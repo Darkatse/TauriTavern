@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use std::sync::Arc;
 use tokio::fs;
 
 use crate::infrastructure::assets::{
-    copy_resource_to_file, list_default_files_under, read_resource_json,
+    BundledResources, copy_resource_to_file, list_default_files_under, read_resource_json,
 };
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::content_repository::{
@@ -22,7 +22,7 @@ struct ContentIndexItem {
 
 /// File Content Repository implementation
 pub struct FileContentRepository {
-    app_handle: AppHandle,
+    resources: Arc<dyn BundledResources>,
     data_root: PathBuf,
     user_content_dir: PathBuf,
 }
@@ -32,13 +32,17 @@ impl FileContentRepository {
     ///
     /// # Arguments
     ///
-    /// * `app_handle` - Tauri app handle for resolving resource paths
+    /// * `resources` - Bundled resources holding the default content
     /// * `data_root` - Path to the global data root
     /// * `user_content_dir` - Path to the user content directory (e.g., data/default-user)
     ///   This should be the complete path to the user directory, not just the parent directory.
-    pub fn new(app_handle: AppHandle, data_root: PathBuf, user_content_dir: PathBuf) -> Self {
+    pub fn new(
+        resources: Arc<dyn BundledResources>,
+        data_root: PathBuf,
+        user_content_dir: PathBuf,
+    ) -> Self {
         Self {
-            app_handle,
+            resources,
             data_root,
             user_content_dir,
         }
@@ -239,7 +243,7 @@ impl FileContentRepository {
                 }
 
                 tracing::debug!("Copying {} to {:?}", resource_path, dest_path);
-                copy_resource_to_file(&self.app_handle, &resource_path, &dest_path).await?;
+                copy_resource_to_file(self.resources.as_ref(), &resource_path, &dest_path).await?;
             }
 
             content_log.push(item.filename.clone());
@@ -294,7 +298,7 @@ impl ContentRepository for FileContentRepository {
 
     async fn get_content_index(&self) -> Result<Vec<ContentItem>, DomainError> {
         let index_items: Vec<ContentIndexItem> =
-            read_resource_json(&self.app_handle, "default/content/index.json")?;
+            read_resource_json(self.resources.as_ref(), "default/content/index.json")?;
 
         // Convert to domain model
         let mut content_items = Vec::with_capacity(index_items.len());

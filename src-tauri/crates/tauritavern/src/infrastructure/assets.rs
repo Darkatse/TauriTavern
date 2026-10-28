@@ -20,11 +20,15 @@ mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
 
+pub trait BundledResources: Send + Sync {
+    fn read_bytes(&self, relative_path: &str) -> Result<Vec<u8>, DomainError>;
+}
+
 pub fn read_resource_text(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     relative_path: &str,
 ) -> Result<String, DomainError> {
-    let bytes = read_resource_bytes(app_handle, relative_path)?;
+    let bytes = resources.read_bytes(relative_path)?;
     String::from_utf8(bytes).map_err(|e| {
         tracing::error!("Failed to decode resource text {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!(
@@ -87,10 +91,10 @@ pub fn read_resource_bytes(
 }
 
 pub fn read_resource_json<T: DeserializeOwned>(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     relative_path: &str,
 ) -> Result<T, DomainError> {
-    let text = read_resource_text(app_handle, relative_path)?;
+    let text = read_resource_text(resources, relative_path)?;
     serde_json::from_str(&text).map_err(|e| {
         tracing::error!("Failed to parse JSON resource {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
@@ -98,7 +102,7 @@ pub fn read_resource_json<T: DeserializeOwned>(
 }
 
 pub async fn copy_resource_to_file(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     resource_relative_path: &str,
     destination: &Path,
 ) -> Result<(), DomainError> {
@@ -109,7 +113,7 @@ pub async fn copy_resource_to_file(
         })?;
     }
 
-    let bytes = read_resource_bytes(app_handle, resource_relative_path)?;
+    let bytes = resources.read_bytes(resource_relative_path)?;
     fs::write(destination, bytes).await.map_err(|e| {
         tracing::error!(
             "Failed to write copied resource {:?} to {:?}: {}",

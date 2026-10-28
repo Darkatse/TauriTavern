@@ -1,14 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use tauri::AppHandle;
 use tokio::fs;
 use tt_domain::errors::DomainError;
 use uuid::Uuid;
 
-use super::assets::{copy_resource_to_file, list_default_files_under};
+use super::assets::{BundledResources, copy_resource_to_file, list_default_files_under};
 
 pub async fn materialize_builtin_skills(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     data_root: &Path,
 ) -> Result<PathBuf, DomainError> {
     let cache_root = data_root.join("_cache/builtin-skills");
@@ -31,7 +30,7 @@ pub async fn materialize_builtin_skills(
     })?;
     for relative in list_default_files_under("skills", "") {
         copy_resource_to_file(
-            app_handle,
+            resources,
             &format!("default/skills/{relative}"),
             &staging.join(relative),
         )

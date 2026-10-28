@@ -1,19 +1,14 @@
+use std::path::Path;
 use std::sync::Arc;
-
-use tauri::{AppHandle, Manager};
 
 use crate::app::startup_profile::initial_tauritavern_settings;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::builtin_skills::materialize_builtin_skills;
-use crate::infrastructure::logging::llm_api_logs::{
-    LlmApiLogStore, LoggingChatCompletionRepository,
-};
-use crate::infrastructure::paths::RuntimePaths;
+use crate::infrastructure::logging::llm_api_logs::LoggingChatCompletionRepository;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use tt_adapter_extension::FileExtensionRepository;
-use tt_adapter_http::HttpClientPool;
 use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
 };
@@ -22,7 +17,6 @@ use tt_adapter_provider_http::{
     HttpSearxngSearchRepository, HttpStableDiffusionRepository, HttpTranslateRepository,
     HttpTtsRepository,
 };
-use tt_adapter_storage_core::commit_stage::PageGeneration;
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
     FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
@@ -86,6 +80,8 @@ use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 use tt_ports::settings::ChatBackupRuntime;
 
+use super::HostEnvironment;
+
 pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) character_repository: Arc<dyn CharacterRepository>,
     pub(in crate::app::composition) chat_repository: Arc<dyn ChatRepository>,
@@ -139,13 +135,13 @@ pub(in crate::app::composition) struct AppRepositories {
 }
 
 pub(super) async fn build(
-    app_handle: &AppHandle,
+    environment: &HostEnvironment,
+    app_root: &Path,
     data_directory: &DataDirectory,
     chat_backup_settings: ChatBackupSettings,
 ) -> Result<AppRepositories, DomainError> {
-    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
-    let page_generation = app_handle.state::<Arc<PageGeneration>>().inner().clone();
-    let runtime_paths = app_handle.state::<RuntimePaths>();
+    let http_client_pool = environment.http_client_pool.clone();
+    let page_generation = environment.page_generation.clone();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
     let chat_aliases = new_shared_chat_alias_store_for_user_dir(data_directory.default_user());
@@ -181,9 +177,9 @@ pub(super) async fn build(
     ));
 
     let default_user_settings: UserSettings = {
-        let app_handle = app_handle.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            read_resource_json(&app_handle, "default/content/settings.json")
+        let bundled_resources = environment.bundled_resources.clone();
+        tokio::task::spawn_blocking(move || {
+            read_resource_json(bundled_resources.as_ref(), "default/content/settings.json")
         })
         .await
         .map_err(|error| {
@@ -223,14 +219,14 @@ pub(super) async fn build(
     ));
     let skill_repository: Arc<dyn SkillRepository> = Arc::new(FileSkillRepository::new(
         data_root.join("_tauritavern").join("skills"),
-        materialize_builtin_skills(app_handle, &data_root).await?,
+        materialize_builtin_skills(environment.bundled_resources.as_ref(), &data_root).await?,
     ));
     let sprite_repository: Arc<dyn SpriteRepository> = Arc::new(FileSpriteRepository::new(
         data_directory.characters().to_path_buf(),
     ));
 
     let content_repository: Arc<dyn ContentRepository> = Arc::new(FileContentRepository::new(
-        app_handle.clone(),
+        environment.bundled_resources.clone(),
         data_root.clone(),
         default_user_dir.clone(),
     ));
@@ -277,7 +273,7 @@ pub(super) async fn build(
         Arc::new(FileThemeRepository::new(default_user_dir.join("themes")));
 
     let preset_repository: Arc<dyn PresetRepository> = Arc::new(FilePresetRepository::new(
-        app_handle.clone(),
+        environment.bundled_resources.clone(),
         default_user_dir.clone(),
         content_repository.clone(),
     ));
@@ -298,10 +294,7 @@ pub(super) async fn build(
     );
     let user_endpoint_grant_repository: Arc<dyn UserEndpointGrantRepository> =
         Arc::new(FileUserEndpointGrantRepository::new(
-            runtime_paths
-                .app_root
-                .join("security")
-                .join("user-endpoint-grants.json"),
+            app_root.join("security").join("user-endpoint-grants.json"),
         ));
     let mcp_server_repository: Arc<dyn McpServerRepository> = Arc::new(
         FileMcpServerRepository::new(data_root.join("_tauritavern").join("mcp")),
@@ -318,11 +311,10 @@ pub(super) async fn build(
     let agent_workspace_lifecycle_repository: Arc<dyn AgentWorkspaceLifecycleRepository> =
         file_agent_repository;
 
-    let llm_api_log_store = app_handle.state::<Arc<LlmApiLogStore>>().inner().clone();
     let chat_completion_repository: Arc<dyn ChatCompletionRepository> =
         Arc::new(LoggingChatCompletionRepository::new(
             Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone())),
-            llm_api_log_store,
+            environment.llm_api_log_store.clone(),
         ));
     let provider_metadata_repository: Arc<dyn ProviderMetadataRepository> = Arc::new(
         HttpProviderMetadataRepository::new(http_client_pool.clone()),

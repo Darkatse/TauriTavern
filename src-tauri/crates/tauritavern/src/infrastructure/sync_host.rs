@@ -5,23 +5,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, oneshot};
-use ttsync_contract::sync::SyncMode;
 
-use tt_application::services::lan_sync_service::LanSyncService;
-use tt_application::services::tt_sync_service::TtSyncService;
 use tt_contracts::sync::SyncJobEvent;
-use tt_contracts::sync_automation::{
-    SyncAutomationStatus, SyncAutomationTarget, SyncAutomationToastEvent,
-};
+use tt_contracts::sync_automation::{SyncAutomationStatus, SyncAutomationToastEvent};
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::LanSyncPairRequestEvent;
 use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerEvents, PairingApproval};
 use tt_ports::sync::SyncJobEventPublisher;
-use tt_ports::sync_automation::{
-    SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
-};
+use tt_ports::sync_automation::SyncAutomationEventPublisher;
 
-pub(in crate::app::composition) fn sync_automation_events(
+pub(crate) fn sync_automation_events(
     app_handle: &AppHandle,
 ) -> Arc<dyn SyncAutomationEventPublisher> {
     Arc::new(TauriSyncAutomationEventPublisher {
@@ -29,47 +22,19 @@ pub(in crate::app::composition) fn sync_automation_events(
     })
 }
 
-pub(in crate::app::composition) fn sync_job_events(
-    app_handle: &AppHandle,
-) -> Arc<dyn SyncJobEventPublisher> {
+pub(crate) fn sync_job_events(app_handle: &AppHandle) -> Arc<dyn SyncJobEventPublisher> {
     Arc::new(TauriSyncJobEventPublisher {
         app_handle: app_handle.clone(),
     })
 }
 
-pub(in crate::app::composition) fn pairing_approval(
-    app_handle: &AppHandle,
-) -> Arc<dyn PairingApproval> {
+pub(crate) fn pairing_approval(app_handle: &AppHandle) -> Arc<dyn PairingApproval> {
     Arc::new(TauriPairingApproval::new(app_handle.clone()))
 }
 
-pub(in crate::app::composition) fn lan_server_events(
-    app_handle: &AppHandle,
-) -> Arc<dyn LanServerEvents> {
+pub(crate) fn lan_server_events(app_handle: &AppHandle) -> Arc<dyn LanServerEvents> {
     Arc::new(TauriLanServerEvents {
         app_handle: app_handle.clone(),
-    })
-}
-
-pub(in crate::app::composition) fn sync_automation_lan_server(
-    lan_sync_service: Arc<LanSyncService>,
-    lan_sync_allowed: bool,
-) -> Arc<dyn SyncAutomationLanServerControl> {
-    Arc::new(ServiceSyncAutomationLanServerControl {
-        lan_sync_service,
-        lan_sync_allowed,
-    })
-}
-
-pub(in crate::app::composition) fn sync_automation_endpoint_catalog(
-    lan_sync_service: Arc<LanSyncService>,
-    tt_sync_service: Arc<TtSyncService>,
-    lan_sync_allowed: bool,
-) -> Arc<dyn SyncAutomationEndpointCatalog> {
-    Arc::new(ServiceSyncAutomationEndpointCatalog {
-        lan_sync_service,
-        tt_sync_service,
-        lan_sync_allowed,
     })
 }
 
@@ -122,7 +87,7 @@ impl LanServerEvents for TauriLanServerEvents {
     }
 }
 
-pub(in crate::app::composition) fn lan_discovery_host(
+pub(crate) fn lan_discovery_host(
     app_handle: &AppHandle,
 ) -> Arc<dyn tt_ports::lan_discovery::LanDiscoveryHost> {
     Arc::new(TauriLanDiscoveryHost {
@@ -213,94 +178,6 @@ impl PairingApproval for TauriPairingApproval {
 
     async fn cancel_all(&self) {
         self.pending.lock().await.clear();
-    }
-}
-
-struct ServiceSyncAutomationLanServerControl {
-    lan_sync_service: Arc<LanSyncService>,
-    lan_sync_allowed: bool,
-}
-
-#[async_trait]
-impl SyncAutomationLanServerControl for ServiceSyncAutomationLanServerControl {
-    fn validate_allowed(&self) -> Result<(), DomainError> {
-        if !self.lan_sync_allowed {
-            return Err(DomainError::InvalidData(
-                "LAN Sync is not allowed by the current platform policy".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    async fn start(&self) -> Result<(), DomainError> {
-        self.validate_allowed()?;
-        self.lan_sync_service.start_server().await.map(|_| ())
-    }
-
-    async fn ensure_running(&self) -> Result<(), DomainError> {
-        self.validate_allowed()?;
-        if !self.lan_sync_service.get_status().await?.running {
-            return Err(DomainError::InvalidData(
-                "LAN Sync server is not running. Start the sync port before using LAN auto upload."
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-struct ServiceSyncAutomationEndpointCatalog {
-    lan_sync_service: Arc<LanSyncService>,
-    tt_sync_service: Arc<TtSyncService>,
-    lan_sync_allowed: bool,
-}
-
-#[async_trait]
-impl SyncAutomationEndpointCatalog for ServiceSyncAutomationEndpointCatalog {
-    async fn validate_target(
-        &self,
-        target: &SyncAutomationTarget,
-        mode: SyncMode,
-    ) -> Result<(), DomainError> {
-        match target {
-            SyncAutomationTarget::Lan { device_id } => {
-                if !self.lan_sync_allowed {
-                    return Err(DomainError::InvalidData(
-                        "LAN Sync is not allowed by the current platform policy".to_string(),
-                    ));
-                }
-
-                let devices = self.lan_sync_service.list_paired_devices().await?;
-                devices
-                    .iter()
-                    .find(|device| device.device_id == *device_id)
-                    .ok_or_else(|| {
-                        DomainError::NotFound(format!("LAN Sync device not found: {device_id}"))
-                    })?;
-            }
-            SyncAutomationTarget::Tt { server_device_id } => {
-                let servers = self.tt_sync_service.list_servers().await?;
-                let server = servers
-                    .iter()
-                    .find(|server| server.server_device_id.as_str() == server_device_id.as_str())
-                    .ok_or_else(|| {
-                        DomainError::NotFound(format!(
-                            "TT-Sync server not found: {server_device_id}"
-                        ))
-                    })?;
-                if !server.permissions.write {
-                    return Err(DomainError::AuthenticationError(
-                        "TT-Sync server does not grant write permission".to_string(),
-                    ));
-                }
-                if mode == SyncMode::Mirror && !server.permissions.mirror_delete {
-                    return Err(DomainError::AuthenticationError(
-                        "TT-Sync server does not grant mirror_delete permission".to_string(),
-                    ));
-                }
-            }
-        }
-        Ok(())
     }
 }
 

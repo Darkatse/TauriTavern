@@ -15,6 +15,7 @@ mod startup_profile;
 mod state;
 
 pub(crate) use backend_readiness::BackendReadiness;
+pub(crate) use composition::HostEnvironment;
 pub(crate) use startup_profile::StartupProfile;
 pub(crate) use state::AppServices;
 pub use state::AppState;
@@ -26,7 +27,11 @@ pub fn spawn_initialization(
     backend_readiness: Arc<BackendReadiness>,
 ) {
     tauri::async_runtime::spawn(async move {
-        match AppState::new(app_handle.clone(), runtime_paths, startup_profile).await {
+        if let Err(error) = crate::infrastructure::staging::clear_staging_root(&app_handle).await {
+            tracing::warn!(%error, "Failed to clear files left by the previous session");
+        }
+        let environment = host::host_environment(&app_handle);
+        match AppState::new(environment, runtime_paths, startup_profile).await {
             Ok(state) => {
                 let state = Arc::new(state);
                 if let Err(error) = state
