@@ -193,11 +193,43 @@ fn normalize_group_manifest_compat(value: &mut Value, file_path: &Path) -> Resul
         ))
     })?;
 
+    normalize_group_id_field(object, file_path)?;
     normalize_activation_strategy_field(object, file_path)?;
     normalize_optional_timestamp_field(object, "date_added", file_path)?;
     normalize_optional_timestamp_field(object, "date_last_chat", file_path)?;
 
     Ok(())
+}
+
+/// Older SillyTavern versions saved `Date.now()` as a numeric group id.
+fn normalize_group_id_field(
+    object: &mut serde_json::Map<String, Value>,
+    file_path: &Path,
+) -> Result<(), DomainError> {
+    let Some(value) = object.get("id").cloned() else {
+        return Ok(());
+    };
+
+    match value {
+        Value::String(_) => Ok(()),
+        Value::Number(number) if number.is_i64() || number.is_u64() => {
+            let normalized = number.to_string();
+            warn_group_manifest_normalization(
+                file_path,
+                "id",
+                &normalized,
+                &format!("\"{normalized}\""),
+            );
+            object.insert("id".to_string(), Value::String(normalized));
+            Ok(())
+        }
+        other => Err(invalid_group_manifest_field(
+            file_path,
+            "id",
+            "a string or legacy integer",
+            &other,
+        )),
+    }
 }
 
 fn normalize_activation_strategy_field(
@@ -600,6 +632,19 @@ mod tests {
         assert!(error.to_string().contains("activation_strategy"));
     }
 
+    #[test]
+    fn group_manifest_compat_rejects_float_and_bool_id() {
+        let mut float_manifest = base_group_manifest();
+        float_manifest["id"] = json!(1_701_046_282_175.5_f64);
+        let error = decode_test_group(float_manifest).expect_err("float id must fail");
+        assert!(error.to_string().contains("field 'id'"));
+
+        let mut bool_manifest = base_group_manifest();
+        bool_manifest["id"] = json!(true);
+        let error = decode_test_group(bool_manifest).expect_err("bool id must fail");
+        assert!(error.to_string().contains("field 'id'"));
+    }
+
     #[tokio::test]
     async fn group_repository_loads_and_rewrites_legacy_group_manifest() {
         let root = std::env::temp_dir().join(format!(
@@ -608,7 +653,8 @@ mod tests {
         ));
         let groups_dir = root.join("groups");
         let group_chats_dir = root.join("group chats");
-        let group_path = groups_dir.join("legacy-group.json");
+        // `update_group` derives the file name from the id, so the file must be named after it.
+        let group_path = groups_dir.join("1701046282175.json");
 
         tokio::fs::create_dir_all(&groups_dir)
             .await
@@ -618,6 +664,7 @@ mod tests {
             .expect("create group chats dir");
 
         let mut manifest = base_group_manifest();
+        manifest["id"] = json!(1_701_046_282_175_u64);
         manifest["activation_strategy"] = json!(false);
         manifest["date_added"] = json!(1_752_578_685_443.402_8_f64);
         manifest["date_last_chat"] = json!(1_752_578_685_999.987_5_f64);
@@ -634,6 +681,7 @@ mod tests {
         assert_eq!(groups.len(), 1);
 
         let mut group = groups.into_iter().next().expect("loaded group");
+        assert_eq!(group.id, "1701046282175");
         assert_eq!(group.activation_strategy, 0);
         assert_eq!(group.additional.get("vendor_extra"), Some(&json!("kept")));
 
@@ -649,6 +697,7 @@ mod tests {
         let persisted: Value =
             serde_json::from_str(&persisted_raw).expect("parse persisted manifest");
 
+        assert_eq!(persisted["id"], json!("1701046282175"));
         assert_eq!(persisted["activation_strategy"], json!(0));
         assert_eq!(persisted["vendor_extra"], json!("kept"));
         assert!(persisted.get("date_added").is_none());
