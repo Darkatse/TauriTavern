@@ -89,6 +89,10 @@ impl StableDiffusionRepository for HttpStableDiffusionRepository {
             "workersai/models" => workers_ai_models(&self.http_clients, &request).await,
             "workersai/generate" => workers_ai_generate(&self.http_clients, &request, cancel).await,
 
+            // LiteRouter (cloud chain)
+            "literouter/models" => literouter_models(&self.http_clients, &request).await,
+            "literouter/generate" => literouter_generate(&self.http_clients, &request, cancel).await,
+
             // DrawThings (local chain)
             "drawthings/ping" => drawthings_ping(&self.http_clients, &request.body).await,
             "drawthings/get-model" => {
@@ -1363,7 +1367,7 @@ fn workers_ai_api_key(request: &SdRouteRequest) -> Result<&str, SdRouteResponse>
                 Ok(api_key)
             }
         }
-        SdRouteCredentials::None => Err(text(400, "Cloudflare Workers AI API key is required")),
+        _ => Err(text(400, "Cloudflare Workers AI API key is required")),
     }
 }
 
@@ -1718,6 +1722,196 @@ async fn drawthings_generate(
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
 
     Ok(json_response(200, value))
+}
+
+const LITEROUTER_IMAGE_API: &str = "https://image.literouter.com/v1";
+
+fn literouter_api_key(request: &SdRouteRequest) -> Result<&str, SdRouteResponse> {
+    match &request.credentials {
+        SdRouteCredentials::LiteRouter { api_key } => {
+            let api_key = api_key.trim();
+            if api_key.is_empty() {
+                Err(text(400, "LiteRouter API key is required"))
+            } else {
+                Ok(api_key)
+            }
+        }
+        _ => Err(text(400, "LiteRouter API key is required")),
+    }
+}
+
+fn detect_image_format_from_base64(base64_image: &str) -> &'static str {
+    let prefix: String = base64_image.chars().take(32).collect();
+    let Ok(header) = base64::engine::general_purpose::STANDARD.decode(prefix) else {
+        return "png";
+    };
+
+    if header.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "jpg";
+    }
+    if header.starts_with(b"RIFF") && header.get(8..12) == Some(&b"WEBP"[..]) {
+        return "webp";
+    }
+    if header.starts_with(b"GIF") {
+        return "gif";
+    }
+    "png"
+}
+
+async fn literouter_models(
+    http_clients: &Arc<HttpClientPool>,
+    _request: &SdRouteRequest,
+) -> Result<SdRouteResponse, DomainError> {
+    let client = http_clients.client(HttpClientProfile::ProviderMetadata)?;
+    let response = client
+        .get(format!("{LITEROUTER_IMAGE_API}/models"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| {
+            DomainError::transient(format!("LiteRouter models request failed: {error}"))
+        })?;
+
+    if !response.status().is_success() {
+        return Ok(text(500, "LiteRouter returned an error."));
+    }
+
+    let body = response.json::<Value>().await.map_err(|error| {
+        DomainError::InternalError(format!("LiteRouter models JSON is invalid: {error}"))
+    })?;
+
+    let models = body
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut options = models
+        .iter()
+        .filter(|model| model.get("type").and_then(Value::as_str) == Some("image"))
+        .filter_map(|model| {
+            let id = model.get("id").and_then(Value::as_str)?.trim().to_string();
+            if id.is_empty() {
+                return None;
+            }
+            let label = model
+                .get("display_name")
+                .and_then(Value::as_str)
+                .or_else(|| model.get("name").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&id)
+                .to_string();
+            Some(json!({ "value": id, "text": label }))
+        })
+        .collect::<Vec<_>>();
+
+    options.sort_by(|a, b| {
+        a.get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("text").and_then(Value::as_str).unwrap_or(""))
+    });
+
+    Ok(json_response(200, Value::Array(options)))
+}
+
+async fn literouter_generate(
+    http_clients: &Arc<HttpClientPool>,
+    request: &SdRouteRequest,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<SdRouteResponse, DomainError> {
+    let api_key = match literouter_api_key(request) {
+        Ok(api_key) => api_key,
+        Err(response) => return Ok(response),
+    };
+    let prompt = match required_body_string_response(
+        &request.body,
+        "prompt",
+        "LiteRouter prompt is required",
+    ) {
+        Ok(prompt) => prompt,
+        Err(response) => return Ok(response),
+    };
+
+    let width = request
+        .body
+        .get("width")
+        .and_then(Value::as_f64)
+        .unwrap_or(1024.0) as u64;
+    let height = request
+        .body
+        .get("height")
+        .and_then(Value::as_f64)
+        .unwrap_or(1024.0) as u64;
+
+    let mut payload = Map::new();
+    payload.insert("prompt".to_string(), Value::String(prompt));
+    payload.insert(
+        "size".to_string(),
+        Value::String(format!("{width}x{height}")),
+    );
+    payload.insert("n".to_string(), json!(1));
+    payload.insert(
+        "response_format".to_string(),
+        Value::String("b64_json".to_string()),
+    );
+    if let Some(model) = request
+        .body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert("model".to_string(), Value::String(model.to_string()));
+    }
+
+    let client = http_client(http_clients)?;
+    let builder = client
+        .post(format!("{LITEROUTER_IMAGE_API}/images/generations"))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {api_key}"),
+        )
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&Value::Object(payload));
+
+    let response = tokio::select! {
+        res = builder.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        changed = cancel.changed() => {
+            let _ = changed;
+            return Err(DomainError::generation_cancelled_by_user());
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_else(|_| status.to_string());
+        return Ok(text(
+            500,
+            format!("LiteRouter returned an error: {}", detail.trim()),
+        ));
+    }
+
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+
+    let image = body
+        .pointer("/data/0/b64_json")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DomainError::InternalError("LiteRouter returned no image data.".to_string())
+        })?;
+
+    let format = detect_image_format_from_base64(image);
+
+    Ok(json_response(
+        200,
+        json!({ "format": format, "image": image }),
+    ))
 }
 
 #[cfg(test)]

@@ -51,6 +51,17 @@ impl StableDiffusionService {
                 ));
             };
             SdRouteCredentials::WorkersAi { api_key }
+        } else if matches!(path.as_str(), "literouter/models" | "literouter/generate") {
+            let Some(api_key) = self
+                .secret_repository
+                .read_secret(SecretKeys::LITEROUTER, None)
+                .await?
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            else {
+                return Ok(text_response(400, "LiteRouter API key is required"));
+            };
+            SdRouteCredentials::LiteRouter { api_key }
         } else {
             SdRouteCredentials::None
         };

@@ -96,6 +96,7 @@ const sources = {
     zai: 'zai',
     openrouter: 'openrouter',
     workersai: 'workersai',
+    literouter: 'literouter',
 };
 const comfyTypes = {
     standard: 'standard',
@@ -1747,6 +1748,9 @@ async function loadSamplers() {
         case sources.workersai:
             samplers = ['N/A'];
             break;
+        case sources.literouter:
+            samplers = ['N/A'];
+            break;
     }
 
     for (const sampler of samplers) {
@@ -2021,6 +2025,9 @@ async function loadModels() {
         case sources.workersai:
             models = await loadWorkersAIImageModels();
             break;
+        case sources.literouter:
+            models = await loadLiteRouterModels();
+            break;
     }
 
     if (extension_settings.sd.source === sources.electronhub) {
@@ -2182,6 +2189,32 @@ async function loadWorkersAIImageModels() {
         reportModelLoadError('Cloudflare Workers AI', error);
         return [];
     }
+}
+
+async function loadLiteRouterModels() {
+    $('#sd_literouter_key').toggleClass('success', !!secret_state[SECRET_KEYS.LITEROUTER]);
+
+    try {
+        const result = await fetch('/api/sd/literouter/models', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
+
+        if (!result.ok) {
+            throw new Error('LiteRouter returned an error.');
+        }
+
+        const models = await result.json();
+
+        if (Array.isArray(models) && models.length > 0) {
+            return models;
+        }
+    } catch (error) {
+        console.error('Could not load LiteRouter models', error);
+    }
+
+    // Fallback so the source stays usable if the model list can't be fetched
+    return [{ value: 'sdxl-turbo', text: 'sdxl-turbo' }];
 }
 
 async function loadPollinationsModels() {
@@ -2672,6 +2705,9 @@ async function loadSchedulers() {
         case sources.workersai:
             schedulers = ['N/A'];
             break;
+        case sources.literouter:
+            schedulers = ['N/A'];
+            break;
     }
 
     for (const scheduler of schedulers) {
@@ -2793,6 +2829,9 @@ async function loadVaes() {
             vaes = ['N/A'];
             break;
         case sources.workersai:
+            vaes = ['N/A'];
+            break;
+        case sources.literouter:
             vaes = ['N/A'];
             break;
     }
@@ -3450,6 +3489,9 @@ async function sendGenerationRequest(generationType, prompt, additionalNegativeP
                 break;
             case sources.workersai:
                 result = await generateWorkersAIImage(prefixedPrompt, negativePrompt, signal);
+                break;
+            case sources.literouter:
+                result = await generateLiteRouterImage(prefixedPrompt, signal);
                 break;
         }
 
@@ -4766,6 +4808,34 @@ async function generateWorkersAIImage(prompt, negativePrompt, signal) {
     throw new Error(text);
 }
 
+/**
+ * Generates an image using the LiteRouter image API.
+ * @param {string} prompt The main instruction used to guide the image generation.
+ * @param {AbortSignal} signal An AbortSignal object that can be used to cancel the request.
+ * @returns {Promise<{format: string, data: string}>}
+ */
+async function generateLiteRouterImage(prompt, signal) {
+    const result = await fetch('/api/sd/literouter/generate', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        signal: signal,
+        body: JSON.stringify({
+            prompt: prompt,
+            model: extension_settings.sd.model,
+            width: extension_settings.sd.width,
+            height: extension_settings.sd.height,
+        }),
+    });
+
+    if (result.ok) {
+        const data = await result.json();
+        return { format: data.format, data: data.image };
+    }
+
+    const text = await result.text();
+    throw new Error(text);
+}
+
 async function onComfyOpenWorkflowEditorClick() {
     let workflow = await (await fetch('/api/sd/comfy/workflow', {
         method: 'POST',
@@ -5156,6 +5226,8 @@ function isValidState() {
             return secret_state[SECRET_KEYS.OPENROUTER];
         case sources.workersai:
             return !!oai_settings.workers_ai_account_id && !!secret_state[SECRET_KEYS.WORKERS_AI] && hasSelectedModelOption();
+        case sources.literouter:
+            return secret_state[SECRET_KEYS.LITEROUTER];
         default:
             return false;
     }
@@ -5966,6 +6038,7 @@ export async function init() {
                 [sources.comfy]: SECRET_KEYS.COMFY_RUNPOD,
                 [sources.pollinations]: SECRET_KEYS.POLLINATIONS,
                 [sources.workersai]: SECRET_KEYS.WORKERS_AI,
+                [sources.literouter]: SECRET_KEYS.LITEROUTER,
             };
             const shouldReloadOptions = Object.entries(keySourceMap).some(([k, v]) => k === extension_settings.sd.source && v === key);
             if (!shouldReloadOptions) {
