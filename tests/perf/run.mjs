@@ -11,8 +11,8 @@ import { openFrontend } from './frontend.mjs';
 const directory = new URL('./', import.meta.url);
 const baselineFile = new URL('baseline.json', directory);
 const update = process.argv.includes('--update');
-// Across runs and CPU speeds, counters stay within a frame or two and a few events of each other; the slack
-// absorbs that and keeps small UI additions from needing a new baseline.
+// Across runs and CPU speeds, counters stay within a frame or two of each other; the slack absorbs that and
+// keeps small UI additions from needing a new baseline.
 const slack = expected => Math.max(2, Math.ceil(expected * 0.1));
 
 async function runScenarios(options) {
