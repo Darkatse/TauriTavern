@@ -23,54 +23,14 @@ pub use state::AppState;
 pub fn spawn_initialization(
     app_handle: AppHandle,
     runtime_paths: RuntimePaths,
-    startup_profile: StartupProfile,
     backend_readiness: Arc<BackendReadiness>,
 ) {
     tauri::async_runtime::spawn(async move {
         if let Err(error) = crate::infrastructure::staging::clear_staging_root(&app_handle).await {
             tracing::warn!(%error, "Failed to clear files left by the previous session");
         }
-        let environment = host::host_environment(&app_handle);
-        match AppState::new(environment, runtime_paths, startup_profile).await {
+        match initialize_app_state(&app_handle, runtime_paths).await {
             Ok(state) => {
-                let state = Arc::new(state);
-                if let Err(error) = state
-                    .services
-                    .content_service
-                    .initialize_default_content("default-user")
-                    .await
-                {
-                    let message = format!("Failed to initialize default content: {error}");
-                    backend_readiness.mark_failed(message.clone());
-                    tracing::error!(
-                        target: crate::observability_targets::USER_VISIBLE_ERROR,
-                        "{message}",
-                    );
-                    if let Err(emit_error) = app_handle.emit("app-error", message) {
-                        tracing::error!("Failed to emit app-error event: {}", emit_error);
-                    }
-                    return;
-                }
-                tracing::debug!("Successfully initialized default content");
-
-                if !app_handle.manage(state.clone()) {
-                    let message =
-                        "Failed to initialize application state: AppState is already managed"
-                            .to_string();
-                    backend_readiness.mark_failed(message.clone());
-                    tracing::error!(
-                        target: crate::observability_targets::USER_VISIBLE_ERROR,
-                        "{message}",
-                    );
-                    match app_handle.emit("app-error", message) {
-                        Ok(_) => {}
-                        Err(emit_error) => {
-                            tracing::error!("Failed to emit app-error event: {}", emit_error);
-                        }
-                    }
-                    return;
-                }
-
                 backend_readiness.mark_ready();
 
                 state
@@ -109,21 +69,48 @@ pub fn spawn_initialization(
                     Err(error) => tracing::error!("Failed to emit app-ready event: {}", error),
                 }
             }
-            Err(error) => {
-                let message = format!("Failed to initialize application state: {}", error);
+            Err(message) => {
                 backend_readiness.mark_failed(message.clone());
                 tracing::error!(
                     target: crate::observability_targets::USER_VISIBLE_ERROR,
                     "{message}",
                 );
-
-                match app_handle.emit("app-error", error.to_string()) {
-                    Ok(_) => {}
-                    Err(emit_error) => {
-                        tracing::error!("Failed to emit app-error event: {}", emit_error);
-                    }
+                if let Err(error) = app_handle.emit("app-error", message) {
+                    tracing::error!("Failed to emit app-error event: {}", error);
                 }
             }
         }
     });
+}
+
+async fn initialize_app_state(
+    app_handle: &AppHandle,
+    runtime_paths: RuntimePaths,
+) -> Result<Arc<AppState>, String> {
+    let data_root = runtime_paths.data_root.clone();
+    let startup_profile = tokio::task::spawn_blocking(move || StartupProfile::load(&data_root))
+        .await
+        .map_err(|error| format!("Startup settings task failed: {error}"))?
+        .map_err(|error| format!("Failed to load startup settings: {error}"))?;
+    host::apply_startup_profile(app_handle, &startup_profile);
+
+    let environment = host::host_environment(app_handle);
+    let state = AppState::new(environment, runtime_paths, startup_profile)
+        .await
+        .map(Arc::new)
+        .map_err(|error| format!("Failed to initialize application state: {error}"))?;
+    state
+        .services
+        .content_service
+        .initialize_default_content("default-user")
+        .await
+        .map_err(|error| format!("Failed to initialize default content: {error}"))?;
+    tracing::debug!("Successfully initialized default content");
+
+    if !app_handle.manage(state.clone()) {
+        return Err(
+            "Failed to initialize application state: AppState is already managed".to_string(),
+        );
+    }
+    Ok(state)
 }

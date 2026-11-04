@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use crate::app::StartupProfile;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
 use tauri::Manager;
@@ -17,10 +16,10 @@ use tt_application::services::bundled_template_service::BundledTemplateService;
 use tt_application::services::host_resource_service::HostResourceService;
 use tt_application::services::user_media_service::UserMediaService;
 use tt_domain::errors::DomainError;
+use tt_domain::models::settings::TauriTavernSettings;
 
 pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri::AppHandle) {
-    // Template reads are command-driven and independent of user data root, so the
-    // bundled store can be managed before StartupProfile is loaded.
+    // Template reads are command-driven and independent of the user data root.
     app.manage(Arc::new(BundledTemplateService::new(Arc::new(
         BundledResourceStore::new(app_handle.clone()),
     ))));
@@ -30,7 +29,6 @@ pub(super) fn install_runtime_resources(
     app: &mut tauri::App,
     app_handle: &tauri::AppHandle,
     runtime_paths: &RuntimePaths,
-    startup_profile: &StartupProfile,
 ) -> Result<Arc<HostResourceService>, DomainError> {
     // Static scopes cannot cover portable or migrated data roots. Publish the
     // resolved root to both browser assets and FileHandle transports.
@@ -57,14 +55,13 @@ pub(super) fn install_runtime_resources(
 
     // HostResourceService must be managed before the main window is created:
     // both production web resource interception and dev `tt-ext` serving read
-    // the same state.
+    // the same state. Backend initialization applies the persisted settings;
+    // avatar thumbnails are only requested after the backend is ready.
     let host_resource_store = Arc::new(FilesystemHostResourceStore::from_data_root(
         &runtime_paths.data_root,
     ));
     let host_resource_service = Arc::new(HostResourceService::new(
-        startup_profile
-            .tauritavern_settings
-            .avatar_persona_original_images_enabled,
+        TauriTavernSettings::default().avatar_persona_original_images_enabled,
         host_resource_store.clone(),
     ));
     app.manage(host_resource_service.clone());

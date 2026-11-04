@@ -199,6 +199,8 @@ src-tauri/crates/tauritavern/src/
 
 这里可以触碰 `tauri::AppHandle`、window、plugin、platform API。这里不写业务用例。
 
+setup 不会因用户数据失败。宿主设置与 iOS 策略的启动快照（`app/startup_profile.rs`）在异步初始化中读取，失败经 `BackendReadiness` 显示在启动失败对话框，外壳不会在窗口出现前退出。
+
 ### 6.2 Composition root
 
 `app/composition/*` 是唯一可以同时知道 application service 与 concrete adapter 的地方。

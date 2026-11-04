@@ -23,6 +23,7 @@ use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::presentation::commands::registry::invoke_handler;
 
 pub(crate) use environment::host_environment;
+pub(crate) use setup::apply_startup_profile;
 #[cfg(target_os = "windows")]
 pub(crate) use shutdown::request_frontend_shutdown;
 

@@ -152,12 +152,12 @@ pub(super) fn create_main_window(
 pub(super) fn install_windows_tray(
     app_handle: &tauri::AppHandle,
     main_window: &tauri::webview::WebviewWindow,
-    close_to_tray_on_close: bool,
 ) -> tauri::Result<()> {
     // Windows tray state is managed by `presentation::windows_tray` because
-    // settings commands update it at runtime; host only seeds the startup value.
+    // settings commands update it at runtime; backend initialization applies the
+    // persisted value.
     let tray_state = Arc::new(crate::presentation::windows_tray::WindowsTrayState::new(
-        close_to_tray_on_close,
+        tt_domain::models::settings::TauriTavernSettings::default().close_to_tray_on_close,
     ));
     crate::presentation::windows_tray::install_windows_tray(app_handle, main_window, tray_state)
 }
