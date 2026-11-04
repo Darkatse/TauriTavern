@@ -32,13 +32,13 @@ impl FileSettingsRepository {
     }
 }
 
-pub(super) fn create(root: &Path, settings: &UserSettings) -> Result<(), DomainError> {
+pub(super) fn create(root: &Path, settings: &UserSettings) -> Result<String, DomainError> {
     let dir = root.join(BACKUPS_DIR);
     let name = format!(
         "{PREFIX}{}.json",
         Local::now().format(BACKUP_TIMESTAMP_FORMAT)
     );
-    persist_json_file_blocking(&dir.join(name), settings)?;
+    persist_json_file_blocking(&dir.join(&name), settings)?;
 
     let mut entries = entries(&dir)?;
     entries.sort_by_key(|entry| Reverse(entry.snapshot.date));
@@ -50,7 +50,7 @@ pub(super) fn create(root: &Path, settings: &UserSettings) -> Result<(), DomainE
             ))
         })?;
     }
-    Ok(())
+    Ok(name)
 }
 
 pub(super) fn list(root: &Path) -> Result<Vec<SettingsSnapshot>, DomainError> {

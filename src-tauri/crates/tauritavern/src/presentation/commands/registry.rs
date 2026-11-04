@@ -113,6 +113,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bootstrap_commands::get_bootstrap_metadata,
         super::bootstrap_commands::backend_error_bridge_ready,
         super::bootstrap_commands::wait_for_backend_ready,
+        // Safe mode commands
+        super::safe_mode_commands::get_safe_mode_prompt,
+        super::safe_mode_commands::dismiss_safe_mode_prompt,
+        super::safe_mode_commands::request_safe_mode,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::get_chat_backup_storage_stats,

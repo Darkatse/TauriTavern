@@ -3,6 +3,7 @@ use super::lazy_object::LazyObject;
 pub(super) use tt_contracts::settings::{
     APPEARANCE_FILE, CORE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
 };
+pub(super) const NATIVE_FILE: &str = "tauritavern-settings.json";
 pub(super) const DYNAMIC_THEME_FILE: &str = "settings/dynamic-theme.json";
 
 type FieldGroup = (&'static [&'static str], &'static [&'static str]);

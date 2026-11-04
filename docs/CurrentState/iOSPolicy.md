@@ -106,7 +106,7 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入出厂 profile（`ful
 
 > 这只是“首次生成默认 settings”的默认值：用户导入 settings 后可覆盖 profile/overrides，且不会被系统偷偷改回去。
 
-Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外生成、带 `-TestFlight` 后缀的专用 IPA 显式注入 `ios_external_beta` 并使用 App Store Connect export method。本地开发和其他分发方式仍由调用方明确选择 profile。公开 TestFlight 的 `What to Test` 也以同一 capability snapshot 为可见性边界，避免描述默认包中不可达的能力。
+Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestFlight` 后缀的专用 IPA 注入 `ios_external_beta` 并使用 App Store Connect export method。分发构建都声明出厂 profile，因此初始设置（含安全模式写回的初始设置）总带明确的 seed，不会退回本机缓存。本地开发和其他分发方式仍由调用方明确选择 profile。公开 TestFlight 的 `What to Test` 也以同一 capability snapshot 为可见性边界，避免描述默认包中不可达的能力。
 
 ### 2.3 Activation Report（用于调试/回归）
 

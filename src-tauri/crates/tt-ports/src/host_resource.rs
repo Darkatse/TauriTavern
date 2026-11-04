@@ -3,6 +3,7 @@ use std::time::SystemTime;
 
 use tt_contracts::client_asset_paths::UserDataAssetKind;
 use tt_contracts::range::ByteRange;
+use tt_domain::errors::DomainError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostResourceSourceRevision(Vec<u8>);
@@ -115,4 +116,11 @@ pub trait HostResourceAssetStore: Send + Sync {
         &self,
         request: HostResourceSourceRequest<'_>,
     ) -> Result<OpenedHostResource, HostResourceStoreError>;
+}
+
+#[async_trait::async_trait]
+pub trait UserCssStore: Send + Sync {
+    /// Returns whether a stylesheet that differs from `factory` was replaced; a missing one
+    /// stays missing.
+    async fn reset_user_css(&self, factory: &[u8]) -> Result<bool, DomainError>;
 }

@@ -14,7 +14,9 @@ use tt_contracts::byte_commit::CommitBegin;
 use tt_contracts::settings::USER_SETTINGS_FILES;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+use tt_domain::models::settings::{
+    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
+};
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsCommitResult, SettingsRepository, StoredUserSettings,
 };
@@ -245,6 +247,20 @@ impl SettingsRepository for FileSettingsRepository {
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
+    async fn reset_tauritavern_settings(
+        &self,
+        chat_backups: ChatBackupSettings,
+    ) -> Result<(), DomainError> {
+        let root = self.base_directory.clone();
+        let settings = TauriTavernSettings {
+            chat_backups,
+            ..self.initial_settings.clone()
+        };
+        tokio::task::spawn_blocking(move || sections::reset_native(&root, &settings))
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?
+    }
+
     async fn save_user_settings(&self, settings: UserSettings) -> Result<(), DomainError> {
         let root = self.base_directory.clone();
         tokio::task::spawn_blocking(move || sections::save_user(&root, settings).map(|_| ()))
@@ -258,6 +274,17 @@ impl SettingsRepository for FileSettingsRepository {
         tokio::task::spawn_blocking(move || sections::load_user(&root, &defaults))
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?
+    }
+
+    async fn reset_user_settings(&self, disabled_extensions: &[String]) -> Result<(), DomainError> {
+        let root = self.base_directory.clone();
+        let defaults = Arc::clone(&self.default_sections);
+        let disabled_extensions = disabled_extensions.to_vec();
+        tokio::task::spawn_blocking(move || {
+            sections::reset_user(&root, &defaults, &disabled_extensions)
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
     async fn begin_commit(
@@ -301,7 +328,7 @@ impl SettingsRepository for FileSettingsRepository {
         self.commit_sessions.abort(session_id).await
     }
 
-    async fn create_snapshot(&self, settings: UserSettings) -> Result<(), DomainError> {
+    async fn create_snapshot(&self, settings: UserSettings) -> Result<String, DomainError> {
         let root = self.base_directory.clone();
         tokio::task::spawn_blocking(move || snapshots::create(&root, &settings))
             .await

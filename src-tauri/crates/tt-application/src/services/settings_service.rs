@@ -574,15 +574,7 @@ impl SettingsService {
 
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
         tracing::info!("Creating settings snapshot");
-
-        let mut settings = self
-            .settings_repository
-            .load_user_settings()
-            .await?
-            .settings;
-        insert_personas(&mut settings.data, &self.avatars.get_personas().await?);
-        self.settings_repository.create_snapshot(settings).await?;
-
+        snapshot_user_settings(self.settings_repository.as_ref(), self.avatars.as_ref()).await?;
         Ok(())
     }
 
@@ -621,6 +613,16 @@ impl SettingsService {
 
         Ok(())
     }
+}
+
+/// Snapshots hold the Persona registry, as SillyTavern's settings file does.
+pub(crate) async fn snapshot_user_settings(
+    settings_repository: &dyn SettingsRepository,
+    avatars: &dyn AvatarRepository,
+) -> Result<String, ApplicationError> {
+    let mut settings = settings_repository.load_user_settings().await?.settings;
+    insert_personas(&mut settings.data, &avatars.get_personas().await?);
+    Ok(settings_repository.create_snapshot(settings).await?)
 }
 
 fn validate_agent_retention_settings(
@@ -944,6 +946,17 @@ mod tests {
             Ok(self.settings.lock().await.clone())
         }
 
+        async fn reset_tauritavern_settings(
+            &self,
+            _chat_backups: ChatBackupSettings,
+        ) -> Result<(), DomainError> {
+            unreachable!()
+        }
+
+        async fn reset_user_settings(&self, _disabled: &[String]) -> Result<(), DomainError> {
+            unreachable!()
+        }
+
         async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
             unreachable!()
         }
@@ -973,7 +986,7 @@ mod tests {
             unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
             unimplemented!("not used by these tests")
         }
 

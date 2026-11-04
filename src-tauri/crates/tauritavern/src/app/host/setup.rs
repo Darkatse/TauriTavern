@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::app::{BackendReadiness, StartupProfile, spawn_initialization};
+use crate::app::{BackendReadiness, SafeMode, StartupProfile, spawn_initialization};
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use tauri::{AppHandle, Manager};
@@ -47,6 +47,9 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     super::observability::emit_pending_runtime_migration_error(&runtime_paths);
 
     tracing::debug!("Starting TauriTavern application");
+
+    // Before anything reads user data, which this launch may reset.
+    app.manage(Arc::new(SafeMode::register_launch(&runtime_paths.app_root)));
 
     let backend_readiness = Arc::new(BackendReadiness::new());
     if !app.manage(backend_readiness.clone()) {

@@ -228,9 +228,67 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
     })
 }
 
-/// SillyTavern's `generateTimestamp()` in local time, shared by chat and settings
-/// backup file names.
+/// SillyTavern's `generateTimestamp()` in local time.
 pub const BACKUP_TIMESTAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+
+/// Why a replaced file is kept, which names the copy beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptOriginal {
+    Corrupt,
+    SafeMode,
+}
+
+impl KeptOriginal {
+    fn path_beside(self, path: &Path) -> PathBuf {
+        let suffix = match self {
+            Self::Corrupt => format!("corrupt-{}", Uuid::new_v4()),
+            Self::SafeMode => format!(
+                "safe-mode-{}",
+                chrono::Local::now().format(BACKUP_TIMESTAMP_FORMAT)
+            ),
+        };
+        let mut name = path.file_name().expect("a file path").to_owned();
+        name.push(".");
+        name.push(suffix);
+        path.with_file_name(name)
+    }
+}
+
+/// Publishes `bytes` at `path` after a copy of the file it replaces, and returns the copy.
+/// `path` always holds a whole file, so a failure leaves the original in place.
+pub fn replace_keeping_original_blocking(
+    path: &Path,
+    kept: KeptOriginal,
+    bytes: &[u8],
+) -> Result<Option<PathBuf>, DomainError> {
+    let kept = keep_original_blocking(path, kept)?;
+    persist_bytes_file_blocking(path, bytes)?;
+    Ok(kept)
+}
+
+fn keep_original_blocking(path: &Path, kept: KeptOriginal) -> Result<Option<PathBuf>, DomainError> {
+    let mut original = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(DomainError::InternalError(format!(
+                "Failed to open {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let kept = kept.path_beside(path);
+    persist_written_blocking(&kept, |writer| {
+        io::copy(&mut original, writer).map(drop).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to copy {} to {}: {error}",
+                path.display(),
+                kept.display()
+            ))
+        })
+    })?;
+    Ok(Some(kept))
+}
 
 /// Generate a unique temporary file path adjacent to `target_path`.
 ///

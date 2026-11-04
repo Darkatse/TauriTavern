@@ -93,6 +93,7 @@ mod agent_runtime;
 mod character;
 mod host_resources;
 mod profile_migration;
+mod safe_mode;
 mod world_info;
 
 struct AgentRuntimeFixture {

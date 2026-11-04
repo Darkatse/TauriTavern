@@ -24,6 +24,7 @@ use crate::presentation::commands::registry::invoke_handler;
 
 pub(crate) use environment::host_environment;
 pub(crate) use setup::apply_startup_profile;
+pub(crate) use shutdown::exit_for_safe_mode;
 #[cfg(target_os = "windows")]
 pub(crate) use shutdown::request_frontend_shutdown;
 

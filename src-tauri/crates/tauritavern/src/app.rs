@@ -11,11 +11,13 @@ mod composition;
 mod contract_tests;
 pub mod dev_observability;
 pub(crate) mod host;
+mod safe_mode;
 mod startup_profile;
 mod state;
 
 pub(crate) use backend_readiness::BackendReadiness;
 pub(crate) use composition::HostEnvironment;
+pub(crate) use safe_mode::SafeMode;
 pub(crate) use startup_profile::StartupProfile;
 pub(crate) use state::AppServices;
 pub use state::AppState;
@@ -87,6 +89,19 @@ async fn initialize_app_state(
     app_handle: &AppHandle,
     runtime_paths: RuntimePaths,
 ) -> Result<Arc<AppState>, String> {
+    let environment = host::host_environment(app_handle);
+    let safe_mode = app_handle.state::<Arc<SafeMode>>();
+    if safe_mode.rescue_requested() {
+        let rescue = composition::safe_mode_service(&environment, &runtime_paths.data_root)
+            .await
+            .map_err(|error| format!("Safe mode could not start: {error}"))?;
+        let report = rescue
+            .rescue()
+            .await
+            .map_err(|error| format!("Safe mode could not reset the settings: {error}"))?;
+        safe_mode.report(report);
+    }
+
     let data_root = runtime_paths.data_root.clone();
     let startup_profile = tokio::task::spawn_blocking(move || StartupProfile::load(&data_root))
         .await
@@ -94,7 +109,6 @@ async fn initialize_app_state(
         .map_err(|error| format!("Failed to load startup settings: {error}"))?;
     host::apply_startup_profile(app_handle, &startup_profile);
 
-    let environment = host::host_environment(app_handle);
     let state = AppState::new(environment, runtime_paths, startup_profile)
         .await
         .map(Arc::new)

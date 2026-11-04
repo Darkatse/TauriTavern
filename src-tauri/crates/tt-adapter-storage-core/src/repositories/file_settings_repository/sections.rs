@@ -6,9 +6,14 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::fields::{DYNAMIC_THEME_FILE, SECTION_FILES, UserSettingsSections};
+use super::fields::{
+    DYNAMIC_THEME_FILE, NATIVE_FILE, PERSONA_STATE_FILE, SECTION_FILES, UserSettingsSections,
+};
 use super::lazy_object::{LazyObject, Member};
-use crate::file_system::{persist_bytes_file_blocking, persist_json_file_blocking};
+use crate::file_system::{
+    KeptOriginal, persist_bytes_file_blocking, persist_json_file_blocking,
+    replace_keeping_original_blocking,
+};
 use tt_domain::errors::DomainError;
 use tt_domain::models::persona::{Personas, take_personas_with};
 use tt_domain::models::settings::repair::{
@@ -141,6 +146,39 @@ pub(super) fn save_user(
     write_user(root, settings, StoredSections::read(root)?)
 }
 
+pub(super) fn reset_user(
+    root: &Path,
+    defaults: &DefaultSections,
+    disabled_extensions: &[String],
+) -> Result<(), DomainError> {
+    let mut sections = UserSettingsSections::from_files(
+        defaults
+            .0
+            .each_ref()
+            .map(|text| LazyObject::parse(text).expect("default sections are JSON objects")),
+    );
+    let extension_settings = sections.core.object_entry(&["extension_settings"]);
+    let mut disabled = match extension_settings.value("disabledExtensions") {
+        Some(Value::Array(names)) => names,
+        _ => Vec::new(),
+    };
+    for name in disabled_extensions {
+        let name = Value::String(name.clone());
+        if !disabled.contains(&name) {
+            disabled.push(name);
+        }
+    }
+    extension_settings.set_value("disabledExtensions", &Value::Array(disabled));
+    sections.layout.set_value("firstRun", &Value::Bool(false));
+
+    for (name, section) in SECTION_FILES.into_iter().zip(sections.into_files()) {
+        if name != PERSONA_STATE_FILE {
+            persist_changed(&root.join(name), &section.to_bytes())?;
+        }
+    }
+    Ok(())
+}
+
 /// Takes the Persona registry projection out of `power_user`.
 pub(super) fn take_personas(settings: &mut LazyObject) -> Result<Option<Personas>, DomainError> {
     let Some(power_user) = settings.object_mut(&["power_user"]) else {
@@ -183,19 +221,22 @@ fn read_section(
     defaults: &DefaultSections,
 ) -> Result<(Vec<u8>, LazyObject), DomainError> {
     let path = root.join(SECTION_FILES[index]);
+    let default_text = &defaults.0[index];
     match fs::read(&path) {
-        Ok(text) => match LazyObject::parse(&text) {
-            Ok(section) => return Ok((text, section)),
-            Err(error) => preserve_corrupt(
+        Ok(stored) => match LazyObject::parse(&stored) {
+            Ok(section) => return Ok((stored, section)),
+            Err(error) => replace_corrupt(
                 &path,
                 &format!("Invalid settings {}: {error}", path.display()),
+                default_text,
             )?,
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            persist_bytes_file_blocking(&path, default_text)?
+        }
         Err(error) => return Err(read_error(&path, error)),
     }
-    let text = defaults.0[index].clone();
-    persist_bytes_file_blocking(&path, &text)?;
+    let text = default_text.clone();
     let section = LazyObject::parse(&text).expect("default sections are JSON objects");
     Ok((text, section))
 }
@@ -204,7 +245,7 @@ pub(super) fn load_native(
     root: &Path,
     initial_settings: &TauriTavernSettings,
 ) -> Result<TauriTavernSettings, DomainError> {
-    let path = root.join("tauritavern-settings.json");
+    let path = root.join(NATIVE_FILE);
     let mut defaults = serde_json::to_value(initial_settings).map_err(json_error)?;
     defaults
         .as_object_mut()
@@ -230,19 +271,34 @@ pub(super) fn load_native(
 }
 
 pub(super) fn save_native(root: &Path, settings: &TauriTavernSettings) -> Result<(), DomainError> {
+    for (name, text) in native_files(settings)? {
+        persist_changed(&root.join(name), &text)?;
+    }
+    Ok(())
+}
+
+pub(super) fn reset_native(root: &Path, settings: &TauriTavernSettings) -> Result<(), DomainError> {
+    for (name, text) in native_files(settings)? {
+        let path = root.join(name);
+        if let Some(kept) = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, &text)?
+        {
+            tracing::info!("Safe mode kept {name} as {}", kept.display());
+        }
+    }
+    Ok(())
+}
+
+fn native_files(settings: &TauriTavernSettings) -> Result<[(&str, Vec<u8>); 2], DomainError> {
     let mut core = serde_json::to_value(settings).map_err(json_error)?;
     let theme = core
         .as_object_mut()
         .expect("settings object")
-        .remove("dynamic_theme");
-    persist_changed(
-        &root.join(DYNAMIC_THEME_FILE),
-        &pretty_json(&theme.expect("dynamic theme field"))?,
-    )?;
-    persist_changed(
-        &root.join("tauritavern-settings.json"),
-        &pretty_json(&core)?,
-    )
+        .remove("dynamic_theme")
+        .expect("dynamic theme field");
+    Ok([
+        (DYNAMIC_THEME_FILE, pretty_json(&theme)?),
+        (NATIVE_FILE, pretty_json(&core)?),
+    ])
 }
 
 /// Rewrites a file only when the bytes to write differ from the stored ones.
@@ -280,32 +336,23 @@ fn load_or_default<T: DeserializeOwned + Serialize + Clone>(
 ) -> Result<T, DomainError> {
     match read_optional(path) {
         Ok(Some(value)) => return Ok(value),
-        Ok(None) => {}
-        Err(DomainError::InvalidData(error)) => preserve_corrupt(path, &error)?,
+        Ok(None) => persist_json_file_blocking(path, defaults)?,
+        Err(DomainError::InvalidData(error)) => {
+            replace_corrupt(path, &error, &pretty_json(defaults)?)?
+        }
         Err(error) => return Err(error),
     }
-    persist_json_file_blocking(path, defaults)?;
     Ok(defaults.clone())
 }
 
-/// Moves a corrupt settings file aside so that its section can restart from defaults.
-fn preserve_corrupt(path: &Path, error: &str) -> Result<(), DomainError> {
-    let name = path
-        .file_name()
-        .expect("settings filename")
-        .to_string_lossy();
-    let preserved = path.with_file_name(format!("{name}.corrupt-{}", uuid::Uuid::new_v4()));
-    fs::rename(path, &preserved).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to preserve corrupt settings {}: {error}",
-            path.display(),
-        ))
-    })?;
-    tracing::error!(
-        target: tt_contracts::observability::USER_VISIBLE_ERROR,
-        "{error}; original saved at {}; restoring this settings section to defaults",
-        preserved.display(),
-    );
+fn replace_corrupt(path: &Path, error: &str, defaults: &[u8]) -> Result<(), DomainError> {
+    if let Some(kept) = replace_keeping_original_blocking(path, KeptOriginal::Corrupt, defaults)? {
+        tracing::error!(
+            target: tt_contracts::observability::USER_VISIBLE_ERROR,
+            "{error}; original saved at {}; restoring this settings section to defaults",
+            kept.display(),
+        );
+    }
     Ok(())
 }
 

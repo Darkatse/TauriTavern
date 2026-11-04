@@ -134,6 +134,64 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) local_embedding_repository: Arc<dyn LocalEmbeddingRepository>,
 }
 
+pub(in crate::app::composition) async fn settings_repository(
+    environment: &HostEnvironment,
+    data_directory: &DataDirectory,
+) -> Result<Arc<FileSettingsRepository>, DomainError> {
+    let bundled_resources = environment.bundled_resources.clone();
+    let default_user_settings: UserSettings = tokio::task::spawn_blocking(move || {
+        read_resource_json(bundled_resources.as_ref(), "default/content/settings.json")
+    })
+    .await
+    .map_err(|error| {
+        DomainError::InternalError(format!("Default user settings load task failed: {error}"))
+    })??;
+    Ok(Arc::new(FileSettingsRepository::new(
+        data_directory.settings().to_path_buf(),
+        default_user_settings,
+        initial_tauritavern_settings(),
+        environment.page_generation.clone(),
+        crate::platform::ipc::COMMIT_FRAME_BYTES,
+    )))
+}
+
+/// Brings the user data to the current formats; whatever reads it runs this first.
+pub(in crate::app::composition) async fn prepare_user_data(
+    settings_repository: &FileSettingsRepository,
+    data_directory: &DataDirectory,
+) -> Result<(), DomainError> {
+    settings_repository.cleanup_orphaned_commit_staging().await;
+    settings_repository.migrate_legacy_snapshots().await;
+    // Materialize settings sections before background sync can scan the data directory.
+    settings_repository.load_user_settings().await?;
+    let user_root = data_directory.default_user().to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        tt_adapter_media::persona_cards::migrate_personas(&user_root, &user_root)
+    })
+    .await
+    .map_err(|error| DomainError::InternalError(error.to_string()))?
+}
+
+pub(in crate::app::composition) fn avatar_repository(
+    data_directory: &DataDirectory,
+) -> Arc<FileAvatarRepository> {
+    Arc::new(FileAvatarRepository::new(
+        data_directory.default_user().join("User Avatars"),
+    ))
+}
+
+pub(in crate::app::composition) fn extension_repository(
+    environment: &HostEnvironment,
+    data_directory: &DataDirectory,
+) -> Arc<FileExtensionRepository> {
+    Arc::new(FileExtensionRepository::new(
+        data_directory.default_user().join("extensions"),
+        data_directory.global_extensions().to_path_buf(),
+        data_directory.extension_sources().to_path_buf(),
+        environment.http_client_pool.clone(),
+    ))
+}
+
 pub(super) async fn build(
     environment: &HostEnvironment,
     app_root: &Path,
@@ -176,37 +234,10 @@ pub(super) async fn build(
         data_directory.user_data().to_path_buf(),
     ));
 
-    let default_user_settings: UserSettings = {
-        let bundled_resources = environment.bundled_resources.clone();
-        tokio::task::spawn_blocking(move || {
-            read_resource_json(bundled_resources.as_ref(), "default/content/settings.json")
-        })
-        .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("Default user settings load task failed: {error}"))
-        })??
-    };
-    let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
-        default_user_dir.join("User Avatars"),
-    ));
+    let avatar_repository: Arc<dyn AvatarRepository> = avatar_repository(data_directory);
 
-    let settings_repository = Arc::new(FileSettingsRepository::new(
-        data_directory.settings().to_path_buf(),
-        default_user_settings,
-        initial_tauritavern_settings(),
-        page_generation.clone(),
-        crate::platform::ipc::COMMIT_FRAME_BYTES,
-    ));
-    settings_repository.cleanup_orphaned_commit_staging().await;
-    settings_repository.migrate_legacy_snapshots().await;
-    // Materialize settings sections before background sync can scan the data directory.
-    settings_repository.load_user_settings().await?;
-    let persona_root = default_user_dir.clone();
-    tokio::task::spawn_blocking(move || {
-        tt_adapter_media::persona_cards::migrate_personas(&persona_root, &persona_root)
-    })
-    .await
-    .map_err(|error| DomainError::InternalError(error.to_string()))??;
+    let settings_repository = settings_repository(environment, data_directory).await?;
+    prepare_user_data(&settings_repository, data_directory).await?;
 
     let prompt_cache_repository: Arc<dyn PromptCacheRepository> = Arc::new(
         FilePromptCacheRepository::new(data_root.join("_tauritavern").join("prompt-cache")),
@@ -239,12 +270,7 @@ pub(super) async fn build(
     ));
 
     let extension_repository: Arc<dyn ExtensionRepository> =
-        Arc::new(FileExtensionRepository::new(
-            default_user_dir.join("extensions"),
-            data_directory.global_extensions().to_path_buf(),
-            data_directory.extension_sources().to_path_buf(),
-            http_client_pool.clone(),
-        ));
+        extension_repository(environment, data_directory);
 
     let extension_store_repository = Arc::new(FileExtensionStoreRepository::new(
         data_root.join("_tauritavern").join("extension-store"),

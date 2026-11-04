@@ -10,7 +10,9 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, AgentRunSummaryProjection,
 };
-use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+use tt_domain::models::settings::{
+    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
+};
 use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
     AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
@@ -47,6 +49,17 @@ impl SettingsRepository for TestSettingsRepository {
         Ok(self.tauritavern_settings.lock().await.clone())
     }
 
+    async fn reset_tauritavern_settings(
+        &self,
+        _chat_backups: ChatBackupSettings,
+    ) -> Result<(), DomainError> {
+        Err(unused_settings_method("reset_tauritavern_settings"))
+    }
+
+    async fn reset_user_settings(&self, _disabled: &[String]) -> Result<(), DomainError> {
+        Err(unused_settings_method("reset_user_settings"))
+    }
+
     async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
         Err(unused_settings_method("save_user_settings"))
     }
@@ -78,7 +91,7 @@ impl SettingsRepository for TestSettingsRepository {
         unreachable!()
     }
 
-    async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
+    async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 
