@@ -42,7 +42,7 @@
 | macOS | 进程指令数 | 本机与 HEAD 比较，取三次运行的最小值 |
 | Windows | I/O 字节与次数 | 同 macOS |
 
-macOS 与 Windows 只在 `src`、`src-tauri`、`tests/perf` 有未提交改动时比较：在 `src-tauri/target/perf-base/` 的工作树里测量 HEAD，结果按提交与 Rust 版本缓存，工作区增长超过余量即失败。有意的增长提交之后就成为新的 HEAD。CI 只比较 Linux。
+macOS 与 Windows 只在 `src`、`src-tauri`、`tests/perf` 有未提交改动时比较：在 `src-tauri/target/perf-head/` 的工作树里测量 HEAD，结果按提交与 Rust 版本缓存，工作区增长超过余量即失败。HEAD 构建到自己的 target 目录：Cargo 给同一工作区的产物取的名字与检出位置无关，并按文件时间判断新旧，共用 target 目录时两个检出会互相用到对方的构建。有意的增长提交之后就成为新的 HEAD。CI 只比较 Linux。
 
 新步骤用到还没重放过的命令时，重放会报出命令名。把它加入 `src/perf/environment.rs` 的命令表；接收 `Webview` 的命令写成对 `R: Runtime` 泛型。
 

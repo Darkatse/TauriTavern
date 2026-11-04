@@ -5,29 +5,35 @@
 // and Windows counters depend on the OS and machine, so they compare the working tree with HEAD on this machine,
 // and only when sources changed.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const baselineFile = path.join(repo, 'tests/perf/backend-baseline.json');
-const baseRoot = path.join(repo, 'src-tauri/target/perf-base');
+const repoTarget = path.join(repo, 'src-tauri/target');
+// HEAD builds into its own target directory. Cargo names a workspace's artifacts the same wherever it is checked
+// out and judges them fresh by file times, so two checkouts sharing a target directory reuse each other's builds.
+const headRoot = path.join(repoTarget, 'perf-head');
 const update = process.argv.includes('--update');
 const slack = expected => Math.max(2, Math.ceil(expected * 0.1));
 const run = (command, args, options = {}) => execFileSync(command, args, { stdio: 'inherit', ...options });
 const output = (command, args, options = {}) => execFileSync(command, args, { encoding: 'utf8', ...options }).trim();
 
-/** Builds tt-perf from `root` (with `toolchain` when given) and replays that root's suite output; returns each step's counters. */
-function measure(root, toolchain) {
+/**
+ * Builds tt-perf from `root` into `target` (with `toolchain` when given) and replays that root's suite output;
+ * returns each step's counters.
+ */
+function measure(root, target, toolchain) {
     const inputs = path.join(root, 'tests/perf/out');
     if (!existsSync(path.join(inputs, 'trace.json'))) throw new Error(`${inputs} has no trace; run pnpm run test:perf there first`);
     run('cargo', [...(toolchain ? [`+${toolchain}`] : []), 'build', '--manifest-path', path.join(root, 'src-tauri/Cargo.toml'), '-p', 'tauritavern',
-        '--profile', 'perf', '--no-default-features', '--features', 'perf', '--bin', 'tt-perf'], { env: { ...process.env, CARGO_TARGET_DIR: path.join(repo, 'src-tauri/target') } });
+        '--profile', 'perf', '--no-default-features', '--features', 'perf', '--bin', 'tt-perf'], { env: { ...process.env, CARGO_TARGET_DIR: target } });
     const work = mkdtempSync(path.join(os.tmpdir(), 'tt-perf-'));
     try {
         const binary = path.join(work, `tt-perf${process.platform === 'win32' ? '.exe' : ''}`);
-        copyFileSync(path.join(repo, 'src-tauri/target/perf', path.basename(binary)), binary);
+        copyFileSync(path.join(target, 'perf', path.basename(binary)), binary);
         const report = path.join(work, 'report.json');
         const replay = [path.join(inputs, 'data'), path.join(inputs, 'trace.json'), report, root];
         if (process.platform === 'linux') {
@@ -75,18 +81,24 @@ function compare(expected, actual, { failOnDecrease }) {
 
 /** HEAD's counters on this machine, from a worktree that runs HEAD's own frontend suite and replay. */
 function measureHead(sha) {
+    // The former HEAD tree built into the working tree's target directory; artifacts built from it stay fresh
+    // for the working tree until the tree is gone.
+    const sharedTree = path.join(repoTarget, 'perf-base');
+    if (existsSync(sharedTree)) {
+        rmSync(sharedTree, { recursive: true, force: true });
+        run('git', ['-C', repo, 'worktree', 'prune']);
+    }
     const rust = output('rustc', ['--version']).split(' ')[1];
-    const cache = path.join(baseRoot, `${sha}.${process.platform}.${rust}.json`);
+    const cache = path.join(headRoot, `${sha}.${process.platform}.${rust}.json`);
     if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8'));
-    const tree = path.join(baseRoot, 'tree');
+    const tree = path.join(headRoot, 'tree');
     if (existsSync(tree)) run('git', ['-C', tree, 'checkout', '--quiet', '--detach', '--force', sha]);
     else run('git', ['-C', repo, 'worktree', 'add', '--quiet', '--detach', tree, sha]);
     if (!existsSync(path.join(tree, 'tests/perf/backend.mjs'))) return null;
     const pnpm = (...args) => run('pnpm', args, { cwd: tree, shell: process.platform === 'win32' });
     pnpm('install', '--frozen-lockfile', '--prefer-offline');
     pnpm('run', 'test:perf');
-    const steps = measure(tree);
-    mkdirSync(baseRoot, { recursive: true });
+    const steps = measure(tree, path.join(headRoot, 'target'));
     writeFileSync(cache, JSON.stringify(steps));
     return steps;
 }
@@ -95,7 +107,7 @@ if (process.platform === 'linux') {
     const baseline = existsSync(baselineFile) ? JSON.parse(readFileSync(baselineFile, 'utf8')) : null;
     const toolchain = update || !baseline ? output('rustc', ['--version']).split(' ')[1] : baseline.toolchain;
     run('rustup', ['toolchain', 'install', toolchain, '--profile', 'minimal']);
-    const current = { toolchain, steps: measure(repo, toolchain) };
+    const current = { toolchain, steps: measure(repo, repoTarget, toolchain) };
     const recorded = `${JSON.stringify(current, null, 4)}\n`;
     if (update) {
         writeFileSync(baselineFile, recorded);
@@ -119,7 +131,7 @@ if (process.platform === 'linux') {
         console.log('backend counters: HEAD predates the backend perf suite');
         process.exit(0);
     }
-    const changes = compare(head, measure(repo), { failOnDecrease: false });
+    const changes = compare(head, measure(repo, repoTarget), { failOnDecrease: false });
     if (changes.length > 0) {
         console.error(`Backend counters grew past HEAD on this machine. Fix the regression; growth that is intended is measured once committed, and CI records it in the Linux baseline:\n  ${changes.join('\n  ')}`);
         process.exit(1);
