@@ -1,10 +1,10 @@
 /** World Info: the entry list, typing a title, opening the 100k-character entry, typing in its editor, and closing it. */
-export default async function worldInfo({ page, measure, centerOf }) {
+export default async function worldInfo({ page, measure, frame, centerOf }) {
     // One input, as from a fast typist: the debounced work runs once, after the last key.
     const typeTenKeys = async key => {
         for (let i = 0; i < 10; i++) {
             await page.keyboard.press(key);
-            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve))));
+            await frame();
         }
     };
     const drawer = await centerOf(page.locator('#WIDrawerIcon'));

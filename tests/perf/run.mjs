@@ -1,8 +1,9 @@
 // `pnpm run test:perf`: compares the counters measure.mjs takes in both layers. They are exact only on Linux, where
-// the backend runs under callgrind, so Linux compares them with baseline.json and fails on any change past the
-// slack, improvements included, so that every change is recorded on purpose: `pnpm run test:perf -- --update`,
-// or commit the measurement a failing run prints. macOS and Windows compare the working tree with HEAD on this
-// machine when sources changed, and fail on growth; a change is recorded on Linux once committed.
+// the harness issues the frontend's frames and the backend runs under callgrind, so Linux compares them with
+// baseline.json and fails on any change past the slack, improvements included, so that every change is recorded
+// on purpose: `pnpm run test:perf -- --update`, or commit the measurement a failing run prints. macOS and Windows
+// compare the working tree with HEAD on this machine when sources changed, and fail on growth; a change is
+// recorded on Linux once committed.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

@@ -11,62 +11,62 @@
                 "eventListeners": 3334
             },
             "backend": {
-                "readBytes": 7167352,
-                "readOps": 4950,
-                "resultBytes": 663410,
-                "writeBytes": 83728,
-                "writeOps": 5100,
-                "instructions": 1358353798
+                "readBytes": 7268734,
+                "readOps": 5225,
+                "resultBytes": 664045,
+                "writeBytes": 128020,
+                "writeOps": 5397,
+                "instructions": 1389860282
             }
         },
         "character/open-heavy-card": {
             "frontend": {
-                "eventDispatches": 24,
-                "styleRecalcs": 20,
+                "eventDispatches": 23,
+                "styleRecalcs": 17,
                 "forcedStyleRecalcs": 11,
-                "elementsRestyled": 239,
-                "layouts": 9,
+                "elementsRestyled": 237,
+                "layouts": 6,
                 "forcedLayouts": 3,
-                "layoutObjectsLaidOut": 305,
-                "frames": 8,
-                "compositorUpdates": 3,
+                "layoutObjectsLaidOut": 297,
+                "frames": 5,
+                "compositorUpdates": 0,
                 "requests": 1,
                 "hostBytes": 4488624,
                 "elements": 7985,
                 "scrollContainers": 14,
                 "liveNodes": 29002,
-                "layoutObjects": 497,
+                "layoutObjects": 501,
                 "eventListeners": 3294,
-                "jsAllocatedBytes": 10937860
+                "jsAllocatedBytes": 10977624
             },
             "backend": {
                 "readBytes": 2853841,
-                "readOps": 626,
+                "readOps": 625,
                 "resultBytes": 4143998,
-                "writeBytes": 46090,
-                "writeOps": 635,
-                "instructions": 304398051
+                "writeBytes": 46089,
+                "writeOps": 634,
+                "instructions": 304251192
             }
         },
         "character/open-back": {
             "frontend": {
-                "eventDispatches": 25,
-                "styleRecalcs": 21,
+                "eventDispatches": 24,
+                "styleRecalcs": 17,
                 "forcedStyleRecalcs": 11,
-                "elementsRestyled": 1233,
-                "layouts": 11,
+                "elementsRestyled": 762,
+                "layouts": 5,
                 "forcedLayouts": 2,
-                "layoutObjectsLaidOut": 1284,
-                "frames": 10,
-                "compositorUpdates": 3,
+                "layoutObjectsLaidOut": 813,
+                "frames": 6,
+                "compositorUpdates": 0,
                 "requests": 1,
                 "hostBytes": 86551,
                 "elements": 13781,
                 "scrollContainers": 88,
                 "liveNodes": 43751,
-                "layoutObjects": 4049,
+                "layoutObjects": 4118,
                 "eventListeners": 3368,
-                "jsAllocatedBytes": 58614608
+                "jsAllocatedBytes": 58662052
             },
             "backend": {
                 "readBytes": 102282,
@@ -74,36 +74,36 @@
                 "resultBytes": 1020,
                 "writeBytes": 30253,
                 "writeOps": 430,
-                "instructions": 32111597
+                "instructions": 32030489
             }
         },
         "chat/send-and-stream": {
             "frontend": {
                 "eventDispatches": 11,
-                "styleRecalcs": 27,
+                "styleRecalcs": 19,
                 "forcedStyleRecalcs": 2,
-                "elementsRestyled": 293,
-                "layouts": 25,
+                "elementsRestyled": 272,
+                "layouts": 18,
                 "forcedLayouts": 0,
-                "layoutObjectsLaidOut": 254,
-                "frames": 21,
-                "compositorUpdates": 13,
+                "layoutObjectsLaidOut": 205,
+                "frames": 12,
+                "compositorUpdates": 3,
                 "requests": 1,
-                "hostBytes": 208088,
+                "hostBytes": 208090,
                 "elements": 13933,
                 "scrollContainers": 84,
                 "liveNodes": 44147,
                 "layoutObjects": 3942,
                 "eventListeners": 3370,
-                "jsAllocatedBytes": 28758076
+                "jsAllocatedBytes": 27486316
             },
             "backend": {
-                "readBytes": 33380,
-                "readOps": 507,
+                "readBytes": 33382,
+                "readOps": 509,
                 "resultBytes": 1029,
-                "writeBytes": 147266,
-                "writeOps": 613,
-                "instructions": 17938974
+                "writeBytes": 147278,
+                "writeOps": 616,
+                "instructions": 18030770
             }
         },
         "world-info/open-list": {
@@ -115,8 +115,8 @@
                 "layouts": 8,
                 "forcedLayouts": 2,
                 "layoutObjectsLaidOut": 1644,
-                "frames": 9,
-                "compositorUpdates": 1,
+                "frames": 8,
+                "compositorUpdates": 0,
                 "requests": 2,
                 "hostBytes": 701,
                 "elements": 15010,
@@ -124,7 +124,7 @@
                 "liveNodes": 49757,
                 "layoutObjects": 5399,
                 "eventListeners": 3722,
-                "jsAllocatedBytes": 4728276
+                "jsAllocatedBytes": 4747400
             },
             "backend": {
                 "readBytes": 743,
@@ -132,7 +132,7 @@
                 "resultBytes": 662,
                 "writeBytes": 8,
                 "writeOps": 8,
-                "instructions": 55779
+                "instructions": 56060
             }
         },
         "world-info/type-title-10-keys": {
@@ -153,28 +153,28 @@
                 "liveNodes": 49762,
                 "layoutObjects": 5370,
                 "eventListeners": 3722,
-                "jsAllocatedBytes": 35463716
+                "jsAllocatedBytes": 35465392
             },
             "backend": {
                 "readBytes": 447239,
                 "readOps": 80,
                 "resultBytes": 86,
-                "writeBytes": 894220,
-                "writeOps": 85,
-                "instructions": 13548188
+                "writeBytes": 894228,
+                "writeOps": 86,
+                "instructions": 13578943
             }
         },
         "world-info/open-entry": {
             "frontend": {
                 "eventDispatches": 13,
-                "styleRecalcs": 8,
+                "styleRecalcs": 7,
                 "forcedStyleRecalcs": 5,
                 "elementsRestyled": 644,
-                "layouts": 8,
+                "layouts": 7,
                 "forcedLayouts": 5,
-                "layoutObjectsLaidOut": 456,
-                "frames": 4,
-                "compositorUpdates": 1,
+                "layoutObjectsLaidOut": 451,
+                "frames": 3,
+                "compositorUpdates": 0,
                 "requests": 0,
                 "hostBytes": 100525,
                 "elements": 15230,
@@ -182,28 +182,28 @@
                 "liveNodes": 52114,
                 "layoutObjects": 5365,
                 "eventListeners": 3954,
-                "jsAllocatedBytes": 7254668
+                "jsAllocatedBytes": 7268892
             },
             "backend": {
-                "readBytes": 173,
-                "readOps": 64,
+                "readBytes": 172,
+                "readOps": 63,
                 "resultBytes": 24,
-                "writeBytes": 76,
-                "writeOps": 62,
-                "instructions": 79252016
+                "writeBytes": 75,
+                "writeOps": 61,
+                "instructions": 78698730
             }
         },
         "world-info/type-10-keys": {
             "frontend": {
                 "eventDispatches": 72,
                 "styleRecalcs": 12,
-                "forcedStyleRecalcs": 10,
+                "forcedStyleRecalcs": 11,
                 "elementsRestyled": 166,
                 "layouts": 12,
                 "forcedLayouts": 1,
                 "layoutObjectsLaidOut": 216,
-                "frames": 12,
-                "compositorUpdates": 2,
+                "frames": 11,
+                "compositorUpdates": 0,
                 "requests": 0,
                 "hostBytes": 547629,
                 "elements": 15230,
@@ -211,15 +211,15 @@
                 "liveNodes": 52116,
                 "layoutObjects": 5365,
                 "eventListeners": 3954,
-                "jsAllocatedBytes": 5789140
+                "jsAllocatedBytes": 5824232
             },
             "backend": {
-                "readBytes": 447175,
-                "readOps": 136,
+                "readBytes": 447178,
+                "readOps": 139,
                 "resultBytes": 110,
-                "writeBytes": 894052,
-                "writeOps": 143,
-                "instructions": 92928561
+                "writeBytes": 894055,
+                "writeOps": 146,
+                "instructions": 92930583
             }
         },
         "world-info/close-entry": {
@@ -227,7 +227,7 @@
                 "eventDispatches": 12,
                 "styleRecalcs": 8,
                 "forcedStyleRecalcs": 4,
-                "elementsRestyled": 4146,
+                "elementsRestyled": 3450,
                 "layouts": 4,
                 "forcedLayouts": 0,
                 "layoutObjectsLaidOut": 710,
@@ -240,7 +240,7 @@
                 "liveNodes": 52058,
                 "layoutObjects": 5370,
                 "eventListeners": 3812,
-                "jsAllocatedBytes": 3285196
+                "jsAllocatedBytes": 3300676
             }
         }
     }

@@ -18,12 +18,14 @@ const TYPES = {
 function bootstrap() {
     const data = pageData();
     return `<script>
-// Timers must not decide how DOM changes batch into frames, or which step does a piece of work:
+// Timers and clocks must not decide how DOM changes batch into frames, or which step does a piece of work:
 // - a timeout shorter than a frame runs just before the next frame, so a chain of them lands in one frame;
 // - during a step, a timeout up to 10 s, which covers debounces and a toast's lifetime, waits until the page is
 //   quiet, when the harness runs every pending timeout in due order on a clock that only those runs advance; an
 //   interval the step starts ticks once each time the page goes quiet. Timers from before the step wait until it
-//   ends. Outside steps timers keep real time, so scenarios prepare the page as a user would.
+//   ends. performance.now() and Date.now() read that clock too, so work the page slices by elapsed time does
+//   not split by machine speed. Outside steps timers and clocks keep real time, so scenarios prepare the page as
+//   a user would.
 // - frame and idle callbacks the page requests are pending work: the page is not quiet until they have run.
 // A step leaves nothing it scheduled behind; the harness fails the run on anything left.
 // Block scope keeps these names out of the global scope that classic scripts share.
@@ -35,8 +37,11 @@ function bootstrap() {
         requestAnimationFrame: nextFrame, cancelAnimationFrame: cancelFrame,
         requestIdleCallback: whenIdle, cancelIdleCallback: cancelIdle,
     } = globalThis;
-    let heldId = 0, frameRequested = false, holding = false, stepClock = 0, activity = 0;
-    const now = () => holding ? stepClock : performance.now();
+    const realNow = performance.now.bind(performance), realDateNow = Date.now;
+    let heldId = 0, frameRequested = false, holding = false, stepClock = 0, stepEpoch = 0, activity = 0;
+    const now = () => holding ? stepClock : realNow();
+    performance.now = now;
+    Date.now = () => holding ? Math.floor(stepEpoch + stepClock) : realDateNow();
     const source = () => new Error().stack.split('\\n').slice(3, 5).map(line => line.trim()).join(' <- ');
     const run = (callback, args) => {
         activity++;
@@ -110,8 +115,9 @@ function bootstrap() {
     globalThis.cancelIdleCallback = id => { callbacks.delete(\`idle \${id}\`); cancelIdle(id); };
     globalThis.__perfPage = {
         startStep() {
+            stepClock = realNow();
+            stepEpoch = realDateNow() - stepClock;
             holding = true;
-            stepClock = performance.now();
         },
         /** Ends the step and returns what it left scheduled. Intervals it left keep running in real time. */
         endStep() {
@@ -377,7 +383,7 @@ function countEngineWork(events) {
  * settles the page after each one, so the machine's speed never decides which work shares a frame. It
  * records the engine work and host traffic they caused plus the page's size afterwards. With `allocations`, it
  * records only the bytes JavaScript allocated: sampling every allocation slows the page and would change how
- * the engine work splits into frames.
+ * the engine work splits into frames. `frame()` lets one frame render between inputs.
  */
 async function openFrontend({ allocations = false } = {}) {
     const quietWithinMs = allocations ? 30_000 : 5000;
@@ -389,12 +395,33 @@ async function openFrontend({ allocations = false } = {}) {
     // On Linux, headless Chromium hints web fonts in full by default and rounds their glyph advances to whole
     // pixels, so text wraps differently from macOS; without hinting the advances are the unrounded ones.
     if (process.platform === 'linux') args.push('--font-render-hinting=none');
+    // On Linux the harness also issues every frame, which headless Chromium on macOS cannot do. Outside steps a
+    // frame comes every 16 ms, as on the engine's own clock; during a step only once the page is quiet, so real
+    // time never decides whether work lands before or after a frame.
+    const harnessFrames = process.platform === 'linux';
+    if (harnessFrames) args.push('--deterministic-mode');
     const browser = await chromium.launch({ args });
     // The page takes its language and time zone from the machine otherwise, and the UI translates and formats
     // dates by them.
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US', timezoneId: 'UTC' });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
+    let frameQueue = Promise.resolve(), measuring = false, open = true;
+    /** Issues one frame; resolves whether it drew anything. */
+    const issueFrame = () => (frameQueue = frameQueue.then(async () =>
+        (await cdp.send('HeadlessExperimental.beginFrame', { interval: 1000 / 60 })).hasDamage));
+    const realTimeFrames = harnessFrames && (async () => {
+        while (open) {
+            if (!measuring) await issueFrame();
+            await new Promise(resolve => setTimeout(resolve, 16));
+        }
+    })();
+    async function close() {
+        open = false;
+        await realTimeFrames;
+        await browser.close();
+        server.close();
+    }
     const problems = [];
     page.on('pageerror', error => problems.push(`Page error: ${error.message}`));
     page.on('console', message => { if (message.type() === 'error') problems.push(`Console error: ${message.text()}`); });
@@ -416,32 +443,58 @@ async function openFrontend({ allocations = false } = {}) {
         if (left.length > 0) problems.push(`${name} left work scheduled after it ended: ${left.join('; ')}`);
     }
 
-    // Waits until the main thread has idled for three frame intervals with no frame or idle callback pending,
-    // then runs the held timeouts, ticks the step's intervals once, or lets one held response through, and
-    // repeats until nothing is held and a tick changes nothing. Holding them means no work arrives after the page
-    // looks quiet. Idleness is read from outside the page, so waiting adds no page work.
-    async function settle() {
+    // Waits until the main thread has idled for three frame intervals with no frame or idle callback pending; a
+    // pending callback waits for a frame, which the harness issues when it issues frames. Idleness is read from
+    // outside the page, so waiting adds no page work.
+    async function quiet() {
         const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'TaskDuration').value;
-        for (let ticks = 0; ;) {
-            const deadline = Date.now() + quietWithinMs;
-            for (let quiet = 0, last = await busy(); quiet < 50;) {
-                if (Date.now() > deadline) throw new Error(`The page did not go quiet within ${quietWithinMs / 1000} s`);
-                await new Promise(resolve => setTimeout(resolve, 10));
-                const now = await busy();
-                quiet = now - last < 0.001 ? quiet + 10 : 0;
-                last = now;
-                if (quiet >= 50 && await page.evaluate(() => globalThis.__perfPage.hasPendingCallbacks())) quiet = 0;
+        const deadline = Date.now() + quietWithinMs;
+        for (let idle = 0, last = await busy(); idle < 50;) {
+            if (Date.now() > deadline) throw new Error(`The page did not go quiet within ${quietWithinMs / 1000} s`);
+            await new Promise(resolve => setTimeout(resolve, 10));
+            const now = await busy();
+            idle = now - last < 0.001 ? idle + 10 : 0;
+            last = now;
+            if (idle >= 50 && await page.evaluate(() => globalThis.__perfPage.hasPendingCallbacks())) {
+                idle = 0;
+                if (harnessFrames) await issueFrame();
             }
-            if (await page.evaluate(() => globalThis.__perfPage.runPendingTimeouts()) > 0) continue;
+        }
+    }
+
+    // Once the page is quiet, runs the held timeouts, ticks the step's intervals once, lets one held response
+    // through, or issues a frame, and repeats until nothing is held and a frame draws nothing. Holding them means
+    // no work arrives after the page looks quiet.
+    async function settle() {
+        for (let ticks = 0, frames = 0, drawn = true; ;) {
+            await quiet();
+            if (await page.evaluate(() => globalThis.__perfPage.runPendingTimeouts()) > 0) {
+                drawn = true;
+                continue;
+            }
             if (await page.evaluate(() => globalThis.__perfPage.tickIntervals())) {
                 if (++ticks > 1000) throw new Error('Intervals keep producing work');
+                drawn = true;
                 continue;
             }
             const route = held.shift();
-            if (!route) return;
-            await route.continue();
-            await (await route.request().response())?.finished();
+            if (route) {
+                await route.continue();
+                await (await route.request().response())?.finished();
+                drawn = true;
+                continue;
+            }
+            if (!harnessFrames || !drawn) return;
+            if (++frames > 1000) throw new Error('Frames keep drawing');
+            drawn = await issueFrame();
         }
+    }
+
+    /** One frame between inputs, as a typist's keys render one by one; harness frames come once the page is quiet. */
+    async function frame() {
+        if (!harnessFrames) return page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve))));
+        await quiet();
+        await issueFrame();
     }
 
     async function trace(step) {
@@ -525,20 +578,25 @@ async function openFrontend({ allocations = false } = {}) {
 
     async function measure(name, ...inputs) {
         if (name in results) throw new Error(`Duplicate perf step: ${name}`);
-        await settle();
-        if (allocations) {
+        measuring = true;
+        try {
+            await settle();
+            if (allocations) {
+                await startStep();
+                results[name] = { jsAllocatedBytes: await allocatedBytes(() => run(name, inputs)) };
+                await endStep(name);
+                return;
+            }
+            const before = requests, hostBefore = await hostBytes();
+            await traceStep(name);
             await startStep();
-            results[name] = { jsAllocatedBytes: await allocatedBytes(() => run(name, inputs)) };
+            const work = await trace(() => run(name, inputs));
             await endStep(name);
-            return;
+            await traceStep(null);
+            results[name] = { ...work, requests: requests - before, hostBytes: await hostBytes() - hostBefore, ...await pageSize() };
+        } finally {
+            measuring = false;
         }
-        const before = requests, hostBefore = await hostBytes();
-        await traceStep(name);
-        await startStep();
-        const work = await trace(() => run(name, inputs));
-        await endStep(name);
-        await traceStep(null);
-        results[name] = { ...work, requests: requests - before, hostBytes: await hostBytes() - hostBefore, ...await pageSize() };
     }
 
     // Startup's work depends on when resources finish loading, so it records the page it produces.
@@ -561,8 +619,7 @@ async function openFrontend({ allocations = false } = {}) {
             results['app/startup'] = await pageSize();
         }
     } catch (error) {
-        await browser.close();
-        server.close();
+        await close();
         throw error;
     }
 
@@ -576,16 +633,14 @@ async function openFrontend({ allocations = false } = {}) {
     return {
         page,
         measure,
+        frame,
         centerOf,
         results,
         problems,
         chromium: browser.version(),
         /** Every host call so far, in order, with the step it belongs to: `app/startup`, a measured step or null. */
         hostCalls: () => page.evaluate(() => globalThis.__perfHost.calls),
-        async close() {
-            await browser.close();
-            server.close();
-        },
+        close,
     };
 }
 
