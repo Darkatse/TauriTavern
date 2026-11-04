@@ -198,6 +198,7 @@ pub(super) async fn build(
         crate::platform::ipc::COMMIT_FRAME_BYTES,
     ));
     settings_repository.cleanup_orphaned_commit_staging().await;
+    settings_repository.migrate_legacy_snapshots().await;
     // Materialize settings sections before background sync can scan the data directory.
     settings_repository.load_user_settings().await?;
     let persona_root = default_user_dir.clone();

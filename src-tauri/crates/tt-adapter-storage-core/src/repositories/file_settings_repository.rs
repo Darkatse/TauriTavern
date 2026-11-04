@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 use tokio::fs;
 
 use crate::commit_stage::{CommitSessions, PageGeneration};
-use crate::file_system::{list_files_with_extension, persist_json_file_blocking, read_json_file};
+use crate::file_system::{list_files_with_extension, read_json_file};
 use crate::preset_file_naming::load_named_preset_files;
 use crate::sillytavern_sorting::{
     sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
@@ -23,6 +22,7 @@ use tt_ports::repositories::settings_repository::{
 mod commit;
 mod fields;
 mod sections;
+mod snapshots;
 
 pub struct FileSettingsRepository {
     base_directory: PathBuf,
@@ -81,27 +81,6 @@ impl FileSettingsRepository {
             default_user_settings,
             initial_settings,
         }
-    }
-
-    async fn ensure_snapshots_directory_exists(&self) -> Result<PathBuf, DomainError> {
-        let snapshots_dir = self.base_directory.join("snapshots");
-
-        if !snapshots_dir.exists() {
-            tracing::info!("Creating snapshots directory: {:?}", snapshots_dir);
-            fs::create_dir_all(&snapshots_dir).await.map_err(|e| {
-                tracing::error!("Failed to create snapshots directory: {}", e);
-                DomainError::InternalError(format!("Failed to create snapshots directory: {}", e))
-            })?;
-        }
-
-        Ok(snapshots_dir)
-    }
-
-    fn get_timestamp_ms(&self) -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
     }
 
     async fn read_json_files_from_directory(
@@ -324,71 +303,21 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn create_snapshot(&self, settings: UserSettings) -> Result<(), DomainError> {
-        let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-        let timestamp = self.get_timestamp_ms();
-        let snapshot_file = snapshots_dir.join(format!("settings_{}.json", timestamp));
-
-        tracing::info!("Creating settings snapshot: {}", snapshot_file.display());
-        tokio::task::spawn_blocking(move || persist_json_file_blocking(&snapshot_file, &settings))
+        let root = self.base_directory.clone();
+        tokio::task::spawn_blocking(move || snapshots::create(&root, &settings))
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError> {
-        let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-
-        let mut snapshots = Vec::new();
-        let mut entries = fs::read_dir(&snapshots_dir).await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read snapshots directory: {}", e))
-        })?;
-
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            DomainError::InternalError(format!("Failed to read directory entry: {}", e))
-        })? {
-            let path = entry.path();
-
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                let file_name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
-
-                if let Some(timestamp_str) = file_name.strip_prefix("settings_")
-                    && let Ok(timestamp) = timestamp_str.parse::<i64>()
-                {
-                    let metadata = fs::metadata(&path).await.map_err(|e| {
-                        DomainError::InternalError(format!("Failed to get file metadata: {}", e))
-                    })?;
-
-                    snapshots.push(SettingsSnapshot {
-                        date: timestamp,
-                        name: file_name.to_string(),
-                        size: metadata.len(),
-                    });
-                }
-            }
-        }
-
-        snapshots.sort_by_key(|snapshot| Reverse(snapshot.date));
-
-        Ok(snapshots)
+        let root = self.base_directory.clone();
+        tokio::task::spawn_blocking(move || snapshots::list(&root))
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
     async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError> {
-        let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-        let snapshot_file = snapshots_dir.join(format!("{}.json", name));
-
-        if !snapshot_file.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Snapshot {} not found",
-                name
-            )));
-        }
-
-        tracing::info!("Loading settings snapshot: {}", snapshot_file.display());
-        let settings = read_json_file::<UserSettings>(&snapshot_file).await?;
-
-        Ok(settings)
+        read_json_file(&snapshots::path(&self.base_directory, name)?).await
     }
 
     async fn get_sillytavern_settings_signature(
@@ -1005,5 +934,95 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec!["symbol", "latin", "emoji"]);
+    }
+
+    #[tokio::test]
+    async fn legacy_snapshots_move_to_the_upstream_backup_layout() {
+        let dir = TestDir::new();
+        let repository = new_repository(&dir);
+        let legacy = dir.path().join("snapshots");
+        let backups = dir.path().join("backups");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::create_dir_all(&backups).unwrap();
+        let upstream_name = |millis: i64| {
+            let at = chrono::DateTime::from_timestamp_millis(millis)
+                .unwrap()
+                .with_timezone(&chrono::Local);
+            format!(
+                "settings_default-user_{}.json",
+                at.format(crate::file_system::BACKUP_TIMESTAMP_FORMAT)
+            )
+        };
+        fs::write(
+            legacy.join("settings_1700000000000.json"),
+            r#"{"theme":"moved"}"#,
+        )
+        .unwrap();
+        fs::write(
+            legacy.join("settings_1700000100000.json"),
+            r#"{"theme":"kept"}"#,
+        )
+        .unwrap();
+        fs::write(
+            backups.join(upstream_name(1_700_000_100_000)),
+            r#"{"theme":"taken"}"#,
+        )
+        .unwrap();
+
+        repository.migrate_legacy_snapshots().await;
+
+        let moved = upstream_name(1_700_000_000_000);
+        assert!(!legacy.join("settings_1700000000000.json").exists());
+        assert!(legacy.join("settings_1700000100000.json").exists());
+        let names: Vec<_> = repository
+            .get_snapshots()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|snapshot| snapshot.name)
+            .collect();
+        assert!(names.contains(&moved));
+        assert_eq!(
+            repository.load_snapshot(&moved).await.unwrap().data,
+            json!({"theme": "moved"})
+        );
+        assert!(matches!(
+            repository.load_snapshot("../settings.json").await,
+            Err(tt_domain::errors::DomainError::InvalidData(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn snapshots_keep_the_newest_fifty_settings_backups_only() {
+        let dir = TestDir::new();
+        let repository = new_repository(&dir);
+        let backups = dir.path().join("backups");
+        fs::create_dir_all(&backups).unwrap();
+        let chat_backup = backups.join("chat_alice_20200101-000000.jsonl");
+        fs::write(&chat_backup, b"{}").unwrap();
+        let oldest = backups.join("settings_default-user_20200101-000000.json");
+        for index in 0..50u64 {
+            let path = backups.join(format!(
+                "settings_default-user_20200101-0000{index:02}.json"
+            ));
+            fs::write(&path, b"{}").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000 + index),
+                ))
+                .unwrap();
+        }
+
+        repository
+            .create_snapshot(default_user_settings())
+            .await
+            .unwrap();
+
+        assert_eq!(repository.get_snapshots().await.unwrap().len(), 50);
+        assert!(!oldest.exists());
+        assert!(chat_backup.exists());
     }
 }

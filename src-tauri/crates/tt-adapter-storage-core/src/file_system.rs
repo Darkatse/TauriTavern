@@ -228,6 +228,10 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
     })
 }
 
+/// SillyTavern's `generateTimestamp()` in local time, shared by chat and settings
+/// backup file names.
+pub const BACKUP_TIMESTAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+
 /// Generate a unique temporary file path adjacent to `target_path`.
 ///
 /// The bounded, target-independent file name remains valid even when the target
