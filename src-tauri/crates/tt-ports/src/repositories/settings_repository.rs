@@ -10,6 +10,12 @@ pub struct SettingsCommitResult {
     pub personas: Personas,
 }
 
+/// User settings as read, with the revision of the files they were read from.
+pub struct StoredUserSettings {
+    pub settings: UserSettings,
+    pub revision: UserSettingsRevision,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SettingsAggregateSignature(String);
 
@@ -28,7 +34,7 @@ pub trait SettingsRepository: Send + Sync {
     async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError>;
 
     async fn save_user_settings(&self, settings: UserSettings) -> Result<(), DomainError>;
-    async fn load_user_settings(&self) -> Result<UserSettings, DomainError>;
+    async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError>;
 
     async fn begin_commit(
         &self,

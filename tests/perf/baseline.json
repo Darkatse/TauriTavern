@@ -11,12 +11,12 @@
                 "eventListeners": 3334
             },
             "backend": {
-                "readBytes": 7268734,
-                "readOps": 5225,
-                "resultBytes": 664045,
-                "writeBytes": 128020,
-                "writeOps": 5397,
-                "instructions": 1389860282
+                "readBytes": 7194036,
+                "readOps": 5122,
+                "resultBytes": 664076,
+                "writeBytes": 116560,
+                "writeOps": 5318,
+                "instructions": 1354112842
             }
         },
         "character/open-heavy-card": {
@@ -37,15 +37,15 @@
                 "liveNodes": 29002,
                 "layoutObjects": 501,
                 "eventListeners": 3294,
-                "jsAllocatedBytes": 10977624
+                "jsAllocatedBytes": 10980068
             },
             "backend": {
-                "readBytes": 2853841,
-                "readOps": 625,
-                "resultBytes": 4143998,
-                "writeBytes": 46089,
-                "writeOps": 634,
-                "instructions": 304251192
+                "readBytes": 2808418,
+                "readOps": 567,
+                "resultBytes": 4144000,
+                "writeBytes": 43148,
+                "writeOps": 593,
+                "instructions": 284998463
             }
         },
         "character/open-back": {
@@ -66,15 +66,15 @@
                 "liveNodes": 43751,
                 "layoutObjects": 4118,
                 "eventListeners": 3368,
-                "jsAllocatedBytes": 58662052
+                "jsAllocatedBytes": 58662080
             },
             "backend": {
-                "readBytes": 102282,
-                "readOps": 398,
-                "resultBytes": 1020,
-                "writeBytes": 30253,
-                "writeOps": 430,
-                "instructions": 32030489
+                "readBytes": 56771,
+                "readOps": 342,
+                "resultBytes": 1022,
+                "writeBytes": 30107,
+                "writeOps": 393,
+                "instructions": 12539653
             }
         },
         "chat/send-and-stream": {
@@ -95,15 +95,15 @@
                 "liveNodes": 44147,
                 "layoutObjects": 3942,
                 "eventListeners": 3370,
-                "jsAllocatedBytes": 27486316
+                "jsAllocatedBytes": 27492928
             },
             "backend": {
-                "readBytes": 33382,
-                "readOps": 509,
+                "readBytes": 33380,
+                "readOps": 507,
                 "resultBytes": 1029,
-                "writeBytes": 147278,
-                "writeOps": 616,
-                "instructions": 18030770
+                "writeBytes": 147268,
+                "writeOps": 613,
+                "instructions": 17988046
             }
         },
         "world-info/open-list": {
@@ -124,7 +124,7 @@
                 "liveNodes": 49757,
                 "layoutObjects": 5399,
                 "eventListeners": 3722,
-                "jsAllocatedBytes": 4747400
+                "jsAllocatedBytes": 4745480
             },
             "backend": {
                 "readBytes": 743,
@@ -132,7 +132,7 @@
                 "resultBytes": 662,
                 "writeBytes": 8,
                 "writeOps": 8,
-                "instructions": 56060
+                "instructions": 57845
             }
         },
         "world-info/type-title-10-keys": {
@@ -153,15 +153,15 @@
                 "liveNodes": 49762,
                 "layoutObjects": 5370,
                 "eventListeners": 3722,
-                "jsAllocatedBytes": 35465392
+                "jsAllocatedBytes": 35465356
             },
             "backend": {
                 "readBytes": 447239,
                 "readOps": 80,
                 "resultBytes": 86,
-                "writeBytes": 894228,
-                "writeOps": 86,
-                "instructions": 13578943
+                "writeBytes": 894220,
+                "writeOps": 85,
+                "instructions": 13427699
             }
         },
         "world-info/open-entry": {
@@ -182,7 +182,7 @@
                 "liveNodes": 52114,
                 "layoutObjects": 5365,
                 "eventListeners": 3954,
-                "jsAllocatedBytes": 7268892
+                "jsAllocatedBytes": 7268832
             },
             "backend": {
                 "readBytes": 172,
@@ -190,7 +190,7 @@
                 "resultBytes": 24,
                 "writeBytes": 75,
                 "writeOps": 61,
-                "instructions": 78698730
+                "instructions": 78825112
             }
         },
         "world-info/type-10-keys": {
@@ -211,15 +211,15 @@
                 "liveNodes": 52116,
                 "layoutObjects": 5365,
                 "eventListeners": 3954,
-                "jsAllocatedBytes": 5824232
+                "jsAllocatedBytes": 5824156
             },
             "backend": {
-                "readBytes": 447178,
-                "readOps": 139,
+                "readBytes": 447175,
+                "readOps": 136,
                 "resultBytes": 110,
-                "writeBytes": 894055,
-                "writeOps": 146,
-                "instructions": 92930583
+                "writeBytes": 894052,
+                "writeOps": 143,
+                "instructions": 92893997
             }
         },
         "world-info/close-entry": {
@@ -240,7 +240,7 @@
                 "liveNodes": 52058,
                 "layoutObjects": 5370,
                 "eventListeners": 3812,
-                "jsAllocatedBytes": 3300676
+                "jsAllocatedBytes": 3300688
             }
         }
     }

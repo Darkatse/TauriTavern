@@ -413,7 +413,11 @@ impl LlmConnectionService {
             }
             LlmConnectionReverseProxy::Preset { preset } => preset.trim(),
         };
-        let settings = self.settings_repository.load_user_settings().await?;
+        let settings = self
+            .settings_repository
+            .load_user_settings()
+            .await?
+            .settings;
         let saved = settings
             .data
             .get("proxies")

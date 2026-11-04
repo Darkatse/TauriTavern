@@ -51,7 +51,9 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("save_user_settings"))
     }
 
-    async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
+    async fn load_user_settings(
+        &self,
+    ) -> Result<tt_ports::repositories::settings_repository::StoredUserSettings, DomainError> {
         Err(unused_settings_method("load_user_settings"))
     }
 

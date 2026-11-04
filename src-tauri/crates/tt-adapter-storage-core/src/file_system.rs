@@ -473,6 +473,26 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
     path: &Path,
     data: &T,
 ) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        serde_json::to_writer_pretty(writer, data).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
+        })
+    })
+}
+
+/// Write bytes into a staging file, sync it, then publish by atomic replacement.
+pub fn persist_bytes_file_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        io::Write::write_all(writer, bytes).map_err(|error| {
+            DomainError::InternalError(format!("Failed to write {}: {error}", path.display()))
+        })
+    })
+}
+
+fn persist_written_blocking(
+    path: &Path,
+    write: impl FnOnce(&mut io::BufWriter<std::fs::File>) -> Result<(), DomainError>,
+) -> Result<(), DomainError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
@@ -487,10 +507,8 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", temp_path.display()))
         })?;
     let result = (|| {
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, data).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
-        })?;
+        let mut writer = io::BufWriter::new(file);
+        write(&mut writer)?;
         let file = writer.into_inner().map_err(|error| {
             DomainError::InternalError(format!("Failed to finish {}: {error}", temp_path.display()))
         })?;
