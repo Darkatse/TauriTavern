@@ -386,8 +386,13 @@ export async function openFrontend({ allocations = false } = {}) {
     const args = ['--disable-smooth-scrolling', '--force-prefers-reduced-motion'];
     // Background compilation would let machine speed decide which allocations optimized code removes.
     if (allocations) args.push('--js-flags=--single-threaded');
+    // On Linux, headless Chromium hints web fonts in full by default and rounds their glyph advances to whole
+    // pixels, so text wraps differently from macOS; without hinting the advances are the unrounded ones.
+    if (process.platform === 'linux') args.push('--font-render-hinting=none');
     const browser = await chromium.launch({ args });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    // The page takes its language and time zone from the machine otherwise, and the UI translates and formats
+    // dates by them.
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US', timezoneId: 'UTC' });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
     const problems = [];
