@@ -2,14 +2,20 @@
 
 `pnpm run check` 在一组固定场景里计量前端与 Rust 后端各做了多少工作，并与记录比较。计的是工作量，例如样式重算、布局、宿主流量、内存分配、指令数与 I/O，不是耗时，所以结果不随机器快慢变化。计数只设在生产代码绕不开的边界（渲染引擎、宿主调用、JS 堆、进程），不针对具体函数。代码在 `tests/perf/`，以及 host crate 的 `src/perf.rs` 与 `src/perf/`。
 
+## 比较方式
+
+`pnpm run test:perf` 先测量两层（`measure.mjs`）：构建前端，跑前端层，再在后端层重放前端的宿主调用。两层的计数只在 Linux 上精确，比较方式由此而来：
+
+| 平台 | 比较 |
+| --- | --- |
+| Linux | 与 `tests/perf/baseline.json` 比较。任一计数偏离超过 10%（至少 2）即失败，变少也算，所以每一次性能变化都是有意记录的。基线写明 Chromium 与 Rust 版本，测量固定用这个 Rust 版本构建 |
+| macOS、Windows | 只在 `src`、`src-tauri`、`tests/perf` 有未提交改动时比较：HEAD 在 `src-tauri/target/perf-head/` 的工作树里测量自己，结果按提交、平台与 Rust 版本缓存；工作区的计数增长超过余量即失败 |
+
+CI 只比较 Linux。
+
 ## 失败时
 
-- `pnpm run test:perf`：前端计数偏离 `tests/perf/baseline.json`。
-- `pnpm run test:perf:backend`：后端计数偏离 Linux 基线，或在 macOS、Windows 上超过 HEAD。它重放前一步留在 `tests/perf/out/` 的调用，所以要先跑前端层。
-
-任一计数偏离超过 10%（至少 2）即失败；与基线比较时，变少也算。先确认变化来自本次改动。有意的变化用 `-- --update` 重新记录，基线随提交评审。升级 `playwright-core`（换了 Chromium）或 Rust 版本后，也要重新记录。
-
-后端基线只能在装有 valgrind 的 Linux 上记录。在其他系统开发时，CI 失败日志末尾会给出这次的完整计数，可以直接提交为 `tests/perf/backend-baseline.json`。
+先确认变化来自本次改动。有意的变化在 Linux 上用 `pnpm run test:perf -- --update` 重新记录；在其他系统开发时，Linux CI 失败日志末尾会给出这次的完整测量，直接提交为 `tests/perf/baseline.json`。基线随提交评审。在 macOS、Windows 上，有意的增长提交之后就成为新的 HEAD。升级 `playwright-core`（换了 Chromium）或 Rust 版本后，也要重新记录。
 
 ## 场景与数据
 
@@ -48,13 +54,13 @@
 
 每个步骤都计结果字节，此外：
 
-| 平台 | 计数 | 比较 |
-| --- | --- | --- |
-| Linux | callgrind 指令数；`/proc/self/io` 的读写字节与次数 | 与 `backend-baseline.json` 比较。基线写明 Rust 版本，测量固定用这个版本构建 |
-| macOS | 进程指令数 | 本机与 HEAD 比较，取三次运行的最小值 |
-| Windows | I/O 字节与次数 | 同 macOS |
+| 平台 | 计数 |
+| --- | --- |
+| Linux | callgrind 指令数；`/proc/self/io` 的读写字节与次数 |
+| macOS | 进程指令数 |
+| Windows | I/O 字节与次数 |
 
-macOS 与 Windows 只在 `src`、`src-tauri`、`tests/perf` 有未提交改动时比较：在 `src-tauri/target/perf-head/` 的工作树里测量 HEAD，结果按提交与 Rust 版本缓存，工作区增长超过余量即失败。HEAD 构建到自己的 target 目录：Cargo 给同一工作区的产物取的名字与检出位置无关，并按文件时间判断新旧，共用 target 目录时两个检出会互相用到对方的构建。有意的增长提交之后就成为新的 HEAD。CI 只比较 Linux。
+macOS 与 Windows 的计数还包含系统替进程做的工作，只增不减，所以取三次运行的最小值。每棵源码树构建到自己的 target 目录：Cargo 给同一工作区的产物取的名字与检出位置无关，并按文件时间判断新旧，共用 target 目录时两个检出会互相用到对方的构建。
 
 新步骤用到还没重放过的命令时，重放会报出命令名。把它加入 `src/perf/environment.rs` 的命令表；接收 `Webview` 的命令写成对 `R: Runtime` 泛型。
 

@@ -1,8 +1,8 @@
-// Runs the built frontend in Playwright's pinned headless Chromium, embedded through the Web Host, and
-// counts the engine work each scenario step causes. Counts depend on the code, DOM and CSS, not on the
-// machine, so they can be compared against a committed baseline.
+// The frontend layer: runs the built frontend in Playwright's pinned headless Chromium, embedded through the Web
+// Host, and counts the engine work, host traffic and JavaScript allocations each scenario step causes, and the
+// host calls the backend layer replays.
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -379,7 +379,7 @@ function countEngineWork(events) {
  * records only the bytes JavaScript allocated: sampling every allocation slows the page and would change how
  * the engine work splits into frames.
  */
-export async function openFrontend({ allocations = false } = {}) {
+async function openFrontend({ allocations = false } = {}) {
     const quietWithinMs = allocations ? 30_000 : 5000;
     const server = await serve();
     // Animations, including smooth scrolling, would make frame counts follow elapsed time instead of work.
@@ -579,7 +579,7 @@ export async function openFrontend({ allocations = false } = {}) {
         centerOf,
         results,
         problems,
-        engine: `Chromium ${browser.version()}`,
+        chromium: browser.version(),
         /** Every host call so far, in order, with the step it belongs to: `app/startup`, a measured step or null. */
         hostCalls: () => page.evaluate(() => globalThis.__perfHost.calls),
         async close() {
@@ -587,4 +587,37 @@ export async function openFrontend({ allocations = false } = {}) {
             server.close();
         },
     };
+}
+
+async function runScenarios(options) {
+    const directory = new URL('./', import.meta.url);
+    const app = await openFrontend(options);
+    try {
+        for (const file of (await readdir(directory)).filter(name => name.endsWith('.perf.mjs')).sort()) {
+            const { default: scenario } = await import(new URL(file, directory));
+            await scenario(app);
+        }
+        app.calls = await app.hostCalls();
+    } finally {
+        await app.close();
+    }
+    if (app.problems.length > 0) {
+        throw new Error(`The frontend reported problems, so its counters are not comparable:\n${app.problems.join('\n')}`);
+    }
+    return app;
+}
+
+/**
+ * Runs every *.perf.mjs scenario in two sessions, one for engine work and host traffic and one for JavaScript
+ * allocations. Returns each step's counters, the browser version and the first session's host calls.
+ */
+export async function measureFrontend() {
+    const engine = await runScenarios();
+    const allocations = (await runScenarios({ allocations: true })).results;
+    for (const step of Object.keys(engine.results)) {
+        if (step === 'app/startup') continue;
+        if (!allocations[step]) throw new Error(`The allocation session did not measure ${step}`);
+        Object.assign(engine.results[step], allocations[step]);
+    }
+    return { chromium: engine.chromium, steps: engine.results, calls: engine.calls };
 }

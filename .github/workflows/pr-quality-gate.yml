@@ -66,6 +66,7 @@ jobs:
         run: pnpm run flatpak:sources
 
       - name: Install the performance baseline browser
+        if: runner.os == 'Linux'
         run: pnpm exec playwright-core install --with-deps --only-shell chromium
 
       - name: Run checks and tests

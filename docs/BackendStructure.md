@@ -370,7 +370,7 @@ pnpm run check:rust-boundaries
 
 ```bash
 pnpm run test:rust
-pnpm run test:perf:backend
+pnpm run test:perf
 pnpm run check:rust:dev
 cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-test>
 ```
