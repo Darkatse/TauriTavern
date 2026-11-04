@@ -132,7 +132,17 @@ jobs:
           password=android
           storeFile=ci-release.keystore
           EOF
-
+          
+      - name: Restore signing key
+        shell: bash
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$DEBUG_KEYSTORE_B64"
+          mkdir -p ~/.android
+          echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          
       - name: Build debug APKs
         uses: tauri-apps/tauri-action@v1
         env:
