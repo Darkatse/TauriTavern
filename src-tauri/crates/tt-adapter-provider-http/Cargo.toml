@@ -23,3 +23,6 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 url = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+http = "1"

@@ -25,7 +25,7 @@ pub(crate) fn reqwest_body_failure(
     classify_reqwest_error(error, endpoint, Some(UPSTREAM_NETWORK_BODY_INTERRUPTED))
 }
 
-fn sanitize_endpoint(url: &Url) -> String {
+pub(crate) fn sanitize_endpoint(url: &Url) -> String {
     let mut sanitized = url.clone();
     let _ = sanitized.set_username("");
     let _ = sanitized.set_password(None);

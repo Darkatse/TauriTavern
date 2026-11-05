@@ -77,13 +77,6 @@ impl SseEventAccumulator {
         Ok(())
     }
 
-    fn finish<F: FnMut(&[u8]) -> Result<(), DomainError>>(
-        &mut self,
-        on_event: &mut F,
-    ) -> Result<(), DomainError> {
-        self.dispatch(on_event)
-    }
-
     fn dispatch<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
         on_event: &mut F,
@@ -465,13 +458,17 @@ impl HttpChatCompletionRepository {
             Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
         }
 
-        if !buffer.is_empty() {
-            Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
-            Self::forward_sse_line(buffer.as_slice(), &mut accumulator, &mut on_event)?;
-            buffer.clear();
+        // An event cut off by the end of the stream is never dispatched (SSE).
+        let discarded_bytes = buffer.len() + accumulator.data.len();
+        if discarded_bytes > 0 {
+            tracing::warn!(
+                provider = provider_name,
+                operation = "stream",
+                endpoint = crate::http_error::sanitize_endpoint(&endpoint),
+                discarded_bytes,
+                "upstream stream ended mid-event",
+            );
         }
-
-        accumulator.finish(&mut on_event)?;
         Ok(())
     }
 
@@ -503,19 +500,6 @@ impl HttpChatCompletionRepository {
         }
 
         Ok(())
-    }
-
-    fn forward_sse_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
-        line: &[u8],
-        accumulator: &mut SseEventAccumulator,
-        on_event: &mut F,
-    ) -> Result<(), DomainError> {
-        let mut line = line;
-        if line.last().is_some_and(|byte| *byte == b'\r') {
-            line = &line[..line.len() - 1];
-        }
-
-        accumulator.on_line(line, on_event)
     }
 }
 
@@ -1258,25 +1242,19 @@ mod tests {
         assert!(buffer.is_empty());
     }
 
-    #[test]
-    fn forward_sse_events_can_flush_pending_event_at_end_of_stream() {
-        let mut events = Vec::<Vec<u8>>::new();
-        let mut buffer = b"data: tail\n".to_vec();
+    #[tokio::test]
+    async fn consume_sse_response_discards_an_event_cut_off_by_end_of_stream() {
+        for body in ["data: a\n\ndata: b\n", "data: a\n\ndata: b"] {
+            let response = reqwest::Response::from(http::Response::new(body));
+            let mut events = Vec::<Vec<u8>>::new();
+            HttpChatCompletionRepository::consume_sse_response("test", response, |event| {
+                events.push(event.to_vec());
+                Ok(())
+            })
+            .await
+            .unwrap();
 
-        let mut on_event = |event: &[u8]| {
-            events.push(event.to_vec());
-            Ok(())
-        };
-        let mut accumulator = super::SseEventAccumulator::default();
-        HttpChatCompletionRepository::forward_sse_events(
-            &mut buffer,
-            &mut accumulator,
-            &mut on_event,
-        )
-        .unwrap();
-
-        accumulator.finish(&mut on_event).unwrap();
-
-        assert_eq!(events, [b"tail".to_vec()]);
+            assert_eq!(events, [b"a".to_vec()], "{body:?}");
+        }
     }
 }
