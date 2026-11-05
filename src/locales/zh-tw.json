@@ -5197,6 +5197,8 @@
     "Started in safe mode": "已進入安全模式",
     "Third-party extensions are off and settings are back to their defaults. Characters and chats are not affected.": "第三方擴充功能已停用，設定已還原為預設，角色和聊天不受影響。",
     "Your previous settings were backed up. You can restore them in User Settings → Miscellaneous → Settings Snapshots.": "原先的設定已備份，可以在 使用者設定 → 其他 → 設定備份 中還原。",
+    "Safe mode saves a snapshot before resetting your settings.": "進入安全模式前會自動儲存一份快照。",
+    "Restoring a snapshot also restores which extensions are turned on.": "還原快照時，擴充功能的啟用狀態也會一併還原。",
     "Automatic sync upload is paused. Turn it back on in the sync settings when you're ready.": "自動同步上傳已暫停，需要時可在同步設定中重新開啟。",
     "Copy details": "複製詳情",
     "Guide the Agent?": "是否引導Agent行為？",

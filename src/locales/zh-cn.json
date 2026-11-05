@@ -4681,6 +4681,8 @@
     "Started in safe mode": "已进入安全模式",
     "Third-party extensions are off and settings are back to their defaults. Characters and chats are not affected.": "第三方扩展已停用，设置已恢复默认，角色和聊天不受影响。",
     "Your previous settings were backed up. You can restore them in User Settings → Miscellaneous → Settings Snapshots.": "原先的设置已备份，可以在 用户设置 → 杂项 → 设置快照 中恢复。",
+    "Safe mode saves a snapshot before resetting your settings.": "进入安全模式前会自动保存一份快照。",
+    "Restoring a snapshot also restores which extensions are turned on.": "恢复快照时，扩展的启用状态也会一起恢复。",
     "Automatic sync upload is paused. Turn it back on in the sync settings when you're ready.": "自动同步上传已暂停，需要时可在同步设置中重新开启。",
     "Copy details": "复制详情",
     "Guide the Agent?": "是否引导Agent行为？",
