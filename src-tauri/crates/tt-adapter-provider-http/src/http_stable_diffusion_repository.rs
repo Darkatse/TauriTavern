@@ -1886,11 +1886,14 @@ async fn literouter_generate(
 
     if !response.status().is_success() {
         let status = response.status();
-        let detail = response.text().await.unwrap_or_else(|_| status.to_string());
-        return Ok(text(
-            500,
-            format!("LiteRouter returned an error: {}", detail.trim()),
-        ));
+        let detail = response.text().await.unwrap_or_default();
+        let detail = detail.trim();
+        let message = if detail.is_empty() {
+            format!("LiteRouter returned an error: HTTP {status}")
+        } else {
+            format!("LiteRouter returned an error: HTTP {status}: {detail}")
+        };
+        return Ok(text(500, message));
     }
 
     let body = response
@@ -1916,8 +1919,35 @@ async fn literouter_generate(
 
 #[cfg(test)]
 mod tests {
-    use super::optional_nonnegative_number_value;
+    use super::{detect_image_format_from_base64, optional_nonnegative_number_value};
     use serde_json::json;
+
+    #[test]
+    fn detects_image_format_from_base64_header() {
+        use base64::Engine;
+
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+
+        assert_eq!(
+            detect_image_format_from_base64(&encode(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])),
+            "jpg"
+        );
+        assert_eq!(
+            detect_image_format_from_base64(&encode(
+                b"RIFF\x00\x00\x00\x00WEBPVP8 "
+            )),
+            "webp"
+        );
+        assert_eq!(
+            detect_image_format_from_base64(&encode(b"GIF89a\x00\x00")),
+            "gif"
+        );
+        assert_eq!(
+            detect_image_format_from_base64(&encode(b"\x89PNG\r\n\x1a\n")),
+            "png"
+        );
+        assert_eq!(detect_image_format_from_base64("not-base64!!"), "png");
+    }
 
     #[tokio::test]
     async fn comfy_generation_queries_only_its_prompt_and_returns_the_image() {
