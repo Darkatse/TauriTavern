@@ -254,40 +254,44 @@ impl KeptOriginal {
     }
 }
 
-/// Publishes `bytes` at `path` after a copy of the file it replaces, and returns the copy.
-/// `path` always holds a whole file, so a failure leaves the original in place.
+/// Publishes `bytes` at `path` unless the file already holds them.
+pub fn persist_changed_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    if read_stored_blocking(path)?.as_deref() != Some(bytes) {
+        persist_bytes_file_blocking(path, bytes)?;
+    }
+    Ok(())
+}
+
+/// Publishes `bytes` at `path` like [`persist_changed_blocking`], first keeping a copy of the
+/// file it replaces, and returns the copy. `path` always holds a whole file, so a failure
+/// leaves the original in place.
 pub fn replace_keeping_original_blocking(
     path: &Path,
     kept: KeptOriginal,
     bytes: &[u8],
 ) -> Result<Option<PathBuf>, DomainError> {
-    let kept = keep_original_blocking(path, kept)?;
+    let kept = match read_stored_blocking(path)? {
+        Some(original) if original == bytes => return Ok(None),
+        Some(original) => {
+            let kept = kept.path_beside(path);
+            persist_bytes_file_blocking(&kept, &original)?;
+            Some(kept)
+        }
+        None => None,
+    };
     persist_bytes_file_blocking(path, bytes)?;
     Ok(kept)
 }
 
-fn keep_original_blocking(path: &Path, kept: KeptOriginal) -> Result<Option<PathBuf>, DomainError> {
-    let mut original = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to open {}: {error}",
-                path.display()
-            )));
-        }
-    };
-    let kept = kept.path_beside(path);
-    persist_written_blocking(&kept, |writer| {
-        io::copy(&mut original, writer).map(drop).map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to copy {} to {}: {error}",
-                path.display(),
-                kept.display()
-            ))
-        })
-    })?;
-    Ok(Some(kept))
+fn read_stored_blocking(path: &Path) -> Result<Option<Vec<u8>>, DomainError> {
+    match std::fs::read(path) {
+        Ok(stored) => Ok(Some(stored)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 /// Generate a unique temporary file path adjacent to `target_path`.
@@ -735,6 +739,20 @@ mod tests {
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"old");
 
         tokio_fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[test]
+    fn replace_keeping_original_leaves_a_file_that_already_holds_the_bytes() {
+        let root = unique_temp_root();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, b"same").unwrap();
+
+        let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, b"same");
+
+        assert_eq!(kept.unwrap(), None);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

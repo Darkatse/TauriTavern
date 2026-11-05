@@ -120,6 +120,6 @@ pub trait HostResourceAssetStore: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait UserCssStore: Send + Sync {
-    /// Replaces a stylesheet that differs from `factory`; a missing one stays missing.
+    /// Puts `factory` in place, keeping a copy of a different stylesheet it replaces.
     async fn reset_user_css(&self, factory: &[u8]) -> Result<(), DomainError>;
 }

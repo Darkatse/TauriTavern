@@ -276,19 +276,6 @@ impl UserCssStore for FilesystemHostResourceStore {
         let path = self.roots.user_css_file.clone();
         let factory = factory.to_vec();
         tokio::task::spawn_blocking(move || {
-            let stored = match fs::read(&path) {
-                Ok(stored) => stored,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => {
-                    return Err(DomainError::InternalError(format!(
-                        "Failed to read {}: {error}",
-                        path.display()
-                    )));
-                }
-            };
-            if stored == factory {
-                return Ok(());
-            }
             let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, &factory)?;
             if let Some(kept) = kept {
                 tracing::info!("Safe mode kept user.css as {}", kept.display());

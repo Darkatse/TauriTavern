@@ -11,8 +11,8 @@ use super::fields::{
 };
 use super::lazy_object::{LazyObject, Member};
 use crate::file_system::{
-    KeptOriginal, persist_bytes_file_blocking, persist_json_file_blocking,
-    replace_keeping_original_blocking,
+    KeptOriginal, persist_bytes_file_blocking, persist_changed_blocking,
+    persist_json_file_blocking, replace_keeping_original_blocking,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::persona::{Personas, take_personas_with};
@@ -101,7 +101,7 @@ pub(super) fn load_user(
             (texts[index], sections[index]) = read_section(root, index, defaults)?;
         } else {
             texts[index] = sections[index].to_bytes();
-            persist_changed(&root.join(SECTION_FILES[index]), &texts[index])?;
+            persist_changed_blocking(&root.join(SECTION_FILES[index]), &texts[index])?;
             migrated = true;
         }
     }
@@ -173,7 +173,7 @@ pub(super) fn reset_user(
 
     for (name, section) in SECTION_FILES.into_iter().zip(sections.into_files()) {
         if name != PERSONA_STATE_FILE {
-            persist_changed(&root.join(name), &section.to_bytes())?;
+            persist_changed_blocking(&root.join(name), &section.to_bytes())?;
         }
     }
     Ok(())
@@ -261,7 +261,7 @@ pub(super) fn load_native(
         TauriTavernSettings::from_json_value_with_compat(value.clone()).map_err(json_error)?;
     let theme_path = root.join(DYNAMIC_THEME_FILE);
     if let Some(legacy) = &legacy_theme {
-        persist_changed(&theme_path, &pretty_json(legacy)?)?;
+        persist_changed_blocking(&theme_path, &pretty_json(legacy)?)?;
     }
     settings.dynamic_theme = load_or_default(&theme_path, &DynamicThemeSettings::default())?;
     if missing_core || legacy_theme.is_some() {
@@ -272,7 +272,7 @@ pub(super) fn load_native(
 
 pub(super) fn save_native(root: &Path, settings: &TauriTavernSettings) -> Result<(), DomainError> {
     for (name, text) in native_files(settings)? {
-        persist_changed(&root.join(name), &text)?;
+        persist_changed_blocking(&root.join(name), &text)?;
     }
     Ok(())
 }
@@ -299,18 +299,6 @@ fn native_files(settings: &TauriTavernSettings) -> Result<[(&str, Vec<u8>); 2], 
         (DYNAMIC_THEME_FILE, pretty_json(&theme)?),
         (NATIVE_FILE, pretty_json(&core)?),
     ])
-}
-
-/// Rewrites a file only when the bytes to write differ from the stored ones.
-fn persist_changed(path: &Path, text: &[u8]) -> Result<(), DomainError> {
-    match fs::read(path) {
-        Ok(stored) if stored == text => Ok(()),
-        Ok(_) => persist_bytes_file_blocking(path, text),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            persist_bytes_file_blocking(path, text)
-        }
-        Err(error) => Err(read_error(path, error)),
-    }
 }
 
 fn pretty_json(value: &impl Serialize) -> Result<Vec<u8>, DomainError> {
