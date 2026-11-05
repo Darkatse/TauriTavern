@@ -143,6 +143,8 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Windows 便携版**（Portable）：需系统已安装 WebView2 运行时。
 >
 > **鸿蒙用户（Beta）**：Release 里的 HAP 适用于 HarmonyOS NEXT。请使用自己的证书签名安装，推荐使用 [Auto-Installer（小白调试助手）](https://github.com/likuai2010/auto-installer/)。当前仅在模拟器上进行过测试。
+>
+> **应用无法打开时**：在 3 分钟内连续退出并重新打开 TauriTavern 5 次，会询问是否进入安全模式。
 
 ## 这是什么
 

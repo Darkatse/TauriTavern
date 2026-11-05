@@ -142,6 +142,8 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Versão portátil para Windows**: requer o WebView2 Runtime instalado no sistema.
 >
 > **HarmonyOS (beta)**: o HAP das releases é para o HarmonyOS NEXT. Assine com seu próprio certificado para instalar; recomendamos o [Auto-Installer](https://github.com/likuai2010/auto-installer/). Até agora, foi testado apenas no emulador.
+>
+> **Se o aplicativo não abrir**: feche e abra o TauriTavern 5 vezes seguidas em até 3 minutos; ele vai perguntar se você quer entrar no modo seguro.
 
 ## O que é o TauriTavern
 

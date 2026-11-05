@@ -321,7 +321,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `OpenAI Settings`
 - `TextGen Settings`
 
-TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。安全模式的启动记录 `app_root/safe-mode.json` 同样属于安装：setup 在读取任何用户数据之前计入本次启动，由它决定本次启动是询问还是执行安全模式。
+TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。[安全模式](CurrentState/SafeMode.md)的启动记录 `app_root/safe-mode.json` 同样属于安装：setup 在读取任何用户数据之前计入本次启动，由它决定本次启动是询问还是执行安全模式。
 
 权威代码入口：
 

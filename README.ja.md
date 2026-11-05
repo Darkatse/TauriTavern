@@ -142,6 +142,8 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Windowsポータブル版**：システムにWebView2ランタイムが必要です。
 >
 > **HarmonyOS（ベータ）**：ReleaseのHAPはHarmonyOS NEXT向けです。ご自身の証明書で署名してからインストールしてください。[Auto-Installer](https://github.com/likuai2010/auto-installer/)の利用をおすすめします。現在はエミュレーターでのみテストしています。
+>
+> **アプリが起動しないとき**：3分以内にTauriTavernの終了と再起動を5回続けると、セーフモードに入るか確認されます。
 
 ## TauriTavernとは
 

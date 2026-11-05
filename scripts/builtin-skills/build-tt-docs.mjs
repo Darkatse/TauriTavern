@@ -44,6 +44,7 @@ const GROUPS = [
             ['CurrentState/LoggingObservability.md', 'Where logs go, how errors reach the user as notifications, and the developer observability tools.'],
             ['CurrentState/UserEndpointAccess.md', 'Custom API endpoints (custom URL, reverse proxy): the one-time native approval dialog, where approvals are stored, and what cancelling does.'],
             ['CurrentState/Sync.md', 'LAN Sync and TT-Sync: what data syncs, which settings sections sync independently, discovery and pairing, and automatic sync.'],
+            ['CurrentState/SafeMode.md', 'Safe mode: how it is entered, what it resets and what it keeps, and how to restore the previous settings from a snapshot.'],
             ['CurrentState/DataDirectorySelection.md', 'Choosing or moving the data directory: what is supported and what is not.'],
             ['CurrentState/UpdateChannels.md', 'Stable and Canary update channels, how updates are detected, and public TestFlight builds.'],
             ['CurrentState/iOSPolicy.md', 'Features restricted in iOS builds: policy profiles and capabilities, how they are applied, and their known limits.'],
