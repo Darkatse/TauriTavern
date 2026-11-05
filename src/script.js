@@ -403,6 +403,7 @@ import { MessageFormatter } from './scripts/message-formatter.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
 import { createStartupStatusOverlay, showStartupFailure } from './scripts/tauri/startup/startup-status-overlay.js';
+import { loadUserStylesheet, settleSafeModePrompt } from './scripts/tauri/startup/safe-mode.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 
 // API OBJECT FOR EXTERNAL WIRING
@@ -1147,6 +1148,9 @@ async function firstLoadInit() {
         await initLocales();
         setStage('shell', t`Starting: rendering the interface… (extensions load later)`);
         removePreloader();
+        // Settings and user styles load only once the safe mode prompt is settled. An offer is
+        // answered before startup waits on a paint or the backend, a report after the rescue.
+        await settleSafeModePrompt();
         await nextPaint();
 
         registerPromptManagerMigration();
@@ -1161,6 +1165,8 @@ async function firstLoadInit() {
         // Ensure bridge/interceptors are installed before first /api/* calls.
         setStage('core', t`Starting: connecting to the backend…`);
         await window.__TAURITAVERN_MAIN_READY__;
+        await settleSafeModePrompt();
+        await loadUserStylesheet();
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
         initializeColdSwipes(tauriTavernSettings);

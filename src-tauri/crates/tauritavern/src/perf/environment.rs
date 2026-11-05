@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tauri::test::{MockRuntime, mock_builder, mock_context, noop_assets};
 use tauri::{App, Manager};
 
-use crate::app::{AppState, HostEnvironment, StartupProfile};
+use crate::app::{AppState, HostEnvironment, SafeMode, StartupProfile};
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::assets::{
     BundledResources, map_resource_error, normalize_resource_relative_path, read_resource_text,
@@ -41,6 +41,7 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
         .manage(Arc::new(BundledTemplateService::new(resources.clone())))
         .invoke_handler(tauri::generate_handler![
             c::settings_commands::get_tauritavern_settings,
+            c::safe_mode_commands::get_safe_mode_prompt,
             c::bridge::get_client_version,
             c::bootstrap_commands::get_bootstrap_metadata,
             c::settings_commands::get_sillytavern_settings,
@@ -79,6 +80,7 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
         .map_err(|error| error.to_string())?;
 
     let runtime_paths = RuntimePaths::new(RuntimeMode::Standard, root.to_path_buf());
+    app.manage(Arc::new(SafeMode::register_launch(&runtime_paths.app_root)));
     let startup_profile =
         StartupProfile::load(&runtime_paths.data_root).map_err(|error| error.to_string())?;
     let environment = HostEnvironment {

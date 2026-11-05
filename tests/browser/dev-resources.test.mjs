@@ -27,7 +27,6 @@ test('dev READY resolves only after the active worker controls the page', async 
     };
     const registration = { active };
     serviceWorker.controller = null;
-    serviceWorker.startMessages = () => {};
     serviceWorker.ready = Promise.resolve(registration);
     serviceWorker.register = async () => registration;
     Object.defineProperty(window.navigator, 'serviceWorker', { value: serviceWorker });

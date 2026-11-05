@@ -67,15 +67,14 @@ impl SafeModeService {
         self.settings
             .reset_tauritavern_settings(chat_backups)
             .await?;
-        let user_css_reset = self.user_css.reset_user_css(&self.factory_user_css).await?;
+        self.user_css.reset_user_css(&self.factory_user_css).await?;
 
-        tracing::info!("Safe mode reset the settings; the previous ones are in {snapshot}");
-        Ok(SafeModeReport {
-            snapshot,
-            disabled_extensions: third_party.len(),
+        tracing::info!(
+            disabled_extensions = third_party.len(),
             auto_upload_paused,
-            user_css_reset,
-        })
+            "Safe mode reset the settings; the previous ones are in {snapshot}"
+        );
+        Ok(SafeModeReport { auto_upload_paused })
     }
 
     /// Limits decide which chat backups survive, so they outlast the reset; limits that cannot be

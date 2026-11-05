@@ -56,6 +56,7 @@ const host = installWebHost({
 | 命令 | 对应的后端请求或行为 |
 | --- | --- |
 | `wait_for_backend_ready`、`backend_error_bridge_ready` | 立即就绪；没有待投递的原生错误 |
+| `get_safe_mode_prompt` | `null`：嵌入方没有原生启动记录，不询问也不报告；请求与关闭询问按下文以 `Unsupported` 拒绝，失败对话框会显示 |
 | `get_client_version` | `GET /version` |
 | `get_tauritavern_settings`、`update_tauritavern_settings` | 读取及部分更新 `store` 文档，见“TT 设置” |
 | `get_sillytavern_settings`、`get_personas` | `/api/settings/get`，转为 TT 的形状 |

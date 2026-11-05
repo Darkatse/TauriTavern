@@ -119,10 +119,9 @@ async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
 
     let report = service.rescue().await.unwrap();
 
-    assert_eq!(report.disabled_extensions, 2);
     assert!(report.auto_upload_paused);
-    assert!(report.user_css_reset);
-    let snapshot = settings.load_snapshot(&report.snapshot).await.unwrap().data;
+    let [snapshot] = settings.get_snapshots().await.unwrap().try_into().unwrap();
+    let snapshot = settings.load_snapshot(&snapshot.name).await.unwrap().data;
     assert_eq!(
         snapshot["power_user"]["custom_css"],
         "body { display: none }"

@@ -272,13 +272,13 @@ impl FilesystemHostResourceStore {
 
 #[async_trait::async_trait]
 impl UserCssStore for FilesystemHostResourceStore {
-    async fn reset_user_css(&self, factory: &[u8]) -> Result<bool, DomainError> {
+    async fn reset_user_css(&self, factory: &[u8]) -> Result<(), DomainError> {
         let path = self.roots.user_css_file.clone();
         let factory = factory.to_vec();
         tokio::task::spawn_blocking(move || {
             let stored = match fs::read(&path) {
                 Ok(stored) => stored,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => {
                     return Err(DomainError::InternalError(format!(
                         "Failed to read {}: {error}",
@@ -287,13 +287,13 @@ impl UserCssStore for FilesystemHostResourceStore {
                 }
             };
             if stored == factory {
-                return Ok(false);
+                return Ok(());
             }
             let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, &factory)?;
             if let Some(kept) = kept {
                 tracing::info!("Safe mode kept user.css as {}", kept.display());
             }
-            Ok(true)
+            Ok(())
         })
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?

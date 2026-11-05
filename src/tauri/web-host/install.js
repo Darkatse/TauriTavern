@@ -53,6 +53,7 @@ export function installWebHost({ identity, backend, store }) {
         ...createExtensionCommands(st, fetchResource, loadDefaults),
         wait_for_backend_ready: () => undefined,
         backend_error_bridge_ready: () => [],
+        get_safe_mode_prompt: () => null,
         get_tauritavern_settings: settings.get,
         update_tauritavern_settings: ({ dto }) => settings.update(dto),
         get_window_snapshot: () => null,

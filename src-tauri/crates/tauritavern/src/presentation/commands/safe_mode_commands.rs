@@ -38,9 +38,7 @@ pub async fn request_safe_mode(
     tauri::async_runtime::spawn_blocking(move || safe_mode.request())
         .await
         .map_err(|error| CommandError::InternalServerError(error.to_string()))?
-        .map_err(|error| {
-            CommandError::InternalServerError(format!("Failed to request safe mode: {error}"))
-        })?;
+        .map_err(CommandError::from)?;
     crate::app::host::exit_for_safe_mode(&app_handle);
     Ok(())
 }
