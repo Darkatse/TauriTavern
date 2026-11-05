@@ -141,7 +141,8 @@ jobs:
           set -euo pipefail
           test -n "$DEBUG_KEYSTORE_B64"
           mkdir -p ~/.android
-          echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          printf '%s' "$DEBUG_KEYSTORE_B64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey
           
       - name: Build debug APKs
         uses: tauri-apps/tauri-action@v1
