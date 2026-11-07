@@ -55,6 +55,55 @@ test('sync and batch formatting produce the same sanitized HTML, including empty
     assert.ok(bodies.every(body => !body.querySelector('script, [onclick]')));
 });
 
+test('streaming formats each version by blocks into the HTML of the whole message', async t => {
+    const { window, script, power_user } = await openRuntime(t);
+    power_user.auto_fix_generated_markdown = true;
+    script.chat.push(message(''));
+    // Showdown numbers repeated heading ids within each block; nothing else may differ.
+    const normalize = html => {
+        const root = window.document.createElement('div');
+        root.innerHTML = html;
+        root.querySelectorAll('h1, h2, h3').forEach(heading => heading.removeAttribute('id'));
+        [...root.childNodes].filter(node => node.nodeType === 3 && !node.data.trim()).forEach(node => node.remove());
+        return root.innerHTML;
+    };
+    const replies = [
+        'He nods.\n\n* first\n\n* second\n\nShe "smiles".\n\n> quoted\n\n> still quoted\n\n# Title\n\nAfter.\n\n# Title',
+        'Code:\n\n```js\nconst a = 1;\n\nconst b = "x";\n```\n\nDone with `one\n\ntwo` ticks.',
+        '<details><summary>Status</summary>\n\n**HP** 10\n\n</details>\n\n<div>\nopen\n\nstill open',
+        '<content>\nFirst part.\n\nSecond *part\n\ncontinues* here.\n</content>\n\n<b>bold\n\nstill bold</b>\n\nx < y\n\n"q" > z',
+        'Thinking aloud\n</think>\nAnswer.\n\n<!-- note\n\n-->\n\n<style>\n.a {}\n\n.b {}\n</style>\n\nAfter.',
+        'See [it][ref].\n\nMore.\n\n[ref]: https://example.com',
+    ];
+    for (const reply of replies) {
+        const format = script.createStreamingMessageFormatter();
+        for (let end = reply.indexOf('\n'); ; end = reply.indexOf('\n', end + 1)) {
+            const text = end === -1 ? reply : reply.slice(0, end);
+            assert.equal(normalize(format(text, 'Alice', false, false, 0).join('\n')), normalize(script.messageFormatting(text, 'Alice', false, false, 0)), text);
+            if (end === -1) break;
+        }
+    }
+});
+
+test('streaming writes keep unchanged blocks and restore content someone else changed', async t => {
+    const { window, getModule } = await openRuntime(t);
+    const { createBlockContent } = getModule('scripts/tauri/message/block-content.js').namespace;
+    const element = window.document.createElement('div');
+    window.document.body.append(element);
+    const content = createBlockContent();
+    const write = blocks => content.prepare(element, blocks)?.commit();
+    write(['<p>One</p>', '<p>Two</p>']);
+    const first = element.firstChild;
+    write(['<p>One</p>', '<p>Two three</p>']);
+    assert.equal(element.firstChild, first);
+    assert.equal(element.innerHTML, '<p>One</p>\n<p>Two three</p>');
+    assert.equal(content.prepare(element, ['<p>One</p>', '<p>Two three</p>']), null);
+    first.textContent = 'Changed';
+    await Promise.resolve();
+    write(['<p>One</p>', '<p>Two three four</p>']);
+    assert.equal(element.innerHTML, '<p>One</p>\n<p>Two three four</p>');
+});
+
 test('refresh applies a late formatter hook to already displayed body and reasoning', async t => {
     const { window, script, formatter } = await openRuntime(t);
     script.chat.push(message('Answer', { reasoning: 'Thought' }));

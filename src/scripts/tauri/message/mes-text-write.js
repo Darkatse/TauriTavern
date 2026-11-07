@@ -1,6 +1,7 @@
 // @ts-check
 
 import {
+    holdsEmbeddedRuntimeWrappers,
     prepareMesTextHtmlPreservingEmbeddedRuntimes,
 } from '../../../tauri/main/adapters/embedded-runtime/message-render-transaction.js';
 import { syncElementAttributes } from './mes-text-content.js';
@@ -69,6 +70,30 @@ export function replaceTransientMesTextHtmlWithRuntimePolicy(messageElement, htm
             return mesText;
         },
     }, true);
+}
+
+/**
+ * Writes a streaming version of `.mes_text` as transient content. Formatted content holds no embedded runtime
+ * wrappers, so content that someone else wrote with them is replaced whole under the runtime policy.
+ *
+ * @param {HTMLElement} messageElement `.mes` element.
+ * @param {ReturnType<typeof import('./block-content.js').createBlockContent>} content
+ * @param {string[]} blocks Formatted blocks; joined by line breaks, they are the HTML.
+ * @param {{ fadeIn?: boolean }} [options]
+ */
+export function writeStreamingMesText(messageElement, content, blocks, { fadeIn = false } = {}) {
+    const mesText = messageElement.querySelector('.mes_text');
+    if (!(mesText instanceof HTMLElement)) {
+        throw new Error('writeStreamingMesText: .mes_text not found');
+    }
+    if (!content.owns(mesText) && holdsEmbeddedRuntimeWrappers(mesText)) {
+        replaceTransientMesTextHtmlWithRuntimePolicy(messageElement, blocks.join('\n'), { fadeIn });
+        return;
+    }
+    const transaction = content.prepare(mesText, blocks, { fadeIn });
+    if (transaction) {
+        commitTransaction(messageElement, transaction, true);
+    }
 }
 
 /**

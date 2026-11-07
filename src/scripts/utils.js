@@ -966,12 +966,14 @@ export function formatTime(seconds) {
  * countOccurrences('Hello, world!', 'x'); // 0
  */
 export function countOccurrences(string, character) {
-    let count = 0;
+    if (!character) {
+        return string.length;
+    }
 
-    for (let i = 0; i < string.length; i++) {
-        if (string.substring(i, i + character.length) === character) {
-            count++;
-        }
+    // Occurrences may overlap.
+    let count = 0;
+    for (let at = string.indexOf(character); at !== -1; at = string.indexOf(character, at + 1)) {
+        count++;
     }
 
     return count;

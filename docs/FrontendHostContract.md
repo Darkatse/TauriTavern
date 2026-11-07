@@ -60,7 +60,9 @@
 
 `SillyTavern.getContext().macros` 提供宏注册与独立求值，接口和使用范围见[宏求值 API](API/Macros.md)。
 
-`SillyTavern.getContext().messageFormatter` 暴露上游 [MessageFormatter](../src/scripts/message-formatter.js) 单例。同步 hook 在 HTML 净化前运行，可重复执行；单个 hook 失败会报告并隔离。延后扩展初始化完成后，通过 ChatSurface 统一补刷已挂载内容。
+`SillyTavern.getContext().messageFormatter` 暴露上游 [MessageFormatter](../src/scripts/message-formatter.js) 单例。同步 hook 在 HTML 净化前运行，可重复执行，每次都收到整条消息；单个 hook 失败会报告并隔离。延后扩展初始化完成后，通过 ChatSurface 统一补刷已挂载内容。
+
+流式中间帧的 `.mes_text` 等于当时文本的格式化结果（重复标题的 id 编号可能不同），未变的顶层块保留原节点；其他代码改动过 `.mes_text` 时，下一帧整体重写。
 
 > 这些符号被第三方脚本/扩展/角色卡直接调用，变更需极度谨慎。
 

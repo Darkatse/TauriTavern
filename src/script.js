@@ -20,7 +20,10 @@ import {
     prepareMesTextHtmlWithRuntimePolicy,
     replaceMesTextHtmlWithRuntimePolicy,
     replaceTransientMesTextHtmlWithRuntimePolicy,
+    writeStreamingMesText,
 } from './scripts/tauri/message/mes-text-write.js';
+import { createBlockContent } from './scripts/tauri/message/block-content.js';
+import { splitMessageBlocks } from './scripts/tauri/message/message-blocks.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { assertRequiredChatSurfaceParticipants } from './tauri/main/services/chat-surface/capability-gate.js';
 import { installChatSurfaceRuntime } from './tauri/main/services/chat-surface/install.js';
@@ -30,7 +33,7 @@ import {
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { initDrawers, getTopLevelDrawerPanel, isTopLevelDrawerOpen, setTopLevelDrawerOpen, toggleInlineDrawer } from './scripts/drawers.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
-import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
+import { getStreamingRenderInterval, normalizeStreamingFps } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
     initializeColdSwipes,
@@ -174,6 +177,7 @@ import {
     loadPowerUserSettings,
     playMessageSound,
     fixMarkdown,
+    MARKDOWN_FIX_PAIRS,
     power_user,
     persona_description_positions,
     loadMovingUIState,
@@ -2554,6 +2558,9 @@ function getMessageFormattingRegexContext(isUser, messageId, isReasoning = false
     };
 }
 
+const MESSAGE_TAG_QUOTES = /<([^>]+)>/g;
+const MESSAGE_QUOTES = /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(\u201C.*?\u201D)|(\u00AB.*?\u00BB)|(\u300C.*?\u300D)|(\u300E.*?\u300F)|(\uFF02.*?\uFF02)/gim;
+
 // Preparation and completion stay inside the formatter; callers only receive HTML.
 function prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
     if (!mes) return null;
@@ -2628,13 +2635,13 @@ function finishMessageFormatting(input, mes = input?.text) {
     if (!isSystem) {
         // Save double quotes in tags as a special character to prevent them from being encoded
         if (!power_user.encode_tags) {
-            mes = mes.replace(/<([^>]+)>/g, function (_, contents) {
+            mes = mes.replace(MESSAGE_TAG_QUOTES, function (_, contents) {
                 return '<' + contents.replace(/"/g, '\ufffe') + '>';
             });
         }
 
         mes = mes.replace(
-            /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(\u201C.*?\u201D)|(\u00AB.*?\u00BB)|(\u300C.*?\u300D)|(\u300E.*?\u300F)|(\uFF02.*?\uFF02)/gim,
+            MESSAGE_QUOTES,
             function (match, p1, p2, p3, p4, p5, p6) {
                 if (p1) {
                     // English double quotes
@@ -2702,6 +2709,67 @@ function finishMessageFormatting(input, mes = input?.text) {
     mes = decodeStyleTags(mes, { prefix: '.mes_text ' });
 
     return mes;
+}
+
+/**
+ * The ranges that a whole-text pass of finishMessageFormatting reads across lines, end exclusive.
+ * @param {string} text
+ * @returns {Array<[number, number]>}
+ */
+function getMessageFormattingSpans(text) {
+    /** @type {Array<[number, number]>} */
+    const spans = [];
+    /** @param {RegExp} regex */
+    const add = regex => {
+        for (const match of text.matchAll(regex)) {
+            if (match[0].includes('\n')) spans.push([match.index, match.index + match[0].length]);
+        }
+    };
+    if (power_user.auto_fix_generated_markdown) add(MARKDOWN_FIX_PAIRS);
+    if (!power_user.encode_tags) add(MESSAGE_TAG_QUOTES);
+    add(MESSAGE_QUOTES);
+    // Only the first occurrence of a reasoning string is escaped.
+    for (const reasoningString of [power_user.reasoning.prefix, power_user.reasoning.suffix]) {
+        const first = reasoningString?.trim() ? text.indexOf(reasoningString) : -1;
+        if (first !== -1) spans.push([first, text.lastIndexOf(reasoningString) + reasoningString.length]);
+    }
+    return spans;
+}
+
+/**
+ * Formats successive versions of one streaming message as top-level blocks. Joined by line breaks, the blocks are the
+ * message's messageFormatting HTML, except that showdown numbers repeated heading ids per block. An unchanged block
+ * keeps its HTML. Display hooks receive whole messages, so with any registered the message is one block.
+ * @returns {(...args: Parameters<typeof messageFormatting>) => string[]}
+ */
+export function createStreamingMessageFormatter() {
+    /** @type {string | null} */
+    let lastMes = null;
+    /** @type {string[]} */
+    let lastBlocks = [];
+    /** @type {Map<string, string>} */
+    let held = new Map();
+    return (mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) => {
+        if (mes === lastMes) {
+            return lastBlocks;
+        }
+        const input = prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides, isReasoning);
+        const text = input?.regex ? getRegexedString(input.text, input.regex.placement, input.regex.params) : input?.text;
+        const blocks = !input ? []
+            : MessageFormatter.hasHooks(MessageFormatter.stage.AFTER_REGEX) || MessageFormatter.hasHooks(MessageFormatter.stage.AFTER_MARKDOWN)
+                ? [text]
+                : splitMessageBlocks(text, getMessageFormattingSpans(text));
+        /** @type {Map<string, string>} */
+        const next = new Map();
+        lastBlocks = blocks.map(block => {
+            const html = held.get(block) ?? finishMessageFormatting(input, block);
+            next.set(block, html);
+            return html;
+        });
+        held = next;
+        lastMes = mes;
+        return lastBlocks;
+    };
 }
 
 /**
@@ -4315,8 +4383,8 @@ class StreamingProcessor {
         this.messageDom = null;
         /** @type {HTMLElement} */
         this.messageTextDom = null;
-        /** @type {string|null} Last canonical message HTML committed during streaming. */
-        this.lastCommittedHtml = null;
+        this.formatMessage = createStreamingMessageFormatter();
+        this.messageContent = createBlockContent();
         /** @type {HTMLElement} */
         this.messageTimerDom = null;
         /** @type {HTMLElement} */
@@ -4474,29 +4542,15 @@ class StreamingProcessor {
                 };
             }
 
-            const formattedText = messageFormatting(
-                processedText,
-                chat[messageId].name,
-                chat[messageId].is_system,
-                chat[messageId].is_user,
-                messageId,
-                {},
-                false,
-            );
-            if (
-                this.messageDom instanceof HTMLElement
-                && this.messageTextDom instanceof HTMLElement
-                && shouldCommitStreamingMessage({
-                    lastCommittedHtml: this.lastCommittedHtml,
-                    nextHtml: formattedText,
-                    final: isFinal,
-                    fadeIn: power_user.stream_fade_in,
-                })
-            ) {
-                replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, formattedText, {
-                    fadeIn: !isFinal && power_user.stream_fade_in,
-                });
-                this.lastCommittedHtml = formattedText;
+            if (this.messageDom instanceof HTMLElement && this.messageTextDom instanceof HTMLElement) {
+                const { name, is_system, is_user } = chat[messageId];
+                if (isFinal) {
+                    replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, messageFormatting(processedText, name, is_system, is_user, messageId));
+                } else {
+                    writeStreamingMesText(this.messageDom, this.messageContent, this.formatMessage(processedText, name, is_system, is_user, messageId), {
+                        fadeIn: power_user.stream_fade_in,
+                    });
+                }
             }
 
             const timePassed = formatGenerationTimer(this.timeStarted, currentTime, currentTokenCount, this.reasoningHandler.getDuration(), this.timeToFirstToken);

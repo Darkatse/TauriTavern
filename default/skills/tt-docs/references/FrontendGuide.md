@@ -179,6 +179,7 @@ src/
 - renderer 在入口只调用一次 `isManagedOwnershipRequired()`：`true` 时只启用 participant owner，`false` 时只启用原 static owner；API 是否存在和当前 DOM 形状都不能替代该决策。
 - 结构 reconcile 与纯 range projection 分离：前者只在 canonical `chat[]` 结构改变时 O(N) 执行，后者携带 epoch/revision token 并保持 O(M)。
 - mount lease 与 content lease 分离；streaming 中间帧只提交内容，最终帧才恢复 decorator/runtime。
+- streaming 中间帧（含思考中的 reasoning）按顶层块格式化和写入：regex 仍作用于整条文本，切块见 [message-blocks.js](../src/scripts/tauri/message/message-blocks.js)；未变的块沿用 HTML 与节点，变化的块原地 morph。最终帧用 `messageFormatting` 整体写入。
 - `chat_virtualization_enabled=false` 是默认值并保持上游 Show More 语义；TauriTavern Settings 的“聊天 DOM 虚拟化”开关直接绑定这个布尔值并在保存后 reload。用户显式开启后，experimental bounded 使用 TanStack 几何提交 `V ∪ T`，true tail 常驻且 `.mes` 上界为 `32 + 1`。
 - TanStack symbols 由 `lib.js` vendor facade 在 composition root 注入单一 adapter；原生 ESM 源码不直接解析 bare package。virtualizer 的 `scrollToFn` 也注入既有 ChatScrollAdapter，因此 `#chat` 的物理滚动写入仍只有一个 owner。
 - bounded 的 runtime candidate 由独立 grant lease 管理；viewport 滚动可以 revoke/re-grant，而不会伪造 content commit 或消息业务事件。
