@@ -22,6 +22,7 @@
     "check:rust:dev": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features",
     "check:rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "check:rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --no-default-features --features tauritavern/perf -- -D warnings",
+    "check:advisories": "node scripts/check-dependency-advisories.mjs",
     "test": "pnpm run test:browser && pnpm run test:perf && pnpm run test:contracts && pnpm run test:ui && pnpm run test:rust",
     "test:browser": "pnpm run web:build && node --experimental-vm-modules --test --test-timeout=60000 --test-force-exit \"tests/browser/*.test.mjs\"",
     "test:perf": "node tests/perf/run.mjs",
