@@ -41,7 +41,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
             await ensureModelTargetLlmConnectionForProfile(profile);
             const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, input, profile } });
             const frozenInput = prepared.request.frozenRunInputSnapshot;
-            const macroContext = MacroEnvBuilder.createSessionContext(prepared.sessionMessages, {
+            const macroContext = MacroEnvBuilder.createSessionContext(prepared.macroMessages, {
                 sessionId,
                 variables: sessionVariables,
             });

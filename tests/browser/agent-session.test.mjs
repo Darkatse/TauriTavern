@@ -47,7 +47,7 @@ try {
         promptInputs: { messages: [], sessionHistory: messages, messageExamples: [], worldInfoExamples: { before: [], after: [] }, extensionPrompts: {} },
     });
     const assemble = (messages, reasoningEffort) => {
-        const context = MacroEnvBuilder.createSessionContext(messages.flat(), {
+        const context = MacroEnvBuilder.createSessionContext({ messageCount: messages.flat().length, lastMessage: messages.flat().at(-1) }, {
             sessionId: 'session-history', variables: { local: {}, global: {} },
         });
         Object.assign(context.names, { user: 'Session user', char: 'Assistant' });
@@ -118,7 +118,10 @@ try {
                     case 'prepare_agent_session_run':
                         return {
                             expectedHistorySeq: 0,
-                            sessionMessages: [message('user', dto.input.text)],
+                            macroMessages: {
+                                messageCount: 1, lastMessage: message('user', dto.input.text),
+                                lastUserMessage: message('user', dto.input.text), lastAssistantMessage: null,
+                            },
                             request: {
                                 modelId: 'test-model', settings: sessionPreset,
                                 agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },

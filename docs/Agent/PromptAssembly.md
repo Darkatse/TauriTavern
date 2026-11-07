@@ -17,7 +17,7 @@ Chat 的 `Generate()` 在组装前采集材料，在 `GENERATE_AFTER_DATA` 的�
 
 根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定预设、模型和上下文范围。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
 
-Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；宏环境由完整会话求出并在发送时冻结，Run 保留最终消息和组装请求。
+Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据；变量来源见 [Session API](../API/Agent.md#持续-session)。发送时 Rust 从历史末尾读到当前上下文的起点，宏环境仍按完整会话求出并冻结。Run 保留最终消息和组装请求。
 
 捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix；需要重新组装时，schemaVersion 1 的输入返回 `agent.frozen_run_input_outdated`，缺少宏重建材料时返回 `agent.macro_context_rebuild_unavailable`。
 

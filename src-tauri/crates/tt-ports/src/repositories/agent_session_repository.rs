@@ -6,11 +6,9 @@ use tt_domain::models::agent::session::{
     AgentSession, AgentSessionMessage, NewAgentSessionMessage,
 };
 
+/// The latest `limit` messages before `before_seq`, or before the end of the history.
 #[derive(Debug, Clone)]
 pub struct AgentSessionMessageReadQuery {
-    /// Read forward after this sequence; mutually exclusive with before_seq.
-    pub after_seq: Option<u64>,
-    /// Otherwise return the latest page before this sequence, or before EOF.
     pub before_seq: Option<u64>,
     /// Positive result limit. Public API bounds are applied by the application.
     pub limit: usize,

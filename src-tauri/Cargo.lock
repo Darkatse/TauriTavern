@@ -9374,6 +9374,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "image",
+ "memchr",
  "mime_guess",
  "rand 0.10.3",
  "serde",

@@ -116,6 +116,8 @@ agent-workspaces/sessions/
     runs/<run-id>/                  每次执行的记录
 ```
 
+`history.jsonl` 只追加，第 n 行是 seq 为 n 的消息；读取从文件末尾向前，只解析要返回的行。
+
 `work/`、`tmp/` 和只读的 `tool-results/` 跨 Run、跨重启保留，临时材料由 Agent 自行清理。Shell 的 `/tmp` 指向工作区目录，不是宿主临时目录。历史与文件按 Session 隔离，只有 Profile 共用。
 
 Session 文件直接修改，不发布 Chat persist 版本。数据仅保存在本机，不参与现有同步或 Chat retention；完整数据归档仍包含它们。

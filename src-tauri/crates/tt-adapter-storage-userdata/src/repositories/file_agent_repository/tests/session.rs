@@ -227,7 +227,6 @@ async fn session_history_pages_and_appends_across_reopen() {
         .read_session_messages(
             "session_a",
             AgentSessionMessageReadQuery {
-                after_seq: None,
                 before_seq: None,
                 limit: 2,
             },
@@ -244,7 +243,6 @@ async fn session_history_pages_and_appends_across_reopen() {
         .read_session_messages(
             "session_a",
             AgentSessionMessageReadQuery {
-                after_seq: None,
                 before_seq: Some(2),
                 limit: 2,
             },
@@ -446,7 +444,6 @@ async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size(
         .read_session_messages(
             "session_a",
             AgentSessionMessageReadQuery {
-                after_seq: Some(0),
                 before_seq: None,
                 limit: usize::MAX,
             },
@@ -458,5 +455,45 @@ async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size(
         messages.last().unwrap().seq,
         repository.session_last_seq("session_a").await.unwrap()
     );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn session_history_pages_read_records_longer_than_a_read_block() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    create_session(&repository, "session_a").await;
+    session_run(&repository, "session_a", "opaque_run").await;
+    let message = |text: String| -> AgentModelMessage {
+        serde_json::from_value(json!({"role": "user", "parts": [{"type": "text", "text": text}]}))
+            .unwrap()
+    };
+    let long = message("line\n".repeat(60_000));
+    for text in [
+        message("first".into()),
+        long.clone(),
+        message("last".into()),
+    ] {
+        repository
+            .append_session_message("session_a", new_message("opaque_run", text))
+            .await
+            .unwrap();
+    }
+    let reopened = FileAgentRepository::new(root.clone());
+    let page = reopened
+        .read_session_messages(
+            "session_a",
+            AgentSessionMessageReadQuery {
+                before_seq: Some(3),
+                limit: 2,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        page.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(page[1].message, long);
     fs::remove_dir_all(root).await.unwrap();
 }

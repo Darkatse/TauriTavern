@@ -36,8 +36,18 @@ pub enum AgentSessionRunInput {
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrepareSessionRunResultDto {
     pub expected_history_seq: u64,
-    pub session_messages: Vec<tt_domain::models::agent::AgentModelMessage>,
+    pub macro_messages: AgentSessionMacroMessagesDto,
     pub request: AgentPromptAssemblyBrokerRequestDto,
+}
+
+/// What the Session macros read from the whole history, the new user message included.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionMacroMessagesDto {
+    pub message_count: u64,
+    pub last_message: Option<tt_domain::models::agent::AgentModelMessage>,
+    pub last_user_message: Option<tt_domain::models::agent::AgentModelMessage>,
+    pub last_assistant_message: Option<tt_domain::models::agent::AgentModelMessage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

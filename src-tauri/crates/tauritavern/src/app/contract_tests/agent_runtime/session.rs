@@ -557,7 +557,10 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
         })
         .await
         .unwrap();
-    assert_eq!(next.session_messages.len(), history.messages.len() + 1);
+    assert_eq!(
+        next.macro_messages.message_count,
+        history.messages.len() as u64 + 1
+    );
     let prompt_inputs = &next.request.frozen_run_input_snapshot["promptInputs"];
     assert_eq!(
         prompt_inputs["sessionHistory"][0][0],
