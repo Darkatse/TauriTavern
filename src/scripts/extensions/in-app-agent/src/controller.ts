@@ -152,7 +152,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         while (loadedTail !== undefined && incoming[0] && incoming[0].seq > loadedTail + 1 && cursor !== null) {
             const page = await agent.sessions.read({ sessionId, beforeSeq: cursor, limit: PAGE_SIZE });
             if (!current(epoch)) return;
-            incoming = mergeMessages(page.messages, incoming); cursor = page.nextBeforeSeq;
+            incoming = mergeMessages(incoming, page.messages); cursor = page.nextBeforeSeq;
         }
         const wasEmpty = snapshot.messages.length === 0;
         publish({ messages: mergeMessages(snapshot.messages, incoming), ...(wasEmpty ? { nextBeforeSeq: cursor } : {}) });
@@ -324,7 +324,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
             if (!sessionId || nextBeforeSeq === null) return;
             try {
                 const page = await agent.sessions.read({ sessionId, beforeSeq: nextBeforeSeq, limit: PAGE_SIZE });
-                if (current(epoch)) publish({ messages: mergeMessages(page.messages, snapshot.messages), nextBeforeSeq: page.nextBeforeSeq });
+                if (current(epoch)) publish({ messages: mergeMessages(snapshot.messages, page.messages), nextBeforeSeq: page.nextBeforeSeq });
             } catch (error) { if (current(epoch)) throw error; }
         },
         refresh: () => action(async () => { await refreshSessions(); await refresh(); }),

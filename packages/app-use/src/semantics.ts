@@ -210,18 +210,30 @@ export function createSemantics(options: ObservationOptions) {
         return null;
     }
 
+    // Text that is empty or one of the element's own attributes carries nothing from other nodes.
+    function readsOtherNodes(element: Element, text: string, attributes: string[]): boolean {
+        return text !== '' && !attributes.some(attribute => element.getAttribute(attribute)?.trim() === text);
+    }
+
     function readName(element: Element): string {
-        // Associated labels can contain sensitive values too; avoid deriving a name from those contents.
-        if (hasSensitiveTextSource(element, 'aria-labelledby', isSensitive)) {
-            return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
-        }
-        if (isHtmlTag(element, 'option')) {
-            return element.label;
-        }
-        return computeAccessibleName(element, {
+        const name = isHtmlTag(element, 'option') ? element.label : computeAccessibleName(element, {
             getComputedStyle: getStyle,
             computedStyleSupportsPseudoElements: false,
         });
+        // Associated labels can contain sensitive values too; avoid deriving a name from those contents.
+        if (readsOtherNodes(element, name, ['aria-label', 'title']) && hasSensitiveTextSource(element, 'aria-labelledby', isSensitive)) {
+            return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
+        }
+        return name;
+    }
+
+    function readDescription(element: Element): string {
+        const description = computeAccessibleDescription(element, {
+            getComputedStyle: getStyle,
+            computedStyleSupportsPseudoElements: false,
+        });
+        return readsOtherNodes(element, description, ['aria-description', 'title'])
+            && hasSensitiveTextSource(element, 'aria-describedby', isSensitive) ? '' : description;
     }
 
     function describeElement(element: Element): ElementDescription {
@@ -235,13 +247,8 @@ export function createSemantics(options: ObservationOptions) {
             if (name) {
                 result.name = name;
             }
-            if (!hasSensitiveTextSource(element, 'aria-describedby', isSensitive)) {
-                const description = computeAccessibleDescription(element, {
-                    getComputedStyle: getStyle,
-                    computedStyleSupportsPseudoElements: false,
-                });
-                if (description && name !== description && !name.startsWith(`${description} `)) result.description = description;
-            }
+            const description = readDescription(element);
+            if (description && name !== description && !name.startsWith(`${description} `)) result.description = description;
         }
 
         if (isDisabled(element)) {

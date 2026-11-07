@@ -161,9 +161,13 @@ function formatMessage(message: string, params: McpMessageParams): string {
     ));
 }
 
+// SillyTavern's translate stays the same function for the page's lifetime.
+let translate: SillyTavernContext['translate'];
+
 export const tr: McpTranslator = (key, params = {}) => {
     const fallback = DEFAULT_MESSAGES[key];
-    const message = context()?.translate?.(fallback, `${PREFIX}${key}`) ?? fallback;
+    translate ??= context()?.translate;
+    const message = translate?.(fallback, `${PREFIX}${key}`) ?? fallback;
     return formatMessage(message, params);
 };
 

@@ -58,12 +58,13 @@ export function contextUsage(events: TauriTavernAgentRunEvent[]): ContextUsage |
     return null;
 }
 
+// A seq names one immutable record within a Session, so a record already held keeps its object.
 export function mergeMessages(
-    current: TauriTavernAgentSessionMessage[],
+    held: TauriTavernAgentSessionMessage[],
     incoming: TauriTavernAgentSessionMessage[],
 ): TauriTavernAgentSessionMessage[] {
-    const bySeq = new Map(current.map(message => [message.seq, message]));
-    for (const message of incoming) bySeq.set(message.seq, message);
+    const bySeq = new Map(incoming.map(message => [message.seq, message]));
+    for (const message of held) bySeq.set(message.seq, message);
     return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 

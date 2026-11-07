@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController } from './host';
 import { CopyButton, Disclosure, ErrorNotice, Icon, Markdown, formatDuration, formatTick, useNow } from './components';
@@ -51,70 +51,95 @@ function messageKey(entry: TauriTavernAgentSessionMessage) {
     return entry.origin ? responseKey(entry.runId, entry.origin.invocationId, entry.origin.round) : `history:${entry.seq}`;
 }
 
-type RunBlock = {
+type RunRecords = {
     runId: string;
+    entries: TauriTavernAgentSessionMessage[];
     userEntries: TauriTavernAgentSessionMessage[];
     workEntries: TauriTavernAgentSessionMessage[];
     finalEntry: TauriTavernAgentSessionMessage | null;
-    responses: TauriTavernAgentRunLiveResponse[];
-    active: boolean;
     startedAt: number | null;
     endedAt: number | null;
     toolCalls: number;
+    results: Map<string, Result>;
+    paired: Set<Result>;
+};
+type CurrentRun = {
+    responses: TauriTavernAgentRunLiveResponse[];
+    active: boolean;
+    events: TauriTavernAgentRunEvent[];
+    startedAt: number | null;
+    endedAt: number | null;
 };
 const runTerminalEvents = ['run_completed', 'run_failed', 'run_cancelled', 'run_partial_success'];
 function parseTime(value: string): number | null {
     const time = Date.parse(value);
     return Number.isFinite(time) ? time : null;
 }
-function buildRunBlocks(snapshot: AssistantSnapshot, lastMessageByRun: Map<string, TauriTavernAgentSessionMessage>): RunBlock[] {
-    const blocks: RunBlock[] = [];
-    for (const entry of snapshot.messages) {
-        let block = blocks.at(-1);
-        if (!block || block.runId !== entry.runId) {
-            block = { runId: entry.runId, userEntries: [], workEntries: [], finalEntry: null, responses: [], active: false, startedAt: null, endedAt: null, toolCalls: 0 };
-            blocks.push(block);
-        }
+function currentRun(snapshot: AssistantSnapshot): CurrentRun | undefined {
+    if (!snapshot.run) return undefined;
+    const terminalEvent = [...snapshot.events].reverse().find(item => runTerminalEvents.includes(item.type));
+    return {
+        responses: snapshot.responses, active: snapshot.run.active, events: snapshot.events,
+        // The run record's creation time; older pages of messages may not be loaded.
+        startedAt: snapshot.run.createdAt ? parseTime(snapshot.run.createdAt) : null,
+        endedAt: terminalEvent ? parseTime(terminalEvent.timestamp) : null,
+    };
+}
+// Calls and their results never cross runs: every pairing key carries the run.
+function deriveRun(runId: string, entries: TauriTavernAgentSessionMessage[]): RunRecords {
+    const userEntries: TauriTavernAgentSessionMessage[] = [];
+    const workEntries: TauriTavernAgentSessionMessage[] = [];
+    let finalEntry: TauriTavernAgentSessionMessage | null = null;
+    let startedAt: number | null = null;
+    let endedAt: number | null = null;
+    let toolCalls = 0;
+    for (const entry of entries) {
         const at = parseTime(entry.createdAt);
         if (at !== null) {
-            block.startedAt ??= at;
-            block.endedAt = at;
+            startedAt ??= at;
+            endedAt = at;
         }
         const { message } = entry;
-        if (entry.compaction) { block.workEntries.push(entry); continue; }
-        if (message.role === 'user') { block.userEntries.push(entry); continue; }
-        block.toolCalls += message.parts.filter(part => part.type === 'toolCall').length;
-        if (message.role === 'assistant' && lastMessageByRun.get(entry.runId) === entry && !message.parts.some(part => part.type === 'toolCall')) {
-            block.finalEntry = entry;
+        if (entry.compaction) { workEntries.push(entry); continue; }
+        if (message.role === 'user') { userEntries.push(entry); continue; }
+        toolCalls += message.parts.filter(part => part.type === 'toolCall').length;
+        if (message.role === 'assistant' && entry === entries.at(-1) && !message.parts.some(part => part.type === 'toolCall')) {
+            finalEntry = entry;
         } else {
-            block.workEntries.push(entry);
+            workEntries.push(entry);
         }
     }
-    const runId = snapshot.run?.runId;
-    if (runId) {
-        let block = blocks.at(-1);
-        if (!block || block.runId !== runId) {
-            block = { runId, userEntries: [], workEntries: [], finalEntry: null, responses: [], active: false, startedAt: null, endedAt: null, toolCalls: 0 };
-            blocks.push(block);
+    return { runId, entries, userEntries, workEntries, finalEntry, startedAt, endedAt, toolCalls, ...pairToolResults(entries) };
+}
+// Held records never change, so a run whose records are the same objects keeps its previous derivation.
+function createRunDerivation() {
+    let runs: RunRecords[] = [];
+    return (messages: TauriTavernAgentSessionMessage[]): RunRecords[] => {
+        const held = new Map(runs.map(run => [run.runId, run]));
+        const groups: TauriTavernAgentSessionMessage[][] = [];
+        for (const entry of messages) {
+            const group = groups.at(-1);
+            if (group?.[0]?.runId === entry.runId) group.push(entry); else groups.push([entry]);
         }
-        block.responses = snapshot.responses;
-        block.active = Boolean(snapshot.run?.active);
-        const terminalEvent = [...snapshot.events].reverse().find(item => runTerminalEvents.includes(item.type));
-        // The run record's creation time; older pages of messages may not be loaded.
-        if (snapshot.run?.createdAt) block.startedAt = parseTime(snapshot.run.createdAt);
-        if (terminalEvent) block.endedAt = parseTime(terminalEvent.timestamp) ?? block.endedAt;
-    }
-    return blocks.filter(block => block.userEntries.length + block.workEntries.length + block.responses.length > 0 || block.finalEntry !== null);
+        runs = groups.map(entries => {
+            const previous = held.get(entries[0]!.runId);
+            return previous?.entries.length === entries.length && previous.entries.every((entry, index) => entry === entries[index])
+                ? previous : deriveRun(entries[0]!.runId, entries);
+        });
+        return runs;
+    };
 }
 
-function RunBar({ block, expanded, onToggle }: { block: RunBlock; expanded: boolean; onToggle: () => void }) {
-    const ticking = block.active && block.startedAt !== null;
+function RunBar({ active, startedAt, endedAt, toolCalls, expanded, onToggle }: {
+    active: boolean; startedAt: number | null; endedAt: number | null; toolCalls: number; expanded: boolean; onToggle: () => void;
+}) {
+    const ticking = active && startedAt !== null;
     const now = useNow(1000, ticking);
-    const durationMs = block.startedAt !== null ? Math.max(0, (block.active ? now : block.endedAt ?? block.startedAt) - block.startedAt) : null;
+    const durationMs = startedAt !== null ? Math.max(0, (active ? now : endedAt ?? startedAt) - startedAt) : null;
     const parts: string[] = [];
     if (durationMs !== null) parts.push(tr('workedFor', { duration: formatDuration(durationMs) }));
-    if (block.toolCalls > 0) parts.push(tr('calls', { count: block.toolCalls }));
-    return <button type="button" className={`ttia-run-bar${block.active ? ' is-active' : ''}`} aria-expanded={expanded} data-assistant-disclosure onClick={onToggle}>
+    if (toolCalls > 0) parts.push(tr('calls', { count: toolCalls }));
+    return <button type="button" className={`ttia-run-bar${active ? ' is-active' : ''}`} aria-expanded={expanded} data-assistant-disclosure onClick={onToggle}>
         <Icon name="chevron-right" /><span>{parts.length > 0 ? parts.join(' · ') : tr('working')}</span><span className="ttia-run-line" />
     </button>;
 }
@@ -155,13 +180,13 @@ function ToolResult({ result, runId, actions, expanded }: { result: Result; runI
     </div>;
 }
 function ToolCall({ call, result, runId, origin, events, active, actions }: {
-    call: Call; result: Result | undefined; runId: string; origin: TauriTavernAgentSessionMessage['origin']; events: TauriTavernAgentRunEvent[]; active: boolean; actions: AssistantActions;
+    call: Call; result: Result | undefined; runId: string; origin: TauriTavernAgentSessionMessage['origin']; events: TauriTavernAgentRunEvent[] | undefined; active: boolean; actions: AssistantActions;
 }) {
     const matches = (item: TauriTavernAgentRunEvent, types: string[]) => Boolean(origin && item.runId === runId && types.includes(item.type)
         && record(item.payload).callId === call.callId && record(item.payload).round === origin.round
         && record(item.payload).invocationId === origin.invocationId);
-    const event = events.find(item => matches(item, ['tool_call_completed', 'tool_call_failed']));
-    const requested = events.find(item => matches(item, ['tool_call_requested']));
+    const event = events?.find(item => matches(item, ['tool_call_completed', 'tool_call_failed']));
+    const requested = events?.find(item => matches(item, ['tool_call_requested']));
     const elapsed = record(event?.payload).elapsedMs;
     const failed = result?.isError || event?.type === 'tool_call_failed';
     const done = Boolean(result || event);
@@ -189,13 +214,34 @@ function ToolCall({ call, result, runId, origin, events, active, actions }: {
         </div>}
     </Disclosure>;
 }
-function AssistantMessage({ parts, results, runId, origin, scope, events, active, finalReply, streaming = false, actions }: {
-    parts: Part[]; results: Map<string, Result>; runId: string; origin: TauriTavernAgentSessionMessage['origin']; scope: string;
-    events: TauriTavernAgentRunEvent[]; active: boolean; finalReply?: boolean; streaming?: boolean; actions: AssistantActions;
+function pairToolResults(messages: TauriTavernAgentSessionMessage[]) {
+    const results = new Map<string, Result>();
+    const calls = new Set<string>();
+    const lastCall = new Map<string, string>();
+    const paired = new Set<Result>();
+    for (const entry of messages) for (const part of entry.message.parts) {
+        if (part.type === 'toolCall') {
+            const key = `${messageKey(entry)}:${part.call.callId}`;
+            calls.add(key); lastCall.set(`${entry.runId}:${part.call.callId}`, key);
+        }
+        if (part.type === 'toolResult') {
+            // Old history has no origin. Its ordered call/result records still
+            // associate with the preceding call, never a later reuse of its ID.
+            const key = entry.origin ? `${messageKey(entry)}:${part.result.callId}` : lastCall.get(`${entry.runId}:${part.result.callId}`);
+            if (key && calls.has(key)) { results.set(key, part.result); paired.add(part.result); }
+        }
+    }
+    return { results, paired };
+}
+
+// Props stay identical while a row is unchanged.
+const AssistantMessage = memo(function AssistantMessage({ parts, hideReasoning = false, results, runId, origin, scope, events, active, finalReply, streaming = false, actions }: {
+    parts: Part[]; hideReasoning?: boolean; results: Map<string, Result>; runId: string; origin: TauriTavernAgentSessionMessage['origin']; scope: string;
+    events: TauriTavernAgentRunEvent[] | undefined; active: boolean; finalReply?: boolean; streaming?: boolean; actions: AssistantActions;
 }) {
     const text = parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
     // Stored part order is provider data; reasoning has a fixed place in the UI.
-    const displayParts = [...parts.filter(part => part.type === 'reasoning'), ...parts.filter(part => part.type !== 'reasoning')];
+    const displayParts = [...(hideReasoning ? [] : parts.filter(part => part.type === 'reasoning')), ...parts.filter(part => part.type !== 'reasoning')];
     const lastTextIndex = displayParts.reduce((last, part, index) => part.type === 'text' ? index : last, -1);
     return <article className="ttia-reply">
         {displayParts.map((part, index) => {
@@ -222,7 +268,57 @@ function AssistantMessage({ parts, results, runId, origin, scope, events, active
         })}
         {finalReply && !active && text && <CopyButton text={text} copy={actions.copy} />}
     </article>;
-}
+});
+
+// Only the current run receives `current`; any other run renders again only when its records or expansion change.
+const RunView = memo(function RunView({ run, current, expanded, onToggle, initialSeq, actions }: {
+    run: RunRecords; current: CurrentRun | undefined; expanded: boolean; onToggle: (runId: string, expanded: boolean) => void; initialSeq: number; actions: AssistantActions;
+}) {
+    const active = Boolean(current?.active);
+    const responses = current?.responses ?? [];
+    const renderEntry = (entry: TauriTavernAgentSessionMessage, collapseContent = false) => {
+        const { message } = entry;
+        if (entry.compaction) {
+            const summary = message.parts[1] as Extract<Part, { type: 'text' }>;
+            const locale = document.documentElement.lang || undefined;
+            return <div key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
+                <Disclosure label={<>{tr('contextCompacted')} <span className="ttia-muted">{tr('compactionTokens', {
+                    before: entry.compaction.tokensBefore.toLocaleString(locale), after: entry.compaction.tokensAfter.toLocaleString(locale),
+                })}</span></>}>
+                    <Markdown text={summary.text} actions={actions} />
+                </Disclosure>
+            </div>;
+        }
+        if (message.role === 'user') return <div className="ttia-user" key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
+            {message.parts.filter(part => part.type === 'text').map(part => part.text).join('\n')}</div>;
+        if (message.role === 'tool') {
+            const orphaned = message.parts.filter(part => part.type === 'toolResult' && !run.paired.has(part.result));
+            return orphaned.length ? <div key={entry.seq} data-message-seq={entry.seq}>{orphaned.map((part, index) => part.type === 'toolResult'
+                ? <Disclosure key={index} label={tr('missingCall')}>{open => <ToolResult result={part.result} runId={entry.runId} actions={actions} expanded={open} />}</Disclosure> : null)}</div> : null;
+        }
+        const key = messageKey(entry);
+        return <div key={key} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}><AssistantMessage parts={message.parts} hideReasoning={collapseContent} results={run.results}
+            finalReply={entry === run.finalEntry} runId={entry.runId} scope={key} origin={entry.origin} events={current?.events} active={active} actions={actions} /></div>;
+    };
+    const renderResponse = (response: TauriTavernAgentRunLiveResponse, streaming: boolean, collapseContent = false) => <div key={responseKey(run.runId, response.invocationId, response.round)} data-new>
+        <AssistantMessage parts={[...(response.reasoning ? [{ type: 'reasoning' as const, text: response.reasoning, provider_metadata: null }] : []),
+            ...(response.text ? [{ type: 'text' as const, text: response.text }] : [])]}
+        hideReasoning={collapseContent} results={run.results} runId={run.runId} scope={responseKey(run.runId, response.invocationId, response.round)} origin={response} events={current?.events} active streaming={streaming} actions={actions} />
+    </div>;
+    const workResponses = responses.slice(0, -1);
+    const finalResponse = responses.at(-1);
+    const workContent = [...run.workEntries.map(entry => renderEntry(entry)), ...workResponses.map(response => renderResponse(response, false))];
+    const hasReasoning = run.finalEntry?.message.parts.some(part => part.type === 'reasoning' && part.text) || Boolean(finalResponse?.reasoning);
+    const showBar = workContent.length > 0 || hasReasoning || (active && run.userEntries.length > 0);
+    return <div className="ttia-run">
+        {run.userEntries.map(entry => renderEntry(entry))}
+        {showBar && <RunBar active={active} startedAt={current?.startedAt ?? run.startedAt} endedAt={current?.endedAt ?? run.endedAt} toolCalls={run.toolCalls}
+            expanded={expanded} onToggle={() => onToggle(run.runId, expanded)} />}
+        {workContent.length > 0 && <div className={`ttia-run-work${expanded ? ' is-open' : ''}`} inert={!expanded} aria-hidden={!expanded}><div>{workContent}</div></div>}
+        {run.finalEntry && renderEntry(run.finalEntry, !expanded)}
+        {finalResponse && renderResponse(finalResponse, true, !expanded)}
+    </div>;
+});
 
 export function Transcript({ snapshot, controller, actions, visible }: {
     snapshot: AssistantSnapshot; controller: AssistantController; actions: AssistantActions; visible: boolean;
@@ -235,24 +331,14 @@ export function Transcript({ snapshot, controller, actions, visible }: {
     const [initialSeq] = useState(() => snapshot.messages.at(-1)?.seq ?? 0);
     const lastMessageSeq = useRef(snapshot.messages.at(-1)?.seq ?? 0);
     const anchor = useRef<{ seq: string; offset: number; firstSeq: number } | null>(null);
-    const lastMessageByRun = new Map(snapshot.messages.map(entry => [entry.runId, entry]));
     const [expandOverride, setExpandOverride] = useState<ReadonlyMap<string, boolean>>(new Map());
-    const results = new Map<string, Result>();
-    const calls = new Set<string>();
-    const lastCall = new Map<string, string>();
-    const paired = new Set<Result>();
-    for (const entry of snapshot.messages) for (const part of entry.message.parts) {
-        if (part.type === 'toolCall') {
-            const key = `${messageKey(entry)}:${part.call.callId}`;
-            calls.add(key); lastCall.set(`${entry.runId}:${part.call.callId}`, key);
-        }
-        if (part.type === 'toolResult') {
-            // Old history has no origin. Its ordered call/result records still
-            // associate with the preceding call, never a later reuse of its ID.
-            const key = entry.origin ? `${messageKey(entry)}:${part.result.callId}` : lastCall.get(`${entry.runId}:${part.result.callId}`);
-            if (key && calls.has(key)) { results.set(key, part.result); paired.add(part.result); }
-        }
-    }
+    const toggle = useCallback((runId: string, expanded: boolean) => setExpandOverride(prev => new Map(prev).set(runId, !expanded)), []);
+    const derive = useMemo(() => createRunDerivation(), []);
+    const held = useMemo(() => derive(snapshot.messages), [derive, snapshot.messages]);
+    const current = currentRun(snapshot);
+    const currentId = snapshot.run?.runId;
+    // A run that has saved nothing yet shows while it has live responses.
+    const runs = currentId && held.at(-1)?.runId !== currentId && snapshot.responses.length ? [...held, deriveRun(currentId, [])] : held;
     useLayoutEffect(() => {
         const root = scroller.current;
         if (!root || !visible) return;
@@ -304,51 +390,10 @@ export function Transcript({ snapshot, controller, actions, visible }: {
                 {snapshot.nextBeforeSeq !== null && <button type="button" className="ttia-older" disabled={loadingOlder || snapshot.busy}
                     onClick={() => { void loadOlder(); }}>{loadingOlder ? tr('loading') : tr('older')}</button>}
                 {pageError != null && <ErrorNotice error={pageError} retry={() => { void loadOlder(); }} />}
-                {buildRunBlocks(snapshot, lastMessageByRun).map((block, blockIndex, blocks) => {
-                    const renderEntry = (entry: TauriTavernAgentSessionMessage, collapseContent = false) => {
-                        const { message } = entry;
-                        if (entry.compaction) {
-                            const summary = message.parts[1] as Extract<Part, { type: 'text' }>;
-                            const locale = document.documentElement.lang || undefined;
-                            return <div key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
-                                <Disclosure label={<>{tr('contextCompacted')} <span className="ttia-muted">{tr('compactionTokens', {
-                                    before: entry.compaction.tokensBefore.toLocaleString(locale), after: entry.compaction.tokensAfter.toLocaleString(locale),
-                                })}</span></>}>
-                                    <Markdown text={summary.text} actions={actions} />
-                                </Disclosure>
-                            </div>;
-                        }
-                        if (message.role === 'user') return <div className="ttia-user" key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
-                            {message.parts.filter(part => part.type === 'text').map(part => part.text).join('\n')}</div>;
-                        if (message.role === 'tool') {
-                            const orphaned = message.parts.filter(part => part.type === 'toolResult' && !paired.has(part.result));
-                            return orphaned.length ? <div key={entry.seq} data-message-seq={entry.seq}>{orphaned.map((part, index) => part.type === 'toolResult'
-                                ? <Disclosure key={index} label={tr('missingCall')}>{open => <ToolResult result={part.result} runId={entry.runId} actions={actions} expanded={open} />}</Disclosure> : null)}</div> : null;
-                        }
-                        const key = messageKey(entry);
-                        const parts = collapseContent ? message.parts.filter(part => part.type !== 'reasoning') : message.parts;
-                        return <div key={key} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}><AssistantMessage parts={parts} results={results}
-                            finalReply={entry === block.finalEntry}
-                            runId={entry.runId} scope={key} origin={entry.origin} events={snapshot.events} active={Boolean(snapshot.run?.active && snapshot.run.runId === entry.runId)} actions={actions} /></div>;
-                    };
-                    const renderResponse = (response: TauriTavernAgentRunLiveResponse, streaming: boolean, collapseContent = false) => <div key={responseKey(block.runId, response.invocationId, response.round)} data-new>
-                        <AssistantMessage parts={[...(!collapseContent && response.reasoning ? [{ type: 'reasoning' as const, text: response.reasoning, provider_metadata: null }] : []),
-                            ...(response.text ? [{ type: 'text' as const, text: response.text }] : [])]}
-                        results={results} runId={block.runId} scope={responseKey(block.runId, response.invocationId, response.round)} origin={response} events={snapshot.events} active streaming={streaming} actions={actions} />
-                    </div>;
-                    const workResponses = block.responses.slice(0, -1);
-                    const finalResponse = block.responses.at(-1);
-                    const workContent = [...block.workEntries.map(entry => renderEntry(entry)), ...workResponses.map(response => renderResponse(response, false))];
-                    const expanded = expandOverride.get(block.runId) ?? (block.active || blockIndex === blocks.length - 1);
-                    const hasReasoning = block.finalEntry?.message.parts.some(part => part.type === 'reasoning' && part.text) || Boolean(finalResponse?.reasoning);
-                    const showBar = workContent.length > 0 || hasReasoning || (block.active && block.userEntries.length > 0);
-                    return <div className="ttia-run" key={block.runId}>
-                        {block.userEntries.map(entry => renderEntry(entry))}
-                        {showBar && <RunBar block={block} expanded={expanded} onToggle={() => setExpandOverride(prev => new Map(prev).set(block.runId, !expanded))} />}
-                        {workContent.length > 0 && <div className={`ttia-run-work${expanded ? ' is-open' : ''}`} inert={!expanded} aria-hidden={!expanded}><div>{workContent}</div></div>}
-                        {block.finalEntry && renderEntry(block.finalEntry, !expanded)}
-                        {finalResponse && renderResponse(finalResponse, true, !expanded)}
-                    </div>;
+                {runs.map((run, index) => {
+                    const isCurrent = run.runId === currentId;
+                    return <RunView key={run.runId} run={run} current={isCurrent ? current : undefined} initialSeq={initialSeq} actions={actions} onToggle={toggle}
+                        expanded={expandOverride.get(run.runId) ?? ((isCurrent && Boolean(current?.active)) || index === runs.length - 1)} />;
                 })}
             </div>
         </div>

@@ -94,7 +94,7 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
     const [lib, bridge, widthSetting] = await Promise.all([
         import(libraryUrl /* webpackIgnore: true */) as Promise<{
             showdown: { Converter: new (options: Record<string, boolean>) => { makeHtml: (text: string) => string } };
-            DOMPurify: { sanitize: (html: string, options: Record<string, unknown>) => string };
+            DOMPurify: (root: Window) => { setConfig: (options: Record<string, unknown>) => void; sanitize: (html: string) => string };
         }>,
         import(bridgeUrl /* webpackIgnore: true */) as Promise<{
             writeClipboardText: (text: string) => Promise<void>;
@@ -107,6 +107,9 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         throw new Error('in-app-agent: stored contentWidthPercent must be an integer from 40 to 100');
     }
     const converter = new lib.showdown.Converter({ tables: true, strikethrough: true, simpleLineBreaks: false });
+    // Its own DOMPurify instance, so hooks the page adds do not apply.
+    const purify = lib.DOMPurify(window);
+    purify.setConfig({ USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'style', 'form', 'input', 'button'] });
     // SillyTavern's preset panel declares which sources accept a reasoning effort.
     const effortSources = document.getElementById('openai_reasoning_effort_block')?.dataset.source?.split(',');
     if (!effortSources) throw new Error('in-app-agent: reasoning effort sources are unavailable');
@@ -134,9 +137,7 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
             message.textContent = tr('deleteConversationNote', { title });
             return await context.Popup.show.confirm(tr('deleteConversation'), message.outerHTML) === context.POPUP_RESULT.AFFIRMATIVE;
         },
-        markdown: (text: string) => lib.DOMPurify.sanitize(converter.makeHtml(text), {
-            USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'style', 'form', 'input', 'button'],
-        }),
+        markdown: (text: string) => purify.sanitize(converter.makeHtml(text)),
         async loadOptions(profileId: string): Promise<SettingsOptions> {
             const manager = context.getPresetManager('openai');
             if (!manager) throw new Error('in-app-agent: preset manager is unavailable');
