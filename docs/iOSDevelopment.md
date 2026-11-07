@@ -31,7 +31,7 @@ scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 
 
 ### 1.2 Xcode 27 构建
 
-发布用的 iOS 构建（canary 与 stable 的 `mobile` job）运行在 `xcode-27` runner 上，并选用 Xcode 27.1。应用的行为跟随链接的 SDK：用 iOS 26 SDK 链接的应用在 iPhone Duo 上以兼容模式运行，画布为旧 iPhone 尺寸，没有竖栏。
+发布用的 iOS 构建（canary 与 stable 的 `mobile` job）运行在 `xcode-27` runner 上，并选用 Xcode 27.2。应用的行为跟随链接的 SDK：用 iOS 26 SDK 链接的应用在 iPhone Duo 上以兼容模式运行，画布为旧 iPhone 尺寸，没有竖栏。
 
 Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符号，Rust 因此链接不到 Swift 入口。swift-rs 1.0.9、Tauri 2.12.3 与当前锁定的官方插件已把这些入口声明为 `public`；引入新的带 Swift 包的插件时，确认它的 `init_plugin_*` 也是 `public`。
 
@@ -39,9 +39,9 @@ Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符�
 
 ### 1.3 iPhone Duo
 
-抽屉栏的规则见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md) 的抽屉栏一节。模拟器验证使用 Xcode 27.1 与 iOS 27.1 runtime：
+抽屉栏的规则见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md) 的抽屉栏一节。模拟器验证使用 Xcode 27.2：
 
-- 该 runtime 目前只提供 iPhone Duo，非 Duo 设备上的 27.1 行为无法在模拟器上验证。
+- iPhone Duo 的 iOS 27.2 runtime 与通用 runtime 分开下载，只包含 iPhone Duo；其他机型用通用 runtime。
 - 开合只能在 Device Hub 中切换。不要用 `simctl io screenConfig ... power` 模拟：它不改变形态，还会让 SpringBoard 崩溃。
 - 外屏可以用 `requestGeometryUpdateWithPreferences:` 旋转，内屏拒绝程序旋转。
 - 截图：外屏 `xcrun simctl io <udid> screenshot --display=primary`，内屏 `--display=primary-1`；加 `--mask=black` 才能看到显示圆角的裁切，外屏四角的圆角并不相同。

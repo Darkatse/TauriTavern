@@ -278,9 +278,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Select Xcode 27.1 (iOS 27.1 SDK)
+      - name: Select Xcode 27.2 (iOS 27.2 SDK)
         if: matrix.mobile == 'ios'
-        run: sudo xcode-select -s /Applications/Xcode_27.1.app && xcodebuild -version
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
 
       - name: Install Android host dependencies
         if: matrix.mobile == 'android'
