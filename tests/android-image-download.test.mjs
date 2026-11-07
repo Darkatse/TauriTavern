@@ -5,7 +5,7 @@ import { Window } from 'happy-dom';
 import { createDownloadBridge } from '../src/tauri/main/download-bridge.js';
 
 test('an inherited-origin window saves remote images and its own images and download links', async () => {
-    const window = new Window({ url: 'https://tauritavern.local/' });
+    const window = new Window({ url: 'https://tauritavern.local/', settings: { enableIframePageLoading: true } });
     const iframe = window.document.createElement('iframe');
     window.document.body.append(iframe);
     const child = iframe.contentWindow;

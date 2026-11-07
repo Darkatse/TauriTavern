@@ -19,5 +19,11 @@ enableGlobalVirtualStore: false
 minimumReleaseAge: 0
 overrides:
   lodash-es: 4.18.1
+peerDependencyRules:
+  allowedVersions:
+    # Rstest still declares happy-dom ^20.8.3, but its docs and its own tests
+    # support 21, and only 21.0.4 fixes GHSA-c8p4-j97h-3vg8 and
+    # GHSA-834v-8h66-3h79. Remove this once Rstest widens the peer range.
+    '@rstest/core>happy-dom': '21'
 patchedDependencies:
   style-mod@4.1.3: patches/style-mod@4.1.3.patch

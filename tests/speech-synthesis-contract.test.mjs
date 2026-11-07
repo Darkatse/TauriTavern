@@ -6,7 +6,7 @@ import { Window } from 'happy-dom';
 const script = readFileSync(new URL('../src/tauri/main/compat/android-speech-synthesis.js', import.meta.url), 'utf8');
 
 function createWindow(invoke) {
-    const window = new Window({ url: 'http://tauri.localhost/' });
+    const window = new Window({ url: 'http://tauri.localhost/', settings: { enableIframePageLoading: true } });
     window.eval(script);
     window.__TAURI__ = { core: { invoke, Channel: class {} } };
     return window;

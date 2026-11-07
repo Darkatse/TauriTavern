@@ -6,7 +6,7 @@ import { Window } from 'happy-dom';
 import { readRequestBody } from '../src/tauri/main/http-utils.js';
 
 test('request body decoding preserves multipart data across realms', async () => {
-    const hostWindow = new Window({ url: 'https://tauritavern.local/' });
+    const hostWindow = new Window({ url: 'https://tauritavern.local/', settings: { enableIframePageLoading: true } });
     const iframe = hostWindow.document.createElement('iframe');
     hostWindow.document.body.append(iframe);
     const iframeWindow = iframe.contentWindow;
