@@ -2,7 +2,6 @@ use crate::client_asset_paths::{
     THIRD_PARTY_EXTENSION_ROUTE_PREFIX, THUMBNAIL_ROUTE_PATH, USER_CSS_ROUTE,
     is_user_data_asset_route,
 };
-use http::Request;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostResourceRoute {
@@ -12,10 +11,8 @@ pub(crate) enum HostResourceRoute {
     UserDataAsset,
 }
 
-pub(crate) fn classify_host_resource_route(
-    request: &Request<Vec<u8>>,
-) -> Option<HostResourceRoute> {
-    let path = request.uri().path();
+pub(crate) fn classify_host_resource_route(uri: &http::Uri) -> Option<HostResourceRoute> {
+    let path = uri.path();
     if path == USER_CSS_ROUTE {
         return Some(HostResourceRoute::UserCss);
     }
@@ -38,34 +35,31 @@ pub(crate) fn classify_host_resource_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http::Method;
+    use http::Uri;
 
-    fn request(path: &'static str) -> Request<Vec<u8>> {
-        Request::builder()
-            .method(Method::GET)
-            .uri(path)
-            .body(Vec::new())
-            .expect("request")
+    fn classify_path(path: &'static str) -> Option<HostResourceRoute> {
+        let uri: Uri = path.parse().expect("valid uri");
+        classify_host_resource_route(&uri)
     }
 
     #[test]
     fn keeps_browser_resource_route_order() {
         assert_eq!(
-            classify_host_resource_route(&request("/css/user.css")),
+            classify_path("/css/user.css"),
             Some(HostResourceRoute::UserCss)
         );
         assert_eq!(
-            classify_host_resource_route(&request("/scripts/extensions/third-party/a/b.js")),
+            classify_path("/scripts/extensions/third-party/a/b.js"),
             Some(HostResourceRoute::ThirdPartyAsset)
         );
         assert_eq!(
-            classify_host_resource_route(&request("/thumbnail")),
+            classify_path("/thumbnail"),
             Some(HostResourceRoute::Thumbnail)
         );
         assert_eq!(
-            classify_host_resource_route(&request("/backgrounds/a.mp4")),
+            classify_path("/backgrounds/a.mp4"),
             Some(HostResourceRoute::UserDataAsset)
         );
-        assert_eq!(classify_host_resource_route(&request("/index.html")), None);
+        assert_eq!(classify_path("/index.html"), None);
     }
 }
