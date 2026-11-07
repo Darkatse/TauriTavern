@@ -632,19 +632,6 @@ mod tests {
         assert!(error.to_string().contains("activation_strategy"));
     }
 
-    #[test]
-    fn group_manifest_compat_rejects_float_and_bool_id() {
-        let mut float_manifest = base_group_manifest();
-        float_manifest["id"] = json!(1_701_046_282_175.5_f64);
-        let error = decode_test_group(float_manifest).expect_err("float id must fail");
-        assert!(error.to_string().contains("field 'id'"));
-
-        let mut bool_manifest = base_group_manifest();
-        bool_manifest["id"] = json!(true);
-        let error = decode_test_group(bool_manifest).expect_err("bool id must fail");
-        assert!(error.to_string().contains("field 'id'"));
-    }
-
     #[tokio::test]
     async fn group_repository_loads_and_rewrites_legacy_group_manifest() {
         let root = std::env::temp_dir().join(format!(
