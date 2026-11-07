@@ -57,8 +57,8 @@ importers:
         specifier: ^1.0.5
         version: 1.0.5
       dompurify:
-        specifier: ^3.4.15
-        version: 3.4.15
+        specifier: ^3.4.17
+        version: 3.4.17
       droll:
         specifier: ^0.2.1
         version: 0.2.1
@@ -1084,8 +1084,8 @@ packages:
   dom-accessibility-api@0.7.1:
     resolution: {integrity: sha512-vdnCeZD+3wZ+8h8xXL/ZtBlvvoobOFyPzSiIfO6sGOZDqjFx4aLMAjZhl4rawj5xYz3UwP6Tgvyh0iH4IOCVnQ==}
 
-  dompurify@3.4.15:
-    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   droll@0.2.1:
     resolution: {integrity: sha512-fXxtxZSwGK6afeG18Vk6q/8LQDAnIylsvk/2tQhHwDOJmdB/x+YL9GLoSZUZXJkQ8LrBcyU/1EoIL1eSlpDMsg==}
@@ -2807,7 +2807,7 @@ snapshots:
 
   dom-accessibility-api@0.7.1: {}
 
-  dompurify@3.4.15:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 

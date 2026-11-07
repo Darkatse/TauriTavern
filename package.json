@@ -95,7 +95,7 @@
     "chalk": "^5.6.0",
     "chevrotain": "^11.2.0",
     "diff-match-patch": "^1.0.5",
-    "dompurify": "^3.4.15",
+    "dompurify": "^3.4.17",
     "droll": "^0.2.1",
     "fflate": "^0.8.3",
     "fuse.js": "^7.1.0",

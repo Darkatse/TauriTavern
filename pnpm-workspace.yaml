@@ -5,6 +5,16 @@ packages:
 allowBuilds:
   '@parcel/watcher': true
   protobufjs: true
+auditConfig:
+  ignoreGhsas:
+    # showdown has no fixed release: the advisories name 2.1.1, which was never
+    # published. Every showdown result shown in the page is sanitized by
+    # DOMPurify, so the two XSS advisories are unreachable. The link-parsing
+    # ReDoS stays accepted until showdown publishes a fix; remove these entries
+    # then.
+    - GHSA-cr32-g25g-vxjj
+    - GHSA-22g5-r2x5-97cx
+    - GHSA-rmmh-p597-ppvv
 enableGlobalVirtualStore: false
 minimumReleaseAge: 0
 overrides:
