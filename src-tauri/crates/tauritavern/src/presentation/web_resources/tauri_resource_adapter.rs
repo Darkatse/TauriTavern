@@ -6,9 +6,10 @@ use tt_contracts::host::{HostKind, HostPlatform};
 
 #[cfg(any(dev, debug_assertions))]
 use tauri::Manager;
+use tauri::http::HeaderValue;
 use tauri::http::header::{
     ACCEPT_RANGES, ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, DATE, ETAG,
-    EXPIRES, LAST_MODIFIED, PRAGMA, VARY,
+    EXPIRES, LAST_MODIFIED, PRAGMA, REFERRER_POLICY, VARY,
 };
 use tauri::http::header::{
     CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_LOCATION,
@@ -43,6 +44,12 @@ pub(crate) fn handle_tauri_web_resource_request(
 ) {
     if let Some(host_response) = dispatch_tauri_host_resource_request(host_resources, request) {
         apply_host_resource_response(response, host_response);
+    }
+
+    if is_tauri_frontend_uri(request.uri()) {
+        response
+            .headers_mut()
+            .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     }
 }
 
@@ -80,6 +87,14 @@ fn serve_dev_web_resource_from_app<R: tauri::Runtime>(
 ) -> HostResourceResponse {
     let host_resources = app_handle.state::<Arc<HostResourceService>>();
     host_resources.serve(request, delivery)
+}
+
+fn is_tauri_frontend_uri(uri: &tauri::http::Uri) -> bool {
+    is_tauri_app_uri(uri)
+        || (uri.scheme_str() == Some("http")
+            && uri
+                .authority()
+                .is_some_and(|authority| authority.as_str() == "tauri.localhost"))
 }
 
 fn is_tauri_app_uri(uri: &tauri::http::Uri) -> bool {
@@ -161,16 +176,23 @@ mod tests {
         for accepted in [
             "tauri://localhost/backgrounds/a.mp4",
             "tauri://localhost/backgrounds/a.mp4?x=1",
+            "http://tauri.localhost/",
+            "http://tauri.localhost/backgrounds/a.png",
         ] {
-            assert!(is_tauri_app_uri(&accepted.parse().expect("accepted URI")));
+            assert!(is_tauri_frontend_uri(
+                &accepted.parse().expect("accepted URI")
+            ));
         }
         for rejected in [
             "/backgrounds/a.mp4",
             "https://example.com/backgrounds/a.mp4",
+            "http://tauri.localhost.evil.example/",
             "tauri://evil.example/backgrounds/a.mp4",
             "tauri://localhost:80/backgrounds/a.mp4",
         ] {
-            assert!(!is_tauri_app_uri(&rejected.parse().expect("rejected URI")));
+            assert!(!is_tauri_frontend_uri(
+                &rejected.parse().expect("rejected URI")
+            ));
         }
     }
 
@@ -179,7 +201,7 @@ mod tests {
         let host_resources = HostResourceService::new(false, Arc::new(NoopStore::default()));
         let request = Request::builder()
             .method("GET")
-            .uri("tauri://localhost/index.html")
+            .uri("http://tauri.localhost/index.html")
             .body(Vec::new())
             .expect("request");
         let mut response: Response<Cow<'static, [u8]>> =
@@ -191,6 +213,41 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.body().as_ref(), b"frontend");
         assert!(response.headers().get(CONTENT_TYPE).is_none());
+    }
+
+    #[test]
+    fn app_resources_set_no_referrer_policy_and_external_requests_are_untouched() {
+        let host_resources = HostResourceService::new(false, Arc::new(NoopStore::default()));
+        let app_request = Request::builder()
+            .method("GET")
+            .uri("http://tauri.localhost/index.html")
+            .body(Vec::new())
+            .expect("app request");
+        let mut app_response: Response<Cow<'static, [u8]>> =
+            Response::new(Cow::Owned(b"frontend".to_vec()));
+
+        handle_tauri_web_resource_request(&host_resources, &app_request, &mut app_response);
+
+        assert_eq!(
+            app_response.headers().get(REFERRER_POLICY),
+            Some(&HeaderValue::from_static("no-referrer"))
+        );
+
+        let external_request = Request::builder()
+            .method("GET")
+            .uri("https://example.com/image.png")
+            .body(Vec::new())
+            .expect("external request");
+        let mut external_response: Response<Cow<'static, [u8]>> =
+            Response::new(Cow::Owned(b"external".to_vec()));
+
+        handle_tauri_web_resource_request(
+            &host_resources,
+            &external_request,
+            &mut external_response,
+        );
+
+        assert!(external_response.headers().get(REFERRER_POLICY).is_none());
     }
 
     #[test]
