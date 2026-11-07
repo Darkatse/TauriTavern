@@ -123,17 +123,19 @@ EventEmitter.prototype.removeListener = function (event, listener) {
     }
 };
 
+function traceEmit(event, args) {
+    if (localStorage.getItem('eventTracing') === 'true') {
+        console.trace('Event emitted: ' + event, args);
+    }
+}
+
 /**
  * Emits an event with optional arguments.
  * @param {string} event Event name
  */
 EventEmitter.prototype.emit = async function (event) {
     let args = [].slice.call(arguments, 1);
-    if (localStorage.getItem('eventTracing') === 'true') {
-        console.trace('Event emitted: ' + event, args);
-    } else {
-        console.debug('Event emitted: ' + event);
-    }
+    traceEmit(event, args);
 
     let i, listeners, length;
 
@@ -159,11 +161,7 @@ EventEmitter.prototype.emit = async function (event) {
 
 EventEmitter.prototype.emitAndWait = function (event) {
     let args = [].slice.call(arguments, 1);
-    if (localStorage.getItem('eventTracing') === 'true') {
-        console.trace('Event emitted: ' + event, args);
-    } else {
-        console.debug('Event emitted: ' + event);
-    }
+    traceEmit(event, args);
 
     let i, listeners, length;
 
