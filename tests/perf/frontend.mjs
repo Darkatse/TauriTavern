@@ -154,13 +154,16 @@ const data = JSON.parse(document.getElementById('perf-data').textContent);
 const fixture = createWebHostFixture(data.settings, data.theme, data.extensions);
 fixture.chatFiles.set('review-chat', data.chat.map(record => JSON.stringify(record)).join('\\n'));
 fixture.chatFiles.set('ledger-chat', data.ledgerChat.map(record => JSON.stringify(record)).join('\\n'));
+fixture.chatFiles.set('atlas-chat', data.atlasChat.map(record => JSON.stringify(record)).join('\\n'));
 const respond = (body, status = 200) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const cards = {
     'Review.png': () => JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/characters/get', headers: {}, body: '{}' }).body),
     'Ledger.png': () => ({ ...JSON.parse(data.ledgerCard), json_data: data.ledgerCard, avatar: 'Ledger.png',
         chat_size: 160000, data_size: 2100000, date_added: 2, date_last_chat: 2 }),
+    'Atlas.png': () => ({ ...JSON.parse(data.atlasCard), json_data: data.atlasCard, avatar: 'Atlas.png',
+        chat_size: 790000, data_size: 95000, date_added: 3, date_last_chat: 3 }),
 };
-const chatsOf = { 'Review.png': ['review-chat'], 'Ledger.png': ['ledger-chat'] };
+const chatsOf = { 'Review.png': ['review-chat'], 'Ledger.png': ['ledger-chat'], 'Atlas.png': ['atlas-chat'] };
 // The native host's list entry (tt-domain Character::into_shallow); the full card is read when one opens.
 function shallow(card) {
     const data = card.data ?? {}, extensions = data.extensions ?? {};
@@ -197,17 +200,21 @@ function handleCharacters(request) {
         default: return null;
     }
 }
-// Opens the reply stream that the scenario feeds through __perfReply.
+// Opens the reply stream that the scenario feeds through __perfReply while it is open. A token arrives 50 ms after
+// it is pushed; during a step that time passes on the step clock, so every token passes the 30 FPS render limit.
 function streamReply() {
     const encoder = new TextEncoder();
     return new ReadableStream({
         start(controller) {
             const send = data => controller.enqueue(encoder.encode(\`data: \${data}\\n\\n\`));
+            const arrive = delta => setTimeout(() => send(JSON.stringify({ choices: [{ delta, index: 0 }] })), 50);
             globalThis.__perfReply = {
-                push: token => send(JSON.stringify({ choices: [{ delta: { content: token }, index: 0 }] })),
+                push: content => arrive({ content }),
+                think: reasoning_content => arrive({ reasoning_content }),
                 end() {
                     send('[DONE]');
                     controller.close();
+                    globalThis.__perfReply = null;
                 },
             };
         },
@@ -274,7 +281,30 @@ function rememberIssued(issued, index, value, at = []) {
         for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, [...at, key]);
     }
 }
-const { invoke } = window.__TAURI__.core;
+// Native commands the Web Host lacks, answered as the native host would.
+const { session, messages, runs } = data.assistant;
+const nativeOnly = {
+    count_openai_tokens_batch: ({ dto }) => ({ token_counts: dto.requests.map(request => Math.ceil(JSON.stringify(request.messages).length / 4)) }),
+    load_agent_session_profile: () => ({ profile: null }),
+    list_agent_sessions: () => ({ sessions: [session], activeRuns: [] }),
+    read_agent_session({ dto }) {
+        const limit = dto.limit ?? 50;
+        const page = messages.filter(message => message.seq < (dto.beforeSeq ?? Infinity)).slice(-limit - 1);
+        const more = page.length > limit;
+        return { session, messages: more ? page.slice(1) : page, lastSeq: messages.length, nextBeforeSeq: more ? page[1].seq : null, activeRun: null };
+    },
+    read_agent_run_events({ dto }) {
+        const events = runs.find(({ run }) => run.id === dto.runId).events
+            .filter(event => event.seq > (dto.afterSeq ?? 0) && event.seq < (dto.beforeSeq ?? Infinity));
+        return { events: dto.beforeSeq == null ? events.slice(0, dto.limit) : events.slice(-dto.limit) };
+    },
+    // The catalog only fills the assistant's settings view.
+    list_agent_tools: () => ({ tools: [], diagnostics: [] }),
+};
+const webHostInvoke = window.__TAURI__.core.invoke;
+const invoke = async (command, args, options) => Object.hasOwn(nativeOnly, command)
+    ? structuredClone(nativeOnly[command](args))
+    : webHostInvoke(command, args, options);
 window.__TAURI__.core.invoke = async (command, args, options) => {
     const host = globalThis.__perfHost;
     globalThis.__perfPage.noteActivity();
@@ -424,7 +454,11 @@ async function openFrontend({ allocations = false } = {}) {
     }
     const problems = [];
     page.on('pageerror', error => problems.push(`Page error: ${error.message}`));
-    page.on('console', message => { if (message.type() === 'error') problems.push(`Console error: ${message.text()}`); });
+    let consoleMessages = 0;
+    page.on('console', message => {
+        consoleMessages++;
+        if (message.type() === 'error') problems.push(`Console error: ${message.text()}`);
+    });
     page.on('response', response => { if (response.status() >= 400) problems.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`); });
     const results = {};
     let requests = 0;
@@ -587,13 +621,16 @@ async function openFrontend({ allocations = false } = {}) {
                 await endStep(name);
                 return;
             }
-            const before = requests, hostBefore = await hostBytes();
+            const before = requests, messagesBefore = consoleMessages, hostBefore = await hostBytes();
             await traceStep(name);
             await startStep();
             const work = await trace(() => run(name, inputs));
             await endStep(name);
             await traceStep(null);
-            results[name] = { ...work, requests: requests - before, hostBytes: await hostBytes() - hostBefore, ...await pageSize() };
+            results[name] = {
+                ...work, requests: requests - before, consoleMessages: consoleMessages - messagesBefore,
+                hostBytes: await hostBytes() - hostBefore, ...await pageSize(),
+            };
         } finally {
             measuring = false;
         }
