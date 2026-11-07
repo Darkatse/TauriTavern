@@ -111,6 +111,7 @@ export {};
  *   | 'get_workers_ai_embedding_models'
  *   | 'get_workers_ai_multimodal_models'
  *   | 'get_world_info'
+ *   | 'list_world_info'
  *   | 'import_character'
  *   | 'import_character_chats'
  *   | 'import_group_chat_payload'

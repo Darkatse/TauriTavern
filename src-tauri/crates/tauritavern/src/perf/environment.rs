@@ -64,6 +64,7 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
             c::agent_session_commands::read_agent_session,
             c::agent_commands::read_agent_run_events,
             c::agent_commands::list_agent_tools,
+            c::world_info_commands::list_world_info,
             c::world_info_commands::get_world_info,
             c::tokenizer_commands::count_openai_tokens_batch,
             c::avatar_commands::get_personas,

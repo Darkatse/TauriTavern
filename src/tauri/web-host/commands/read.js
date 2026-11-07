@@ -51,6 +51,7 @@ export function createReadCommands(backend) {
         get_all_backgrounds: () => json('/api/backgrounds/all').images,
         get_background_folders: () => json('/api/backgrounds/folders'),
         get_all_background_metadata: args => json('/api/image-metadata/all', args),
+        list_world_info: () => json('/api/worldinfo/list'),
         get_world_info: ({ dto }) => new TextEncoder().encode(JSON.stringify(json('/api/worldinfo/get', dto))),
     };
 }

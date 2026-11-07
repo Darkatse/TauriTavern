@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::dto::world_info_dto::WorldInfoJsonDto;
 use crate::errors::ApplicationError;
 use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::world_info::WorldInfoListItem;
 use tt_domain::models::world_info::{sanitize_world_info_import_name, sanitize_world_info_name};
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
@@ -16,6 +17,10 @@ impl WorldInfoService {
         Self {
             world_info_repository,
         }
+    }
+
+    pub async fn list_world_info(&self) -> Result<Vec<WorldInfoListItem>, ApplicationError> {
+        Ok(self.world_info_repository.list_world_info().await?)
     }
 
     pub async fn get_world_info(&self, name: &str) -> Result<WorldInfoJsonDto, ApplicationError> {

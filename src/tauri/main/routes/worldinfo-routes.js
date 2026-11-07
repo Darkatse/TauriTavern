@@ -9,6 +9,11 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
         return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
     }
 
+    router.post('/api/worldinfo/list', async () => {
+        const inventory = await context.safeInvoke('list_world_info');
+        return jsonResponse(inventory);
+    });
+
     router.post('/api/worldinfo/get', async ({ body }) => {
         const name = typeof body?.name === 'string' ? body.name : '';
         if (name === '') {
