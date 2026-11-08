@@ -267,7 +267,7 @@ export function createChatSurfaceController({
             for (const messageId of nextProjection.indices) {
                 residencies.getByMessageId(messageId).message = messages[messageId];
             }
-            domAdapter.syncLastMessage(messages.length - 1);
+            domAdapter.syncChatEnd(messages.length - 1);
             assertHealthy();
             return;
         }
@@ -361,7 +361,7 @@ export function createChatSurfaceController({
 
         structure = nextStructure;
         projection = nextProjection;
-        domAdapter.syncLastMessage(messages.length - 1);
+        domAdapter.syncChatEnd(messages.length - 1);
         try {
             assertCommittedResidencies(residencies, projection, domAdapter);
             participants.connected(added.map(record => ({ record })), ['didMount']);

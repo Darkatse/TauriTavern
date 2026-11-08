@@ -231,6 +231,7 @@ src/
 - 长列表的条目用 `content-visibility: auto`，并按实际高度给出 `contain-intrinsic-block-size`。WebKit 的 `content-visibility` 不省样式计算，所以世界书还会让远离可见区域的条目休眠：由 `IntersectionObserver` 判断远近，休眠条目设为 `content-visibility: hidden`，标题栏 `display: none`。休眠要守住两点：
   - 不改变条目尺寸。`hidden` 让条目保持上次渲染的高度；否则条目会在唤醒前塌缩，快速滚动停下后列表会反复伸缩、闪烁。
   - 不让内容变得无法测量。只隐藏标题栏，其余部分仍能读取布局，休眠时打开的条目也能正确挂载编辑器。依赖布局的初始化（如测量标题）放到唤醒时做；持有焦点的条目不休眠。
+- 代码直接设置滚动位置时（如滚到末尾、删除末尾条目），浏览器还没判断条目离视口远近，带进视口的条目按记录或占位的高度排版，读者会停在别处。这类操作能到达的条目不跳过渲染：聊天由 ChatSurface 给末尾三楼写 `data-tt-chat-end`。
 - WebKit 每次按下鼠标、或删除持有选区的节点时，会在页面里搜索放置选区的位置，在由表单组成的长列表里要好几秒。世界书列表因此对字段以外的按下调用 `preventDefault()`，同时让当前焦点 `blur()`（`change` 时保存的字段靠失焦提交）；拆除列表前先清除其中的选区。不要用 `user-select: none` 代替，WKWebView 仍会搜索。
 
 ## 7. 插件系统前端适配

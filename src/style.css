@@ -1249,10 +1249,15 @@ body .panelControlBar {
 }
 
 @supports (content-visibility: auto) and (contain-intrinsic-block-size: auto 200px) {
-    /* Keep the actively updating last message on the normal rendering path. */
-    #chat > .mes:not(.last_mes) {
-        content-visibility: auto;
+    /* Every message records its rendered height, which it keeps while skipped. */
+    #chat > .mes {
         contain-intrinsic-block-size: auto 200px;
+    }
+
+    /* Sending and deleting set the scroll position before the browser decides which messages
+       are near the viewport, so the messages at the end are never skipped. */
+    #chat > .mes:not([data-tt-chat-end]) {
+        content-visibility: auto;
         flex-shrink: 0;
     }
 }

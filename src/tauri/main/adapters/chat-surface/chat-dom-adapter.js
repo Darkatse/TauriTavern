@@ -2,6 +2,9 @@
 
 /** @typedef {{ messageId: number; element: HTMLElement }} DomProjectionEntry */
 
+// Sending and deleting bring these last messages into view; style.css keeps them rendered.
+const CHAT_END_MESSAGES = 3;
+
 /** @param {HTMLElement} root */
 function directMessages(root) {
     return /** @type {HTMLElement[]} */ ([...root.querySelectorAll(':scope > .mes')]);
@@ -271,9 +274,11 @@ export function createChatDomAdapter({
     }
 
     /** @param {number} finalMessageId */
-    function syncLastMessage(finalMessageId) {
+    function syncChatEnd(finalMessageId) {
         for (const element of directMessages(root)) {
-            element.classList.toggle('last_mes', element.getAttribute('mesid') === String(finalMessageId));
+            const messageId = Number(element.getAttribute('mesid'));
+            element.classList.toggle('last_mes', messageId === finalMessageId);
+            element.toggleAttribute('data-tt-chat-end', messageId > finalMessageId - CHAT_END_MESSAGES);
         }
     }
 
@@ -420,7 +425,7 @@ export function createChatDomAdapter({
         clearAll,
         discard,
         directMessages: () => directMessages(root),
-        syncLastMessage,
+        syncChatEnd,
         enableBoundedLayout,
         commitBoundedLayout,
         disableBoundedLayout,

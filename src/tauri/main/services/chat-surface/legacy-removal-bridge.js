@@ -70,6 +70,6 @@ export function reconcileLegacyMessageRemovals({
     assertActiveRuntimeSources(retained);
 
     residencies.remove(removed);
-    domAdapter.syncLastMessage(trueTailId);
+    domAdapter.syncChatEnd(trueTailId);
     return nextProjection;
 }
