@@ -9,13 +9,13 @@ use super::super::model_capabilities::{
     map_gemini_thinking_control, parse_known_reasoning_effort,
 };
 use super::content_parts::{
-    InputPart, MediaPart, MediaSource, parse_openai_chat_content,
-    reject_media_for_text_only_content,
+    InputPart, MediaPart, MediaSource, media_kind_in_value, parse_openai_chat_content,
+    reject_media_for_text_only_content, to_lossy_text,
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
-    message_tool_name, message_tool_result_text, normalize_tool_result_payload,
+    message_tool_name, normalize_tool_result_payload,
 };
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
@@ -136,11 +136,7 @@ fn build_google_payload(
         && gemini_model
             .as_ref()
             .is_some_and(GeminiModel::has_fixed_sampling);
-    let no_prefill = has_fixed_sampling_parameters
-        && payload
-            .get("chat_completion_source")
-            .and_then(Value::as_str)
-            != Some("opencode");
+    let no_prefill = has_fixed_sampling_parameters;
     let (contents, system_prompt) = convert_messages(
         payload.get("messages"),
         use_system_prompt,
@@ -377,14 +373,7 @@ fn convert_messages(
                 break;
             };
 
-            let role = message
-                .get("role")
-                .and_then(Value::as_str)
-                .unwrap_or("user")
-                .trim()
-                .to_lowercase();
-
-            if role != "system" {
+            if message_role(message) != "system" {
                 break;
             }
 
@@ -401,36 +390,58 @@ fn convert_messages(
         }
     }
 
+    let mut tool_images = Vec::new();
     for (index, entry) in entries.iter().enumerate().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
         };
 
-        let role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user")
-            .trim()
-            .to_lowercase();
-        let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
+        let role = message_role(message);
+        let is_tool = is_tool_role(&role);
+        let mut merge_with_previous = is_tool;
 
-        let native_gemini_parts = if role == "assistant" {
-            message_native_gemini_parts(message)
-        } else {
+        let native_gemini_parts = if is_tool {
             None
+        } else {
+            message_native_gemini_parts(message)
         };
-        let mut parts = if matches!(role.as_str(), "tool" | "function") {
+        let mut parts = if is_tool {
             let previous_call =
                 message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
             let name = message_tool_name(message)
                 .or_else(|| previous_call.map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| fallback_tool_name().to_string());
-            let content = message_tool_result_text(message);
-            vec![build_tool_response_part(
+            let content_parts = parse_openai_chat_content(message.get("content"))?;
+            let mut images = Vec::new();
+            for part in &content_parts {
+                match part {
+                    InputPart::Image(media) => {
+                        images.push(render_google_media_part("image", media, false)?);
+                    }
+                    InputPart::Text(_) => {}
+                    InputPart::Unknown { value, .. } if media_kind_in_value(value).is_none() => {}
+                    InputPart::Audio(_) | InputPart::Video(_) | InputPart::Unknown { .. } => {
+                        return Err(ApplicationError::ValidationError(
+                            "Gemini function response supports only text and image content parts"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+            let content = to_lossy_text(&content_parts);
+            let mut response = build_tool_response_part(
                 &name,
                 &content,
                 previous_call.and_then(|(_, id)| id.as_deref()),
-            )]
+            );
+            if !images.is_empty() {
+                if is_gemini3_or_later {
+                    response["functionResponse"]["parts"] = json!(images);
+                } else {
+                    tool_images.extend(images);
+                }
+            }
+            vec![response]
         } else {
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
@@ -546,6 +557,15 @@ fn convert_messages(
                 "role": target_role,
                 "parts": parts,
             }));
+        }
+        let next_is_tool = entries
+            .get(index + 1)
+            .and_then(Value::as_object)
+            .is_some_and(|message| is_tool_role(&message_role(message)));
+        if !next_is_tool && !tool_images.is_empty() {
+            let mut parts = vec![json!({ "text": "Tool result image:" })];
+            parts.append(&mut tool_images);
+            contents.push(json!({ "role": "user", "parts": parts }));
         }
     }
 
@@ -725,6 +745,19 @@ fn normalize_google_part_field(object: &mut Map<String, Value>, legacy: &str, ca
     {
         object.insert(canonical.to_string(), value);
     }
+}
+
+fn message_role(message: &Map<String, Value>) -> String {
+    message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .trim()
+        .to_lowercase()
+}
+
+fn is_tool_role(role: &str) -> bool {
+    matches!(role, "tool" | "function")
 }
 
 fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
@@ -1314,12 +1347,14 @@ mod tests {
 
     #[test]
     fn makersuite_rejects_media_that_generate_content_cannot_preserve() {
-        for (content, expected) in [
+        for (role, content, expected) in [
             (
+                "user",
                 json!([{ "type": "image_url", "image_url": { "detail": "high" } }]),
                 "missing url",
             ),
             (
+                "user",
                 json!([{
                     "type": "audio_url",
                     "audio_url": { "url": "data:audio/wav;base64," }
@@ -1327,6 +1362,7 @@ mod tests {
                 "invalid data URL",
             ),
             (
+                "user",
                 json!([{
                     "type": "image_url",
                     "image_url": { "url": "https://example.test/cat.png" }
@@ -1334,13 +1370,34 @@ mod tests {
                 "remote image URLs",
             ),
             (
+                "user",
                 json!([{ "type": "input_image", "file_id": "file_123" }]),
                 "file_id",
+            ),
+            (
+                "tool",
+                json!([{ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }]),
+                "function response supports only text and image",
+            ),
+            (
+                "tool",
+                json!([{ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }]),
+                "function response supports only text and image",
+            ),
+            (
+                "tool",
+                json!([{ "type": "input_audio", "input_audio": { "data": "AAAA", "format": "wav" } }]),
+                "function response supports only text and image",
+            ),
+            (
+                "tool",
+                json!([{ "type": "input_video", "video_url": "data:video/mp4;base64,AAAA" }]),
+                "function response supports only text and image",
             ),
         ] {
             let payload = json!({
                 "model": "gemini-2.5-flash",
-                "messages": [{ "role": "user", "content": content }]
+                "messages": [{ "role": role, "content": content }]
             })
             .as_object()
             .cloned()
@@ -1721,6 +1778,36 @@ mod tests {
             assert_eq!(contents.last().unwrap()["role"], role);
             if last.get("native").is_some() {
                 assert_eq!(contents.last().unwrap()["parts"], native["parts"]);
+            }
+        }
+    }
+
+    #[test]
+    fn tool_result_images_use_model_supported_wire_shape() {
+        for model in ["gemini-3-flash-preview", "gemini-2.5-flash"] {
+            let payload = json!({"model":model,"messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},
+                {"role":" FUNCTION ","tool_call_id":"call_2","content":"done"}
+            ]}).as_object().unwrap().clone();
+            let (_, upstream) = build(payload).unwrap();
+            let contents = upstream["contents"].as_array().unwrap();
+            let images = json!([{"inlineData":{"mimeType":"image/png","data":"AAAA"}}]);
+            if model.starts_with("gemini-3") {
+                assert_eq!(contents[2]["parts"][0]["functionResponse"]["parts"], images);
+                assert_eq!(contents.len(), 3);
+            } else {
+                assert!(
+                    contents[2]["parts"][0]["functionResponse"]
+                        .get("parts")
+                        .is_none()
+                );
+                assert_eq!(contents[2]["parts"].as_array().unwrap().len(), 2);
+                assert_eq!(
+                    contents[3],
+                    json!({"role":"user","parts":[{"text":"Tool result image:"},images[0]]})
+                );
             }
         }
     }

@@ -8,7 +8,7 @@ use super::commit_ledger::RunCommitLedger;
 use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
-use super::tool_execution::recoverable_tool_error;
+use super::session_context::{CompactionTrigger, is_context_overflow_error};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
@@ -21,6 +21,8 @@ use tt_domain::models::agent::{
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
+
+const MAX_DRIFT_RECOVERY_ATTEMPTS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
@@ -43,7 +45,7 @@ impl AgentRuntimeService {
         frame: &mut InvocationFrame,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<AgentLoopExit>, ApplicationError> {
+    ) -> Result<AgentLoopExit, ApplicationError> {
         let InvocationFrame { prepared, progress } = frame;
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
@@ -62,12 +64,9 @@ impl AgentRuntimeService {
         loop {
             let round = progress.round;
             match &mut progress.step {
-                InvocationStep::Exited(exit) => return Ok(Some(exit.clone())),
+                InvocationStep::Exited(exit) => return Ok(exit.clone()),
                 InvocationStep::Model => {
                     self.ensure_not_cancelled(cancel)?;
-                    if round > progress.max_rounds {
-                        return Ok(None);
-                    }
                     if updates_run_status {
                         self.apply_pending_guidance_to_request(
                             run_id,
@@ -79,28 +78,74 @@ impl AgentRuntimeService {
                         self.transition_status(run_id, AgentRunStatus::CallingModel)
                             .await?;
                     }
-                    self.event(
-                        run_id,
-                        AgentRunEventLevel::Info,
-                        "model_request_created",
-                        json!({
-                            "round": round,
-                            "invocationId": invocation_id,
-                            "toolTurn": &prepared.tool_turn,
-                            "request": request_summary(&prepared.request),
-                        }),
-                    )
-                    .await?;
-                    let exchange = self
-                        .generate_model_with_retry(
-                            &prepared.invocation,
-                            round,
-                            &prepared.request,
-                            &profile.run.model_retry,
-                            stream,
-                            cancel,
+                    let mut session_tokens = match &prepared.session {
+                        Some(session) => Some(
+                            self.context_tokens(
+                                &prepared.request,
+                                &session.tokenizer_model,
+                                session.usage_anchor.as_ref(),
+                                prepared.accepts_images,
+                            )
+                            .await?,
+                        ),
+                        None => None,
+                    };
+                    let mut pending = match (&prepared.session, session_tokens) {
+                        (Some(session), Some(tokens)) if tokens >= session.point => {
+                            Some((CompactionTrigger::Point, tokens))
+                        }
+                        _ => None,
+                    };
+                    let mut compacted = false;
+                    let exchange = loop {
+                        if let (Some((trigger, tokens)), Some(session)) =
+                            (pending.take(), &prepared.session)
+                        {
+                            let (request, tokens_after) = self
+                                .compact_session_context(
+                                    prepared, session, round, trigger, tokens, cancel,
+                                )
+                                .await?;
+                            prepared.request = request;
+                            session_tokens = Some(tokens_after);
+                            progress.session.clear_reads();
+                            compacted = true;
+                            self.transition_status(run_id, AgentRunStatus::CallingModel)
+                                .await?;
+                        }
+                        let mut created = json!({
+                            "round": round, "invocationId": invocation_id,
+                            "toolTurn": &prepared.tool_turn, "request": request_summary(&prepared.request),
+                        });
+                        if let (Some(session), Some(tokens)) = (&prepared.session, session_tokens) {
+                            created["context"] =
+                                json!({ "tokens": tokens, "point": session.point });
+                        }
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "model_request_created",
+                            created,
                         )
                         .await?;
+                        let result = self
+                            .generate_model_with_retry(
+                                prepared,
+                                round,
+                                &prepared.request,
+                                stream,
+                                cancel,
+                            )
+                            .await;
+                        match (result, session_tokens) {
+                            (Err(error), Some(tokens))
+                                if !compacted && is_context_overflow_error(&error) =>
+                            {
+                                pending = Some((CompactionTrigger::Overflow, tokens));
+                            }
+                            (result, _) => break result?,
+                        }
+                    };
                     let response = exchange.response;
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
@@ -181,8 +226,14 @@ impl AgentRuntimeService {
                     // Keep the actual transcript current, including finish/return/handoff turns.
                     prepared.request.provider_state = exchange.provider_state;
                     prepared.request.messages.push(response.message);
+                    if let Some(session) = &mut prepared.session {
+                        session.observe_usage(
+                            &response.provider_metadata,
+                            prepared.request.messages.len(),
+                        );
+                    }
                     if replied {
-                        return Ok(Some(AgentLoopExit::Replied));
+                        return Ok(AgentLoopExit::Replied);
                     } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
@@ -197,19 +248,23 @@ impl AgentRuntimeService {
                             parts: vec![AgentModelContentPart::Text { text: nudge }],
                             provider_metadata: Value::Null,
                         });
-                        let can_recover = round < progress.max_rounds;
+                        let can_recover = progress.drift_attempts <= MAX_DRIFT_RECOVERY_ATTEMPTS;
                         progress.round += 1;
                         if can_recover {
-                            self.event(run_id, AgentRunEventLevel::Warn, "drift_recovery_attempted", json!({
-                                "attempt": progress.drift_attempts,
-                                "maxAttempts": drift_recovery_attempt_limit(progress.max_rounds),
-                                "maxRounds": progress.max_rounds,
-                                "limitReason": "max_rounds",
-                                "round": round,
-                                "invocationId": invocation_id,
-                                "committedCount": commit_ledger.explicit_count(),
-                                "reasonCode": "model.tool_call_required",
-                            })).await?;
+                            self.event(
+                                run_id,
+                                AgentRunEventLevel::Warn,
+                                "drift_recovery_attempted",
+                                json!({
+                                    "attempt": progress.drift_attempts,
+                                    "maxAttempts": MAX_DRIFT_RECOVERY_ATTEMPTS,
+                                    "round": round,
+                                    "invocationId": invocation_id,
+                                    "committedCount": commit_ledger.explicit_count(),
+                                    "reasonCode": "model.tool_call_required",
+                                }),
+                            )
+                            .await?;
                         }
                         self.ensure_not_cancelled(cancel)?;
                         if !can_recover {
@@ -237,7 +292,6 @@ impl AgentRuntimeService {
                                 round,
                                 turn.next_call,
                                 call,
-                                &mut progress.gate,
                                 &mut progress.session,
                                 turn.next_call + 1 == turn.calls.len(),
                                 commit_ledger,
@@ -254,13 +308,11 @@ impl AgentRuntimeService {
                                         call.call_id, call.tool_id, failure.error
                                     ));
                                 } else {
-                                    let result = recoverable_tool_error(
+                                    let result = AgentToolResult::error(
                                         call,
                                         "agent.tool_not_started",
                                         &failure.error.to_string(),
-                                        0,
-                                    )
-                                    .result;
+                                    );
                                     prepared.request.messages.push(AgentModelMessage {
                                         role: AgentModelRole::Tool,
                                         parts: vec![AgentModelContentPart::ToolResult { result }],
@@ -539,7 +591,7 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-pub(super) fn completion_tool_name(
+fn completion_tool_name(
     exit_policy: AgentInvocationExitPolicy,
     turn: &ToolTurnContract,
 ) -> &'static str {
@@ -562,10 +614,6 @@ fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
     turn.tools()
         .iter()
         .any(|tool_id| tool_id.is_builtin() && tool_id.native_name() == native_name)
-}
-
-fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
-    max_rounds.saturating_sub(1)
 }
 
 /// Build the corrective `user` message we inject when the model returns a

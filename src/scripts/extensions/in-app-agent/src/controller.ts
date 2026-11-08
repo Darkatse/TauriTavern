@@ -21,7 +21,7 @@ export type AssistantSnapshot = {
     sessions: TauriTavernAgentSession[];
     sessionId: string | null;
     draft: string;
-    sendingSessionId: string | null | undefined;
+    startingSessionId: string | null | undefined;
     activeRun: ActiveRun | null;
     messages: TauriTavernAgentSessionMessage[];
     nextBeforeSeq: number | null;
@@ -35,7 +35,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
     let snapshot: AssistantSnapshot = {
         initialized: false, busy: false, loading: false, error: null,
         profile: createAssistantProfile(), profileSaved: false, sessions: [], sessionId: null, draft: '',
-        sendingSessionId: undefined, activeRun: null, messages: [], nextBeforeSeq: null, run: null, events: [], responses: [],
+        startingSessionId: undefined, activeRun: null, messages: [], nextBeforeSeq: null, run: null, events: [], responses: [],
     };
     const listeners = new Set<() => void>();
     const drafts = new Map<string | null, string>();
@@ -152,11 +152,15 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         while (loadedTail !== undefined && incoming[0] && incoming[0].seq > loadedTail + 1 && cursor !== null) {
             const page = await agent.sessions.read({ sessionId, beforeSeq: cursor, limit: PAGE_SIZE });
             if (!current(epoch)) return;
-            incoming = mergeMessages(page.messages, incoming); cursor = page.nextBeforeSeq;
+            incoming = mergeMessages(incoming, page.messages); cursor = page.nextBeforeSeq;
         }
         const wasEmpty = snapshot.messages.length === 0;
         publish({ messages: mergeMessages(snapshot.messages, incoming), ...(wasEmpty ? { nextBeforeSeq: cursor } : {}) });
-        const runId = tail.activeRun?.runId ?? snapshot.messages.at(-1)?.runId;
+        const latest = snapshot.messages.at(-1);
+        const observedAt = snapshot.run?.createdAt;
+        // A run that saved no message, such as a compaction that failed, stays current until a newer message.
+        const keepsObserved = observedAt !== undefined && (!latest || Date.parse(latest.createdAt) < Date.parse(observedAt));
+        const runId = tail.activeRun?.runId ?? (keepsObserved ? snapshot.run?.runId : latest?.runId);
         if (!runId) return;
         const read = await agent.readEvents({ runId, beforeSeq: Number.MAX_SAFE_INTEGER, limit: 100 });
         if (!current(epoch)) return;
@@ -167,7 +171,10 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         const knownSeq = Math.max(0, ...events.map(appendedMessageSeq));
         if (knownSeq > (snapshot.messages.at(-1)?.seq ?? 0) && refreshing?.epoch === epoch) refreshing.requested = true;
         const active = tail.activeRun !== null && !terminal;
-        publish({ events, run: { runId, active, status: terminal ?? (active ? progress : null) ?? (active ? tail.activeRun?.status : null) ?? 'interrupted' } });
+        const status = terminal ?? (active ? progress : null) ?? (active ? tail.activeRun?.status : null) ?? 'interrupted';
+        // An ended run leaves the tail without a handle; keep the creation time observed for the same run.
+        const createdAt = tail.activeRun?.createdAt ?? (snapshot.run?.runId === runId ? snapshot.run.createdAt : undefined);
+        publish({ events, run: { runId, active, status, ...(createdAt === undefined ? {} : { createdAt }) } });
         if (active && tail.activeRun && (!snapshot.activeRun || snapshot.activeRun.runId === runId)) {
             attach(tail.activeRun, events);
         } else if (!active && snapshot.activeRun?.runId === runId) {
@@ -194,6 +201,27 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         try { await refresh(); }
         finally { if (current(epoch)) publish({ loading: false }); }
     }
+    // Admission can succeed even when its receipt is lost. Never start again.
+    async function admit(sessionId: string, start: () => Promise<TauriTavernAgentSessionRunHandle>): Promise<TauriTavernAgentSessionRunHandle> {
+        try { return await start(); }
+        catch (error) {
+            try {
+                await refreshSessions();
+                if (snapshot.sessionId === sessionId) await refresh();
+            } catch (refreshError) {
+                throw new AggregateError([error, refreshError], 'in-app-agent: the task could not start and Session state could not be refreshed');
+            }
+            throw error;
+        }
+    }
+    async function follow(sessionId: string, handle: TauriTavernAgentSessionRunHandle): Promise<void> {
+        await observe(handle);
+        await refreshSessions();
+        if (snapshot.sessionId === sessionId) await refresh();
+    }
+    function assertIdle(): void {
+        if (snapshot.startingSessionId !== undefined || snapshot.activeRun || snapshot.busy) throw new Error('agent.session_busy: the assistant already has a task');
+    }
     async function action<T>(work: () => Promise<T>): Promise<T> {
         assertOpen();
         if (snapshot.busy) throw new Error('in-app-agent: another action is in progress');
@@ -219,7 +247,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         newSession: () => selectSession(null),
         setDraft(text: string) {
             assertOpen();
-            if (snapshot.sendingSessionId !== undefined && snapshot.sendingSessionId === snapshot.sessionId) return;
+            if (snapshot.startingSessionId !== undefined && snapshot.startingSessionId === snapshot.sessionId) return;
             drafts.set(snapshot.sessionId, text); publish({});
         },
         refreshSessions: () => action(refreshSessions),
@@ -228,7 +256,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
             await refreshSessions();
         }),
         deleteSession: (sessionId: string) => action(async () => {
-            if (snapshot.activeRun?.sessionId === sessionId || snapshot.sendingSessionId === sessionId) {
+            if (snapshot.activeRun?.sessionId === sessionId || snapshot.startingSessionId === sessionId) {
                 throw new Error('agent.session_busy: stop the task before deleting its conversation');
             }
             await agent.sessions.delete({ sessionId });
@@ -246,10 +274,10 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
             if (!snapshot.initialized) throw new Error('in-app-agent: initialize before sending');
             if (!snapshot.profileSaved) throw new Error('in-app-agent: configure and save a model before sending');
             if (!text.trim()) throw new Error('in-app-agent: message cannot be empty');
-            if (snapshot.sendingSessionId !== undefined || snapshot.activeRun || snapshot.busy) throw new Error('agent.session_busy: the assistant already has a task');
+            assertIdle();
             let sessionId = snapshot.sessionId;
             drafts.set(sessionId, text);
-            publish({ sendingSessionId: sessionId, error: null });
+            publish({ startingSessionId: sessionId, error: null });
             try {
                 if (sessionId === null) {
                     const originEpoch = selectionEpoch;
@@ -257,29 +285,30 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
                     sessionId = session.id;
                     drafts.set(sessionId, text); drafts.delete(null);
                     upsertSession(session);
-                    publish({ sendingSessionId: sessionId });
+                    publish({ startingSessionId: sessionId });
                     if (current(originEpoch)) await selectSession(sessionId);
                 }
-                let handle: TauriTavernAgentSessionRunHandle;
-                try { handle = await agent.sessions.send({ sessionId, text }); }
-                catch (error) {
-                    // Admission can succeed even when its receipt is lost. Never resend.
-                    try {
-                        await refreshSessions();
-                        if (snapshot.sessionId === sessionId) await refresh();
-                    } catch (refreshError) {
-                        throw new AggregateError([error, refreshError], 'in-app-agent: send failed and Session state could not be refreshed');
-                    }
-                    throw error;
-                }
-                drafts.delete(sessionId);
+                const target = sessionId;
+                const handle = await admit(target, () => agent.sessions.send({ sessionId: target, text }));
+                drafts.delete(target);
                 publish({});
-                await observe(handle);
-                await refreshSessions();
-                if (snapshot.sessionId === sessionId) await refresh();
+                await follow(target, handle);
                 return handle;
             } catch (error) { reportError(error); throw error; }
-            finally { publish({ sendingSessionId: undefined }); }
+            finally { publish({ startingSessionId: undefined }); }
+        },
+        async compact() {
+            assertOpen();
+            const sessionId = snapshot.sessionId;
+            if (sessionId === null) throw new Error('in-app-agent: there is no conversation to compact');
+            assertIdle();
+            publish({ startingSessionId: sessionId, error: null });
+            try {
+                const handle = await admit(sessionId, () => agent.sessions.compact({ sessionId }));
+                await follow(sessionId, handle);
+                return handle;
+            } catch (error) { reportError(error); throw error; }
+            finally { publish({ startingSessionId: undefined }); }
         },
         async cancel() {
             assertOpen();
@@ -295,7 +324,7 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
             if (!sessionId || nextBeforeSeq === null) return;
             try {
                 const page = await agent.sessions.read({ sessionId, beforeSeq: nextBeforeSeq, limit: PAGE_SIZE });
-                if (current(epoch)) publish({ messages: mergeMessages(page.messages, snapshot.messages), nextBeforeSeq: page.nextBeforeSeq });
+                if (current(epoch)) publish({ messages: mergeMessages(snapshot.messages, page.messages), nextBeforeSeq: page.nextBeforeSeq });
             } catch (error) { if (current(epoch)) throw error; }
         },
         refresh: () => action(async () => { await refreshSessions(); await refresh(); }),

@@ -9,7 +9,7 @@ use super::{
     chat_unavailable_message, role_as_str, visible_total_messages,
 };
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::common::{ensure_only_args, tool_error};
+use crate::services::agent_tools::common::ensure_only_args;
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
 use tt_domain::frozen_macros::{FrozenMacros, MAX_EXPANDED_TEXT_BYTES};
@@ -73,7 +73,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     if let Err(message) = ensure_only_args(args, &["messages"]) {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", &message),
+            AgentToolResult::error(call, "tool.invalid_arguments", &message),
             AgentToolEffect::None,
         ));
     }
@@ -81,7 +81,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
         Ok(requests) => requests,
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
@@ -111,7 +111,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
         Ok(read) => read,
         Err(DomainError::NotFound(message)) => {
             return Ok((
-                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
+                AgentToolResult::error(call, "chat.not_found", &chat_unavailable_message(&message)),
                 AgentToolEffect::None,
             ));
         }
@@ -124,7 +124,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
         .find(|request| request.index >= visible_total)
     {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "chat.message_not_found",
                 &format!(
@@ -148,7 +148,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "chat.message_not_found",
                 &format!(
@@ -180,7 +180,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
             Ok(item) => item,
             Err(message) => {
                 return Ok((
-                    tool_error(call, "chat.invalid_message_range", &message),
+                    AgentToolResult::error(call, "chat.invalid_message_range", &message),
                     AgentToolEffect::None,
                 ));
             }
@@ -194,21 +194,16 @@ pub(in crate::services::agent_tools) async fn read_messages(
         .collect::<Vec<_>>();
     let content = render_content(visible_total, &rendered);
 
-    Ok((
-        AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content,
-            structured: structured_value(ChatReadMessagesStructured {
-                total_messages: visible_total,
-                messages: rendered.iter().map(structured_message).collect(),
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs,
-        },
-        AgentToolEffect::None,
-    ))
+    let mut result = AgentToolResult::ok(
+        call,
+        content,
+        structured_value(ChatReadMessagesStructured {
+            total_messages: visible_total,
+            messages: rendered.iter().map(structured_message).collect(),
+        }),
+    );
+    result.resource_refs = resource_refs;
+    Ok((result, AgentToolEffect::None))
 }
 
 fn parse_message_requests(args: &Map<String, Value>) -> Result<Vec<MessageRequest>, String> {

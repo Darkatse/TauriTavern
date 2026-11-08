@@ -26,6 +26,7 @@ mod tests;
 #[cfg(test)]
 pub(crate) use tests::TestAgentProfileRepository;
 
+pub use defaults::default_writer_profile;
 pub use model_config::{
     ensure_profile_model_configured, profile_model_configuration_error,
     profile_model_requires_configuration,

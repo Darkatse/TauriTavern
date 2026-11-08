@@ -18,6 +18,8 @@ pub struct ExtensionToolDefinition {
     pub contexts: Vec<AgentToolScope>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    pub returns_images: bool,
 }
 
 fn default_enabled() -> bool {
@@ -49,6 +51,7 @@ impl ExtensionToolDefinition {
             },
             contexts: self.contexts,
             enabled: self.enabled,
+            returns_images: self.returns_images,
         })
     }
 }
@@ -58,6 +61,7 @@ pub struct ExtensionTool {
     pub descriptor: ToolDescriptor,
     pub contexts: Vec<AgentToolScope>,
     pub enabled: bool,
+    pub returns_images: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,8 +124,20 @@ pub enum ExtensionToolEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ExtensionToolReply {
-    Value { value: Value },
-    Error { message: String },
+    Value {
+        value: Value,
+        images: Vec<ExtensionToolImage>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionToolImage {
+    /// Base64-encoded image bytes.
+    pub data: String,
 }
 
 #[derive(Debug, Deserialize)]

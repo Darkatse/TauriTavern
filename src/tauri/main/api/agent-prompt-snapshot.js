@@ -14,7 +14,6 @@ import {
     createMacroContextFromSnapshot,
     normalizeFrozenRunInputSnapshot,
 } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
-import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
 
 const LEGACY_DRY_RUN_SOURCE = 'legacy-generate-dry-run';
 
@@ -64,15 +63,19 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
     };
 }
 
-/**
- * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any>; agentSystemPrompt?: string }} input
- * @returns {Promise<{ promptSnapshot: { contextPolicy: any; chatCompletionPayload: any; worldInfoActivation?: any }; frozenRunInputSnapshot: any; generationIntent: any }>}
- */
-export async function buildAgentPromptSnapshot(input = {}) {
-    return materializeCurrentPromptSnapshot(await buildAgentPromptSnapshotSeed(input));
+/** @param {{ currentPromptSnapshotSeed: any; frozenRunInputSnapshot: any }} input */
+export async function materializeCurrentPromptSnapshot(input) {
+    const { payload, snapshotInputs, generationIntent } = await prepareCurrentPromptPayload(input);
+    const { createAgentPromptSnapshot } = await import('../../../scripts/openai.js');
+    return {
+        frozenRunInputSnapshot: input.frozenRunInputSnapshot,
+        generationIntent: { source: LEGACY_DRY_RUN_SOURCE, ...generationIntent },
+        promptSnapshot: createAgentPromptSnapshot(payload, snapshotInputs),
+    };
 }
 
-export async function materializeCurrentPromptSnapshot(input) {
+/** @param {{ currentPromptSnapshotSeed: any; frozenRunInputSnapshot: any }} input */
+export async function prepareCurrentPromptPayload(input) {
     const seed = input?.currentPromptSnapshotSeed;
     if (!seed || typeof seed !== 'object' || Array.isArray(seed)) {
         throw new Error('agent.current_prompt_snapshot_seed_required: currentPromptSnapshotSeed must be an object');
@@ -80,8 +83,7 @@ export async function materializeCurrentPromptSnapshot(input) {
     const generationType = normalizeGenerationType(seed.generationType);
     const messages = seed.messages;
     assertMessagesReady(messages);
-    assertNoExternalToolTurns(messages);
-    const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(input.frozenRunInputSnapshot);
+    const frozenRunInputSnapshot = input.frozenRunInputSnapshot;
     const openai = await import('../../../scripts/openai.js');
     const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
         openai.oai_settings,
@@ -96,7 +98,7 @@ export async function materializeCurrentPromptSnapshot(input) {
     const macroContext = openai.createChatCompletionMacroContext(
         createMacroContextFromSnapshot(frozenRunInputSnapshot, workingInputs), settings, model,
     );
-    const { generate_data: payload } = await openai.createGenerationParameters(
+    const { generate_data: payload } = /** @type {any} */ (await openai.createGenerationParameters(
         settings,
         model,
         generationType,
@@ -106,19 +108,16 @@ export async function materializeCurrentPromptSnapshot(input) {
             agentMode: true,
             macroContext,
         },
-    );
-
-    assertNoExternalTools(payload);
-    assertNoExternalToolTurns(payload.messages);
+    ));
 
     return {
-        promptSnapshot: createAgentPromptSnapshot(payload, {
+        payload,
+        snapshotInputs: {
+            settings,
             contextPolicy: seed.contextPolicy,
-            ...(seed.worldInfoActivation ? { worldInfoActivation: seed.worldInfoActivation } : {}),
-        }),
-        frozenRunInputSnapshot,
+            worldInfoActivation: seed.worldInfoActivation,
+        },
         generationIntent: {
-            source: LEGACY_DRY_RUN_SOURCE,
             generationType,
             chatCompletionSource: payload.chat_completion_source,
             model: payload.model,
@@ -126,10 +125,12 @@ export async function materializeCurrentPromptSnapshot(input) {
     };
 }
 
+/** @param {unknown} value */
 function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
+/** @param {any} value */
 function normalizeGenerateOptions(value) {
     if (value == null) {
         return {};
@@ -140,8 +141,11 @@ function normalizeGenerateOptions(value) {
     return value;
 }
 
+/** @param {any} script @param {string} generationType @param {Record<string, any>} generateOptions */
 async function captureAgentDryRun(script, generationType, generateOptions) {
+    /** @type {any} */
     let generateData = null;
+    /** @param {any} capturedGenerateData @param {boolean} dryRun */
     const generateListener = (capturedGenerateData, dryRun) => {
         if (dryRun === true) {
             generateData = capturedGenerateData;
@@ -162,22 +166,14 @@ async function captureAgentDryRun(script, generationType, generateOptions) {
     return { generateData };
 }
 
+/** @param {any} messages */
 function assertMessagesReady(messages) {
     if (!Array.isArray(messages)) {
         throw new Error('agent.prompt_snapshot_messages_required: dryRun did not produce chat-completion messages');
     }
 }
 
-function assertNoExternalTools(payload) {
-    const tools = payload?.tools;
-    if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
-    }
-    if (Object.prototype.hasOwnProperty.call(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
-    }
-}
-
+/** @param {any[]} messages */
 function assertNoExternalToolTurns(messages) {
     if (!Array.isArray(messages)) {
         return;

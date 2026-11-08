@@ -6,7 +6,7 @@
 
 | 事实 | 内容 | 变化时机 | 消费者 |
 | --- | --- | --- | --- |
-| 窗口快照 | 窗口物理像素尺寸、政策避让、scale、revision | 旋转、窗口尺寸、显示政策变化 | `#bg1` 窗口矩形、原生背景条带、第一方竖屏判断 |
+| 窗口快照 | 窗口物理像素尺寸、政策避让、scale、revision、抽屉栏所在边 | 旋转、窗口尺寸、显示政策变化 | `#bg1` 窗口矩形、原生背景条带、第一方竖屏判断、抽屉栏模式 |
 | 内容视口 | 窗口减去政策避让与停靠键盘 | 上述变化，以及键盘出现、消失、高度变化 | 浏览器布局引擎 |
 
 窗口快照不含键盘。键盘只改变内容视口的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
@@ -30,13 +30,13 @@
 
 入口 `infrastructure/ios_webview.rs`，安装 `platform/ios_window_layout.rs` 的窗口宿主 UIView。
 
-- WKWebView 上、左、右约束到 `safeAreaLayoutGuide`，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 guide 停在底部安全区。
-- iOS 没有沉浸模式，政策避让始终是安全区。
+- WKWebView 上、左、右约束到宿主的内容 guide，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 keyboard guide 停在底部安全区。
+- iOS 没有沉浸模式，政策避让就是内容 guide：平时等于安全区；有抽屉栏时页面没有顶栏，上边改用纵向角落适配的安全区（`safeAreaLayoutRegionWithCornerAdaptation:`），避开显示圆角。快照的 insets 读同一个 guide。
 - 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
 - 主窗口隐藏 WebKit 表单附属栏（`disableInputAccessoryView`）。收键盘手势由宿主内的全窗口 `KeyboardScrollView` 提供：UIKit `.interactive`，与网页内部滚动视图的 pan 同时识别，不取消内容触摸，网页控件操作与键盘跟手可以同时发生。容器没有滚动内容，`setContentOffset:` 固定为零，`alwaysBounceVertical` 只用来让 pan 能够开始。
 - WKWebView 是容器的子视图，约束对象仍是宿主的 guide。UIKit 在键盘动画块里一次设定 guide；交互拖动不同，guide 跟手变化，所以容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随。iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，逐帧跟随的代价尤其高。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
-- 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。home indicator 由系统自适应。
+- 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。有系统竖栏时状态栏在竖栏里，图标颜色取该侧条带。home indicator 由系统自适应。
 - 元素全屏时 WebKit 会把 WKWebView 移出容器；归还时容器停用保持约束并重新激活同一组边约束。全屏期间手势不由容器提供；普通 CSS 全屏面板、dialog 和嵌入的 iframe 仍在覆盖范围内。
 
 ## 鸿蒙
@@ -69,6 +69,16 @@
 
 系统栏条带不呈现：视频壁纸（含第一方 mp4）、渐变与外部 URL（只画底色并记录诊断）、弹窗遮罩、主题滤镜与第三方背景层。动画图片取首帧。条带不做磁盘缓存。
 
+## 抽屉栏（iOS 27.1+）
+
+系统在内容视口之外给出 bar 区域时，宿主把页面顶层抽屉的入口画成原生玻璃胶囊（`UIGlassEffect` 与 SF Symbol 按钮），页面不画顶栏。宿主在 `platform/ios_drawer_bar.rs`，页面在 `src/scripts/drawer-bar.js`。
+
+- 位置：`verticalBarEdge` 报告有竖栏时用竖栏，否则用状态栏旁的顶部带，都没有时保留页面顶栏。具体的边取 `layoutRegionForBarOnEdge:extent:` 区域整块落在哪条边的安全区 inset 内；trait 只给 leading/trailing，旋转时还晚一次布局，不用它定边。胶囊从区域起点排起，放不下时按钮等分缩小。
+- 事实来源：快照的 `drawerBar.edge`（`left`/`right`/`top`）。页面模式（根元素的 `data-tt-drawer-bar`）、内容 guide 的上边与状态栏取色的条带都由它决定。
+- 发布：页面经 `set_drawer_bar_items` 发布每个可见的顶层抽屉（id、标题、开合、标记），抽屉增删、开合、标题或标记变化时按帧合并。标记为 `alert`（API 断开）、`working` 与 `unread`（助手）。SF Symbol 按抽屉 id 对应，扩展抽屉用通用符号；胶囊明暗跟随状态栏样式。
+- 激活：原生点按派发 `tt-drawer-bar-activate`，页面点击该抽屉的图标，开合与 hydration 走原有路径；页面有模态弹窗时忽略。
+- 页面样式：`src/css/tauritavern-drawer-bar.css` 隐藏顶栏与抽屉开关，`--topBarBlockSize` 为 0，抽屉从栏所在的边平移滑入。
+
 ## 第一方行为
 
 - `--doc-height` 是静态别名：支持时 `100dvh`，否则 `100vh`。
@@ -86,6 +96,6 @@
 - `src/style.css` 中 `html` 上的 transform 与 perspective：它们让 `html` 成为 fixed 元素的包含块，根文档滚动时 `#bg1` 会随之移动。
 - `src/css/mobile-styles.css` 中 `#bg1` 的 `100dvw`/`100dvh !important` 尺寸：它会压过 `#bg1` 的窗口矩形。
 - `src/scripts/browser-fixes.js` 中 iOS resize 时把根元素临时设为 `position: fixed` 的补偿。
-- 顶层抽屉（带 `openDrawer`/`closedDrawer`）开合时的高度动画：`src/style.css` 中 `.drawer-content` 的 `height: 0`、打开时的 `calc-size(auto, size)` 与 `.fillLeft`/`.fillRight` 的高度过渡，以及 `src/css/mobile-styles.css` 中左右面板关闭时的 `height: 0`。WebKit 不支持 `calc-size()`，高度在过渡一半时跳变；抽屉改为按最终尺寸排版一次，用 `clip-path` 揭开。浮动面板仍沿用上游的高度过渡。随之删除打开时隐藏滚动条的 `hide-scroll` 动画：它结束时滚动条才出现，内容宽度会抽动。
+- 顶层抽屉（带 `openDrawer`/`closedDrawer`）开合时的高度动画：`src/style.css` 中 `.drawer-content` 的 `height: 0`、打开时的 `calc-size(auto, size)` 与 `.fillLeft`/`.fillRight` 的高度过渡，以及 `src/css/mobile-styles.css` 中左右面板关闭时的 `height: 0`。WebKit 不支持 `calc-size()`，高度在过渡一半时跳变；抽屉改为按最终尺寸排版一次，隐藏态由 `--tt-drawer-*` 变量给出：默认自上而下 `clip-path` 揭开，抽屉栏模式改为平移。浮动面板仍沿用上游的高度过渡。随之删除打开时隐藏滚动条的 `hide-scroll` 动画：它结束时滚动条才出现，内容宽度会抽动。
 
 公开布局 API 与旧变量的状态见 [API/Layout.md](../API/Layout.md)。

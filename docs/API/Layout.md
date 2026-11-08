@@ -43,6 +43,19 @@ await unsubscribe();
 
 非沉浸模式下，系统栏后面显示宿主绘制的壁纸或主题底色。网页像素（包括遮罩、滤镜和视频）不会延伸到系统栏。
 
+### 原生抽屉栏
+
+iOS 27.1+ 上，系统在内容视口之外给出 bar 区域时（目前为 iPhone Duo），宿主把页面顶层抽屉（`#top-settings-holder > .drawer`）的入口画成原生按钮，页面没有顶栏：
+
+- 扩展加入的顶层抽屉同样出现，使用通用图标，名称取抽屉图标的 `title`。
+- 主题对顶栏与抽屉开关的样式不生效。
+
+## 截取
+
+`await layout.capture()` 返回当前内容视口的 `image/png` Blob，属于第一方使用的 Project Contract。图像左上角对应内容视口 `(0, 0)`，宽度对应 `window.innerWidth`；分辨率由平台决定，调用方用图片宽度除以视口宽度换算 CSS 坐标。系统栏不在图中，不滚动页面或拼接视口外内容。
+
+调用方负责等待重绘，原生接口只读取像素。macOS 使用 ScreenCaptureKit 捕获本进程窗口并裁至内容视口，无需屏幕录制授权；iOS 使用 WK snapshot，其他平台使用各自的原生截图接口。失败直接拒绝 Promise，Web Host 以 `Unsupported` 拒绝。
+
 ## 旧契约
 
 - `ime.activeSurface` 与 `ime.kind` 已移除。

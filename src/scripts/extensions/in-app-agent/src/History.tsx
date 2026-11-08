@@ -93,7 +93,7 @@ export function History({ snapshot, controller, actions, onOpen, onNew }: {
                 {group.label && <h3>{tr(group.label)}</h3>}
                 <ul className="ttia-session-list">
                     {group.sessions.map(session => {
-                        const running = snapshot.activeRun?.sessionId === session.id || snapshot.sendingSessionId === session.id;
+                        const running = snapshot.activeRun?.sessionId === session.id || snapshot.startingSessionId === session.id;
                         const current = snapshot.sessionId === session.id;
                         const timestamp = session.lastUsedAt ?? session.createdAt;
                         const at = new Date(timestamp);

@@ -1,9 +1,7 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::args::{
-    ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg, tool_error,
-};
+use super::args::{ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg};
 use super::render::render_file_list;
 use super::{DEFAULT_LIST_DEPTH, MAX_LIST_DEPTH, MAX_LIST_ENTRIES};
 use crate::errors::ApplicationError;
@@ -41,7 +39,7 @@ pub(in crate::services::agent_tools) async fn list_files(
         Ok(path) => path,
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
@@ -55,14 +53,14 @@ pub(in crate::services::agent_tools) async fn list_files(
         Ok(depth) => depth.unwrap_or(DEFAULT_LIST_DEPTH),
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
     };
     if depth > MAX_LIST_DEPTH {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.list_depth_too_large",
                 &format!("depth must be <= {MAX_LIST_DEPTH}"),
@@ -78,7 +76,7 @@ pub(in crate::services::agent_tools) async fn list_files(
         Ok(list) => list,
         Err(DomainError::NotFound(message)) => {
             return Ok((
-                tool_error(call, "workspace.path_not_found", &message),
+                AgentToolResult::error(call, "workspace.path_not_found", &message),
                 AgentToolEffect::None,
             ));
         }
@@ -98,23 +96,18 @@ pub(in crate::services::agent_tools) async fn list_files(
         .collect::<Vec<_>>();
     let content = render_file_list(&list);
 
-    Ok((
-        AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content,
-            structured: structured_value(WorkspaceListFilesStructured {
-                entries,
-                truncated: list.truncated,
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs: list
-                .entries
-                .iter()
-                .map(|entry| entry.path.as_str().to_string())
-                .collect(),
-        },
-        AgentToolEffect::None,
-    ))
+    let mut result = AgentToolResult::ok(
+        call,
+        content,
+        structured_value(WorkspaceListFilesStructured {
+            entries,
+            truncated: list.truncated,
+        }),
+    );
+    result.resource_refs = list
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str().to_string())
+        .collect();
+    Ok((result, AgentToolEffect::None))
 }

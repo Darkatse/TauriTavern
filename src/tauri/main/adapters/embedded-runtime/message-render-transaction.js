@@ -159,6 +159,11 @@ function finalizeLittleWhiteBoxPre(pre, xbHash) {
     pre.dataset.xbHash = xbHash;
 }
 
+/** @param {HTMLElement} mesText */
+export function holdsEmbeddedRuntimeWrappers(mesText) {
+    return mesText.querySelector(`${JSR_WRAPPER_SELECTOR}, ${LWB_WRAPPER_SELECTOR}`) !== null;
+}
+
 /**
  * Replaces `.mes_text` HTML while preserving already-rendered iframe runtimes
  * (JS-Slash-Runner: `div.TH-render`, LittleWhiteBox: `.xiaobaix-iframe-wrapper`)

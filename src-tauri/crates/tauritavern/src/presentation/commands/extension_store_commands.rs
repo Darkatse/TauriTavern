@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Manager, ResourceId, State, Webview};
+use tauri::{Manager, ResourceId, Runtime, State, Webview};
 use tt_contracts::byte_commit::CommitBegin;
 use tt_contracts::extension_store::{EntryKind, WriteOperation};
 
@@ -21,12 +21,12 @@ pub struct OpenEntryResponse {
 }
 
 #[tauri::command]
-pub async fn open_extension_store_entry(
+pub async fn open_extension_store_entry<R: Runtime>(
     namespace: String,
     key: String,
     table: Option<String>,
     kind: EntryKind,
-    webview: Webview,
+    webview: Webview<R>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Option<OpenEntryResponse>, CommandError> {
     log_command(format!(

@@ -1,0 +1,20 @@
+# RustSec policy for `pnpm run check:advisories:rust`.
+# Vulnerabilities fail the audit. Each ignored advisory names the condition
+# that keeps it unreachable; remove the entry when that condition changes.
+
+[advisories]
+ignore = [
+    # pyo3 only appears through jiter's optional `python` feature, which no
+    # dependency enables, so it is never compiled.
+    "RUSTSEC-2026-0176",
+    "RUSTSEC-2026-0177",
+
+    # These zip advisories affect `ZipArchive::extract` and
+    # `ZipStreamReader::extract`. TauriTavern and candle-core read entries
+    # without calling either function. The fix requires zip 9, and candle-core
+    # still depends on zip 8.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+]

@@ -34,7 +34,7 @@ pub(super) const WORKSPACE_READ_FILE: &str = "workspace.read_file";
 pub(crate) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
 pub(crate) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
 pub(crate) const WORKSPACE_SHELL: &str = "workspace.shell";
-pub(super) const WORKSPACE_COMMIT: &str = "workspace.commit";
+pub(crate) const WORKSPACE_COMMIT: &str = "workspace.commit";
 pub(crate) const WORKSPACE_FINISH: &str = "workspace.finish";
 
 const DEFAULT_LIST_DEPTH: usize = 2;

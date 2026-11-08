@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::infrastructure::paths::RuntimePaths;
@@ -53,7 +52,7 @@ use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::IosPolicyActivationReport;
 
-use super::{StartupProfile, composition};
+use super::{HostEnvironment, StartupProfile, composition};
 
 pub struct AppState {
     pub(crate) services: AppServices,
@@ -128,7 +127,7 @@ pub(crate) struct AppServices {
 
 impl AppState {
     pub(crate) async fn new(
-        app_handle: AppHandle,
+        environment: HostEnvironment,
         runtime_paths: RuntimePaths,
         startup_profile: StartupProfile,
     ) -> Result<Self, DomainError> {
@@ -140,8 +139,13 @@ impl AppState {
 
         let data_directory =
             composition::initialize_data_directory(&runtime_paths.data_root).await?;
-        let services =
-            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
+        let services = composition::build_services(
+            &environment,
+            &runtime_paths.app_root,
+            &data_directory,
+            &startup_profile,
+        )
+        .await?;
 
         tracing::info!("Application initialized successfully");
 

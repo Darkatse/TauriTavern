@@ -6,6 +6,8 @@ const messages = {
     "snapshotHelp": "Read a bounded view of controls, text and current state.",
     "interact": "Operate app UI",
     "interactHelp": "Operate an observed control and read back its state.",
+    "capture": "Screenshot",
+    "captureHelp": "See how the app looks on screen.",
     "readFile": "Read files",
     "writeFile": "Write files",
     "listFiles": "List files",
@@ -90,6 +92,12 @@ const messages = {
     "waiting": "Waiting for a reply…",
     "replying": "Replying…",
     "working": "Working…",
+    "compacting": "Compacting context",
+    "contextCompacted": "Compacted context",
+    "compactionTokens": "{before} → {after} tokens",
+    "context": "Context",
+    "contextTokens": "{tokens} / {point} tokens",
+    "compactNow": "Compact now",
     "finishing": "Finishing this reply…",
     "stopping": "Stopping…",
     "cancelled": "This run was stopped. Completed actions were not undone.",
@@ -138,6 +146,7 @@ const messages = {
     "instructions": "Assistant instructions",
     "stream": "Stream replies",
     "skills": "Skill",
+    "builtinSkill": "Built-in",
     "noSkills": "Import a Skill to add instructions and reference material.",
     "skillReadNote": "Enable file reading to use the standard Skill workspace. Shell is enabled separately.",
     "enableRead": "Enable file reading",
@@ -161,10 +170,12 @@ const messages = {
 } as const;
 export type MessageKey = keyof typeof messages;
 export type Tr = (key: MessageKey, params?: Record<string, string | number>) => string;
-type Context = { translate?: (fallback: string, key: string) => string };
+type Translate = (fallback: string, key: string) => string;
+// SillyTavern's translate stays the same function for the page's lifetime.
+let translate: Translate | undefined;
 export const tr: Tr = (key, params = {}) => {
-    const context = (window as Window & { SillyTavern?: { getContext: () => Context } }).SillyTavern?.getContext();
-    const text = context?.translate?.(messages[key], `in_app_agent.${key}`) ?? messages[key];
+    translate ??= (window as Window & { SillyTavern?: { getContext: () => { translate?: Translate } } }).SillyTavern?.getContext().translate;
+    const text = translate?.(messages[key], `in_app_agent.${key}`) ?? messages[key];
     return text.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match);
 };
 export function errorText(error: unknown): string {

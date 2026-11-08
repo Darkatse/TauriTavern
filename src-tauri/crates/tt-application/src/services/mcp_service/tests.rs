@@ -206,6 +206,7 @@ impl McpGateway for FixedGateway {
             .push((native_name.to_string(), arguments));
         Ok(McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(
             McpToolCallResult {
+                images: Vec::new(),
                 is_error: false,
                 text: vec![McpTextContent {
                     index: 0,

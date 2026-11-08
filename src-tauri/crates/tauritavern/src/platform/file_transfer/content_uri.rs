@@ -77,14 +77,7 @@ pub(super) async fn deliver(
         .file()
         .set_file_access_mode(FileAccessMode::Scoped)
         .set_file_name(file_name);
-    #[cfg(target_os = "android")]
-    let dialog = dialog.add_filter(
-        "File",
-        &[mime_guess::from_path(file_name)
-            .first_or_octet_stream()
-            .essence_str()],
-    );
-    #[cfg(target_env = "ohos")]
+    // The system maps the extension with the same table its file picker uses to settle the saved name.
     let dialog = match Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())

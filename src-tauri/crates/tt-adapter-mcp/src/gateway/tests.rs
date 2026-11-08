@@ -308,8 +308,10 @@ async fn modern_call_sends_custom_and_standard_headers_and_preserves_arguments()
     assert!(result.is_error);
     assert_eq!(result.text[0].text, "fixture tool error");
     assert_eq!(result.text[0].index, 0);
-    assert_eq!(result.diagnostics[0].code, "mcp.call_content_unsupported");
-    assert_eq!(result.diagnostics[0].content_index, Some(1));
+    assert_eq!(result.images.len(), 1);
+    assert_eq!(result.images[0].index, 1);
+    assert_eq!(result.images[0].mime_type, "image/png");
+    assert_eq!(result.images[0].data, "encoded");
 
     let requests = captured.lock().unwrap();
     assert!(requests.iter().all(|request| {

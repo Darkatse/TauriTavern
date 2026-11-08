@@ -7,7 +7,12 @@ import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.os.Handler
+import android.os.Looper
+import android.util.Base64
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
@@ -19,6 +24,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import kotlin.math.pow
 
 /**
@@ -41,6 +47,7 @@ class AndroidWindowLayout(
   private var snapshot: WindowSnapshot? = null
   private var wallpaperToken = 0L
   private val backdrop = WindowBackdrop()
+  private val mainHandler = Handler(Looper.getMainLooper())
   private var darkStatusBarIcons = false
   private var darkNavigationBarIcons = false
 
@@ -98,6 +105,33 @@ class AndroidWindowLayout(
   }
 
   fun getSnapshot(): JSONObject = checkNotNull(snapshot) { "Window layout is not ready" }.toJson()
+
+  fun captureViewport(resolve: (String) -> Unit, reject: (Exception) -> Unit) {
+    val webView = checkNotNull(webViewProvider()) { "WebView is not ready" }
+    val location = IntArray(2)
+    webView.getLocationInWindow(location)
+    val rect = Rect(location[0], location[1], location[0] + webView.width, location[1] + webView.height)
+    val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.ARGB_8888)
+    try {
+      PixelCopy.request(window, rect, bitmap, { status ->
+        val png = try {
+          check(status == PixelCopy.SUCCESS) { "PixelCopy failed with status $status" }
+          val stream = ByteArrayOutputStream()
+          check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) { "PNG encoding failed" }
+          Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+        } catch (error: Exception) {
+          reject(error)
+          return@request
+        } finally {
+          bitmap.recycle()
+        }
+        resolve(png)
+      }, mainHandler)
+    } catch (error: Exception) {
+      bitmap.recycle()
+      throw error
+    }
+  }
 
   fun beginBackdrop(windowRevision: Long, color: Int, replaceWallpaper: Boolean): JSONObject? {
     if (windowRevision != snapshot?.revision) return null

@@ -165,39 +165,29 @@ async fn custom_gemini_generate_content_http_contract() {
 }
 
 #[tokio::test]
-async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_commit() {
-    for (event, expected) in [
-        (
-            json!({ "candidates": [{ "content": { "parts": [{ "text": "partial" }] } }] }),
-            "without a finish reason",
-        ),
-        (
-            json!({ "error": { "message": "stream rejected" } }),
-            "stream rejected",
-        ),
-    ] {
-        let (base, server) = upstream(vec![format!("data: {event}\n\n")]).await;
-        let (repository, config) = repository(base);
-        let (sender, mut receiver) = mpsc::unbounded_channel();
-        let (_cancel, cancel) = watch::channel(false);
-        let error = repository
-            .generate_stream(
-                ChatCompletionSource::Custom,
-                &config,
-                "/streamGenerateContent",
-                &json!({ "model": "gemini-test", "contents": [] }),
-                sender,
-                cancel,
-            )
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains(expected), "{error}");
-        while let Some(chunk) = receiver.recv().await {
-            let chunk: Value = serde_json::from_str(&chunk).unwrap();
-            assert!(chunk.pointer("/choices/0/delta/native").is_none());
-        }
-        server.await.unwrap();
+async fn custom_gemini_stream_rejects_error_events_without_native_commit() {
+    let event = json!({ "error": { "message": "stream rejected" } });
+    let (base, server) = upstream(vec![format!("data: {event}\n\n")]).await;
+    let (repository, config) = repository(base);
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let (_cancel, cancel) = watch::channel(false);
+    let error = repository
+        .generate_stream(
+            ChatCompletionSource::Custom,
+            &config,
+            "/streamGenerateContent",
+            &json!({ "model": "gemini-test", "contents": [] }),
+            sender,
+            cancel,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("stream rejected"), "{error}");
+    while let Some(chunk) = receiver.recv().await {
+        let chunk: Value = serde_json::from_str(&chunk).unwrap();
+        assert!(chunk.pointer("/choices/0/delta/native").is_none());
     }
+    server.await.unwrap();
 }
 
 #[tokio::test]
@@ -251,6 +241,21 @@ async fn models_pagination_preserves_metadata_and_headers_and_rejects_partial_re
             );
         }
     }
+}
+
+#[tokio::test]
+async fn models_from_a_proxy_serving_an_openai_list_are_empty() {
+    let page = json!({"object": "list", "data": [{"id": "gemini-test", "object": "model"}]});
+    let (base, server) = upstream(vec![page.to_string()]).await;
+    let (repository, config) = repository(format!("{base}/zen/v1"));
+
+    let result = repository
+        .list_models(ChatCompletionSource::Makersuite, &config)
+        .await
+        .unwrap();
+
+    assert_eq!(result, json!({ "data": [] }));
+    server.await.unwrap();
 }
 
 #[tokio::test]

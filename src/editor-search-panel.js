@@ -1,6 +1,18 @@
 import { runScopeHandlers } from '@codemirror/view';
 import { SearchQuery, getSearchQuery, setSearchQuery, findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel } from '@codemirror/search';
 
+/** @param {string} path A 16×16 stroke path. */
+export function editorIcon(path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const shape = document.createElementNS(svg.namespaceURI, 'path');
+    shape.setAttribute('d', path);
+    svg.append(shape);
+    return svg;
+}
+
 export function createSearchPanel(view) {
     const dom = document.createElement('div');
     dom.className = 'cm-editor-search';
@@ -17,17 +29,6 @@ export function createSearchPanel(view) {
         button.addEventListener('mousedown', event => event.preventDefault());
         button.addEventListener('click', action);
         return button;
-    }
-
-    function icon(path) {
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', '0 0 16 16');
-        svg.setAttribute('aria-hidden', 'true');
-        svg.setAttribute('focusable', 'false');
-        const shape = document.createElementNS(svg.namespaceURI, 'path');
-        shape.setAttribute('d', path);
-        svg.append(shape);
-        return svg;
     }
 
     function field(name, label) {
@@ -72,16 +73,16 @@ export function createSearchPanel(view) {
         findBox.append(toggle);
         return [key, toggle];
     });
-    const previous = button('Previous', icon('M8 13V3M3.5 7.5 8 3l4.5 4.5'), () => run(findPrevious));
-    const next = button('Next', icon('M8 3v10M3.5 8.5 8 13l4.5-4.5'), () => run(findNext));
-    const close = button('Close', icon('m4 4 8 8M12 4l-8 8'), () => closeSearchPanel(view));
+    const previous = button('Previous', editorIcon('M8 13V3M3.5 7.5 8 3l4.5 4.5'), () => run(findPrevious));
+    const next = button('Next', editorIcon('M8 3v10M3.5 8.5 8 13l4.5-4.5'), () => run(findNext));
+    const close = button('Close', editorIcon('m4 4 8 8M12 4l-8 8'), () => closeSearchPanel(view));
     const replaceRow = document.createElement('div');
     replaceRow.className = 'cm-search-replace';
     replaceRow.hidden = true;
     const replace = button('Replace', view.state.phrase('Replace'), () => run(replaceNext));
     const all = button('Replace all', view.state.phrase('All'), () => run(replaceAll));
     replaceRow.append(replaceField, replace, all);
-    const expand = button('Toggle replace', icon('m6 3.5 4.5 4.5L6 12.5'), () => {
+    const expand = button('Toggle replace', editorIcon('m6 3.5 4.5 4.5L6 12.5'), () => {
         if (!replaceRow.hidden) searchField.focus();
         replaceRow.hidden = !replaceRow.hidden;
         expand.setAttribute('aria-expanded', String(!replaceRow.hidden));

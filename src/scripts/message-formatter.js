@@ -47,6 +47,11 @@ class MessageFormatterRegistry {
         this.#hooks.get(stage).push({ fn, order });
     }
 
+    /** @param {string} stage */
+    hasHooks(stage) {
+        return Boolean(this.#hooks.get(stage)?.length);
+    }
+
     /**
      * Extension failures are reported and isolated, as in upstream SillyTavern.
      * @param {string} stage

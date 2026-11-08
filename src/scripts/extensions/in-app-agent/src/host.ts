@@ -31,6 +31,7 @@ export type SettingsOptions = {
 };
 const MODEL_TARGET_EVENTS = ['MODEL_TARGET_CREATED', 'MODEL_TARGET_UPDATED', 'MODEL_TARGET_DELETED'] as const;
 export type AssistantContext = {
+    scrollChatSurfaceTo: (options: ScrollToOptions) => void;
     eventSource: {
         once: (event: string, listener: () => void) => void;
         on: (event: string, listener: () => void) => void;
@@ -93,7 +94,7 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
     const [lib, bridge, widthSetting] = await Promise.all([
         import(libraryUrl /* webpackIgnore: true */) as Promise<{
             showdown: { Converter: new (options: Record<string, boolean>) => { makeHtml: (text: string) => string } };
-            DOMPurify: { sanitize: (html: string, options: Record<string, unknown>) => string };
+            DOMPurify: (root: Window) => { setConfig: (options: Record<string, unknown>) => void; sanitize: (html: string) => string };
         }>,
         import(bridgeUrl /* webpackIgnore: true */) as Promise<{
             writeClipboardText: (text: string) => Promise<void>;
@@ -106,6 +107,9 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         throw new Error('in-app-agent: stored contentWidthPercent must be an integer from 40 to 100');
     }
     const converter = new lib.showdown.Converter({ tables: true, strikethrough: true, simpleLineBreaks: false });
+    // Its own DOMPurify instance, so hooks the page adds do not apply.
+    const purify = lib.DOMPurify(window);
+    purify.setConfig({ USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'style', 'form', 'input', 'button'] });
     // SillyTavern's preset panel declares which sources accept a reasoning effort.
     const effortSources = document.getElementById('openai_reasoning_effort_block')?.dataset.source?.split(',');
     if (!effortSources) throw new Error('in-app-agent: reasoning effort sources are unavailable');
@@ -133,21 +137,25 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
             message.textContent = tr('deleteConversationNote', { title });
             return await context.Popup.show.confirm(tr('deleteConversation'), message.outerHTML) === context.POPUP_RESULT.AFFIRMATIVE;
         },
-        markdown: (text: string) => lib.DOMPurify.sanitize(converter.makeHtml(text), {
-            USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'style', 'form', 'input', 'button'],
-        }),
+        markdown: (text: string) => purify.sanitize(converter.makeHtml(text)),
         async loadOptions(profileId: string): Promise<SettingsOptions> {
             const manager = context.getPresetManager('openai');
             if (!manager) throw new Error('in-app-agent: preset manager is unavailable');
-            const [catalog, skills] = await Promise.all([
-                agent.tools.list({ context: 'session' }), skill.list({ scope: { kind: 'profile', profileId } }),
+            const [catalog, builtinSkills, profileSkills] = await Promise.all([
+                agent.tools.list({ context: 'session' }),
+                skill.list({ scope: { kind: 'builtin' } }), skill.list({ scope: { kind: 'profile', profileId } }),
             ]);
             return {
                 presets: manager.getAllPresets().filter(name => name && manager.findPreset(name) !== 'gui').sort((a, b) => a.localeCompare(b)),
-                tools: catalog.tools, diagnostics: catalog.diagnostics, skills,
+                tools: catalog.tools, diagnostics: catalog.diagnostics,
+                skills: [...new Map([...builtinSkills, ...profileSkills].map(item => [item.name, item])).values()],
             };
         },
         readResult: (runId: string, path: string) => agent.readWorkspaceFile({ runId, path }),
+        async readImage(runId: string, image: { path: string; mimeType: string }) {
+            const bytes = await agent.readWorkspaceBytes({ runId, path: image.path });
+            return new Blob([bytes], { type: image.mimeType });
+        },
         openConnections() {
             const toggle = document.querySelector<HTMLElement>('#sys-settings-button .drawer-toggle');
             if (!toggle) throw new Error('in-app-agent: connection settings entry is unavailable');

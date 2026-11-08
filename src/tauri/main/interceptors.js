@@ -1,7 +1,7 @@
 import { createAbortError, isAbortError } from './kernel/abort-error.js';
+import { streamResponse } from './http-utils.js';
 
 export function createInterceptors({
-    isTauri,
     originalFetch,
     canHandleRequest,
     toUrl,
@@ -63,9 +63,7 @@ export function createInterceptors({
                         void result.body?.cancel().catch(error => console.warn('Failed to close aborted response', error));
                         throw createAbortError();
                     }
-                    if (!signal || !result.body) return result;
-                    // Native piping keeps cancellation attached after fetch resolves, including while the body is locked.
-                    return new Response(result.body.pipeThrough(new TransformStream(), { signal }), result);
+                    return signal && result.body ? streamResponse(result.body, result, signal) : result;
                 });
             return await (abortRace ? Promise.race([pending, abortRace.promise]) : pending);
         } finally {
@@ -147,10 +145,6 @@ export function createInterceptors({
                 throw createAbortError();
             }
 
-            if (!isTauri) {
-                return delegateFetch(input, init);
-            }
-
             const requestUrl = toUrl(input, resolveWindowBaseUrl(targetWindow));
             if (!requestUrl || !canHandleRequest(requestUrl, input, init, targetWindow)) {
                 return delegateFetch(input, init);
@@ -190,10 +184,6 @@ export function createInterceptors({
         const originalAjax = $.ajax.bind($);
 
         const patchedAjax = function ajaxProxy(urlOrOptions, maybeOptions) {
-            if (!isTauri) {
-                return originalAjax(urlOrOptions, maybeOptions);
-            }
-
             const options = typeof urlOrOptions === 'string'
                 ? { ...(maybeOptions || {}), url: urlOrOptions }
                 : { ...(urlOrOptions || {}) };

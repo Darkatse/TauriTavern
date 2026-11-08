@@ -139,20 +139,12 @@ pub(super) fn map_xai_reasoning_effort(
 }
 
 pub(super) fn map_zai_reasoning_effort(
-    model: &str,
     value: &str,
 ) -> Result<Option<&'static str>, ApplicationError> {
     let effort = parse_known_reasoning_effort(value, "Z.AI")?;
-    let model = model.trim().to_ascii_lowercase();
 
     match effort {
         RequestedReasoningEffort::Auto => Ok(None),
-        _ if !matches!(model.as_str(), "glm-5.2" | "glm-5.3" | "glm-5.3-flash") => {
-            Err(ApplicationError::ValidationError(
-                "Z.AI reasoning_effort is only supported by glm-5.2, glm-5.3, and glm-5.3-flash"
-                    .to_string(),
-            ))
-        }
         RequestedReasoningEffort::None => Ok(Some("none")),
         RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
         RequestedReasoningEffort::Low => Ok(Some("low")),

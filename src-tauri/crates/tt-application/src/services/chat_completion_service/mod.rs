@@ -484,8 +484,6 @@ impl ChatCompletionService {
             prompt_caching_hints,
         )
         .await?;
-        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
-
         Ok(PreparedChatCompletionRequest {
             source,
             config,

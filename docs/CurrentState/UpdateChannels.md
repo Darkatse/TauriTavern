@@ -26,7 +26,7 @@ Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返�
 
 Windows 与 macOS 的 Stable、Canary debug 包均启用 Tauri Pilot；常规 release 构建默认不启用。
 
-`.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，必需产物校验通过后才更新固定的 `Canary` Release 和 tag。实验性的鸿蒙 HAP 是可选产物：鸿蒙构建失败时 Canary 照常发布，只缺少该 HAP，失败体现在本次运行的鸿蒙 job 上。Stable 与 Canary 共用面向用户的产物命名契约：
+`.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，必需产物校验通过后才更新固定的 `Canary` Release 和 tag。实验性的鸿蒙 HAP 在 Stable 与 Canary 中都是可选产物：鸿蒙构建失败时照常发布其他平台，只缺少该 HAP，失败体现在本次运行的鸿蒙 job 上。Stable 与 Canary 共用面向用户的产物命名契约：
 
 ```text
 TauriTavern-<release-id>-<platform>-<arch>[-<variant>][.<ext>]
@@ -38,7 +38,7 @@ Release notes 先由 Git 历史生成确定性上下文和回退正文。独立�
 
 ## Public TestFlight
 
-Stable 与 Canary 原有的自签 iOS IPA 保持原构建参数和 Release 文件名。iOS job 在普通 IPA 完成后，复用已生成的前端资源额外构建 `ios_external_beta` + App Store Connect 版本，并以 `-TestFlight.ipa` 后缀作为独立产物。完整 GitHub Release 产物发布成功后，共享的 `.github/workflows/public-testflight.yml` 才上传并分发该专用 IPA；成功进入 TestFlight 流程后，再从 GitHub Release 删除临时的 `-TestFlight.ipa`，普通自签 IPA 始终保留。
+Stable 与 Canary 原有的自签 iOS IPA 保持原 Release 文件名，出厂 iOS policy profile 为 `full`。iOS job 在普通 IPA 完成后，复用已生成的前端资源额外构建 `ios_external_beta` + App Store Connect 版本，并以 `-TestFlight.ipa` 后缀作为独立产物。完整 GitHub Release 产物发布成功后，共享的 `.github/workflows/public-testflight.yml` 才上传并分发该专用 IPA；成功进入 TestFlight 流程后，再从 GitHub Release 删除临时的 `-TestFlight.ipa`，普通自签 IPA 始终保留。
 
 Stable 的专用 IPA 只进入 `TauriTavern Beta Test`，Canary 的专用 IPA 只进入 `TauriTavern Canary Test`；流水线会校验目标确实是当前 App 的公开外测组。每次 TestFlight 构建使用按时间单调变化的 `CFBundleVersion`，避免两个渠道共用营销版本时发生构建号冲突。
 

@@ -20,7 +20,10 @@ import {
     prepareMesTextHtmlWithRuntimePolicy,
     replaceMesTextHtmlWithRuntimePolicy,
     replaceTransientMesTextHtmlWithRuntimePolicy,
+    writeStreamingMesText,
 } from './scripts/tauri/message/mes-text-write.js';
+import { createBlockContent } from './scripts/tauri/message/block-content.js';
+import { splitMessageBlocks } from './scripts/tauri/message/message-blocks.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
 import { assertRequiredChatSurfaceParticipants } from './tauri/main/services/chat-surface/capability-gate.js';
 import { installChatSurfaceRuntime } from './tauri/main/services/chat-surface/install.js';
@@ -30,7 +33,7 @@ import {
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { initDrawers, getTopLevelDrawerPanel, isTopLevelDrawerOpen, setTopLevelDrawerOpen, toggleInlineDrawer } from './scripts/drawers.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
-import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
+import { getStreamingRenderInterval, normalizeStreamingFps } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
     initializeColdSwipes,
@@ -48,7 +51,6 @@ import {
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { composeAuthorsNote, extension_prompt_roles, extension_prompt_types, isWorldInfoInjection } from './scripts/extension-prompts.js';
-import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 import {
     ChatInputFocusIntent,
     focusChatInput,
@@ -73,16 +75,14 @@ import {
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy, projectAgentPromptInputs } from './scripts/tauritavern/agent/agent-context-policy.js';
-import { createAgentPromptSnapshot } from './scripts/tauritavern/agent/agent-model-messages.js';
+import { prepareCurrentPromptPayload } from './tauri/main/api/agent-prompt-snapshot.js';
 import { buildPromptAssemblyPayload } from './tauri/main/api/agent-prompt-assembly.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
     buildFrozenRunInputSnapshot,
     updateFrozenMacroContext,
-    createMacroContextFromSnapshot,
     buildCurrentModelConnectionSnapshot,
-    buildSettingsWithCurrentModelConnectionSnapshot,
     normalizeFrozenRunInputSnapshot,
     snapshotExtensionPromptsForFrozenRun,
 } from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
@@ -177,6 +177,7 @@ import {
     loadPowerUserSettings,
     playMessageSound,
     fixMarkdown,
+    MARKDOWN_FIX_PAIRS,
     power_user,
     persona_description_positions,
     loadMovingUIState,
@@ -209,8 +210,7 @@ import {
     getChatCompletionModel,
     getChatCompletionPreset,
     isVertexAiClaudeModelId,
-    createGenerationParameters,
-    createChatCompletionMacroContext,
+    createAgentPromptSnapshot,
     proxies,
     loadProxyPresets,
     selected_proxy,
@@ -407,6 +407,7 @@ import { MessageFormatter } from './scripts/message-formatter.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
 import { createStartupStatusOverlay, showStartupFailure } from './scripts/tauri/startup/startup-status-overlay.js';
+import { loadUserStylesheet, settleSafeModePrompt } from './scripts/tauri/startup/safe-mode.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 
 // API OBJECT FOR EXTERNAL WIRING
@@ -1100,6 +1101,11 @@ export async function pingServer() {
     }
 }
 
+/** The startup failure dialog shows only this message, so it carries the host's reason. */
+async function startupRequestError(name, response) {
+    return new Error(`${name} request failed with status ${response.status}: ${await response.text()}`);
+}
+
 async function fetchBootstrapMetadata() {
     const response = await fetch('/api/bootstrap', {
         method: 'POST',
@@ -1107,7 +1113,7 @@ async function fetchBootstrapMetadata() {
     });
 
     if (!response.ok) {
-        throw new Error(`Bootstrap metadata request failed with status ${response.status}`);
+        throw await startupRequestError('Bootstrap metadata', response);
     }
 
     return response.json();
@@ -1121,7 +1127,7 @@ async function fetchSettingsSnapshot() {
         cache: 'no-cache',
     });
     if (!response.ok) {
-        throw new Error(`Settings request failed with status ${response.status}`);
+        throw await startupRequestError('Settings', response);
     }
     return response.json();
 }
@@ -1140,14 +1146,15 @@ async function firstLoadInit() {
 
     const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
-    const hostReadyPromise = waitForTauriMainReady({ failFast: true });
-
     perfMark('tt:startup:start');
 
     try {
         await initLocales();
         setStage('shell', t`Starting: rendering the interface… (extensions load later)`);
         removePreloader();
+        // Settings and user styles load only once the safe mode prompt is settled. An offer is
+        // answered before startup waits on a paint or the backend, a report after the rescue.
+        await settleSafeModePrompt();
         await nextPaint();
 
         registerPromptManagerMigration();
@@ -1161,7 +1168,9 @@ async function firstLoadInit() {
 
         // Ensure bridge/interceptors are installed before first /api/* calls.
         setStage('core', t`Starting: connecting to the backend…`);
-        await hostReadyPromise;
+        await window.__TAURITAVERN_MAIN_READY__;
+        await settleSafeModePrompt();
+        await loadUserStylesheet();
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
         initializeColdSwipes(tauriTavernSettings);
@@ -1169,7 +1178,7 @@ async function firstLoadInit() {
 
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
-            throw new Error(`CSRF request failed with status ${tokenResponse.status}`);
+            throw await startupRequestError('CSRF', tokenResponse);
         }
         const tokenData = await tokenResponse.json();
         if (typeof tokenData?.token !== 'string' || !tokenData.token) {
@@ -1441,7 +1450,13 @@ export function resultCheckStatus() {
     stopStatusLoading();
 }
 
-async function getPersistedCharacterChats(avatar) {
+/**
+ * Lists a character's persisted chats. A simple listing carries file names only and reads no chat content.
+ * @param {string} avatar Avatar file name
+ * @param {{ simple: boolean }} options
+ * @returns {Promise<any[]>}
+ */
+async function listPersistedCharacterChats(avatar, { simple }) {
     const character = characters.find(character => character.avatar === avatar);
     if (!character) {
         return [];
@@ -1450,7 +1465,7 @@ async function getPersistedCharacterChats(avatar) {
     const response = await fetch('/api/characters/chats', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ avatar_url: character.avatar, ch_name: character.name }),
+        body: JSON.stringify({ avatar_url: character.avatar, ch_name: character.name, simple }),
     });
 
     if (!response.ok) {
@@ -1462,7 +1477,11 @@ async function getPersistedCharacterChats(avatar) {
         throw new Error('Character chat list could not be loaded');
     }
 
-    const chats = Array.isArray(data) ? data : Object.values(data ?? {});
+    return Array.isArray(data) ? data : Object.values(data ?? {});
+}
+
+async function getPersistedCharacterChats(avatar) {
+    const chats = await listPersistedCharacterChats(avatar, { simple: false });
     chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
     return chats;
 }
@@ -1470,15 +1489,17 @@ async function getPersistedCharacterChats(avatar) {
 /**
  * Resolves the chat a character opens: its current chat while it still exists, otherwise its most recent one.
  * A character without persisted chats keeps its current chat name so a new chat can be created under it.
- * @param {{ file_name: string }[]} persistedChats Persisted chats, most recent first
+ * @param {string} avatar Avatar file name
+ * @param {{ file_name: string }[]} chatFiles Persisted chat files in any order
  * @param {string} currentChat Chat name stored in the character
- * @returns {string} Chat name to open
+ * @returns {Promise<string>} Chat name to open
  */
-function resolvePersistedChat(persistedChats, currentChat) {
-    if (persistedChats.length === 0 || persistedChats.some(chat => normalizeChatFileName(chat.file_name) === currentChat)) {
+async function resolvePersistedChat(avatar, chatFiles, currentChat) {
+    if (chatFiles.length === 0 || chatFiles.some(chat => normalizeChatFileName(chat.file_name) === currentChat)) {
         return currentChat;
     }
-    return normalizeChatFileName(persistedChats[0].file_name);
+    const [latest] = await getPersistedCharacterChats(avatar);
+    return normalizeChatFileName(latest.file_name);
 }
 
 /**
@@ -1509,8 +1530,8 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
 
     if (selected_group || String(this_chid) !== String(id) || chatFile !== undefined) {
         if (!is_send_press) {
-            const persistedChats = chatFile === undefined ? await getPersistedCharacterChats(avatar) : [];
-            const allowNewChat = chatFile === undefined && persistedChats.length === 0;
+            const chatFiles = chatFile === undefined ? await listPersistedCharacterChats(avatar, { simple: true }) : [];
+            const allowNewChat = chatFile === undefined && chatFiles.length === 0;
             setCharacterId(undefined);
             setCharacterName('');
             resetSelectedGroup();
@@ -1526,12 +1547,17 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
                 return;
             }
 
+            // After each await, this switch goes on only while the group, the character and the chat it last saw are unchanged.
+            const superseded = seenChat => selected_group || String(this_chid) !== String(id) || characters[id]?.chat !== seenChat;
             const previousChat = characters[id].chat;
-            const targetChat = chatFile ?? resolvePersistedChat(persistedChats, previousChat);
+            const targetChat = chatFile ?? await resolvePersistedChat(avatar, chatFiles, previousChat);
+            if (superseded(previousChat)) {
+                return;
+            }
             characters[id].chat = targetChat;
             await getChat({ allowNewChat });
 
-            if (selected_group || String(this_chid) !== String(id) || characters[id]?.chat !== targetChat) {
+            if (superseded(targetChat)) {
                 return;
             }
             if (chatFile !== undefined || targetChat !== previousChat) {
@@ -2263,25 +2289,26 @@ export async function deleteLastMessage() {
 
 /**
  * Deletes a message from the chat by its ID, optionally asking for confirmation.
- * @param {number} id The ID of the message to delete.
+ * @param {number|string} id The ID of the message to delete.
  * @param {number} [swipeDeletionIndex] Deletes the swipe with that index.
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
-    if (!Number.isInteger(id) || id < 0 || id >= chat.length) {
+    const index = typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id;
+    if (!Number.isInteger(index) || index < 0 || index >= chat.length) {
         throw new RangeError(`Invalid message id: ${String(id)}`);
     }
-    const element = chatSurface.getMessageElement(id);
+    const element = chatSurface.getMessageElement(index);
     const ownedFocus = element?.contains(document.activeElement);
     const canDeleteSwipe = swipeDeletionIndex !== undefined && swipeDeletionIndex !== null;
     if (canDeleteSwipe) {
         if (swipeDeletionIndex < 0) {
             throw new Error('Swipe index cannot be negative');
         }
-        if (!Array.isArray(chat[id].swipes)) {
+        if (!Array.isArray(chat[index].swipes)) {
             throw new Error('Message has no swipes to delete');
         }
-        if (chat[id].swipes.length <= swipeDeletionIndex) {
+        if (chat[index].swipes.length <= swipeDeletionIndex) {
             throw new Error('Swipe index out of bounds');
         }
     }
@@ -2301,13 +2328,13 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     if (deleteOnlySwipe) {
-        await deleteSwipe(swipeDeletionIndex, id);
+        await deleteSwipe(swipeDeletionIndex, index);
         return;
     }
 
-    const deletedMessage = chat[id];
-    deleteItemizedPromptForMessage(id);
-    chat.splice(id, 1);
+    const deletedMessage = chat[index];
+    deleteItemizedPromptForMessage(index);
+    chat.splice(index, 1);
 
     chat_metadata.tainted = true;
 
@@ -2315,14 +2342,14 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     saveChatDebounced();
     void cleanupDeletedMessageStates([deletedMessage]);
 
-    if (this_edit_mes_id === id) {
+    if (this_edit_mes_id === index) {
         this_edit_mes_id = undefined;
         syncChatSurfaceProjectionHold();
     }
 
     refreshActiveSwipeButtons();
 
-    if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(id);
+    if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(index);
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
 }
 
@@ -2531,6 +2558,9 @@ function getMessageFormattingRegexContext(isUser, messageId, isReasoning = false
     };
 }
 
+const MESSAGE_TAG_QUOTES = /<([^>]+)>/g;
+const MESSAGE_QUOTES = /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(\u201C.*?\u201D)|(\u00AB.*?\u00BB)|(\u300C.*?\u300D)|(\u300E.*?\u300F)|(\uFF02.*?\uFF02)/gim;
+
 // Preparation and completion stay inside the formatter; callers only receive HTML.
 function prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
     if (!mes) return null;
@@ -2605,13 +2635,13 @@ function finishMessageFormatting(input, mes = input?.text) {
     if (!isSystem) {
         // Save double quotes in tags as a special character to prevent them from being encoded
         if (!power_user.encode_tags) {
-            mes = mes.replace(/<([^>]+)>/g, function (_, contents) {
+            mes = mes.replace(MESSAGE_TAG_QUOTES, function (_, contents) {
                 return '<' + contents.replace(/"/g, '\ufffe') + '>';
             });
         }
 
         mes = mes.replace(
-            /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(\u201C.*?\u201D)|(\u00AB.*?\u00BB)|(\u300C.*?\u300D)|(\u300E.*?\u300F)|(\uFF02.*?\uFF02)/gim,
+            MESSAGE_QUOTES,
             function (match, p1, p2, p3, p4, p5, p6) {
                 if (p1) {
                     // English double quotes
@@ -2679,6 +2709,67 @@ function finishMessageFormatting(input, mes = input?.text) {
     mes = decodeStyleTags(mes, { prefix: '.mes_text ' });
 
     return mes;
+}
+
+/**
+ * The ranges that a whole-text pass of finishMessageFormatting reads across lines, end exclusive.
+ * @param {string} text
+ * @returns {Array<[number, number]>}
+ */
+function getMessageFormattingSpans(text) {
+    /** @type {Array<[number, number]>} */
+    const spans = [];
+    /** @param {RegExp} regex */
+    const add = regex => {
+        for (const match of text.matchAll(regex)) {
+            if (match[0].includes('\n')) spans.push([match.index, match.index + match[0].length]);
+        }
+    };
+    if (power_user.auto_fix_generated_markdown) add(MARKDOWN_FIX_PAIRS);
+    if (!power_user.encode_tags) add(MESSAGE_TAG_QUOTES);
+    add(MESSAGE_QUOTES);
+    // Only the first occurrence of a reasoning string is escaped.
+    for (const reasoningString of [power_user.reasoning.prefix, power_user.reasoning.suffix]) {
+        const first = reasoningString?.trim() ? text.indexOf(reasoningString) : -1;
+        if (first !== -1) spans.push([first, text.lastIndexOf(reasoningString) + reasoningString.length]);
+    }
+    return spans;
+}
+
+/**
+ * Formats successive versions of one streaming message as top-level blocks. Joined by line breaks, the blocks are the
+ * message's messageFormatting HTML, except that showdown numbers repeated heading ids per block. An unchanged block
+ * keeps its HTML. Display hooks receive whole messages, so with any registered the message is one block.
+ * @returns {(...args: Parameters<typeof messageFormatting>) => string[]}
+ */
+export function createStreamingMessageFormatter() {
+    /** @type {string | null} */
+    let lastMes = null;
+    /** @type {string[]} */
+    let lastBlocks = [];
+    /** @type {Map<string, string>} */
+    let held = new Map();
+    return (mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) => {
+        if (mes === lastMes) {
+            return lastBlocks;
+        }
+        const input = prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides, isReasoning);
+        const text = input?.regex ? getRegexedString(input.text, input.regex.placement, input.regex.params) : input?.text;
+        const blocks = !input ? []
+            : MessageFormatter.hasHooks(MessageFormatter.stage.AFTER_REGEX) || MessageFormatter.hasHooks(MessageFormatter.stage.AFTER_MARKDOWN)
+                ? [text]
+                : splitMessageBlocks(text, getMessageFormattingSpans(text));
+        /** @type {Map<string, string>} */
+        const next = new Map();
+        lastBlocks = blocks.map(block => {
+            const html = held.get(block) ?? finishMessageFormatting(input, block);
+            next.set(block, html);
+            return html;
+        });
+        held = next;
+        lastMes = mes;
+        return lastBlocks;
+    };
 }
 
 /**
@@ -3995,6 +4086,24 @@ export function getExtensionPromptMaxDepth() {
 }
 
 /**
+ * Gets the depths, in ascending order, at which in-chat prompts can be injected.
+ * @param {Record<string, object>|null} prompts Extension prompts by key
+ * @param {Iterable<unknown>} [depths] Depths of other prompts that are injected
+ * @returns {number[]} Depths from 0 to the maximum depth
+ */
+export function getInChatInjectionDepths(prompts, depths = []) {
+    const maxDepth = getExtensionPromptMaxDepth();
+    const usedDepths = new Set(depths);
+    for (const prompt of Object.values(prompts ?? {})) {
+        if (prompt.position != extension_prompt_types.IN_CHAT || !prompt.value) continue;
+        // A prompt without a depth matches every depth.
+        if (prompt.depth === undefined) return Array.from({ length: maxDepth + 1 }, (_, depth) => depth);
+        usedDepths.add(prompt.depth);
+    }
+    return [...usedDepths].filter(depth => Number.isInteger(depth) && depth >= 0 && depth <= maxDepth).sort((a, b) => a - b);
+}
+
+/**
  * Returns the extension prompt for the given position, depth, and role.
  * If multiple prompts are found, they are joined with a separator.
  * @param {number} [position] Position of the prompt
@@ -4274,8 +4383,8 @@ class StreamingProcessor {
         this.messageDom = null;
         /** @type {HTMLElement} */
         this.messageTextDom = null;
-        /** @type {string|null} Last canonical message HTML committed during streaming. */
-        this.lastCommittedHtml = null;
+        this.formatMessage = createStreamingMessageFormatter();
+        this.messageContent = createBlockContent();
         /** @type {HTMLElement} */
         this.messageTimerDom = null;
         /** @type {HTMLElement} */
@@ -4433,29 +4542,15 @@ class StreamingProcessor {
                 };
             }
 
-            const formattedText = messageFormatting(
-                processedText,
-                chat[messageId].name,
-                chat[messageId].is_system,
-                chat[messageId].is_user,
-                messageId,
-                {},
-                false,
-            );
-            if (
-                this.messageDom instanceof HTMLElement
-                && this.messageTextDom instanceof HTMLElement
-                && shouldCommitStreamingMessage({
-                    lastCommittedHtml: this.lastCommittedHtml,
-                    nextHtml: formattedText,
-                    final: isFinal,
-                    fadeIn: power_user.stream_fade_in,
-                })
-            ) {
-                replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, formattedText, {
-                    fadeIn: !isFinal && power_user.stream_fade_in,
-                });
-                this.lastCommittedHtml = formattedText;
+            if (this.messageDom instanceof HTMLElement && this.messageTextDom instanceof HTMLElement) {
+                const { name, is_system, is_user } = chat[messageId];
+                if (isFinal) {
+                    replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, messageFormatting(processedText, name, is_system, is_user, messageId));
+                } else {
+                    writeStreamingMesText(this.messageDom, this.messageContent, this.formatMessage(processedText, name, is_system, is_user, messageId), {
+                        fadeIn: power_user.stream_fade_in,
+                    });
+                }
             }
 
             const timePassed = formatGenerationTimer(this.timeStarted, currentTime, currentTokenCount, this.reasoningHandler.getDuration(), this.timeToFirstToken);
@@ -5404,8 +5499,21 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext()
         : inheritedLegacyMcpContext;
     const legacyMcpToolRound = useLegacyMcpTools ? legacyMcpContext.createRound() : null;
-    let coreChat = chat.filter(x => !x.is_system
-        || (main_api === 'openai' && (x.role === 'tool' || Object.hasOwn(x.extra ?? {}, 'tool_invocations'))));
+    const hiddenToolOwners = new Map();
+    let coreChat = chat.filter(message => {
+        if (main_api === 'openai') {
+            if (message.role === 'tool') {
+                return hiddenToolOwners.get(message.tool_call_id) !== true;
+            }
+            if (!message.is_user && Array.isArray(message.tool_calls)) {
+                for (const call of message.tool_calls) {
+                    hiddenToolOwners.set(call.id, Boolean(message.is_system));
+                }
+            }
+        }
+        return !message.is_system
+            || (main_api === 'openai' && Object.hasOwn(message.extra ?? {}, 'tool_invocations'));
+    });
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -6691,57 +6799,37 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         jsonSchema,
     });
     let payload;
-    let snapshotMetadata;
+    let snapshotInputs;
     let generationIntent;
     let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
 
-    if (promptAssembly?.mode === 'currentPromptSnapshot') {
-        const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
-            oai_settings,
-            frozenRunInputSnapshot.currentModelConnection,
-        );
-        const model = getChatCompletionModel(settings);
-        if (!model) {
-            throw new Error('agent.model_required: current chat-completion source did not resolve a model');
-        }
-
-        const workingInputs = projectAgentPromptInputs(frozenRunInputSnapshot.promptInputs, agentContextPolicy);
-        const macroContext = createChatCompletionMacroContext(
-            createMacroContextFromSnapshot(frozenRunInputSnapshot, workingInputs), settings, model,
-        );
-        const { generate_data: chatCompletionPayload } = await createGenerationParameters(
-            settings,
-            model,
-            type,
-            structuredClone(messages),
-            {
-                jsonSchema, agentMode: true, macroContext,
+    if (promptAssembly.mode === 'currentPromptSnapshot') {
+        const prepared = await prepareCurrentPromptPayload({
+            currentPromptSnapshotSeed: {
+                generationType: type,
+                messages,
+                contextPolicy: agentContextPolicy,
+                jsonSchema,
+                worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation,
             },
-        );
-
-        assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
-        payload = chatCompletionPayload;
-        snapshotMetadata = {
-            contextPolicy: agentContextPolicy,
-            ...(frozenRunInputSnapshot.worldInfoActivation ? { worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation } : {}),
-        };
+            frozenRunInputSnapshot,
+        });
+        payload = prepared.payload;
+        snapshotInputs = prepared.snapshotInputs;
         generationIntent = {
+            ...prepared.generationIntent,
             source: 'legacy-generate-live-handoff',
-            generationType: type,
-            chatCompletionSource: chatCompletionPayload.chat_completion_source,
-            model: chatCompletionPayload.model,
             contextPolicy: agentContextPolicy,
         };
-    } else if (promptAssembly?.mode === 'frontendPromptAssembly') {
+    } else if (promptAssembly.mode === 'frontendPromptAssembly') {
         const assembled = await buildPromptAssemblyPayload(promptAssembly.request);
         payload = assembled.payload;
-        snapshotMetadata = assembled.snapshotMetadata;
-        runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot;
+        snapshotInputs = assembled.snapshotInputs;
+        runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot;
         generationIntent = {
             ...assembled.generationIntent,
-            source: 'frontend-prompt-assembly-broker',
             parentSource: 'legacy-generate-live-handoff',
-            contextPolicy: snapshotMetadata.contextPolicy,
+            contextPolicy: snapshotInputs.contextPolicy,
             promptAssembly: promptAssembly.assembly,
         };
     } else {
@@ -6750,7 +6838,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
 
     // Extensions finish editing the provider payload before it becomes canonical Agent input.
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, payload);
-    const promptSnapshot = createAgentPromptSnapshot(payload, snapshotMetadata);
+    const promptSnapshot = createAgentPromptSnapshot(payload, snapshotInputs);
 
     return startAndWaitForAgentRun({
         generationType: type,
@@ -6762,7 +6850,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     });
 }
 
-export async function resumeAgentRunInChat({ runId, generationType, additionalRounds = 0, checkpoint, revisionGuidance, abortController: commandAbortController }) {
+export async function resumeAgentRunInChat({ runId, generationType, checkpoint, revisionGuidance, abortController: commandAbortController }) {
     if (is_send_press || is_group_generating || hasActiveAgentRun()) {
         throw new Error('agent.resume_generation_active: wait for the current generation to finish');
     }
@@ -6775,7 +6863,7 @@ export async function resumeAgentRunInChat({ runId, generationType, additionalRo
         generation_started = new Date();
         deactivateSendButtons();
         await eventSource.emit(event_types.GENERATION_STARTED, generationType, { agentResume: true, runId }, false);
-        return await resumeAndWaitForAgentRun({ runId, additionalRounds, checkpoint, revisionGuidance }, commandAbortController);
+        return await resumeAndWaitForAgentRun({ runId, checkpoint, revisionGuidance }, commandAbortController);
     } finally {
         unblockGeneration(generationType);
         await exitGeneration();
@@ -6933,29 +7021,6 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds, chatRef)
     await agentApi.pruneChatPersistentStates({ candidateStateIds, chatRef });
 }
 
-function assertAgentPromptSnapshotHasNoExternalTools(payload) {
-    const tools = payload?.tools;
-    if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
-    }
-    if (Object.hasOwn(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
-    }
-
-    const messages = payload?.messages;
-    if (!Array.isArray(messages)) {
-        throw new Error('agent.prompt_snapshot_messages_required: chat-completion payload missing messages');
-    }
-    const hasToolTurn = messages.some((message) => {
-        const role = String(message?.role || '').toLowerCase();
-        return role === 'tool'
-            || (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
-    });
-    if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
-    }
-}
-
 /**
  * Stops the generation and any streaming if it is currently running.
  */
@@ -6995,8 +7060,7 @@ async function doChatInject(messages, isContinue) {
     let totalInsertedMessages = 0;
     messages.reverse();
 
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
+    for (const i of getInChatInjectionDepths(extension_prompts)) {
         // Order of priority (most important go lower)
         const roles = [extension_prompt_roles.SYSTEM, extension_prompt_roles.USER, extension_prompt_roles.ASSISTANT];
         const names = {
@@ -9344,6 +9408,7 @@ export function changeMainAPI(api = null) {
     }
 
     main_api = selectedVal;
+    document.body.dataset.mainApi = selectedVal;
     setOnlineStatus('no_connection');
 
     if (main_api == 'koboldhorde') {
@@ -9410,9 +9475,8 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
         await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, settings);
 
         //Load AI model config settings
-        amount_gen = settings.amount_gen;
-        if (settings.max_context !== undefined)
-            max_context = parseInt(settings.max_context);
+        amount_gen = settings.amount_gen ?? amount_gen;
+        max_context = parseInt(settings.max_context ?? max_context);
 
         swipes = settings.swipes !== undefined ? !!settings.swipes : true;  // enable swipes by default
         $('#swipes-checkbox').prop('checked', swipes); /// swipecode

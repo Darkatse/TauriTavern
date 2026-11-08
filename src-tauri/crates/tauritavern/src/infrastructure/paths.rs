@@ -47,7 +47,7 @@ pub struct RuntimePaths {
 }
 
 impl RuntimePaths {
-    fn new(mode: RuntimeMode, app_root: PathBuf) -> Self {
+    pub(crate) fn new(mode: RuntimeMode, app_root: PathBuf) -> Self {
         let data_root = app_root.join("data");
         let log_root = app_root.join("logs");
         let archive_root = app_root.join(DATA_ARCHIVE_ROOT_DIR);

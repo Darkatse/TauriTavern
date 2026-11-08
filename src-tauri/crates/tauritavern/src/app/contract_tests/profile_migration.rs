@@ -14,7 +14,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
     let registry = BuiltinAgentToolRegistry::all();
     fs::create_dir_all(root.join("profiles")).await.unwrap();
 
-    for version in [1, 2, 3] {
+    for version in [1, 2, 3, 4] {
         let id = format!("legacy-{version}");
         let mut profile = service
             .load_profile(DEFAULT_AGENT_PROFILE_ID)
@@ -44,10 +44,6 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         );
         profile.skills.visible = vec!["lore".into()];
         profile.skills.deny = vec!["private".into()];
-        profile
-            .tools
-            .max_calls_per_tool
-            .insert("builtin:workspace.read_file".into(), 7);
         let expected = serde_json::to_value(&profile).unwrap();
         let mut legacy = expected.clone();
         legacy["preset"]["mode"] = json!("none");
@@ -57,36 +53,39 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .remove("externalResultInlineCharLimit")
             .unwrap();
         legacy["schemaVersion"] = json!(version);
-        legacy["skills"]["maxReadCharsPerCall"] = json!(20_000);
-        legacy["skills"]["maxReadCharsPerRun"] = json!(80_000);
-        legacy["tools"]["allow"].as_array_mut().unwrap().extend([
-            json!("builtin:skill.read"),
-            json!("builtin:skill.run_script"),
-            json!("builtin:agent.list"),
-        ]);
-        legacy["tools"]["deny"]
-            .as_array_mut()
-            .unwrap()
-            .extend([json!("builtin:skill.search"), json!("builtin:agent.list")]);
-        legacy["tools"]["maxCallsPerTool"]["builtin:skill.list"] = json!(1);
-        legacy["tools"]["maxCallsPerTool"]["builtin:agent.list"] = json!(2);
-        legacy["tools"]["toolDescriptions"]["builtin:skill.read"] =
-            json!({"description": "Legacy read"});
-        legacy["tools"]["toolDescriptions"]["builtin:agent.list"] =
-            json!({"description": "Legacy discovery"});
+        legacy["tools"]["maxRounds"] = json!(80);
+        legacy["tools"]["maxCallsPerRun"] = json!(80);
+        legacy["tools"]["maxCallsPerTool"] = json!({"builtin:workspace.read_file": 7});
+        if version < 4 {
+            legacy["skills"]["maxReadCharsPerCall"] = json!(20_000);
+            legacy["skills"]["maxReadCharsPerRun"] = json!(80_000);
+            legacy["tools"]["allow"].as_array_mut().unwrap().extend([
+                json!("builtin:skill.read"),
+                json!("builtin:skill.run_script"),
+                json!("builtin:agent.list"),
+            ]);
+            legacy["tools"]["deny"]
+                .as_array_mut()
+                .unwrap()
+                .extend([json!("builtin:skill.search"), json!("builtin:agent.list")]);
+            legacy["tools"]["maxCallsPerTool"]["builtin:skill.list"] = json!(1);
+            legacy["tools"]["maxCallsPerTool"]["builtin:agent.list"] = json!(2);
+            legacy["tools"]["toolDescriptions"]["builtin:skill.read"] =
+                json!({"description": "Legacy read"});
+            legacy["tools"]["toolDescriptions"]["builtin:agent.list"] =
+                json!({"description": "Legacy discovery"});
+        }
         if version < 3 {
             for key in ["allow", "deny"] {
                 for value in legacy["tools"][key].as_array_mut().unwrap() {
                     *value = json!(value.as_str().unwrap().strip_prefix("builtin:").unwrap());
                 }
             }
-            for key in ["maxCallsPerTool", "toolDescriptions"] {
-                let fields = legacy["tools"][key].as_object_mut().unwrap();
-                *fields = std::mem::take(fields)
-                    .into_iter()
-                    .map(|(id, value)| (id.strip_prefix("builtin:").unwrap().to_string(), value))
-                    .collect();
-            }
+            let descriptions = legacy["tools"]["toolDescriptions"].as_object_mut().unwrap();
+            *descriptions = std::mem::take(descriptions)
+                .into_iter()
+                .map(|(id, value)| (id.strip_prefix("builtin:").unwrap().to_string(), value))
+                .collect();
         }
         let path = root.join("profiles").join(format!("{id}.json"));
         fs::write(&path, serde_json::to_vec(&legacy).unwrap())
@@ -114,6 +113,21 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .unwrap();
         let saved: Value = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
         assert_eq!(saved, expected);
+
+        if version == 4 {
+            let session_path = root.join("session-workspace/sessions/profile.json");
+            fs::create_dir_all(session_path.parent().unwrap())
+                .await
+                .unwrap();
+            fs::write(&session_path, serde_json::to_vec(&legacy).unwrap())
+                .await
+                .unwrap();
+            let loaded = service.load_session_profile().await.unwrap().unwrap();
+            assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+            let saved: Value =
+                serde_json::from_slice(&fs::read(&session_path).await.unwrap()).unwrap();
+            assert_eq!(saved, expected);
+        }
 
         let mut invalid_current = expected;
         invalid_current["skills"]["maxReadCharsPerCall"] = json!(20_000);

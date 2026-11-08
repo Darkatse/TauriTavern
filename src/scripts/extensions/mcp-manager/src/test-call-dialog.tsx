@@ -6,9 +6,8 @@ import {
     type ReactNode,
     type Ref,
 } from 'react';
-import { createRoot } from 'react-dom/client';
 
-import { createTextPopup, errorText, tr, type McpMessageKey, type McpTranslator } from './host';
+import { createTextPopup, errorText, showReactPopup, tr, type McpMessageKey, type McpTranslator } from './host';
 import {
     buildArgumentFields,
     collectArgumentsJson,
@@ -130,7 +129,7 @@ function ArgumentInput({
                                 disabled={disabled}
                                 onChange={() => onChange(option)}
                             />
-                            <span>{option === '' ? tr('notSet') : option}</span>
+                            <span className="tt-mcp-seg-text">{option === '' ? tr('notSet') : option}</span>
                         </label>
                     ))}
                 </div>
@@ -580,22 +579,16 @@ export function TestCallDialog({ servers, discover, refresh, testCall, tr, ref }
  * discovery fetches and the in-flight call; closing the popup aborts the local wait.
  */
 export async function openTestCallDialog(deps: TestCallDialogDeps): Promise<void> {
-    const mount = document.createElement('div');
     let dialog: TestCallDialogHandle | null = null;
-
-    const root = createRoot(mount);
-    try {
-        root.render(
-            <TestCallDialog
-                {...deps}
-                tr={tr}
-                ref={handle => {
-                    dialog = handle;
-                }}
-            />,
-        );
-
-        const popup = createTextPopup(mount, {
+    await showReactPopup(
+        <TestCallDialog
+            {...deps}
+            tr={tr}
+            ref={handle => {
+                dialog = handle;
+            }}
+        />,
+        mount => createTextPopup(mount, {
             okButton: tr('close'),
             allowVerticalScrolling: true,
             wide: true,
@@ -605,9 +598,6 @@ export async function openTestCallDialog(deps: TestCallDialogDeps): Promise<void
                 dialog?.abort();
                 return true;
             },
-        });
-        await popup.show();
-    } finally {
-        root.unmount();
-    }
+        }),
+    );
 }

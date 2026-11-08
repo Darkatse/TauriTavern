@@ -12,6 +12,7 @@ pub mod lan_discovery;
 pub mod observability;
 pub mod provider_metadata;
 pub mod range;
+pub mod safe_mode;
 pub mod settings;
 pub mod sync;
 pub mod sync_automation;

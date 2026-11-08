@@ -1,4 +1,5 @@
 // @ts-check
+import { readByteResponse } from '../kernel/byte-protocol.js';
 
 /**
  * Layout describes the already usable browser viewport. Native system bars and
@@ -42,6 +43,10 @@ export function installLayoutApi() {
     };
     hostAbi.api.layout = {
         snapshot: readSnapshot,
+        async capture() {
+            const bytes = readByteResponse(await hostAbi.invoke.safeInvoke('capture_content_viewport'));
+            return new Blob([bytes], { type: 'image/png' });
+        },
         async subscribe(handler) {
             if (typeof handler !== 'function') throw new TypeError('handler must be a function');
             if (subscribers.size === 0) {

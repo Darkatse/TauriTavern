@@ -161,7 +161,6 @@ const textEncoder = new TextEncoder();
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
 // Counts made with the old role wrappers are not reusable under the 1.19 rules.
 const TOKEN_CACHE_PREFIX = 'tokenCache:v2:';
-const TAURI_WARM_TOKENIZER_MODEL = 'gpt-4o';
 
 let tokenCacheState = {
     chatId: 'undefined',
@@ -1002,7 +1001,7 @@ export function getTokenizerModel(settings = null) {
 }
 
 export async function warmTokenizerCache() {
-    if (!globalThis.__TAURITAVERN__) {
+    if (!globalThis.__TAURITAVERN__ || main_api !== 'openai') {
         return;
     }
 
@@ -1010,7 +1009,7 @@ export async function warmTokenizerCache() {
         await jQuery.ajax({
             async: true,
             type: 'POST',
-            url: `/api/tokenizers/openai/count-batch?model=${TAURI_WARM_TOKENIZER_MODEL}`,
+            url: `/api/tokenizers/openai/count-batch?model=${getTokenizerModel()}`,
             data: '[]',
             dataType: 'json',
             contentType: 'application/json',

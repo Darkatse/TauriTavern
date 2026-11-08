@@ -6,6 +6,7 @@
     "module": "ESNext",
     "tsBuildInfoFile": ".cache/tsconfig.ui.tsbuildinfo",
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": ["react", "react-dom"]
   },
   "include": [

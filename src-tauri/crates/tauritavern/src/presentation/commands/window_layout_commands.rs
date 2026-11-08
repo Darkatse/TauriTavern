@@ -1,10 +1,33 @@
-use crate::{platform::window_layout, presentation::errors::CommandError};
+use crate::{
+    platform::{viewport_capture, window_layout},
+    presentation::errors::CommandError,
+};
 use tauri::AppHandle;
-use tt_contracts::window_layout::{WindowBackdropRequest, WindowSnapshot};
+use tt_contracts::window_layout::{DrawerBarItem, WindowBackdropRequest, WindowSnapshot};
 
 #[tauri::command]
 pub async fn get_window_snapshot(app: AppHandle) -> Result<Option<WindowSnapshot>, CommandError> {
     window_layout::snapshot(&app).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_drawer_bar_items(
+    app: AppHandle,
+    items: Vec<DrawerBarItem>,
+) -> Result<(), CommandError> {
+    window_layout::set_drawer_bar_items(&app, items)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn capture_content_viewport(
+    webview: tauri::Webview,
+) -> Result<tauri::ipc::Response, CommandError> {
+    viewport_capture::capture_png(&webview)
+        .await
+        .map(tauri::ipc::Response::new)
+        .map_err(Into::into)
 }
 
 #[tauri::command]

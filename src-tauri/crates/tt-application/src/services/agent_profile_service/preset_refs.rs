@@ -47,7 +47,7 @@ impl AgentProfileService {
         }
 
         let mut session_profile_updated = false;
-        if let Some(mut profile) = self.session_repository.load_session_profile().await?
+        if let Some(mut profile) = self.load_session_profile().await?
             && retarget_preset_binding(&mut profile.preset, &from, &to)
         {
             self.session_repository

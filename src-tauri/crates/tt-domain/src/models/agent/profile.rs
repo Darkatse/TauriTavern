@@ -5,11 +5,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::{AgentRunPresentation, ArtifactSpec};
 use crate::models::tool::{ToolDescriptionOverride, ToolId};
 
-pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 4;
+pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 5;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default-writer";
-pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
-pub const DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN: usize = 80;
 pub const DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
 pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
@@ -122,6 +120,15 @@ where
     {
         skills.remove("maxReadCharsPerCall");
         skills.remove("maxReadCharsPerRun");
+    }
+    if matches!(value["schemaVersion"].as_u64(), Some(1..=4))
+        && let Some(tools) = value
+            .get_mut("tools")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        tools.remove("maxRounds");
+        tools.remove("maxCallsPerRun");
+        tools.remove("maxCallsPerTool");
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
@@ -298,16 +305,11 @@ pub struct AgentToolPolicy<T = String> {
     pub deny: Vec<T>,
     #[serde(default)]
     pub tool_descriptions: BTreeMap<T, ToolDescriptionOverride>,
-    pub max_rounds: usize,
-    #[serde(default = "default_agent_tool_max_calls_per_run")]
-    pub max_calls_per_run: usize,
     #[serde(
         default = "default_agent_external_result_inline_char_limit",
         alias = "mcpResultInlineCharLimit"
     )]
     pub external_result_inline_char_limit: usize,
-    #[serde(default)]
-    pub max_calls_per_tool: BTreeMap<T, usize>,
 }
 
 pub type ResolvedAgentToolPolicy = AgentToolPolicy<ToolId>;
@@ -369,10 +371,6 @@ impl AgentProfileDefinition {
             direct_runnable: self.run.direct_runnable,
         }
     }
-}
-
-fn default_agent_tool_max_calls_per_run() -> usize {
-    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
 }
 
 fn default_agent_external_result_inline_char_limit() -> usize {
@@ -462,7 +460,7 @@ mod tests {
         DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS,
         DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
         DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MODEL_MAX_RETRIES,
-        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
     };
     use crate::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -486,8 +484,7 @@ mod tests {
                 "presentation": "foreground"
             },
             "tools": {
-                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
-                "maxRounds": 80
+                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"]
             },
             "skills": {
                 "visible": ["*"]
@@ -554,14 +551,9 @@ mod tests {
         assert!(profile.tools.deny.is_empty());
         assert!(profile.tools.tool_descriptions.is_empty());
         assert_eq!(
-            profile.tools.max_calls_per_run,
-            DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
-        );
-        assert_eq!(
             profile.tools.external_result_inline_char_limit,
             DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT
         );
-        assert!(profile.tools.max_calls_per_tool.is_empty());
         assert!(profile.skills.deny.is_empty());
         assert_eq!(profile.plan.beta, DEFAULT_AGENT_PLAN_BETA);
         assert!(profile.plan.nodes.is_empty());

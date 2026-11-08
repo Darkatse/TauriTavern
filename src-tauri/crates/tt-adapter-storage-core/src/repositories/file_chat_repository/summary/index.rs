@@ -10,13 +10,13 @@ use crate::file_system::write_json_file;
 
 use super::super::FileChatRepository;
 use super::search::SearchFingerprint;
-use super::{ChatSummary, FileSignature, summary_cache_key};
+use super::{ChatSummary, FileSignature};
 
 // The file name isolates the old metadata-heavy cache; schema versions invalidate
-// changes to persisted fields OR projection semantics (preview, dates, fingerprints).
+// changes to persisted keys, fields OR projection semantics (preview, dates, fingerprints).
 const INDEX_FILE_NAME: &str = "chat_summary_index_v2.json";
 const LEGACY_INDEX_FILE_NAMES: &[&str] = &["chat_summary_index_v1.json"];
-pub(super) const SCHEMA_VERSION: u32 = 1;
+pub(super) const SCHEMA_VERSION: u32 = 2;
 
 const MAX_SEARCH_ENTRIES: usize = 128;
 
@@ -38,6 +38,7 @@ pub(in crate::repositories::file_chat_repository) struct SummaryCache {
     entries: HashMap<String, SummaryCacheEntry>,
     stats_entries: HashMap<String, ChatStatsCacheEntry>,
     search_cache: HashMap<String, Vec<ChatSummary>>,
+    user_dir: PathBuf,
     index_path: PathBuf,
     loaded: bool,
     dirty: bool,
@@ -52,12 +53,13 @@ struct Snapshot<'a> {
 }
 
 impl SummaryCache {
-    pub(in crate::repositories::file_chat_repository) fn new(cache_dir: PathBuf) -> Self {
+    pub(in crate::repositories::file_chat_repository) fn new(user_dir: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
             stats_entries: HashMap::new(),
             search_cache: HashMap::new(),
-            index_path: cache_dir.join(INDEX_FILE_NAME),
+            index_path: user_dir.join("user").join("cache").join(INDEX_FILE_NAME),
+            user_dir,
             loaded: false,
             dirty: false,
         }
@@ -110,11 +112,20 @@ impl SummaryCache {
         }
     }
 
-    pub(super) fn get(&self, key: &str) -> Option<&SummaryCacheEntry> {
-        self.entries.get(key)
+    /// Relative to the user directory, so the index survives the data directory moving.
+    fn key(&self, path: &Path) -> String {
+        path.strip_prefix(&self.user_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
     }
 
-    pub(super) fn set(&mut self, key: String, entry: SummaryCacheEntry) {
+    pub(super) fn get(&self, path: &Path) -> Option<&SummaryCacheEntry> {
+        self.entries.get(&self.key(path))
+    }
+
+    pub(super) fn set(&mut self, path: &Path, entry: SummaryCacheEntry) {
+        let key = self.key(path);
         self.stats_entries.remove(&key);
         self.entries.insert(key, entry);
         self.search_cache.clear();
@@ -123,10 +134,11 @@ impl SummaryCache {
 
     pub(super) fn get_stats(
         &self,
-        key: &str,
+        path: &Path,
         signature: FileSignature,
     ) -> Option<ChatStatsCacheEntry> {
-        if let Some(entry) = self.entries.get(key)
+        let key = self.key(path);
+        if let Some(entry) = self.entries.get(&key)
             && entry.signature == signature
         {
             return Some(ChatStatsCacheEntry {
@@ -135,12 +147,13 @@ impl SummaryCache {
             });
         }
         self.stats_entries
-            .get(key)
+            .get(&key)
             .filter(|entry| entry.signature == signature)
             .cloned()
     }
 
-    pub(super) fn set_stats(&mut self, key: String, entry: ChatStatsCacheEntry) {
+    pub(super) fn set_stats(&mut self, path: &Path, entry: ChatStatsCacheEntry) {
+        let key = self.key(path);
         if self
             .entries
             .get(&key)
@@ -153,9 +166,10 @@ impl SummaryCache {
         self.dirty = true;
     }
 
-    pub(super) fn remove(&mut self, key: &str) {
-        let removed_summary = self.entries.remove(key).is_some();
-        let removed_stats = self.stats_entries.remove(key).is_some();
+    pub(super) fn remove(&mut self, path: &Path) {
+        let key = self.key(path);
+        let removed_summary = self.entries.remove(&key).is_some();
+        let removed_stats = self.stats_entries.remove(&key).is_some();
         if removed_summary || removed_stats {
             self.dirty = true;
         }
@@ -205,7 +219,7 @@ impl FileChatRepository {
     ) {
         let mut cache = self.summary_cache.lock().await;
         cache.ensure_loaded().await;
-        cache.remove(&summary_cache_key(path));
+        cache.remove(path);
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_cached_search_results(

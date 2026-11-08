@@ -23,13 +23,13 @@ test('Claude native accumulator rejects incomplete tool JSON', () => {
     );
 });
 
-test('Claude terminal status distinguishes refusal and truncation', () => {
+test('Claude terminal status distinguishes refusal, truncation and context overflow', () => {
     assert.deepEqual(
         getClaudeStopStatus('refusal', { explanation: 'This request was declined.' }),
         { code: 'model.provider_refusal', message: 'This request was declined.' },
     );
     assert.equal(getClaudeStopStatus('max_tokens')?.code, 'model.output_truncated');
-    assert.equal(getClaudeStopStatus('model_context_window_exceeded')?.code, 'model.output_truncated');
+    assert.equal(getClaudeStopStatus('model_context_window_exceeded')?.code, 'model.context_overflow');
     assert.equal(getClaudeStopStatus('end_turn'), null);
 });
 

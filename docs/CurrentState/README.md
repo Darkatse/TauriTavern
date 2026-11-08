@@ -8,6 +8,7 @@
 | [移动端视口](MobileStyleAdaptation.md) | 原生内容视口、窗口背景与第一方移动端行为 |
 | [消息内嵌运行时](EmbeddedRuntime.md) | iframe 的生命周期与渲染 |
 | [启动流程](StartupOptimization.md) | Shell、Core、Full 阶段 |
+| [安全模式](SafeMode.md) | 进入方式、恢复范围与找回设置 |
 | [Bootstrap](BootstrapOptimization.md) | 启动输入与内存开销 |
 | [聊天存储](ChatPayload.md) | 完整历史、分页读取和保存 |
 | [记忆扩展](MemoryExtensionApi.md) | 聊天查询与扩展存储 |
@@ -27,3 +28,5 @@
 | [MCP](MCP.md) | 服务器、工具目录与模型调用 |
 | [向量 API](VectorApi.md) | 索引、embedding 与查询 |
 | [自有界面](FirstPartyUI.md) | React、TypeScript 与构建流程 |
+| [Web Host](WebHost.md) | 浏览器嵌入方（Tavern Studio）使用的宿主实现 |
+| [性能基线](PerfBaseline.md) | 前后端工作量的计量、基线与新增场景 |

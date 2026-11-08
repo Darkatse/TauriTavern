@@ -51,7 +51,8 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
     )
     .await;
 
-    let assembly = resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    let assembly =
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
     assert_eq!(assembly.preset_ref.name, "Captured A");
     assert_eq!(
         assembly.agent_context_policy.initial_chat_history_messages,
@@ -261,7 +262,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             "message_handoff",
             &[],
         ),
-        resolve_contract_prompt_assembly(&fixture, &handle.run_id)
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot)
     );
     commits.expect("resolve host commit");
     assert_eq!(assembly.preset_ref.name, "Captured A");
@@ -433,7 +434,7 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
         Some(false),
     )
     .await;
-    resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Failed);
@@ -529,7 +530,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
         Some(false),
     )
     .await;
-    resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Completed);
@@ -620,7 +621,7 @@ async fn configure_distinct_root_binding(
         .await
         .unwrap();
 
-    FileSkillRepository::new(root.join("_tauritavern/skills")).install_import(SkillInstallRequest {
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills")).install_import(SkillInstallRequest {
         target_scope: SkillScope::Preset { api_id: "openai".into(), name: "Captured A".into() },
         conflict_strategy: None,
         input: SkillImportInput::InlineFiles {
@@ -647,7 +648,6 @@ pub(super) async fn configure_return_mode_profiles(
     let mut child = root.clone();
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
-    child.tools.max_rounds = 1;
     // The return-mode invocation must prune these capabilities from the profile.
     child.delegation = AgentDelegationPolicy {
         can_delegate: true,
@@ -656,7 +656,6 @@ pub(super) async fn configure_return_mode_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_delegate = true;
     allow_profile_tool(&mut root.tools.allow, "agent.delegate");
     allow_profile_tool(&mut root.tools.allow, "agent.await");
@@ -686,7 +685,6 @@ async fn configure_handoff_profiles(
     target.id = AgentProfileId::parse("final-editor").expect("target profile id");
     target.display_name = "Final Editor".to_string();
     target.run.direct_runnable = false;
-    target.tools.max_rounds = 1;
     target.tools.allow.retain(|name| {
         matches!(
             name.as_str(),
@@ -701,7 +699,6 @@ async fn configure_handoff_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_handoff = true;
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture

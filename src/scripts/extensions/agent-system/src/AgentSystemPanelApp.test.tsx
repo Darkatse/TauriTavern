@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
@@ -205,7 +205,6 @@ function renderPanel(controller: AgentSystemPanelController): void {
 }
 
 afterEach(() => {
-    cleanup();
     disposables.splice(0).forEach((disposable) => disposable.dispose());
 });
 
@@ -420,6 +419,19 @@ test('a saved profile remains committed when its list refresh fails', async () =
     expect(state.definitions.get(profile.id)?.displayName).toBe('Saved Writer');
     expect(controller.getSnapshot().draft.displayName).toBe('Saved Writer');
     expect(state.errors).toContain('profile list refresh failed');
+});
+
+test('export compares the draft with the saved profile in the same form', async () => {
+    const profile = defaultProfile('writer');
+    // The backend omits an empty descriptionForAgents; the editor writes null.
+    Reflect.deleteProperty(profile.delegation, 'descriptionForAgents');
+    const controller = createAgentSystemPanelController(createPanelWorld(profile).deps);
+    disposables.push(controller);
+    await controller.init();
+
+    await controller.exportSelectedProfile();
+    controller.setIdentityField('displayName', 'Unsaved Writer');
+    await expect(controller.exportSelectedProfile()).rejects.toThrow('agentProfileExportSaveFirst');
 });
 
 test('a dirty draft rejects an external overwrite and save', async () => {

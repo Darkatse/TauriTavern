@@ -52,6 +52,20 @@ class WindowLayoutPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
+  fun captureViewport(invoke: Invoke) {
+    activity.runOnUiThread {
+      try {
+        layout.captureViewport(
+          { png -> invoke.resolve(JSObject().put("png", png)) },
+          { error -> invoke.reject(error.message) },
+        )
+      } catch (error: Exception) {
+        invoke.reject(error.message)
+      }
+    }
+  }
+
+  @Command
   fun snapshot(invoke: Invoke) = onUi(invoke) { JSObject(layout.getSnapshot().toString()) }
 
   @Command

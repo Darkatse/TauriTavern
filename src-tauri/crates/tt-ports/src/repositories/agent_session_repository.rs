@@ -1,17 +1,14 @@
 use async_trait::async_trait;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::AgentProfileDefinition;
 use tt_domain::models::agent::session::{
-    AgentSession, AgentSessionMessage, AgentSessionMessageOrigin,
+    AgentSession, AgentSessionMessage, NewAgentSessionMessage,
 };
 
+/// The latest `limit` messages before `before_seq`, or before the end of the history.
 #[derive(Debug, Clone)]
 pub struct AgentSessionMessageReadQuery {
-    /// Read forward after this sequence; mutually exclusive with before_seq.
-    pub after_seq: Option<u64>,
-    /// Otherwise return the latest page before this sequence, or before EOF.
     pub before_seq: Option<u64>,
     /// Positive result limit. Public API bounds are applied by the application.
     pub limit: usize,
@@ -43,9 +40,7 @@ pub trait AgentSessionRepository: Send + Sync {
     async fn append_session_message(
         &self,
         session_id: &str,
-        run_id: &str,
-        message: &AgentModelMessage,
-        origin: Option<&AgentSessionMessageOrigin>,
+        entry: NewAgentSessionMessage,
     ) -> Result<AgentSessionMessage, DomainError>;
 
     async fn read_session_messages(

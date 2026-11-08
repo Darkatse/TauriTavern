@@ -3,11 +3,19 @@ use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::errors::DomainError;
 use tt_domain::models::persona::Personas;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+use tt_domain::models::settings::{
+    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
+};
 
 pub struct SettingsCommitResult {
     pub revision: UserSettingsRevision,
     pub personas: Personas,
+}
+
+/// User settings as read, with the revision of the files they were read from.
+pub struct StoredUserSettings {
+    pub settings: UserSettings,
+    pub revision: UserSettingsRevision,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -26,9 +34,17 @@ pub trait SettingsRepository: Send + Sync {
         settings: &TauriTavernSettings,
     ) -> Result<(), DomainError>;
     async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError>;
+    /// Writes the initial settings with `chat_backups`, keeping the originals.
+    async fn reset_tauritavern_settings(
+        &self,
+        chat_backups: ChatBackupSettings,
+    ) -> Result<(), DomainError>;
 
     async fn save_user_settings(&self, settings: UserSettings) -> Result<(), DomainError>;
-    async fn load_user_settings(&self) -> Result<UserSettings, DomainError>;
+    async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError>;
+    /// Writes the factory settings except the Persona state, with `firstRun` false and
+    /// `disabled_extensions` added to the disabled list.
+    async fn reset_user_settings(&self, disabled_extensions: &[String]) -> Result<(), DomainError>;
 
     async fn begin_commit(
         &self,
@@ -47,7 +63,7 @@ pub trait SettingsRepository: Send + Sync {
     ) -> Result<SettingsCommitResult, DomainError>;
     async fn abort_commit(&self, session_id: &str) -> Result<(), DomainError>;
 
-    async fn create_snapshot(&self, settings: UserSettings) -> Result<(), DomainError>;
+    async fn create_snapshot(&self, settings: UserSettings) -> Result<String, DomainError>;
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError>;
     async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError>;
 

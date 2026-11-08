@@ -147,17 +147,17 @@ impl AgentRuntimeService {
             Ok(file) => file,
             Err(error) => match classify_workspace_io_error(call, error) {
                 Ok(result) => {
-                    return Ok(AgentToolDispatchOutcome {
+                    return Ok(AgentToolDispatchOutcome::new(
                         result,
-                        effect: AgentToolEffect::None,
+                        AgentToolEffect::None,
                         elapsed_ms,
-                    });
+                    ));
                 }
                 Err(error) => return Err(error.into()),
             },
         };
         if self.required_artifact_is_empty(run_id, &file).await? {
-            return Ok(recoverable_tool_error(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "workspace.required_artifact_empty",
                 &format!("{} is empty", path.as_str()),
@@ -188,7 +188,7 @@ impl AgentRuntimeService {
                 message_index,
             } => (message_id, message_index),
             HostChatCommitOutcome::Rejected(message) => {
-                return Ok(recoverable_tool_error(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "agent.chat_commit_rejected",
                     &message,
@@ -197,34 +197,32 @@ impl AgentRuntimeService {
             }
         };
 
-        Ok(AgentToolDispatchOutcome {
-            result: AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content: format!(
-                    "Committed {} to the current chat message with mode {:?}. \
+        let mut result = AgentToolResult::ok(
+            call,
+            format!(
+                "Committed {} to the current chat message with mode {:?}. \
                      You may continue editing and commit again if needed. When all intended \
                      commits are complete, call workspace_finish to end the run. Do not use \
                      plain text as the final answer; the run must finish through \
                      workspace_finish.",
-                    path.as_str(),
-                    mode
-                ),
-                structured: json!({
-                    "path": path.as_str(),
-                    "mode": mode,
-                    "messageId": message_id.as_deref(),
-                    "messageIndex": message_index,
-                    "chars": file_metrics.chars,
-                    "words": file_metrics.words,
-                }),
-                is_error: false,
-                error_code: None,
-                resource_refs: vec![path.as_str().to_string()],
-            },
-            effect: AgentToolEffect::None,
+                path.as_str(),
+                mode
+            ),
+            json!({
+                "path": path.as_str(),
+                "mode": mode,
+                "messageId": message_id.as_deref(),
+                "messageIndex": message_index,
+                "chars": file_metrics.chars,
+                "words": file_metrics.words,
+            }),
+        );
+        result.resource_refs = vec![path.as_str().to_string()];
+        Ok(AgentToolDispatchOutcome::new(
+            result,
+            AgentToolEffect::None,
             elapsed_ms,
-        })
+        ))
     }
 
     #[expect(
@@ -639,30 +637,4 @@ impl AgentRuntimeService {
 
 fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
     message_id?.trim().parse::<usize>().ok()
-}
-
-fn recoverable_tool_error(
-    call: &ToolInvocation,
-    code: &str,
-    message: &str,
-    elapsed_ms: u128,
-) -> AgentToolDispatchOutcome {
-    AgentToolDispatchOutcome {
-        result: AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: message.to_string(),
-            structured: json!({
-                "error": {
-                    "code": code,
-                    "message": message,
-                }
-            }),
-            is_error: true,
-            error_code: Some(code.to_string()),
-            resource_refs: Vec::new(),
-        },
-        effect: AgentToolEffect::None,
-        elapsed_ms,
-    }
 }

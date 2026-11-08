@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, memo, useMemo, type ReactNode } from 'react';
 import { errorText, tr } from './i18n';
 import type { AssistantActions } from './host';
+import { createMarkdownRenderer } from './markdown';
 
 export function Icon({ name }: { name: string }) {
     return <i className={`fa-solid fa-${name}`} aria-hidden="true" />;
@@ -17,13 +18,13 @@ export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => vo
         </div>
     </div>;
 }
-export function Disclosure({ label, children, className = '' }: { label: ReactNode; children: ReactNode; className?: string }) {
+export function Disclosure({ label, children, className = '' }: { label: ReactNode; children: ReactNode | ((open: boolean) => ReactNode); className?: string }) {
     const [open, setOpen] = useState(false);
     return <div className={`ttia-fold ${open ? 'is-open' : ''} ${className}`}>
         <button className="ttia-fold-toggle" type="button" aria-expanded={open} data-assistant-disclosure onClick={() => setOpen(!open)}>
             <Icon name="chevron-right" />{label}
         </button>
-        <div className="ttia-fold-body" inert={!open} aria-hidden={!open}><div>{children}</div></div>
+        <div className="ttia-fold-body" inert={!open} aria-hidden={!open}><div>{typeof children === 'function' ? children(open) : children}</div></div>
     </div>;
 }
 export function CopyButton({ text, copy }: { text: string; copy: AssistantActions['copy'] }) {
@@ -61,7 +62,8 @@ export function formatDuration(ms: number): string {
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 export const Markdown = memo(function Markdown({ text, actions, streaming }: { text: string; actions: AssistantActions; streaming?: boolean }) {
-    const html = useMemo(() => actions.markdown(text), [actions, text]);
+    const render = useMemo(() => createMarkdownRenderer(actions.markdown), [actions]);
+    const html = useMemo(() => render(text), [render, text]);
     const root = useRef<HTMLDivElement>(null);
     const [error, setError] = useState<unknown>(null);
     useEffect(() => {

@@ -3752,10 +3752,6 @@ export function initDefaultSlashCommands() {
         name: 'syncpanel',
         aliases: ['lansync'],
         callback: async () => {
-            if (typeof window.__TAURI__?.core?.invoke !== 'function') {
-                toastr.error(t`LAN Sync panel is only available in TauriTavern.`);
-                return '';
-            }
             if (getActiveIosPolicyCapabilities()?.sync?.lan === false) {
                 toastr.error(t`LAN Sync is disabled by the active iOS policy.`);
                 return '';

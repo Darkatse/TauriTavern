@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod persona;
 pub mod preset;
 pub mod quick_reply;
+pub mod safe_mode;
 pub mod secret;
 pub mod settings;
 pub mod skill;

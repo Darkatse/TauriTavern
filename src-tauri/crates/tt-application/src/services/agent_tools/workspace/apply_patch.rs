@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 use super::args::{
     classify_workspace_io_error, ensure_writable_workspace_path, optional_bool_arg,
-    parse_workspace_path, required_raw_string_arg, required_trimmed_string_arg, tool_error,
+    parse_workspace_path, required_raw_string_arg, required_trimmed_string_arg,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
@@ -38,19 +38,19 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     let workspace_files: &dyn WorkspaceFs = workspace;
     let Some(path) = required_trimmed_string_arg(args, "path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "path is required"),
             AgentToolEffect::None,
         ));
     };
     let Some(old_string) = required_raw_string_arg(args, "old_string") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "old_string is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "old_string is required"),
             AgentToolEffect::None,
         ));
     };
     let Some(new_string) = required_raw_string_arg(args, "new_string") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "new_string is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "new_string is required"),
             AgentToolEffect::None,
         ));
     };
@@ -58,7 +58,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
         Ok(replace_all) => replace_all.unwrap_or(false),
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
@@ -66,7 +66,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
 
     if old_string.is_empty() {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_empty_old_string",
                 "old_string cannot be empty",
@@ -76,7 +76,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     }
     if old_string == new_string {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_no_change",
                 "old_string and new_string are identical",
@@ -95,7 +95,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     let path_key = path.as_str().to_string();
     let Some(read_state) = session.read_state(&path_key).cloned() else {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_requires_read",
                 "file must be read with workspace_read_file before applying a patch",
@@ -105,7 +105,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     };
     if read_state.patch_requires_full_read() {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_requires_full_read",
                 "a previous patch attempt for this file failed. Fully read the file with workspace_read_file before applying another patch.",
@@ -117,7 +117,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     if patch_uses_partial_read && replace_all {
         session.require_full_read_before_patch(&path_key);
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_requires_full_read",
                 "replace_all can modify text outside the range you read. Fully read the file with workspace_read_file before using replace_all.",
@@ -128,7 +128,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     if patch_uses_partial_read && !read_state.old_string_was_observed(old_string) {
         session.require_full_read_before_patch(&path_key);
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_requires_full_read",
                 "old_string was not in the text you have read for this file. Fully read the file with workspace_read_file before retrying the patch.",
@@ -149,7 +149,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             session.require_full_read_before_patch(&path_key);
         }
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_stale_file",
                 if patch_uses_partial_read {
@@ -168,7 +168,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             session.require_full_read_before_patch(&path_key);
         }
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_old_string_not_found",
                 if patch_uses_partial_read {
@@ -185,7 +185,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             session.require_full_read_before_patch(&path_key);
         }
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.patch_old_string_not_unique",
                 &patch_not_unique_message(matches, patch_uses_partial_read),
@@ -230,27 +230,24 @@ pub(in crate::services::agent_tools) async fn apply_patch(
     }
     let metrics = TextMetrics::from_text(&file.text);
 
-    let result = AgentToolResult {
-        call_id: call.call_id.clone(),
-        tool_id: call.tool_id.clone(),
-        content: format!(
+    let mut result = AgentToolResult::ok(
+        call,
+        format!(
             "Patched {} with {} replacement(s); file now has {} chars / {} words.",
             file.path.as_str(),
             matches,
             metrics.chars,
             metrics.words
         ),
-        structured: structured_value(WorkspaceApplyPatchStructured {
+        structured_value(WorkspaceApplyPatchStructured {
             path: file.path.as_str(),
             metrics: metrics.into(),
             old_sha256: old_sha256.as_str(),
             sha256: file.sha256.as_str(),
             replacements: matches,
         }),
-        is_error: false,
-        error_code: None,
-        resource_refs: vec![file.path.as_str().to_string()],
-    };
+    );
+    result.resource_refs = vec![file.path.as_str().to_string()];
 
     Ok((
         result,
@@ -284,16 +281,16 @@ fn patch_conflict_error(
     };
     match kind {
         WorkspaceWriteConflictKind::AlreadyExists { .. } => {
-            tool_error(call, "workspace.patch_stale_file", changed_message)
+            AgentToolResult::error(call, "workspace.patch_stale_file", changed_message)
         }
         WorkspaceWriteConflictKind::Stale {
             actual_sha256: Some(_),
             ..
-        } => tool_error(call, "workspace.patch_stale_file", changed_message),
+        } => AgentToolResult::error(call, "workspace.patch_stale_file", changed_message),
         WorkspaceWriteConflictKind::Stale {
             actual_sha256: None,
             ..
-        } => tool_error(
+        } => AgentToolResult::error(
             call,
             "workspace.patch_stale_file",
             "file changed before the patch could be written and is no longer present. Read the parent directory before patching again.",

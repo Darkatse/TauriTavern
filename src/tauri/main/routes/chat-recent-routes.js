@@ -35,7 +35,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             const withMetadata = Boolean(body?.metadata);
             const [groups] = await Promise.all([
                 context.safeInvoke('get_all_groups'),
-                context.getAllCharacters({ shallow: true }),
+                context.ensureCharacterIndex(),
             ]);
 
             const groupChatToGroup = new Map();

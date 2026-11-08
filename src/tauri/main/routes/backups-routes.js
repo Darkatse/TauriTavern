@@ -1,4 +1,5 @@
 import { sanitizeAttachmentFileName } from '../binary-utils.js';
+import { streamResponse } from '../http-utils.js';
 
 function isNotFoundError(error) {
     const message = String(error?.message || error || '').toLowerCase();
@@ -91,7 +92,7 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
             const stream = await context.createChatBackupDownloadStream(name);
             const fileName = sanitizeAttachmentFileName(name, 'chat_backup.jsonl');
 
-            return new Response(stream, {
+            return streamResponse(stream, {
                 status: 200,
                 headers: {
                     'Content-Type': 'application/octet-stream',

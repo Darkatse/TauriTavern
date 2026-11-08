@@ -18,6 +18,28 @@ AgentModelRequest
 
 Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 reasoning signature、thought signature 或原生 output blocks。这些内容随消息保留，由对应 provider adapter 原样续接。Timeline 使用 `readModelTurn()` 提供的可见文本和 reasoning 投影。
 
+## 工具结果图片
+
+运行时在发送前按工具结果中的工作区引用读取图片，将其注入请求副本的 `Media` 部件。图片能力来自[组装快照](PromptAssembly.md#一种组装一个-live-例外)，存储、留存与不接受图片时的处理见[工具结果](ToolSystem.md#结果如何进入下一轮)。
+
+Gateway 与 payload 构建器共同完成协议转换：
+
+| 协议 | 工具结果图片 |
+| --- | --- |
+| OpenAI 兼容 Chat Completions | tool 消息保留文字；纯图片结果使用 `(see attached image)`。一组相邻 tool 消息结束后，追加 user 消息，文字为 `Attached image(s) from tool result:`，后接该组图片。 |
+| Claude Messages（含 Bedrock、Vertex、Custom 与 OpenCode） | `tool_result.content` 使用文字与 base64 图片块数组，文字不加工具名前缀。当前请求没有工具定义时，历史工具结果转为保留图片的 user 内容块。 |
+| OpenAI Responses | `function_call_output.output` 使用 `input_text` 与 `input_image` 数组。 |
+| Gemini 3 及之后 | 图片放在 `functionResponse.parts` 的 `inlineData` 中。 |
+| Gemini 2.5 等早期模型 | 函数结果不变；结果组结束后追加 user content，文字为 `Tool result image:`，后接 `inlineData` 图片。 |
+| Gemini Interactions | `function_result.result` 使用文字与 image 块。 |
+
+没有图片的工具结果使用文字形状；工具结果与用户消息共用图片编码。Bedrock 非 Claude 等不支持媒体的格式明确拒绝输入。
+
+已知限制：
+
+- 每次请求重新上传上下文中的全部图片，临时内存约为图片字节的 3–4 倍。
+- Anthropic 单次请求的图片数量上限（200k 窗口模型为 100 张）可能先于压缩点达到；尚未确认相应错误文案，不预设分类。
+
 ## 续接状态
 
 `provider_state` 属于一个 Invocation 的模型会话。每轮调用成功后，gateway 更新会话 ID、消息游标和 provider 需要的响应信息，下一轮继续使用。不同 Invocation 各自持有状态。
@@ -34,6 +56,14 @@ OpenAI Responses 有两种续接方式：
 Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 `options.stream` 可覆盖整次 Run。支持的 provider 流式路由把 assistant 正文、可见推理文字和工具参数通过同一增量通道交给运行时。
 
 签名和加密内容不进入预览；工具保留完整 `ToolId`，包括区分同名工具所需的 MCP 身份。预览按 Invocation 与模型尝试隔离，协议与清理规则见 [Agent API](../API/Agent.md#控制与订阅)。OpenAI 兼容格式的流式与完整响应共用推理字段归一化规则；最终完整响应仍走共同存储与工具执行路径。不支持的流式路由直接报错。
+
+## 错误归类
+
+`model.context_overflow` 表示模型上下文窗口不足或请求体过大。HTTP 413 一律归入此类，包括反向代理返回的 HTML 正文；Gemini 的 HTTP 400 `Request payload size exceeds the limit` 也归入此类，由 Session 压缩流程恢复。
+
+HTTP 400 的错误、成功 HTTP 响应内的错误对象、OpenAI 兼容流的错误事件及 Responses 的失败事件使用同一套文本分类，分类只读服务商的错误值：JSON 的 `error` 或 `detail.error`、Responses `error` 事件中的 `error` 对象（扁平的 SSE 事件则是事件本身）、失败 Response 的 `error`，回显的工具描述与部分输出不参与分类。HTTP 400 的正文没有这样的错误值时（非 JSON，或 JSON 中没有这两个字段），按整段正文分类。超窗错误由同一个构造函数返回带原错误消息的 `InvalidData`。匹配规则改编自 pi-ai 1.3.0 `utils/overflow.js`（MIT），排除限流文字；HTTP 429 和 5xx 按可重试错误映射。
+
+Claude 的 `model_context_window_exceeded` 停止原因在 Rust gateway 与原生 JS 聊天流路径均归为 `model.context_overflow`。输出上限则统一为 `model.output_truncated`，包括 `max_tokens`、`length` 和 Responses 的 `incomplete_details.reason=max_output_tokens`。这些错误不自动重试同一请求；Session 的压缩恢复由运行时负责，见 [Runtime](Runtime.md)。
 
 ## 修改入口
 

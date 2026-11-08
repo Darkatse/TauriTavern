@@ -66,7 +66,9 @@ jobs:
     with:
       architectures: '["aarch64"]'
       package_version: ${{ needs.prepare.outputs.stable_version }}
-      asset_time: ${{ needs.prepare.outputs.asset_time }}
+      release_id: ${{ needs.prepare.outputs.asset_time }}-canary
+      build_branch: dev
+      commit: ${{ github.sha }}
 
   desktop:
     needs: prepare
@@ -230,6 +232,32 @@ jobs:
           path: portable/*
           if-no-files-found: error
 
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm web:build
+
+      - name: Archive web frontend
+        working-directory: src
+        run: zip -qr ../web.zip .
+
+      - name: Upload web frontend
+        uses: actions/upload-artifact@v7
+        with:
+          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-web
+          path: web.zip
+          if-no-files-found: error
+
   mobile:
     needs: prepare
     strategy:
@@ -240,7 +268,7 @@ jobs:
             platform: ubuntu-latest
             args: --verbose --apk --split-per-abi --target aarch64 armv7
           - mobile: ios
-            platform: macos-latest
+            platform: xcode-27
             args: --verbose
 
     concurrency:
@@ -249,6 +277,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Select Xcode 27.2 (iOS 27.2 SDK)
+        if: matrix.mobile == 'ios'
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
 
       - name: Install Android host dependencies
         if: matrix.mobile == 'android'
@@ -365,6 +397,7 @@ jobs:
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
           APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ${{ matrix.mobile == 'ios' && 'full' || '' }}
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
@@ -565,9 +598,9 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [prepare, desktop, portable, mobile, ohos, notes]
+    needs: [prepare, desktop, portable, web, mobile, ohos, notes]
     # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.web.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read

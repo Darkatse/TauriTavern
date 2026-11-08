@@ -1,4 +1,5 @@
 use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use tauri::AppHandle;
@@ -12,18 +13,22 @@ use tokio::fs;
 
 use tt_domain::errors::DomainError;
 
-static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
+static DEFAULT_FILES_MANIFEST: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
 
 #[cfg(any(embedded_resources, feature = "portable"))]
 mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
 
+pub trait BundledResources: Send + Sync {
+    fn read_bytes(&self, relative_path: &str) -> Result<Vec<u8>, DomainError>;
+}
+
 pub fn read_resource_text(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     relative_path: &str,
 ) -> Result<String, DomainError> {
-    let bytes = read_resource_bytes(app_handle, relative_path)?;
+    let bytes = resources.read_bytes(relative_path)?;
     String::from_utf8(bytes).map_err(|e| {
         tracing::error!("Failed to decode resource text {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!(
@@ -86,10 +91,10 @@ pub fn read_resource_bytes(
 }
 
 pub fn read_resource_json<T: DeserializeOwned>(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     relative_path: &str,
 ) -> Result<T, DomainError> {
-    let text = read_resource_text(app_handle, relative_path)?;
+    let text = read_resource_text(resources, relative_path)?;
     serde_json::from_str(&text).map_err(|e| {
         tracing::error!("Failed to parse JSON resource {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
@@ -97,7 +102,7 @@ pub fn read_resource_json<T: DeserializeOwned>(
 }
 
 pub async fn copy_resource_to_file(
-    app_handle: &AppHandle,
+    resources: &dyn BundledResources,
     resource_relative_path: &str,
     destination: &Path,
 ) -> Result<(), DomainError> {
@@ -108,7 +113,7 @@ pub async fn copy_resource_to_file(
         })?;
     }
 
-    let bytes = read_resource_bytes(app_handle, resource_relative_path)?;
+    let bytes = resources.read_bytes(resource_relative_path)?;
     fs::write(destination, bytes).await.map_err(|e| {
         tracing::error!(
             "Failed to write copied resource {:?} to {:?}: {}",
@@ -120,7 +125,7 @@ pub async fn copy_resource_to_file(
     })
 }
 
-pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
+pub fn list_default_files_under(root: &str, prefix: &str) -> Vec<String> {
     let normalized_prefix = prefix.trim_matches('/').replace('\\', "/");
     let query = if normalized_prefix.is_empty() {
         String::new()
@@ -128,7 +133,8 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         format!("{}/", normalized_prefix)
     };
 
-    let files = DEFAULT_CONTENT_MANIFEST.get_or_init(load_default_content_manifest);
+    let manifest = DEFAULT_FILES_MANIFEST.get_or_init(load_default_files_manifest);
+    let files = manifest.get(root).expect("known default resource root");
     if query.is_empty() {
         return files.to_vec();
     }
@@ -140,22 +146,12 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         .collect()
 }
 
-fn load_default_content_manifest() -> Vec<String> {
-    let raw = include_str!(concat!(env!("OUT_DIR"), "/default_content_manifest.json"));
-    match serde_json::from_str::<Vec<String>>(raw) {
-        Ok(mut entries) => {
-            entries.sort();
-            entries
-        }
-        Err(error) => {
-            tracing::error!(
-                target: crate::observability_targets::USER_VISIBLE_ERROR,
-                "Failed to load generated default content manifest: {}",
-                error
-            );
-            Vec::new()
-        }
-    }
+fn load_default_files_manifest() -> BTreeMap<String, Vec<String>> {
+    serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/default_files_manifest.json"
+    )))
+    .expect("valid generated default resource manifest")
 }
 
 #[cfg(not(embedded_resources))]
@@ -172,7 +168,7 @@ fn resolve_resource_path(
         })
 }
 
-fn normalize_resource_relative_path(relative_path: &str) -> Result<String, DomainError> {
+pub(crate) fn normalize_resource_relative_path(relative_path: &str) -> Result<String, DomainError> {
     let normalized = relative_path.trim().replace('\\', "/");
     let normalized = normalized.trim_start_matches('/').to_string();
 
@@ -187,7 +183,7 @@ fn normalize_resource_relative_path(relative_path: &str) -> Result<String, Domai
 }
 
 #[cfg(not(embedded_resources))]
-fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
+pub(crate) fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))
     } else {

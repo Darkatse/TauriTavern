@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createChannel } from '../../../tauri-bridge.js';
+import { encodeBytesToBase64 } from '../binary-utils.js';
 
 /**
  * @param {{
@@ -24,21 +25,25 @@ export function createAgentToolsApi({ safeInvoke, channelFactory = createChannel
             /** @type {Map<string, AbortController>} */
             const pending = new Map();
 
-            /** @param {{ requestId: string; call: Omit<TauriTavernExtensionToolContext, 'signal'> & { arguments: Record<string, TauriTavernJsonValue> } }} event */
+            /** @param {{ requestId: string; call: Omit<TauriTavernExtensionToolContext, 'signal' | 'attachImage'> & { arguments: Record<string, TauriTavernJsonValue> } }} event */
             async function executeCall({ requestId, call }) {
                 const controller = new AbortController();
                 pending.set(requestId, controller);
                 try {
+                    /** @type {Blob[]} */
+                    const attached = [];
                     const value = await execute(call.arguments, {
                         runId: call.runId,
                         invocationId: call.invocationId,
                         callId: call.callId,
                         target: call.target,
                         signal: controller.signal,
+                        attachImage: image => { attached.push(image); },
                     });
+                    const images = await Promise.all(attached.map(async image => ({ data: encodeBytesToBase64(await image.arrayBuffer()) })));
                     if (!pending.has(requestId)) return;
                     await safeInvoke('resolve_agent_extension_tool_call', {
-                        dto: { requestId, result: { kind: 'value', value: value === undefined ? null : value } },
+                        dto: { requestId, result: { kind: 'value', value: value === undefined ? null : value, images } },
                     });
                 } catch (error) {
                     if (!pending.has(requestId)) return;

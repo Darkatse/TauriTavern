@@ -60,7 +60,7 @@ https://v2.tauri.app/develop/resources/#android
 
 - 后端新增命令：`read_frontend_template`  
   文件：`src-tauri/crates/tauritavern/src/presentation/commands/bridge.rs`
-- 前端模板加载改为 Tauri 环境下优先 invoke：  
+- 内置模板通过 `invoke('read_frontend_template')` 读取：
   文件：`src/scripts/templates.js`
 - 内置扩展模板只在嵌入映射中，桌面 bundle 不含，所以 `templates.js` 仅在 Android 上用 `read_frontend_extension_template` 读取，其他宿主走 fetch。
 
@@ -119,7 +119,7 @@ https://v2.tauri.app/develop/resources/#android
 
 ### 4.4 前端接入点
 
-- `src/scripts/templates.js`：模板读取在 Tauri 环境下走 `invoke('read_frontend_template')`
+- `src/scripts/templates.js`：内置模板走 `invoke('read_frontend_template')`
 - `src/css/mobile-styles.css` + `src/style.css`：按已经避让的浏览器视口排版，`--doc-height` 为静态 CSS 别名
 
 ---

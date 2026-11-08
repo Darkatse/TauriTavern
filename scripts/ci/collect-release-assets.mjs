@@ -25,6 +25,7 @@ const RELEASE_ASSETS = new Map([
     ['linux-arm64-portable', ['linux-arm64-portable', '']],
     ['linux-x64-portable', ['linux-x64-portable', '']],
     ['linux-x86_64-rpm', ['linux-x64.rpm', '.rpm']],
+    ['web', ['web.zip', '.zip']],
     ['windows-x64-msi', ['windows-x64.msi', '.msi']],
     ['windows-x64-nsis', ['windows-x64-setup.exe', '.exe']],
     ['windows-x64-portable', ['windows-x64-portable.exe', '.exe']],

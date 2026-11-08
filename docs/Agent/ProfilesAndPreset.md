@@ -63,10 +63,9 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 | 字段 | 用途 |
 | --- | --- |
 | `instructions.agentSystemPrompt` | Agent 的工作指令；省略时使用默认指令 |
-| `context.initialChatHistoryMessages` | 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
+| `context.initialChatHistoryMessages` | Chat 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
 | `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
 | `tools.allow` / `deny` | 可用工具，deny 优先 |
-| `tools.maxRounds` / `maxCallsPerRun` / `maxCallsPerTool` | 每个 Invocation 的轮数与调用预算 |
 | `tools.externalResultInlineCharLimit` | MCP 与 Extension 结果的模型内联字符阈值，默认 50,000；长结果保留完整可读文件 |
 | `tools.toolDescriptions` | 替换模型看到的工具或参数描述 |
 | `skills.visible` / `deny` | 按名称选择可用 Skill |
@@ -86,17 +85,34 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 `descriptionForAgents` 说明适合处理的工作，未填写时使用 `description`。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
 
+## 内置 Agent 预设
+
+内置 `openai/Agent` 预设供直接与用户对话的 Agent 使用：Main Prompt 说明这类 Agent 的工作方式，具体职责写在 Profile 指令里。应用内助手首次配置默认绑定它；已保存的 Session Profile 保留原有预设和指令。预设不指定模型、来源或端点，连接仍由 Profile 决定。
+
+| 取值 | 理由与调整边界 |
+| --- | --- |
+| 上下文 `128000` | 为多轮对话与工具结果留出空间，沿用 SillyTavern 的 128k 取值。用户应按所选模型的实际窗口调大或调小。 |
+| 最大回复 `32768` | 为思考、长回答和工具调用代码留出输出预算；这部分会从上下文预算中预留。模型拒绝此上限时，用户可调小；需要更长输出时按模型限制调大。 |
+| 省略 `temperature`、`frequency_penalty`、`presence_penalty`、`top_p`、`top_k`、`top_a`、`min_p`、`repetition_penalty` | 采用服务商为模型提供的采样默认值。 |
+| `use_sysprompt: true` | 让 Claude、Gemini、Bedrock 等来源按各自协议发送系统提示词。 |
+| `media_inlining: true` | 允许既有媒体内联流程按模型能力将媒体加入请求。 |
+| 角色扮演包装句为空 | 直接面向用户的 Agent 不需要聊天、群聊、示例、续写或代写包装句。 |
+| 保留角色与世界书标记 | 沿用 SillyTavern 标准预设结构；Session 没有相应材料时为空，不产生消息。 |
+| `agentSystemPrompt` 在 Main Prompt 前，`agentTask` 在历史前，`agentResults` 在末尾 | 沿用 PromptManager 的默认插入位置，加载后无需改写顺序。 |
+
+预设是用户可编辑的内容。内置文件播种不覆盖已有同名文件，也不迁移已保存 Profile 的选择。
+
 ## Session 配置
 
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
-Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
+Session 必须指定 `preset.mode = ref`、`model.mode = connectionRef` 和 `context.initialChatHistoryMessages = -1`，不接受历史窗口；Skill 来自内置与 Profile 自身作用域，同名时 Profile 覆盖内置包。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
 
 ## 源码
 
-普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
+普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 5。
 
-schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
+schema 1–4 在加载或导入时自动迁移，丢弃轮数与调用次数上限；1–3 版还会移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算。保留其余配置，不自动授予新权限或重写指令。普通 Profile 与共享 Session Profile 在读取迁移或保存后以当前版本写回。
 
 旧 `tools.mcpResultInlineCharLimit` 的数值在读取时保留，再次保存使用 `tools.externalResultInlineCharLimit`。
 

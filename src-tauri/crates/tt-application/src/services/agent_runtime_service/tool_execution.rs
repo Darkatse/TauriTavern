@@ -2,21 +2,23 @@ use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
+use tt_contracts::extension_tools::ExtensionToolCall;
 
 use super::commit_ledger::RunCommitLedger;
 use super::model_stream_projection::remove_live_tool_call;
 use super::tool_results::{mcp_known_response_result, tool_call_audit_file_stem};
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
+use crate::services::tool_request_gate::{self, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
-    AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    AgentToolSession, TASK_RETURN, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    builtin_model_alias,
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    WorkspacePath,
 };
 use tt_domain::models::tool::{ToolArguments, ToolInvocation};
 use tt_ports::mcp::McpCallOutcome;
@@ -38,7 +40,6 @@ impl AgentRuntimeService {
         round: usize,
         tool_call_index: usize,
         tool_invocation: &ToolInvocation,
-        gate: &mut ToolRequestGate,
         session: &mut AgentToolSession,
         is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
@@ -82,30 +83,11 @@ impl AgentRuntimeService {
             remove_live_tool_call(&active_run.live_projection, invocation_id, tool_call_index);
             let started = Instant::now();
 
-            if let Err(rejection) = gate.authorize_and_reserve(
+            if let Err(rejection) = tool_request_gate::authorize(
                 &prepared.tool_snapshot,
                 &prepared.tool_turn,
                 tool_invocation,
             ) {
-                let budget_message = match &rejection {
-                    ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
-                        "The tool call limit for this task has been reached ({max_calls} calls)."
-                    )),
-                    ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
-                        "`{tool_name}` has reached its call limit for this task ({max_calls} calls)."
-                    )),
-                    _ => None,
-                };
-                if let Some(message) = budget_message {
-                    let outcome = recoverable_tool_error(
-                        tool_invocation,
-                        "agent.tool_budget_exhausted",
-                        &message,
-                        started.elapsed().as_millis(),
-                    );
-                    return Ok(outcome);
-                }
-
                 let error = if matches!(
                     &rejection,
                     ToolRequestGateError::TurnSnapshotMismatch { .. }
@@ -132,11 +114,10 @@ impl AgentRuntimeService {
                 return Err(error);
             }
 
-            // Charge the budget before rejecting arguments so malformed calls cannot retry for free.
             let args = match tool_invocation.arguments.as_map() {
                 Ok(args) => args,
                 Err(message) => {
-                    return Ok(recoverable_tool_error(
+                    return Ok(AgentToolDispatchOutcome::error(
                         tool_invocation,
                         "tool.invalid_arguments",
                         &message,
@@ -168,13 +149,10 @@ impl AgentRuntimeService {
             let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
             started_tool = true;
             let dispatch_result = if !is_last_call && builtin_name.is_some_and(is_completion_tool) {
-                Ok(recoverable_tool_error(
+                Ok(AgentToolDispatchOutcome::error(
                     call,
                     "agent.tool_after_finish",
-                    &format!(
-                        "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
-                        call.tool_id.native_name()
-                    ),
+                    "This tool must be the final tool call in a model turn; complete the other work first, then call it again.",
                     started.elapsed().as_millis(),
                 ))
             } else if builtin_name == Some(AGENT_DELEGATE) {
@@ -211,7 +189,7 @@ impl AgentRuntimeService {
                 .await
             } else if call.tool_id.extension_id().is_some() {
                 let reply = self.extension_tools.call(
-                    tt_contracts::extension_tools::ExtensionToolCall {
+                    ExtensionToolCall {
                         tool_id: call.tool_id.clone(),
                         run_id: run_id.to_string(),
                         invocation_id: invocation_id.to_string(),
@@ -221,23 +199,15 @@ impl AgentRuntimeService {
                     },
                     cancel.clone(),
                 ).await.map_err(ApplicationError::from);
-                reply.map(|reply| AgentToolDispatchOutcome {
-                    result: super::tool_results::extension_reply_result(call, reply),
-                    effect: AgentToolEffect::None,
-                    elapsed_ms: started.elapsed().as_millis(),
-                })
+                reply.map(|reply| super::tool_results::extension_reply_result(call, reply, started.elapsed().as_millis()))
             } else if call.tool_id.provider_id().starts_with("mcp/") {
                 // The MCP service reports sent-but-unconfirmed calls explicitly.
                 started_tool = false;
                 let outcome = self.call_mcp_tool(call, args, cancel).await?;
                 started_tool = true;
                 match outcome {
-                    McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
-                        result: mcp_known_response_result(call, response),
-                        effect: AgentToolEffect::None,
-                        elapsed_ms: started.elapsed().as_millis(),
-                    }),
-                    McpCallOutcome::NotSent(issue) => Ok(recoverable_tool_error(
+                    McpCallOutcome::KnownResponse(response) => Ok(mcp_known_response_result(call, response, started.elapsed().as_millis())),
+                    McpCallOutcome::NotSent(issue) => Ok(AgentToolDispatchOutcome::error(
                         call,
                         issue.code.as_str(),
                         issue.message.as_str(),
@@ -248,14 +218,17 @@ impl AgentRuntimeService {
                             "mcp.call_outcome_unknown: {} The MCP tool may have executed; this call will not be retried.",
                             issue.message
                         );
-                        let outcome = recoverable_tool_error(
+                        let outcome = AgentToolDispatchOutcome::error(
                             call,
                             "mcp.call_outcome_unknown",
                             &message,
                             started.elapsed().as_millis(),
                         );
+                        let file_base = self
+                            .tool_call_file_base(run_id, invocation_id, round, &call.call_id)
+                            .await?;
                         let _ = self
-                            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                            .record_tool_outcome(prepared, round, &file_base, &outcome)
                             .await?;
                         return Err(if *cancel.borrow() {
                             ApplicationError::Cancelled(message)
@@ -272,24 +245,29 @@ impl AgentRuntimeService {
 
             match dispatch_result {
                 Ok(outcome) => {
-                    ensure_tool_result_identity(tool_invocation, &outcome.result)?;
                     let outcome = match outcome.effect.clone() {
                         AgentToolEffect::Finish => {
                             if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                                recoverable_tool_error(
+                                AgentToolDispatchOutcome::error(
                                     tool_invocation,
                                     "agent.child_finish_denied",
-                                    "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
+                                    &format!(
+                                        "Return-mode child Agent invocations must complete with {}, not this tool.",
+                                        builtin_model_alias(TASK_RETURN),
+                                    ),
                                     outcome.elapsed_ms,
                                 )
                             } else if !commit_ledger.has_explicit_commit()
                                 && self.run_repository.load_run(run_id).await?.chat_target()?.presentation
                                     == AgentRunPresentation::Foreground
                             {
-                                recoverable_tool_error(
+                                AgentToolDispatchOutcome::error(
                                     tool_invocation,
                                     "agent.foreground_commit_required",
-                                    "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
+                                    &format!(
+                                        "Foreground Agent runs must call {} successfully before finishing.",
+                                        builtin_model_alias(WORKSPACE_COMMIT),
+                                    ),
                                     outcome.elapsed_ms,
                                 )
                             } else {
@@ -407,74 +385,4 @@ impl AgentRuntimeService {
 
 fn is_completion_tool(tool_name: &str) -> bool {
     matches!(tool_name, WORKSPACE_FINISH | AGENT_HANDOFF | TASK_RETURN)
-}
-
-pub(super) fn recoverable_tool_error(
-    call: &ToolInvocation,
-    code: &str,
-    message: &str,
-    elapsed_ms: u128,
-) -> AgentToolDispatchOutcome {
-    AgentToolDispatchOutcome {
-        result: AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: message.to_string(),
-            structured: json!({
-                "error": {
-                    "code": code,
-                    "message": message,
-                }
-            }),
-            is_error: true,
-            error_code: Some(code.to_string()),
-            resource_refs: Vec::new(),
-        },
-        effect: AgentToolEffect::None,
-        elapsed_ms,
-    }
-}
-
-fn ensure_tool_result_identity(
-    invocation: &ToolInvocation,
-    result: &AgentToolResult,
-) -> Result<(), ApplicationError> {
-    if result.call_id == invocation.call_id && result.tool_id == invocation.tool_id {
-        return Ok(());
-    }
-    Err(ApplicationError::InternalError(format!(
-        "tool.result_identity_mismatch: invocation `{}` / `{}` produced result `{}` / `{}`",
-        invocation.call_id, invocation.tool_id, result.call_id, result.tool_id
-    )))
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::Value;
-    use tt_domain::models::agent::AgentToolResult;
-    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
-
-    use super::ensure_tool_result_identity;
-
-    #[test]
-    fn tool_result_identity_must_match_its_invocation() {
-        let invocation = ToolInvocation {
-            call_id: "call_1".to_string(),
-            tool_id: ToolId::builtin("workspace.finish").unwrap(),
-            arguments: ToolArguments::empty(),
-            provider_metadata: Value::Null,
-        };
-        let result = AgentToolResult {
-            call_id: invocation.call_id.clone(),
-            tool_id: ToolId::builtin("workspace.commit").unwrap(),
-            content: String::new(),
-            structured: Value::Null,
-            is_error: false,
-            error_code: None,
-            resource_refs: Vec::new(),
-        };
-
-        let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
-        assert!(error.to_string().contains("tool.result_identity_mismatch"));
-    }
 }

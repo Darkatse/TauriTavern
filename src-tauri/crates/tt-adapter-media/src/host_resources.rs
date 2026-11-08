@@ -8,6 +8,7 @@ use crate::persistence::thumbnail_cache::{
     thumbnail_cache_identity,
 };
 use crate::thumbnails::{avatar_thumbnail_config, background_thumbnail_config};
+use tt_adapter_storage_core::file_system::{KeptOriginal, replace_keeping_original_blocking};
 use tt_contracts::client_asset_paths::UserDataAssetKind;
 use tt_contracts::range::ByteRange;
 use tt_domain::errors::DomainError;
@@ -15,7 +16,7 @@ use tt_domain::models::user_directory::UserDirectory;
 use tt_ports::host_resource::{
     HostResourceAssetStore, HostResourceBody, HostResourceSourceMetadata,
     HostResourceSourceRequest, HostResourceSourceRevision, HostResourceStoreError,
-    OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection,
+    OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection, UserCssStore,
 };
 
 #[derive(Debug, Clone)]
@@ -266,6 +267,23 @@ impl FilesystemHostResourceStore {
                     .into_resource(&cache_identity))
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl UserCssStore for FilesystemHostResourceStore {
+    async fn reset_user_css(&self, factory: &[u8]) -> Result<(), DomainError> {
+        let path = self.roots.user_css_file.clone();
+        let factory = factory.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, &factory)?;
+            if let Some(kept) = kept {
+                tracing::info!("Safe mode kept user.css as {}", kept.display());
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 }
 

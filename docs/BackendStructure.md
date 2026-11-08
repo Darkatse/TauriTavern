@@ -183,7 +183,8 @@ src-tauri/crates/tauritavern/src/
 │   └── startup_profile.rs # 启动期 settings / policy snapshot
 ├── presentation/          # Tauri commands、CommandError、web resource adapter
 ├── infrastructure/        # Tauri-bound infrastructure
-└── platform/              # 宿主身份、iOS/UIKit、macOS/WebView、native UI glue
+├── platform/              # 宿主身份、iOS/UIKit、macOS/WebView、native UI glue
+└── perf.rs, perf/         # 后端性能重放（`perf` feature，见 CurrentState/PerfBaseline.md）
 ```
 
 ### 6.1 Host shell
@@ -198,6 +199,8 @@ src-tauri/crates/tauritavern/src/
 
 这里可以触碰 `tauri::AppHandle`、window、plugin、platform API。这里不写业务用例。
 
+setup 不会因用户数据失败。宿主设置与 iOS 策略的启动快照（`app/startup_profile.rs`）在异步初始化中读取，失败经 `BackendReadiness` 显示在启动失败对话框，外壳不会在窗口出现前退出。
+
 ### 6.2 Composition root
 
 `app/composition/*` 是唯一可以同时知道 application service 与 concrete adapter 的地方。
@@ -208,6 +211,7 @@ src-tauri/crates/tauritavern/src/
 - service 不直接构造 concrete adapter。
 - adapter 不调用 application service。
 - `AppState` 只持有长期运行的 service 包、lifecycle handle 和启动期策略快照，不作为全局 service locator 下沉到 application 或 adapter。
+- composition 不接触 `AppHandle`。宿主提供的东西由 `app/host/environment.rs` 汇集成 `HostEnvironment` 传入；后端性能重放用同一套 composition，换上自己的 `HostEnvironment`。
 
 ### 6.3 Host-bound infrastructure
 
@@ -282,7 +286,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
 | Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
-| LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
+| LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 在 host `infrastructure/sync_host.rs`，经 `HostEnvironment` 交给 composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
 | 工作区 Shell、jq、Python 与 JavaScript 执行 | `tt-adapter-workspace-shell` | 依赖 `WorkspaceShell` / `WorkspaceFs` port，复用调用方的文件范围；不接触物理路径 |
 
@@ -317,7 +321,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `OpenAI Settings`
 - `TextGen Settings`
 
-TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。
+TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。[安全模式](CurrentState/SafeMode.md)的启动记录 `app_root/safe-mode.json` 同样属于安装：setup 在读取任何用户数据之前计入本次启动，由它决定本次启动是询问还是执行安全模式。
 
 权威代码入口：
 
@@ -325,9 +329,11 @@ TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 age
 - `src-tauri/crates/tt-domain/src/models/user_directory.rs`
 - 桌面数据目录选择现状见 `docs/CurrentState/DataDirectorySelection.md`
 
-设置分区与迁移归 `tt-adapter-storage-core` 的设置仓储，前端 API 保持完整设置对象。同步约定见 [Sync](CurrentState/Sync.md#独立设置范围)。
+设置分区与迁移归 `tt-adapter-storage-core` 的设置仓储，前端 API 保持完整设置对象。分区文件保存写入时的 JSON 原文：仓储只展开分区路由、修复与 Persona 用到的字段，其余内容（主要是扩展数据）按原文搬运；字节不变的文件不重写。同步约定见 [Sync](CurrentState/Sync.md#独立设置范围)。
 
-设置保存复用共享字节提交；领域层定义修复与 revision 规则，应用层协调保存、恢复及 Persona 独立确认。仓储与归档共用文件清单和修复规则，读取及归档投影不回写源数据。
+设置快照沿用上游的设置备份布局：`default-user/backups/settings_<handle>_<时间>.json`，保留最新 50 份，与聊天备份同属 `backups` 同步数据集；旧版写在 `snapshots/` 的快照在启动时迁入。
+
+设置保存复用共享字节提交；领域层定义修复规则，应用层协调保存、恢复及 Persona 独立确认。revision 是各分区原文哈希的哈希，由仓储根据存储的文件计算，提交时只重新哈希有变化的分区；它只用来发现页面加载之后来自别处的修改。仓储与归档共用文件清单和修复规则，读取及归档投影不回写源数据。
 
 文件写入以单文件原子发布为边界，持久化写入在发布前同步文件；失败不回退为覆盖复制。具体保证见[文件系统实现](../src-tauri/crates/tt-adapter-storage-core/src/file_system.rs)。跨 adapter 不为复用文件 helper 引入仓储依赖。
 
@@ -364,6 +370,7 @@ pnpm run check:rust-boundaries
 
 ```bash
 pnpm run test:rust
+pnpm run test:perf
 pnpm run check:rust:dev
 cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-test>
 ```
@@ -391,4 +398,4 @@ pnpm run test:contracts
 
 ### 移动窗口背景边界
 
-`tt-contracts::window_layout` 定义窗口快照与背景请求。主 WebView 布局、系统栏政策、条带显示与过期结果的丢弃属于 `tauritavern::platform` 的 shell glue。`tt-adapter-media::window_backdrop` 负责 Tauri-free 的资源读取、解码与条带裁切，复用 Host Resource Store。流程见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
+`tt-contracts::window_layout` 定义窗口快照、抽屉栏条目与背景请求。主 WebView 布局、系统栏政策、原生抽屉栏、条带显示与过期结果的丢弃属于 `tauritavern::platform` 的 shell glue。`tt-adapter-media::window_backdrop` 负责 Tauri-free 的资源读取、解码与条带裁切，复用 Host Resource Store。流程见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。

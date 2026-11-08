@@ -14,6 +14,7 @@ pub mod runtime_paths;
 pub mod settings;
 pub mod sync;
 pub mod sync_automation;
+pub mod tool_images;
 pub mod user_endpoint_access;
 pub mod user_media;
 pub mod workspace_fs;

@@ -10,11 +10,12 @@ use crate::presentation::commands::agent_live_projection::AgentRunLivePresenter;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
-    AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
-    AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
-    AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto, AgentCancelRunResultDto,
-    AgentCopyChatPersistentStatesDto, AgentFinishRunPresentationDto, AgentListProfilesResultDto,
-    AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
+    AgentActiveRunDto, AgentApplyCurrentModelConnectionSnapshotDto,
+    AgentApplyCurrentModelConnectionSnapshotResultDto, AgentApplyRunPruneDto,
+    AgentBuildCurrentModelConnectionSnapshotDto, AgentBuildCurrentModelConnectionSnapshotResultDto,
+    AgentCancelRunDto, AgentCancelRunResultDto, AgentCopyChatPersistentStatesDto,
+    AgentFinishRunPresentationDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
     AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
     AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
@@ -415,6 +416,18 @@ pub async fn submit_agent_run_guidance(
 }
 
 #[tauri::command]
+pub async fn list_active_agent_runs(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<AgentActiveRunDto>, CommandError> {
+    log_command("list_active_agent_runs");
+    Ok(app_state
+        .services
+        .agent_runtime_service
+        .list_active_runs()
+        .await)
+}
+
+#[tauri::command]
 pub async fn list_agent_runs(
     dto: AgentListRunsDto,
     app_state: State<'_, Arc<AppState>>,
@@ -475,6 +488,21 @@ pub async fn read_agent_run_events(
 }
 
 #[tauri::command]
+pub async fn read_agent_workspace_bytes(
+    dto: AgentReadWorkspaceFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<tauri::ipc::Response, CommandError> {
+    log_command("read_agent_workspace_bytes");
+    let bytes = app_state
+        .services
+        .agent_runtime_service
+        .read_workspace_bytes(dto)
+        .await
+        .map_err(map_command_error("Failed to read agent workspace bytes"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
 pub async fn read_agent_workspace_file(
     dto: AgentReadWorkspaceFileDto,
     app_state: State<'_, Arc<AppState>>,
@@ -522,7 +550,7 @@ pub async fn read_agent_model_turn(
 pub async fn read_agent_prompt_assembly_request(
     dto: AgentReadPromptAssemblyRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentPromptAssemblyBrokerRequestDto, CommandError> {
+) -> Result<Option<AgentPromptAssemblyBrokerRequestDto>, CommandError> {
     log_command("read_agent_prompt_assembly_request");
 
     app_state

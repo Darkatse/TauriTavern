@@ -13,8 +13,8 @@
 | `plan/` | 普通计划文件 |
 | `summaries/` | 摘要与子 Agent 结果的可读版本 |
 | `persist/` | 本次运行的持久内容工作副本 |
-| `tool-results/` | 工具结果及较长结果的可读版本，只读 |
-| `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
+| `tool-results/` | 工具结果、较长结果的可读版本和工具结果图片，只读 |
+| `skills/` | 当前 Invocation 的有效 Skill 包，含 Session 可用的内置包，只读；无绑定时为空目录 |
 
 模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
 
@@ -26,7 +26,7 @@
 
 文本工具与 Shell（含 Python、JavaScript）通过 `WorkspaceFs` 访问同一逻辑视图。普通文件和 runtime 材料保存在 Run 的真实目录，`WorkspaceRepository` 负责初始化、manifest 与持久版本发布；Skill 原始文件由 `SkillRepository` 读取，应用层负责绑定和宏投影。
 
-模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`；业务根本身不可修改，`tool-results` 和 `skills` 只读。Skill 是外部挂载，不复制到 Run 目录。
+模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`；业务根本身不可修改，`tool-results` 和 `skills` 只读。用户安装与内置 Skill 共用外部挂载，不复制到 Run 目录。
 
 Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件检查与写入在同一锁内完成。多步操作不构成事务，已成功的操作立即生效；Shell 失败或取消不回滚已完成的修改。追加使用原生 append，失败可能部分生效，不自动重放。
 
@@ -115,6 +115,8 @@ agent-workspaces/sessions/
     workspace/{work,tmp,tool-results}/
     runs/<run-id>/                  每次执行的记录
 ```
+
+`history.jsonl` 只追加，第 n 行是 seq 为 n 的消息；读取从文件末尾向前，只解析要返回的行。
 
 `work/`、`tmp/` 和只读的 `tool-results/` 跨 Run、跨重启保留，临时材料由 Agent 自行清理。Shell 的 `/tmp` 指向工作区目录，不是宿主临时目录。历史与文件按 Session 隔离，只有 Profile 共用。
 

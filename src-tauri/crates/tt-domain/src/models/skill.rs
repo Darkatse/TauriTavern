@@ -12,6 +12,7 @@ pub const DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS: usize = 80_000;
 )]
 #[derive(Default)]
 pub enum SkillScope {
+    Builtin,
     #[default]
     Global,
     Preset {
@@ -29,6 +30,7 @@ pub enum SkillScope {
 impl SkillScope {
     pub fn stable_key(&self) -> String {
         match self {
+            Self::Builtin => "builtin".to_string(),
             Self::Global => "global".to_string(),
             Self::Preset { api_id, name } => format!("preset\0{api_id}\0{name}"),
             Self::Profile { profile_id } => format!("profile\0{profile_id}"),
@@ -38,6 +40,7 @@ impl SkillScope {
 
     pub fn label(&self) -> String {
         match self {
+            Self::Builtin => "builtin".to_string(),
             Self::Global => "global".to_string(),
             Self::Preset { api_id, name } => format!("preset:{api_id}:{name}"),
             Self::Profile { profile_id } => format!("profile:{profile_id}"),
@@ -54,6 +57,8 @@ impl SkillScope {
 )]
 #[derive(Default)]
 pub enum SkillScopeFilter {
+    Builtin,
+    // All means installed skills; management and embedded assets depend on it.
     All,
     #[default]
     Global,
@@ -72,7 +77,8 @@ pub enum SkillScopeFilter {
 impl SkillScopeFilter {
     pub fn matches(&self, scope: &SkillScope) -> bool {
         match self {
-            Self::All => true,
+            Self::Builtin => matches!(scope, SkillScope::Builtin),
+            Self::All => !matches!(scope, SkillScope::Builtin),
             Self::Global => matches!(scope, SkillScope::Global),
             Self::Preset { api_id, name } => matches!(
                 scope,

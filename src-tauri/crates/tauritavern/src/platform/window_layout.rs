@@ -2,7 +2,7 @@
 use tauri::AppHandle;
 #[cfg(mobile)]
 use tauri::Manager;
-use tt_contracts::window_layout::{WindowBackdropRequest, WindowSnapshot};
+use tt_contracts::window_layout::{DrawerBarItem, WindowBackdropRequest, WindowSnapshot};
 use tt_domain::errors::DomainError;
 
 #[cfg(target_os = "ios")]
@@ -27,6 +27,22 @@ pub async fn snapshot(app: &AppHandle) -> Result<Option<WindowSnapshot>, DomainE
     {
         let _ = app;
         Ok(None)
+    }
+}
+
+/// Only snapshots from the iOS host announce a drawer bar, so only it receives drawer items.
+pub async fn set_drawer_bar_items(
+    app: &AppHandle,
+    items: Vec<DrawerBarItem>,
+) -> Result<(), DomainError> {
+    #[cfg(target_os = "ios")]
+    return native::set_drawer_bar_items(app, items).await;
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, items);
+        Err(DomainError::InvalidData(
+            "The native drawer bar is drawn by the iOS host".into(),
+        ))
     }
 }
 

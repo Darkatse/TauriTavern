@@ -59,11 +59,6 @@ pub struct VersionInfo {
 }
 
 #[tauri::command]
-pub fn get_version() -> Result<String, CommandError> {
-    Ok(crate::product::VERSION.to_string())
-}
-
-#[tauri::command]
 pub fn get_client_version() -> Result<VersionInfo, CommandError> {
     log_command("get_client_version");
 
@@ -82,11 +77,6 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
     };
 
     Ok(version_info)
-}
-
-#[tauri::command]
-pub fn is_ready() -> Result<bool, CommandError> {
-    Ok(true)
 }
 
 #[cfg(any(dev, debug_assertions))]

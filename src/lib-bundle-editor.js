@@ -1,9 +1,8 @@
 import { Compartment, EditorState } from '@codemirror/state';
-import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
-import { keymap, placeholder, showPanel } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
+import { EditorView, highlightSpecialChars, keymap, placeholder, showPanel } from '@codemirror/view';
 import { openSearchPanel, closeSearchPanel, searchPanelOpen, searchKeymap, search } from '@codemirror/search';
-import { EditorView, minimalSetup } from 'codemirror';
-import { createSearchPanel } from './editor-search-panel.js';
+import { createSearchPanel, editorIcon } from './editor-search-panel.js';
 
 const theme = EditorView.theme({
     '&': {
@@ -15,14 +14,10 @@ const theme = EditorView.theme({
         outline: '1px solid var(--SmartThemeQuoteColor)',
     },
     '.cm-content': { caretColor: 'var(--SmartThemeBodyColor)' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--SmartThemeBodyColor)' },
-    '.cm-selectionBackground': {
-        backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent)',
-    },
-    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
+    '::selection': {
         backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent)',
+        color: 'var(--SmartThemeBodyColor)',
     },
-    '::selection': { color: 'var(--SmartThemeBodyColor)' },
     '.cm-scroller': {
         fontFamily: 'inherit',
         lineHeight: 'inherit',
@@ -32,11 +27,14 @@ const theme = EditorView.theme({
         backgroundColor: 'transparent',
         color: 'inherit',
     },
+    // Pages turn the toolbar off with `--tt-editor-tools: none`; find and replace still opens.
     '.cm-panels-top': {
+        display: 'var(--tt-editor-tools, block)',
         borderBottom: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
     },
+    '.cm-panels-top:has(.cm-editor-search)': { display: 'block' },
     '.cm-editor-tools': {
-        display: 'flex',
+        display: 'var(--tt-editor-tools, flex)',
         justifyContent: 'flex-end',
         gap: '2px',
         padding: '2px 5px',
@@ -106,7 +104,7 @@ const theme = EditorView.theme({
         boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--SmartThemeQuoteColor) 45%, transparent)',
     },
     '.cm-search-wholeWord': { textDecoration: 'underline', textUnderlineOffset: '3px' },
-    '.cm-editor-search button svg': {
+    '.cm-editor-tools button svg, .cm-editor-search button svg': {
         width: '14px',
         height: '14px',
         fill: 'none',
@@ -135,7 +133,14 @@ const theme = EditorView.theme({
     },
 });
 
-export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined }) {
+/**
+ * Builds the editor on `host`. An isolated editor lives in a shadow root, so page selectors never match or
+ * re-check its DOM. Raw text events end at the host; edits leave through `onChange`, and an open search
+ * panel is reflected as `data-search-open` on the host.
+ */
+export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined }) {
+    const parent = isolated ? host.attachShadow({ mode: 'open' }) : host;
+    for (const type of ['beforeinput', 'input']) parent.addEventListener(type, event => event.stopPropagation());
     const permissions = new Compartment();
     const editability = disabled => [
         EditorState.readOnly.of(disabled),
@@ -154,10 +159,7 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
             button.type = 'button';
             button.title = view.state.phrase(label);
             button.setAttribute('aria-label', button.title);
-            const glyph = document.createElement('i');
-            glyph.className = `fa-solid ${icon}`;
-            glyph.setAttribute('aria-hidden', 'true');
-            button.append(glyph);
+            button.append(editorIcon(icon));
             button.addEventListener('mousedown', event => event.preventDefault());
             button.addEventListener('click', () => {
                 view.focus();
@@ -167,16 +169,18 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
             return button;
         }
 
-        const undoButton = button('Undo', 'fa-rotate-left', () => undo(view));
-        const redoButton = button('Redo', 'fa-rotate-right', () => redo(view));
-        const searchButton = button('Find and replace', 'fa-magnifying-glass', () => {
+        const undoButton = button('Undo', 'M3.5 6.5h6a3.5 3.5 0 0 1 0 7H6M6 3.5l-3 3 3 3', () => undo(view));
+        const redoButton = button('Redo', 'M12.5 6.5h-6a3.5 3.5 0 0 0 0 7H10M10 3.5l3 3-3 3', () => redo(view));
+        const searchButton = button('Find and replace', 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 1 0 0-9ZM10.2 10.2l3.3 3.3', () => {
             searchPanelOpen(view.state) ? closeSearchPanel(view) : openSearchPanel(view);
         });
-        button('Copy all', 'fa-copy', () => onCopy(view.state.doc.toString()));
+        button('Copy all', 'M5.5 5.5h8v8h-8ZM2.5 10.5v-8h8', () => onCopy(view.state.doc.toString()));
         const update = () => {
+            const searching = searchPanelOpen(view.state);
             undoButton.disabled = view.state.readOnly || undoDepth(view.state) === 0;
             redoButton.disabled = view.state.readOnly || redoDepth(view.state) === 0;
-            searchButton.setAttribute('aria-expanded', String(searchPanelOpen(view.state)));
+            searchButton.setAttribute('aria-expanded', String(searching));
+            host.toggleAttribute('data-search-open', searching);
         };
         update();
         return { dom, top: true, update };
@@ -186,8 +190,10 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
         doc: value,
         selection,
         extensions: [
-            minimalSetup,
-            keymap.of(searchKeymap),
+            // No drawSelection: the native caret keeps each keystroke to one frame.
+            highlightSpecialChars(),
+            history(),
+            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
             showPanel.of(toolbar),
             search({ top: true, createPanel: createSearchPanel }),
             EditorState.phrases.of(phrases),

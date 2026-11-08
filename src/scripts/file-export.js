@@ -3,21 +3,8 @@ import { createFileStagingService } from '../tauri/main/services/files/file-stag
 /** @returns {Promise<{ delivered: boolean }>} */
 export async function deliverBlob(blob, fileName) {
     const payload = blob instanceof Blob ? blob : new Blob([blob ?? '']);
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (typeof invoke !== 'function') {
-        const objectUrl = URL.createObjectURL(payload);
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = fileName || 'download.bin';
-        document.body.append(anchor);
-        anchor.click();
-        anchor.remove();
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-        return { delivered: true };
-    }
-
     const { safeInvoke } = window.__TAURITAVERN__.invoke;
-    const staging = createFileStagingService({ safeInvoke, invoke });
+    const staging = createFileStagingService({ safeInvoke });
     const path = await staging.stageBlob(payload, { kind: 'export', preferredName: fileName });
     return safeInvoke('deliver_staged_file', { path, fileName });
 }

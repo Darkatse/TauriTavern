@@ -1,0 +1,146 @@
+import { documentWindow } from './document.ts';
+import type { DocumentScope } from './document.ts';
+import { preview } from './semantics.ts';
+import type { Semantics } from './semantics.ts';
+import { appToolAliases } from './names.ts';
+
+export type Rect = { x: number; y: number; width: number; height: number };
+
+const { evaluate: EVALUATE } = appToolAliases;
+
+export type InteractionPoint = { x: number; y: number };
+type Bounds = { left: number; right: number; top: number; bottom: number };
+type FrameMapping = { frame: HTMLIFrameElement; x: number; y: number; scaleX: number; scaleY: number };
+type SurfaceCheck = { point: InteractionPoint } | { reason: string };
+type MissedHit = { point: InteractionPoint; document: Document; hit: Element | null };
+
+/** Find one point that hits the target inside its document and every host frame above it. */
+export function inspectInputSurface(element: HTMLElement, scope: DocumentScope, semantics: Semantics): SurfaceCheck {
+    if (!semantics.isVisible(element)) {
+        return { reason: `${identify(element, semantics)} is hidden or has no visible size. Open or restore its panel, then observe again.` };
+    }
+    let outsideDocument = scope.document;
+    let missed: MissedHit | null = null;
+
+    // ponytail: one point per client rect; add richer geometry only for observed partial-overlay failures.
+    for (const rect of Array.from(element.getClientRects())) {
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const mapped = toTopViewport(rect, scope);
+        if ('outside' in mapped) {
+            outsideDocument = mapped.outside;
+            continue;
+        }
+        const { bounds: visible, mappings } = mapped;
+        const point = { x: (visible.left + visible.right) / 2, y: (visible.top + visible.bottom) / 2 };
+        const obstruction = findMissedHit(point, mappings, element);
+        if (!obstruction) return { point };
+        missed ??= obstruction;
+    }
+    if (missed) return { reason: describeMissedHit(missed, semantics) };
+    return { reason: `${identify(element, semantics)} is outside the visible area of ${identifyPage(outsideDocument, semantics)}. Scroll its containing region, then observe again.` };
+}
+
+export function toTopViewport(bounds: Bounds, scope: DocumentScope):
+    { bounds: Bounds; clipped: boolean; mappings: FrameMapping[] } | { outside: Document } {
+    let clipped = false;
+    const clip = (doc: Document) => {
+        const visible = clipToViewport(bounds, doc);
+        if (!visible) return false;
+        clipped ||= visible.left !== bounds.left || visible.right !== bounds.right || visible.top !== bounds.top || visible.bottom !== bounds.bottom;
+        bounds = visible;
+        return true;
+    };
+    if (!clip(scope.document)) return { outside: scope.document };
+    const mappings: FrameMapping[] = [];
+    for (const frame of [...scope.frames].reverse()) {
+        const mapping = frameMapping(frame);
+        mappings.push(mapping);
+        bounds = {
+            left: mapping.x + bounds.left * mapping.scaleX,
+            right: mapping.x + bounds.right * mapping.scaleX,
+            top: mapping.y + bounds.top * mapping.scaleY,
+            bottom: mapping.y + bounds.bottom * mapping.scaleY,
+        };
+        if (!clip(frame.ownerDocument)) return { outside: frame.ownerDocument };
+    }
+    return { bounds, clipped, mappings };
+}
+
+export function intersects(a: Rect, b: Rect): boolean {
+    return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+export function contains(outer: Rect, inner: Rect): boolean {
+    return outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
+}
+
+function clipToViewport(bounds: Bounds, doc: Document): Bounds | null {
+    const view = documentWindow(doc);
+    const left = Math.max(0, bounds.left);
+    const right = Math.min(view.innerWidth, bounds.right);
+    const top = Math.max(0, bounds.top);
+    const bottom = Math.min(view.innerHeight, bounds.bottom);
+    return right > left && bottom > top ? { left, right, top, bottom } : null;
+}
+
+function findMissedHit(point: InteractionPoint, mappings: FrameMapping[], target: Element): MissedHit | null {
+    let local = point;
+    for (const mapping of [...mappings].reverse()) {
+        const hit = mapping.frame.ownerDocument.elementFromPoint(local.x, local.y);
+        if (hit !== mapping.frame) return { point: local, document: mapping.frame.ownerDocument, hit };
+        local = { x: (local.x - mapping.x) / mapping.scaleX, y: (local.y - mapping.y) / mapping.scaleY };
+    }
+    const hit = target.ownerDocument.elementFromPoint(local.x, local.y);
+    return hit && target.contains(hit) ? null : { point: local, document: target.ownerDocument, hit };
+}
+
+function identify(element: Element, semantics: Semantics): string {
+    // A hit may belong to an omitted region; diagnostics must not disclose its contents.
+    if (!semantics.isWithinObservedContent(element) || semantics.isSensitive(element)) return `${element.localName} (content omitted)`;
+    const { name } = semantics.describeElement(element);
+    const id = element.id ? ` id=${JSON.stringify(preview(element.id).value)}` : '';
+    return `${element.localName}${id}${name ? ` ${JSON.stringify(name)}` : ''}`;
+}
+
+function identifyPage(doc: Document, semantics: Semantics): string {
+    if (doc === document) return 'the main page';
+    const frame = documentWindow(doc).frameElement;
+    return frame ? `the page inside ${identify(frame, semantics)}` : 'the target page';
+}
+
+function describeMissedHit({ point, document: doc, hit }: MissedHit, semantics: Semantics): string {
+    let hitDescription = 'no element';
+    if (hit) {
+        const rect = hit.getBoundingClientRect();
+        const bounds = [rect.x, rect.y, rect.width, rect.height].map(Math.round).join(', ');
+        const zIndex = documentWindow(doc).getComputedStyle(hit).zIndex;
+        hitDescription = `${identify(hit, semantics)} (rect x,y,width,height: ${bounds}; z-index: ${zIndex})`;
+    }
+    return `The checked point (${Math.round(point.x)}, ${Math.round(point.y)}) in ${identifyPage(doc, semantics)} hit ${hitDescription}, not the target. Inspect the covering panel or the target's pointer handling, then observe again. Coordinates are in that page's viewport.`;
+}
+
+function frameMapping(frame: HTMLIFrameElement): FrameMapping {
+    const view = documentWindow(frame.ownerDocument);
+    // Bounding rectangles provide a reliable mapping for translation and positive axis-aligned scale.
+    // Perspective alone leaves points on the z=0 plane unchanged.
+    // Reject other transforms instead of using an approximate point to bypass an outer obstruction.
+    for (let ancestor: Element | null = frame; ancestor; ancestor = ancestor.parentElement) {
+        const style = view.getComputedStyle(ancestor);
+        const matrix = new view.DOMMatrixReadOnly(style.transform === 'none' ? undefined : style.transform);
+        const rotated = style.rotate && style.rotate !== 'none' && Number.parseFloat(style.rotate) !== 0;
+        const flipped = style.scale && style.scale !== 'none' && style.scale.split(/\s+/).some(value => Number(value) <= 0);
+        if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0 || rotated || flipped) {
+            throw new Error(`Nothing was done: this embedded page has a rotation, skew, or 3D transform that cannot be mapped to the screen reliably. Use ${EVALUATE} with a known API instead.`);
+        }
+    }
+
+    const rect = frame.getBoundingClientRect();
+    const style = view.getComputedStyle(frame);
+    const scaleX = rect.width / frame.offsetWidth;
+    const scaleY = rect.height / frame.offsetHeight;
+    return {
+        frame, scaleX, scaleY,
+        x: rect.left + (frame.clientLeft + Number.parseFloat(style.paddingLeft)) * scaleX,
+        y: rect.top + (frame.clientTop + Number.parseFloat(style.paddingTop)) * scaleY,
+    };
+}

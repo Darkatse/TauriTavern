@@ -3,6 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 const ownedUiFiles = [
+  'packages/app-use/src/**/*.{ts,tsx}',
   'src/scripts/extensions/agent-system/src/**/*.{ts,tsx}',
   'src/scripts/extensions/in-app-agent/src/**/*.{ts,tsx}',
   'src/scripts/extensions/mcp-manager/src/**/*.{ts,tsx}',
@@ -19,7 +20,7 @@ export default tseslint.config(
     ],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        project: './tsconfig.ui.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -38,7 +39,13 @@ export default tseslint.config(
     },
   },
   {
+    files: ['packages/app-use/src/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: { project: './packages/app-use/tsconfig.json' },
+    },
+  },
+  {
     files: ['src/scripts/extensions/mcp-manager/src/test-call-dialog.tsx'],
-    rules: { 'max-lines': ['error', 613] },
+    rules: { 'max-lines': ['error', 603] },
   },
 );

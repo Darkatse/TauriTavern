@@ -30,8 +30,6 @@ export const TIMELINE_MESSAGES = {
     "timelineActionResume": "Resume run",
     "timelineActionResumeHint": "Continue this run from its saved state.",
     "timelineEventRunResumed": "Run resumed",
-    "timelineResumeTitle": "Resume Agent run",
-    "timelineResumeRounds": "This run reached its round limit. Add {rounds} rounds and continue from the saved state?",
     "timelineDetailFieldRetryable": "Retryable",
     "timelineDetailFieldRound": "Round",
     "timelineDetailFieldUserRetryable": "User-retryable",

@@ -45,31 +45,27 @@ export async function assemblePromptSnapshotForProfile({
     promptSnapshotResult,
     promptAssembly,
 }) {
-    const frozenRunInputSnapshot = promptSnapshotResult?.frozenRunInputSnapshot;
-    if (!frozenRunInputSnapshot) {
-        throw new Error('agent.frozen_run_input_snapshot_required: Agent prompt assembly requires FrozenRunInputSnapshot');
-    }
-
+    const { frozenRunInputSnapshot } = promptSnapshotResult;
     const prepared = await promptAssembly.prepare({
         profileId,
         generationType,
         frozenRunInputSnapshot,
         jsonSchema,
     });
-    if (prepared?.mode === 'currentPromptSnapshot') {
+    if (prepared.mode === 'currentPromptSnapshot') {
         return materializeCurrentPromptSnapshot(promptSnapshotResult);
     }
-    if (prepared?.mode !== 'frontendPromptAssembly') {
+    if (prepared.mode !== 'frontendPromptAssembly') {
         throw new Error('agent.prompt_assembly_mode_invalid: prepare_agent_prompt_assembly returned an unsupported mode');
     }
 
     const assembled = await promptAssembly.buildSnapshot(prepared.request);
     return {
         promptSnapshot: assembled.promptSnapshot,
-        frozenRunInputSnapshot: assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot,
+        frozenRunInputSnapshot: assembled.frozenRunInputSnapshot,
         generationIntent: {
             ...assembled.generationIntent,
-            parentSource: promptSnapshotResult.generationIntent?.source,
+            parentSource: promptSnapshotResult.generationIntent.source,
             promptAssembly: prepared.assembly,
         },
     };

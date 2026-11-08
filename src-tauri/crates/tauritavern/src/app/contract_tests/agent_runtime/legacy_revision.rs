@@ -67,7 +67,10 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .await
         .unwrap();
 
-    let repository = FileSkillRepository::new(root.join("_tauritavern/skills"));
+    let repository = FileSkillRepository::new(
+        root.join("_tauritavern/skills"),
+        root.join("builtin-skills"),
+    );
     let mut bound_skills = Value::Null;
     for (scope, description, body) in [
         (
@@ -111,6 +114,12 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
     let prepared = &mut checkpoint["state"]["foreground"]["prepared"];
     prepared["effectiveSkills"] = bound_skills.clone();
     prepared["profile"]["schemaVersion"] = json!(3);
+    prepared["profile"]["tools"]["maxRounds"] = json!(80);
+    prepared["profile"]["tools"]["maxCallsPerRun"] = json!(80);
+    prepared["toolSnapshot"]["maxCallsPerInvocation"] = json!(80);
+    for binding in prepared["toolSnapshot"]["bindings"].as_array_mut().unwrap() {
+        binding["maxCalls"] = json!(10);
+    }
     prepared["profile"]["preset"]["mode"] = json!("none");
     prepared["profile"]["skills"]["maxReadCharsPerCall"] = json!(100_000);
     prepared["profile"]["skills"]["maxReadCharsPerRun"] = json!(200_000);
@@ -621,7 +630,6 @@ async fn unfinished_legacy_checkpoint_cannot_resume_or_start_a_revision() {
                 expected_terminal_seq: stopped.terminal_seq,
                 chat_ref: run.chat_target().unwrap().chat_ref.clone(),
                 stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-                additional_rounds: 0,
                 host_presentation: false,
                 revision,
             })

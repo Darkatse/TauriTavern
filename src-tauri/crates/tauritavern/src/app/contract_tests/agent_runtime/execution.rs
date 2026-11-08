@@ -1,5 +1,4 @@
 use super::*;
-use tt_domain::models::tool::ToolId;
 use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFailure};
 
 #[tokio::test]
@@ -16,7 +15,6 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         .await
         .expect("resolve default profile");
     profile.run.presentation = AgentRunPresentation::Foreground;
-    profile.tools.max_rounds = 2;
 
     let run = AgentRun {
         id: "run_contract".to_string(),
@@ -52,13 +50,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("execute agent loop");
 
@@ -305,8 +297,7 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
             ]),
         ],
     );
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 2;
+    let profile = resolve_contract_profile(&fixture).await;
     let mut run = contract_run(
         "run_missing_chat_recovery",
         AgentRunPresentation::Background,
@@ -324,13 +315,7 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("recoverable chat errors must not stop the run");
 
@@ -381,7 +366,7 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
                 malformed,
             ]),
             model_tool_response(vec![
-                model_tool_call("call_over_budget", "workspace_list_files", json!({})),
+                model_tool_call("call_list", "workspace_list_files", json!({})),
                 model_tool_call(
                     "call_write",
                     "workspace_write_file",
@@ -391,12 +376,7 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
             ]),
         ],
     );
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 2;
-    profile
-        .tools
-        .max_calls_per_tool
-        .insert(ToolId::builtin("workspace.list_files").unwrap(), 2);
+    let profile = resolve_contract_profile(&fixture).await;
     let run = contract_run("run_arguments", AgentRunPresentation::Background, &profile);
     fixture.agent_repository.create_run(&run).await.unwrap();
     let request = chat_request("list files and write an output");
@@ -405,13 +385,7 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("argument errors remain recoverable");
 
@@ -435,12 +409,6 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
     );
     assert!(results[1].content.contains(r#"{"path":"#));
 
-    let events = read_agent_events(&fixture.agent_repository, &run.id).await;
-    assert!(events.iter().any(|event| {
-        event.event_type == "tool_call_failed"
-            && event.payload["callId"] == "call_over_budget"
-            && event.payload["errorCode"] == "agent.tool_budget_exhausted"
-    }));
     let artifact = fixture
         .agent_repository
         .open_filesystem(&run.id)
@@ -480,8 +448,7 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
             ),
         ])],
     );
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 1;
+    let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -565,7 +532,6 @@ async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_
         .await
         .unwrap()
         .unwrap();
-    caller.tools.max_rounds = 2;
     caller.delegation.can_handoff = true;
     allow_profile_tool(&mut caller.tools.allow, "agent.handoff");
     for (id, delegate, handoff, allowed, configured, description) in [
@@ -776,7 +742,6 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     );
     let mut profile = resolve_contract_profile(&fixture).await;
     profile.run.presentation = AgentRunPresentation::Background;
-    profile.tools.max_rounds = 2;
     let run = contract_run(
         "run_foreground_contract",
         AgentRunPresentation::Foreground,
@@ -796,7 +761,6 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
         fixture.service.clone(),
         run.id.clone(),
         prompt_snapshot,
-        request,
         profile,
         &mut cancel_receiver,
         resolve_chat_commits_and_persistent_state_update(
@@ -973,8 +937,7 @@ async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
             ]),
         ],
     );
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 3;
+    let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -1065,7 +1028,6 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     profile.run.presentation = AgentRunPresentation::Background;
     profile.run.model_retry.max_retries = 1;
     profile.run.model_retry.interval_ms = 1;
-    profile.tools.max_rounds = 2;
     let run = contract_run(
         "run_retry_contract",
         AgentRunPresentation::Background,
@@ -1082,13 +1044,7 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("agent loop");
 
@@ -1149,13 +1105,7 @@ async fn agent_runtime_does_not_retry_non_retryable_model_errors() {
 
     let error = fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect_err("non-retryable error");
 
@@ -1244,7 +1194,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
             )]),
         ],
     );
-    FileSkillRepository::new(root.join("_tauritavern/skills"))
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills"))
         .install_import(SkillInstallRequest {
             target_scope: SkillScope::Global,
             conflict_strategy: None,
@@ -1264,9 +1214,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 }]).collect(),
             },
         }).await.unwrap();
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 2;
-    profile.tools.max_calls_per_run = 20;
+    let profile = resolve_contract_profile(&fixture).await;
     let mut run = contract_run("run_macros", AgentRunPresentation::Background, &profile);
     run.chat_target_mut().unwrap().chat_ref = AgentChatRef::Character {
         character_id: "Alice".into(),
@@ -1311,7 +1259,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     let (_cancel, mut receiver) = watch::channel(false);
     fixture
         .service
-        .execute_agent_loop_run_inner(&run.id, prompt, request, profile, &mut receiver)
+        .execute_agent_loop_run_inner(&run.id, prompt, profile, &mut receiver)
         .await
         .unwrap();
     let requests = fixture.model_gateway.requests().await;
@@ -1430,15 +1378,18 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
         [255]
     );
     assert_eq!(
-        FileSkillRepository::new(root.join("_tauritavern/skills"))
-            .read_skill_bytes(
-                &SkillScope::Global,
-                "macro-demo",
-                &WorkspacePath::parse("references/template.md").unwrap(),
-                usize::MAX
-            )
-            .await
-            .unwrap(),
+        FileSkillRepository::new(
+            root.join("_tauritavern/skills"),
+            root.join("builtin-skills")
+        )
+        .read_skill_bytes(
+            &SkillScope::Global,
+            "macro-demo",
+            &WorkspacePath::parse("references/template.md").unwrap(),
+            usize::MAX
+        )
+        .await
+        .unwrap(),
         source.as_bytes()
     );
     let _ = fs::remove_dir_all(root).await;

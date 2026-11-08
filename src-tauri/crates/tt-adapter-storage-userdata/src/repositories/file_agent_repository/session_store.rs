@@ -1,17 +1,18 @@
-use std::collections::VecDeque;
+use std::io::SeekFrom;
+use std::path::Path;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use tokio::fs::{self, File, OpenOptions};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use tt_adapter_storage_core::file_system::persist_json_file;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::profile::AgentProfileDefinition;
+use tt_domain::models::agent::AgentModelRole;
+use tt_domain::models::agent::profile::{AgentProfileDefinition, deserialize_profile_definition};
 use tt_domain::models::agent::session::{
-    AgentSession, AgentSessionMessage, AgentSessionMessageOrigin,
+    AgentSession, AgentSessionMessage, NewAgentSessionMessage,
 };
-use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::agent_session_repository::{
     AgentSessionMessageReadQuery, AgentSessionRepository,
@@ -23,7 +24,18 @@ use super::run_prune_store::remove_index_file_if_exists;
 #[async_trait]
 impl AgentSessionRepository for FileAgentRepository {
     async fn load_session_profile(&self) -> Result<Option<AgentProfileDefinition>, DomainError> {
-        Self::try_read_json(&self.root.join("sessions/profile.json")).await
+        let path = self.root.join("sessions/profile.json");
+        let Some(value) = Self::try_read_json::<serde_json::Value>(&path).await? else {
+            return Ok(None);
+        };
+        deserialize_profile_definition(value)
+            .map(Some)
+            .map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Invalid Agent session profile in {}: {error}",
+                    path.display()
+                ))
+            })
     }
 
     async fn save_session_profile(
@@ -163,7 +175,6 @@ impl AgentSessionRepository for FileAgentRepository {
                 sequences.remove(run_id);
             }
         }
-        self.session_sequences.lock().await.remove(session_id);
         match fs::remove_dir_all(&directory).await {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -174,11 +185,15 @@ impl AgentSessionRepository for FileAgentRepository {
     async fn append_session_message(
         &self,
         session_id: &str,
-        run_id: &str,
-        message: &AgentModelMessage,
-        origin: Option<&AgentSessionMessageOrigin>,
+        entry: NewAgentSessionMessage,
     ) -> Result<AgentSessionMessage, DomainError> {
-        let run = self.load_run(run_id).await?;
+        let NewAgentSessionMessage {
+            run_id,
+            message,
+            origin,
+            compaction,
+        } = entry;
+        let run = self.load_run(&run_id).await?;
         if run.target.session_id() != Some(session_id) {
             return Err(DomainError::InvalidData(format!(
                 "Agent run {run_id} does not belong to session {session_id}"
@@ -196,10 +211,11 @@ impl AgentSessionRepository for FileAgentRepository {
             .ok_or_else(|| DomainError::InvalidData("Session message sequence exhausted".into()))?;
         let entry = AgentSessionMessage {
             seq,
-            run_id: run_id.to_owned(),
+            run_id,
             created_at: Utc::now(),
-            message: message.clone(),
-            origin: origin.cloned(),
+            message,
+            origin,
+            compaction,
         };
         let mut line = serde_json::to_vec(&entry).map_err(|error| {
             DomainError::InvalidData(format!("Invalid session message: {error}"))
@@ -217,19 +233,14 @@ impl AgentSessionRepository for FileAgentRepository {
         }
         .await;
         if let Err(error) = result {
-            self.session_sequences.lock().await.remove(session_id);
             return Err(DomainError::file_io(
                 "append session history",
                 session_id,
                 error,
             ));
         }
-        self.session_sequences
-            .lock()
-            .await
-            .insert(session_id.to_owned(), seq);
-        if message.role == AgentModelRole::User {
-            session.record_user_message(message, entry.created_at);
+        if entry.message.role == AgentModelRole::User && entry.origin.is_none() {
+            session.record_user_message(&entry.message, entry.created_at);
             persist_json_file(
                 &self.session_dir(session_id)?.join("session.json"),
                 &session,
@@ -264,25 +275,16 @@ impl AgentSessionRepository for FileAgentRepository {
 
 impl FileAgentRepository {
     async fn last_session_seq_locked(&self, session_id: &str) -> Result<u64, DomainError> {
-        if let Some(seq) = self.session_sequences.lock().await.get(session_id).copied() {
-            return Ok(seq);
-        }
         let page = self
             .read_session_message_page(
                 session_id,
                 AgentSessionMessageReadQuery {
-                    after_seq: None,
                     before_seq: None,
                     limit: 1,
                 },
             )
             .await?;
-        let seq = page.last().map_or(0, |entry| entry.seq);
-        self.session_sequences
-            .lock()
-            .await
-            .insert(session_id.to_owned(), seq);
-        Ok(seq)
+        Ok(page.last().map_or(0, |entry| entry.seq))
     }
 
     async fn read_session_message_page(
@@ -295,73 +297,127 @@ impl FileAgentRepository {
                 "Session history limit must be positive".into(),
             ));
         }
-        if query.after_seq.is_some() && query.before_seq.is_some() {
-            return Err(DomainError::InvalidData(
-                "Use either beforeSeq or afterSeq for session history".into(),
-            ));
-        }
         let path = self.session_dir(session_id)?.join("history.jsonl");
-        let file = match File::open(&path).await {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => {
-                return Err(DomainError::file_io(
-                    "read session history",
-                    session_id,
-                    error,
-                ));
-            }
+        let read_error = |error| DomainError::file_io("read session history", session_id, error);
+        let Some(mut history) = HistoryFromEnd::open(&path).await.map_err(read_error)? else {
+            return Ok(Vec::new());
         };
-        let mut reader = BufReader::new(file);
-        let limit = query.limit;
-        let mut page = VecDeque::with_capacity(limit.min(500));
-        let mut seq = 0;
-        let mut line = String::new();
-        // ponytail: bounded pages scan JSONL; add a byte index only for measured large-session cost.
-        loop {
-            line.clear();
-            if reader
-                .read_line(&mut line)
-                .await
-                .map_err(|error| DomainError::file_io("read session history", session_id, error))?
-                == 0
-            {
+        if history.pending.last().is_some_and(|byte| *byte != b'\n') {
+            return Err(DomainError::InvalidData(format!(
+                "Incomplete session history record: {}",
+                path.display()
+            )));
+        }
+        let out_of_sequence = |expected: u64, found: &dyn std::fmt::Display| {
+            DomainError::InvalidData(format!(
+                "Invalid session history sequence in {}: expected {expected}, found {found}",
+                path.display()
+            ))
+        };
+        let mut page = Vec::new();
+        // The seq of the next record back, known once the last record is read.
+        let mut next_seq = None;
+        while page.len() < query.limit {
+            let record = history.previous().await.map_err(read_error)?;
+            let Some(record) = record else {
+                if let Some(seq @ 1..) = next_seq {
+                    return Err(out_of_sequence(seq, &"the start of the file"));
+                }
                 break;
+            };
+            if next_seq == Some(0) {
+                return Err(out_of_sequence(0, &"a record before seq 1"));
             }
-            if !line.ends_with('\n') {
-                return Err(DomainError::InvalidData(format!(
-                    "Incomplete session history record: {}",
-                    path.display()
-                )));
+            // Records after the page are only counted: line n holds seq n.
+            if let Some(seq) = next_seq
+                && query.before_seq.is_some_and(|before| seq >= before)
+            {
+                next_seq = Some(seq - 1);
+                continue;
             }
-            let entry: AgentSessionMessage = serde_json::from_str(&line).map_err(|error| {
+            let entry: AgentSessionMessage = serde_json::from_slice(&record).map_err(|error| {
                 DomainError::InvalidData(format!(
                     "Invalid session history in {}: {error}",
                     path.display()
                 ))
             })?;
-            seq += 1;
-            if entry.seq != seq {
-                return Err(DomainError::InvalidData(format!(
-                    "Invalid session history sequence in {}: expected {seq}, found {}",
-                    path.display(),
-                    entry.seq
-                )));
+            if entry.seq == 0 || next_seq.is_some_and(|seq| seq != entry.seq) {
+                return Err(out_of_sequence(next_seq.unwrap_or(1), &entry.seq));
             }
-            if query.before_seq.is_some_and(|before| seq >= before) {
-                break;
-            }
-            if query.after_seq.is_some_and(|after| seq <= after) {
-                continue;
-            }
-            if page.len() == limit {
-                page.pop_front();
-            }
-            page.push_back(entry);
-            if query.after_seq.is_some() && page.len() == limit {
-                break;
+            next_seq = Some(entry.seq - 1);
+            if query.before_seq.is_none_or(|before| entry.seq < before) {
+                page.push(entry);
             }
         }
-        Ok(page.into_iter().collect())
+        page.reverse();
+        Ok(page)
+    }
+}
+
+/// Reads a JSONL file back from its end, one `\n`-terminated record at a time.
+struct HistoryFromEnd {
+    file: File,
+    /// File offset of `pending`.
+    offset: u64,
+    /// Bytes not yet returned, ending with the newline of the next record back.
+    pending: Vec<u8>,
+}
+
+impl HistoryFromEnd {
+    const BLOCK: u64 = 64 * 1024;
+
+    async fn open(path: &Path) -> std::io::Result<Option<Self>> {
+        let file = match File::open(path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let offset = file.metadata().await?.len();
+        let mut history = Self {
+            file,
+            offset,
+            pending: Vec::new(),
+        };
+        if offset > 0 {
+            history.read_block().await?;
+        }
+        Ok(Some(history))
+    }
+
+    /// Prepends the block before `pending`; returns its length. A block is at least as long as `pending`, so the
+    /// bytes copied for a long record stay linear in its length.
+    async fn read_block(&mut self) -> std::io::Result<usize> {
+        let start = self
+            .offset
+            .saturating_sub(Self::BLOCK.max(self.pending.len() as u64));
+        let read = (self.offset - start) as usize;
+        let mut block = vec![0; read + self.pending.len()];
+        block[read..].copy_from_slice(&self.pending);
+        self.file.seek(SeekFrom::Start(start)).await?;
+        self.file.read_exact(&mut block[..read]).await?;
+        self.pending = block;
+        self.offset = start;
+        Ok(read)
+    }
+
+    /// The record before those already returned, without its newline.
+    async fn previous(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        // The newline before the record's own ends the record before it.
+        let Some(mut unsearched) = self.pending.len().checked_sub(1) else {
+            return Ok(None);
+        };
+        loop {
+            if let Some(index) = memchr::memrchr(b'\n', &self.pending[..unsearched]) {
+                let mut record = self.pending.split_off(index + 1);
+                record.pop();
+                return Ok(Some(record));
+            }
+            if self.offset == 0 {
+                let mut record = std::mem::take(&mut self.pending);
+                record.pop();
+                return Ok(Some(record));
+            }
+            unsearched = self.read_block().await?;
+        }
     }
 }

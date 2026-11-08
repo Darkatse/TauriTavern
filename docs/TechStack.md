@@ -146,6 +146,7 @@ pnpm test
 pnpm run check:frontend
 pnpm run check:types
 pnpm run test:contracts
+pnpm run test:dom
 pnpm run check:rust-boundaries
 pnpm run test:rust
 pnpm run check:rust:dev
@@ -159,6 +160,13 @@ pnpm run check:rust:dev
 - `scripts/check-logging-boundaries.mjs` 守住 logging target 使用边界。
 - `tsconfig.host.json` 为 Host Kernel 提供 TypeScript 检查。
 - `tsconfig.ui.json` 为 Agent、MCP 与 Tauri Settings owned UI 提供 strict TS/TSX 检查。
+
+依赖安全审计：
+
+- `pnpm run check:advisories`（`scripts/check-dependency-advisories.mjs`）用 RustSec 审计 `src-tauri/Cargo.lock`，用 npm 公告库审计随应用发布的前端依赖。本地需先 `cargo install cargo-audit --locked`；前端审计固定使用 npm 官方源，因为镜像源通常不提供审计接口。
+- 审计依赖外部公告库，结果会随时间变化，因此不放进 `pnpm run check`。`.github/workflows/dependency-advisories.yml` 每周四审计 dev：Rust 依赖自动升到兼容的修复版本，其余问题写进同一个提醒 PR；dev 没有已知公告时关闭该 PR。
+- 前端依赖为了保持 SillyTavern 生态兼容由维护者手动升级，不交给 Dependabot。
+- 确认无法触及的公告写明成立条件：Rust 写进 `src-tauri/.cargo/audit.toml`，前端写进 `pnpm-workspace.yaml` 的 `auditConfig.ignoreGhsas`。
 
 ## 9. 平台与分发
 

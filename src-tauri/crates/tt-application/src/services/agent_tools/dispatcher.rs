@@ -20,16 +20,49 @@ use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
+use tt_ports::tool_images::ToolImageRejection;
 use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
 use tt_ports::workspace_shell::WorkspaceShell;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
+
+pub(crate) type IncomingToolImage = Result<Vec<u8>, ToolImageRejection>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AgentToolDispatchOutcome {
     pub result: AgentToolResult,
     pub effect: AgentToolEffect,
     pub elapsed_ms: u128,
+    pub images: Vec<IncomingToolImage>,
+}
+
+impl AgentToolDispatchOutcome {
+    pub(crate) fn new(result: AgentToolResult, effect: AgentToolEffect, elapsed_ms: u128) -> Self {
+        Self {
+            result,
+            effect,
+            elapsed_ms,
+            images: Vec::new(),
+        }
+    }
+
+    pub(crate) fn error(
+        call: &ToolInvocation,
+        code: &str,
+        message: &str,
+        elapsed_ms: u128,
+    ) -> Self {
+        Self::new(
+            AgentToolResult::error(call, code, message),
+            AgentToolEffect::None,
+            elapsed_ms,
+        )
+    }
+
+    pub(crate) fn with_images(mut self, images: Vec<IncomingToolImage>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,11 +217,11 @@ impl AgentToolDispatcher {
             }
         };
 
-        Ok(AgentToolDispatchOutcome {
-            result: outcome.0,
-            effect: outcome.1,
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+        Ok(AgentToolDispatchOutcome::new(
+            outcome.0,
+            outcome.1,
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn read_run_prompt_snapshot(

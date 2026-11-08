@@ -185,6 +185,7 @@ export function createRspackConfigs(mode = 'production') {
     },
     output: {
       filename: '[name].bundle.js',
+      cssFilename: '[name].bundle.css',
       path: path.resolve(__dirname, 'src/scripts/extensions/in-app-agent/dist'),
       module: true,
       library: {
@@ -192,7 +193,12 @@ export function createRspackConfigs(mode = 'production') {
       },
       clean: true,
     },
-    module: createReactModule(development),
+    module: {
+      rules: [
+        ...createReactModule(development).rules,
+        { test: /\.css$/, type: 'css' },
+      ],
+    },
   };
 
   const tauriTavernSettingsConfig = {

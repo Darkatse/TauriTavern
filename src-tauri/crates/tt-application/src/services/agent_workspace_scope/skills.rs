@@ -54,7 +54,7 @@ impl ScopedWorkspaceFs {
         let bytes = repository
             .read_skill_bytes(&binding.scope, &binding.name, &relative, usize::MAX)
             .await?;
-        let bytes = self.project_skill_bytes(&relative, bytes)?;
+        let bytes = self.project_skill_bytes(binding, &relative, bytes)?;
         if bytes.len() > maximum_bytes {
             return Err(DomainError::InvalidData(format!(
                 "Workspace read exceeds {maximum_bytes} bytes: {}",
@@ -66,10 +66,11 @@ impl ScopedWorkspaceFs {
 
     fn project_skill_bytes(
         &self,
+        binding: &SkillIndexEntry,
         path: &WorkspacePath,
         bytes: Vec<u8>,
     ) -> Result<Vec<u8>, DomainError> {
-        if !path.as_str().starts_with("scripts/")
+        if renders_frozen_macros(binding, path)
             && let Ok(text) = std::str::from_utf8(&bytes)
             && let std::borrow::Cow::Owned(text) =
                 self.frozen_macros.render(text, MAX_EXPANDED_TEXT_BYTES)?
@@ -93,7 +94,7 @@ impl ScopedWorkspaceFs {
         if metadata.kind == WorkspaceEntryKind::File
             && relative
                 .as_ref()
-                .is_some_and(|relative| !relative.as_str().starts_with("scripts/"))
+                .is_some_and(|relative| renders_frozen_macros(binding, relative))
         {
             metadata.bytes = self.read_skill_file(path, usize::MAX).await?.len() as u64;
         }
@@ -135,7 +136,7 @@ impl ScopedWorkspaceFs {
             .await?;
         for entry in &mut entries {
             let project_size = entry.metadata.kind == WorkspaceEntryKind::File
-                && !entry.path.as_str().starts_with("scripts/");
+                && renders_frozen_macros(binding, &entry.path);
             entry.path =
                 WorkspacePath::parse(format!("skills/{}/{}", binding.name, entry.path.as_str()))?;
             if project_size {
@@ -145,6 +146,11 @@ impl ScopedWorkspaceFs {
         }
         Ok(entries)
     }
+}
+
+fn renders_frozen_macros(binding: &SkillIndexEntry, relative: &WorkspacePath) -> bool {
+    binding.scope != tt_domain::models::skill::SkillScope::Builtin
+        && !relative.as_str().starts_with("scripts/")
 }
 
 fn binding_directory_metadata() -> WorkspaceMetadata {

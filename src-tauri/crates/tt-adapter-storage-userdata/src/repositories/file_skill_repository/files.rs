@@ -98,7 +98,7 @@ async fn resolve(
     name: &str,
     path: Option<&WorkspacePath>,
 ) -> Result<(PathBuf, WorkspaceMetadata), DomainError> {
-    let root = repository.installed_skill_root(scope, name).await?;
+    let root = repository.readable_skill_root(scope, name).await?;
     let label = logical_path(name, path);
     let target = match path {
         Some(path) => root.join(normalize_skill_path(path.as_str())?),

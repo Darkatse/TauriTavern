@@ -13,6 +13,7 @@ dist-ssr
 .cache
 *.local
 .playwright-mcp
+.rstest
 
 # Editor directories and files
 .vscode/*
@@ -38,3 +39,4 @@ packaging/flatpak/build-identity.env
 
 # Local upstream checkout (junction/symlink)
 sillytavern-*
+tests/perf/out/

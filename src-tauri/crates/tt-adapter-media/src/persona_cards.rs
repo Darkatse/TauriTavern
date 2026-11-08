@@ -6,7 +6,8 @@ use std::time::SystemTime;
 
 use serde_json::Value;
 use tt_adapter_storage_core::file_system::{
-    persist_file_blocking, persist_json_file_blocking, unique_temp_path,
+    KeptOriginal, persist_file_blocking, persist_json_file_blocking,
+    replace_keeping_original_blocking, unique_temp_path,
 };
 use tt_adapter_storage_core::png_metadata::{
     PNG_SIGNATURE, read_preferred_text_chunk, replace_text_chunks, write_utf8_text_chunk,
@@ -161,12 +162,12 @@ pub(crate) fn import_persona(
     let bytes = match with_persona(&image, persona) {
         Ok(bytes) => bytes,
         Err(DomainError::InvalidData(error)) => {
-            let backup = path.with_file_name(format!("{id}.corrupt-{}", uuid::Uuid::new_v4()));
-            fs::copy(&path, &backup).map_err(io_error)?;
             let bytes = with_persona(DEFAULT_AVATAR, persona)?;
-            publish(&path, &bytes)?;
-            tracing::error!(target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                "Persona {id}: {error}; original saved at {}; using the default avatar", backup.display());
+            let kept = replace_keeping_original_blocking(&path, KeptOriginal::Corrupt, &bytes)?;
+            if let Some(kept) = kept {
+                tracing::error!(target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Persona {id}: {error}; original saved at {}; using the default avatar", kept.display());
+            }
             return Ok(());
         }
         Err(error) => return Err(error),

@@ -138,7 +138,7 @@
     padding: 9px 14px; box-shadow: var(--ttia-shadow);
 }
 .ttia-reply { min-width: 0; line-height: 1.72; }
-.ttia-reply > * + * { margin-top: 10px; }
+.ttia-reply > :not(:first-child) { margin-top: 10px; }
 .ttia-markdown { overflow-wrap: anywhere; }
 .ttia-markdown.is-streaming::after {
     content: ''; display: inline-block; width: 2px; height: 1.05em; margin-left: 3px;
@@ -149,7 +149,7 @@
 .ttia-markdown h1, .ttia-markdown h2, .ttia-markdown h3 { font-size: 1.08em; line-height: 1.5; margin: 1em 0 .5em; }
 .ttia-markdown :first-child { margin-top: 0; }
 .ttia-markdown ul, .ttia-markdown ol { padding-left: 1.5em; margin-block: .6em; }
-.ttia-markdown li + li { margin-top: .3em; }
+.ttia-markdown li:not(:first-child) { margin-top: .3em; }
 .ttia-markdown blockquote { border-left: 2px solid var(--ttia-line); margin: .8em 0; padding-left: 14px; color: var(--ttia-muted); }
 .ttia-root pre { background: var(--ttia-field); border: 1px solid color-mix(in srgb, var(--ttia-ink) 8%, transparent); border-radius: 9px; padding: 12px; max-height: 22rem; overflow: auto; font-family: var(--monoFontFamily); font-size: .82em; line-height: 1.6; white-space: pre; margin: 8px 0; text-align: left; }
 .ttia-root code { color: inherit; font-family: var(--monoFontFamily); font-size: .9em; background: var(--ttia-field); border-radius: 4px; padding: .12em .25em; }
@@ -202,6 +202,7 @@
 .ttia-tool.is-running .ttia-tool-state { color: var(--ttia-live); }
 .ttia-detail-label { display: flex; align-items: center; justify-content: space-between; font-size: .83em; color: var(--ttia-muted); }
 .ttia-tool-detail { margin: 4px 0 12px 10px; padding-left: 15px; border-left: 1px solid var(--ttia-line); }
+.ttia-tool-image { display: block; max-width: 100%; max-height: 22rem; margin: 8px 0; border: 1px solid var(--ttia-line); border-radius: 9px; }
 .ttia-refs { font: .73em/1.6 var(--monoFontFamily); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ttia-muted); }
 .ttia-root .ttia-latest { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); border: 1px solid var(--ttia-line); border-radius: 99px; background: var(--ttia-surface); box-shadow: var(--ttia-shadow-lift); font-size: .8em; padding: 7px 12px; white-space: nowrap; animation: ttia-latest-in 260ms var(--ttia-spring) both; }
 .ttia-root .ttia-latest:active { transform: translateX(-50%) scale(.97); }
@@ -249,6 +250,12 @@
 .ttia-model[data-state="missing"] .ttia-chip-icon::after { background: var(--warning); }
 .ttia-effort { flex-shrink: 0; }
 .ttia-root .ttia-effort .ttia-chip { gap: 6px; }
+.ttia-context { flex-shrink: 0; }
+.ttia-root .ttia-context .ttia-chip { gap: 5px; font-variant-numeric: tabular-nums; }
+.ttia-context-ring { flex-shrink: 0; width: 14px; height: 14px; transform: rotate(-90deg); }
+.ttia-context-ring circle { fill: none; stroke-width: 2; }
+.ttia-context-ring circle:first-child { stroke: var(--ttia-line); }
+.ttia-context-ring circle:last-child { stroke: currentColor; transition: stroke-dasharray var(--ttia-d-med) var(--ttia-ease); }
 .ttia-menu-pop {
     position: absolute; z-index: 2; left: var(--ttia-pop-x, 0); bottom: calc(100% + 6px);
     width: max-content; min-width: 10rem; max-width: min(17rem, calc(100vw - 32px));
@@ -282,7 +289,7 @@
 .ttia-menu-item > i { flex-shrink: 0; width: 1em; margin-left: auto; font-size: .78em; }
 .ttia-menu-item[aria-checked="false"] > i { visibility: hidden; }
 .ttia-menu-detail { flex-shrink: 0; color: var(--ttia-muted); font-size: .88em; }
-.ttia-menu-item.is-missing { color: var(--ttia-muted); cursor: default; }
+.ttia-menu-item[aria-disabled="true"] { color: var(--ttia-muted); cursor: default; }
 .ttia-menu-item.is-missing .ttia-menu-detail { color: var(--warning); }
 .ttia-menu-rule { height: 1px; margin: 4px 8px; background: var(--ttia-line); }
 .ttia-root .ttia-model-manage { color: var(--ttia-muted); transition: color var(--ttia-d-fast); }
@@ -395,41 +402,6 @@
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity="unread"]::after { content: ''; position: absolute; right: -1px; top: 0; width: 5px; height: 5px; background: var(--SmartThemeUnderlineColor); border-radius: 50%; }
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity="working"]::after { animation: ttia-breathe 1.7s ease-in-out infinite; }
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity] { position: relative; }
-
-/* The assistant cursor lives outside the drawer and never receives user input. */
-.ttia-agent-cursor {
-    position: fixed; inset: 0 auto auto 0; z-index: 2147483647;
-    width: 24px; height: 24px; min-width: 0; min-height: 0;
-    margin: 0; padding: 0; border: 0; overflow: visible;
-    background: transparent; box-shadow: none; user-select: none;
-    --ttia-cursor-accent: var(--SmartThemeUnderlineColor);
-}
-.ttia-agent-cursor, .ttia-agent-cursor * { pointer-events: none !important; }
-.ttia-agent-cursor::backdrop { background: transparent; pointer-events: none; }
-.ttia-cursor-heading, .ttia-cursor-arrow { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.ttia-cursor-arrow { scale: 1.2; }
-.ttia-cursor-glow {
-    position: absolute; left: -22px; top: -22px; width: 60px; height: 60px; opacity: 0;
-    background: radial-gradient(closest-side, var(--ttia-cursor-accent), transparent);
-}
-.ttia-agent-cursor svg {
-    position: absolute; left: -4px; top: -4px; width: 24px; height: 24px; overflow: visible;
-    fill: var(--SmartThemeBodyColor); stroke: var(--SmartThemeBlurTintColor);
-    stroke-width: 1.8; stroke-linejoin: round;
-    filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--SmartThemeShadowColor) 50%, transparent))
-        drop-shadow(0 0 1px color-mix(in srgb, var(--ttia-cursor-accent) 70%, transparent))
-        drop-shadow(0 0 3px color-mix(in srgb, var(--ttia-cursor-accent) 55%, transparent));
-}
-.ttia-cursor-pulse {
-    position: absolute; left: -52px; top: -52px; width: 104px; height: 104px;
-    box-sizing: border-box; border-radius: 50%; opacity: 0;
-    border: 3px solid var(--ttia-cursor-accent);
-}
-@media (pointer: coarse), (max-width: 600px) {
-    .ttia-cursor-arrow { scale: none; }
-    .ttia-cursor-glow { left: -16px; top: -16px; width: 48px; height: 48px; }
-    .ttia-cursor-pulse { left: -42px; top: -42px; width: 84px; height: 84px; }
-}
 
 /* ---------- motion ---------- */
 @keyframes ttia-breathe { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }

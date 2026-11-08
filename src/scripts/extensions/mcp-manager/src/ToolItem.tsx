@@ -66,7 +66,7 @@ function PermissionGroup({ tool, busy, tr, onSetPermission }: PermissionGroupPro
                         disabled={busy}
                         onChange={() => onSetPermission(permission)}
                     />
-                    <span>{tr(PERMISSION_LABELS[permission])}</span>
+                    <span className="tt-mcp-seg-text">{tr(PERMISSION_LABELS[permission])}</span>
                 </label>
             ))}
         </div>

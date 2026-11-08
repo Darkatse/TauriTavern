@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use super::policy::AgentOperation;
-use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_runtime_service::AgentRuntimeService;
 use crate::services::agent_tools::AgentToolDispatchOutcome;
@@ -86,7 +85,7 @@ impl AgentRuntimeService {
         let catalog = self
             .agent_catalog_for_operations(source, &[operation])
             .await?;
-        Ok(tool_error_outcome(
+        Ok(AgentToolDispatchOutcome::error(
             call,
             code,
             &format!("{message}\n\n{catalog}"),

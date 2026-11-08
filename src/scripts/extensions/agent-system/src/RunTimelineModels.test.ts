@@ -96,13 +96,14 @@ test('detail state ignores stale async loads', async () => {
 
 test('prepending event rows preserves the scroll anchor without following the tail', () => {
     const scroller = document.createElement('div');
-    Object.defineProperties(scroller, {
-        scrollHeight: { configurable: true, value: 500 },
-        clientHeight: { configurable: true, value: 100 },
-    });
+    scroller.style.cssText = 'height: 100px; overflow-y: auto';
+    const rows = document.createElement('div');
+    rows.style.height = '500px';
+    scroller.append(rows);
+    document.body.append(scroller);
     scroller.scrollTop = 120;
     const anchor = captureTimelineScrollAnchor(scroller);
-    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 720 });
+    rows.style.height = '720px';
     let nearBottom = false;
     restoreTimelineScrollAnchor(scroller, anchor, viewport => { nearBottom = viewport.nearBottom; });
     expect(scroller.scrollTop).toBe(340);

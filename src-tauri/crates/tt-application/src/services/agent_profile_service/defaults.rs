@@ -9,13 +9,13 @@ use tt_domain::models::agent::profile::{
     AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition,
     AgentProfileId, AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
     AgentWorkspacePolicy, DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
-    DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
+    DEFAULT_AGENT_PROFILE_ID,
 };
 use tt_domain::models::tool::ToolId;
 
 use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, CHAT_WORKSPACE_ROOTS};
 
-pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
+pub fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
     Ok(AgentProfileDefinition {
         schema_version: AGENT_PROFILE_SCHEMA_VERSION,
         kind: AGENT_PROFILE_KIND.to_string(),
@@ -73,10 +73,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
             .collect(),
             deny: Vec::new(),
             tool_descriptions: BTreeMap::new(),
-            max_rounds: DEFAULT_AGENT_TOOL_MAX_ROUNDS,
-            max_calls_per_run: DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
             external_result_inline_char_limit: DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
-            max_calls_per_tool: BTreeMap::new(),
         },
         skills: AgentSkillPolicy {
             visible: vec!["*".to_string()],

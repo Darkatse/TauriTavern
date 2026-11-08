@@ -74,17 +74,20 @@ impl AgentRuntimeService {
                 AgentToolScope::Chat,
                 AgentInvocationExitPolicy::RunFinishAllowed,
                 "profile_preview",
+                false,
             )
             .await?
             .model_tools)
     }
 
+    /// Extension tools declaring `returnsImages` are bound only when `accepts_images` is true.
     pub(super) async fn prepare_invocation_tools(
         &self,
         profile: &ResolvedAgentProfile,
         context: AgentToolScope,
         exit_policy: AgentInvocationExitPolicy,
         snapshot_id: &str,
+        accepts_images: bool,
     ) -> Result<PreparedInvocationTools, ApplicationError> {
         let selected = profile
             .tools
@@ -135,6 +138,14 @@ impl AgentRuntimeService {
                 continue;
             };
             if tool.enabled && tool.contexts.contains(&context) {
+                if tool.returns_images && !accepts_images {
+                    diagnostics.push(AgentToolCatalogDiagnosticDto {
+                        tool_id: Some(id.clone()),
+                        code: "extension.tool_needs_image_input".into(),
+                        message: format!("Extension tool `{id}` returns images, and is offered only when the model is known to accept them; this invocation will use the remaining tools."),
+                    });
+                    continue;
+                }
                 external.push(ExternalAgentTool {
                     descriptor: tool.descriptor.clone(),
                     model_name: id.native_name().to_string(),

@@ -11,6 +11,8 @@ export {};
  *
  * @typedef {(
  *   | 'get_window_snapshot'
+ *   | 'set_drawer_bar_items'
+ *   | 'capture_content_viewport'
  *   | 'set_window_backdrop'
  *   | 'database_handle'
  *   | 'apply_agent_run_prune'
@@ -116,6 +118,7 @@ export {};
  *   | 'install_extension'
  *   | 'install_skill_import'
  *   | 'list_character_chat_store_keys'
+ *   | 'list_active_agent_runs'
  *   | 'list_agent_profiles'
  *   | 'list_agent_runs'
  *   | 'list_agent_tools'
@@ -161,6 +164,7 @@ export {};
  *   | 'open_cold_chat'
  *   | 'open_cold_swipe_record'
  *   | 'read_agent_workspace_file'
+ *   | 'read_agent_workspace_bytes'
  *   | 'read_agent_model_turn'
  *   | 'read_agent_task_detail'
  *   | 'read_skill_file'

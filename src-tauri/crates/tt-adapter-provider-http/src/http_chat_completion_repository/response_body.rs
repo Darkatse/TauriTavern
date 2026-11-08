@@ -7,6 +7,8 @@ use serde_json::Value;
 
 use tt_domain::errors::DomainError;
 
+use super::context_overflow::context_overflow_or;
+
 /// Maximum number of bytes from a non-JSON upstream body to capture in the
 /// diagnostic log. Anything larger is truncated; the full `body_len` is still
 /// emitted so log readers know how much was elided.
@@ -104,10 +106,12 @@ pub(super) fn parse_upstream_json_body(
     body: &[u8],
 ) -> Result<Value, DomainError> {
     match serde_json::from_slice::<Value>(body) {
-        Ok(value) => match provider_error_message(&value) {
-            Some(message) => Err(DomainError::InvalidData(format!(
-                "{provider_name}: {message}"
-            ))),
+        Ok(value) => match provider_error(&value) {
+            Some(error) => Err(context_overflow_or(
+                error,
+                format!("{provider_name}: {}", provider_error_message(error, &value)),
+                DomainError::InvalidData,
+            )),
             None => Ok(value),
         },
         Err(error) => {
@@ -128,27 +132,28 @@ pub(super) fn parse_upstream_json_body(
 }
 
 /// Provider-declared errors can arrive in a successful HTTP response.
-pub(super) fn provider_error_message(value: &Value) -> Option<String> {
-    let error = value
+pub(super) fn provider_error(value: &Value) -> Option<&Value> {
+    value
         .get("error")
         .or_else(|| value.pointer("/detail/error"))
-        .filter(|error| !error.is_null() && **error != Value::Bool(false))?;
+        .filter(|error| !error.is_null() && **error != Value::Bool(false))
+}
+
+pub(super) fn provider_error_message(error: &Value, envelope: &Value) -> String {
     let message = if error.is_string() {
         error
     } else {
         error
             .get("message")
-            .or_else(|| value.get("message"))
+            .or_else(|| envelope.get("message"))
             .or_else(|| error.get("code"))
             .or_else(|| error.get("type"))
             .unwrap_or(error)
     };
-    Some(
-        message
-            .as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| message.to_string()),
-    )
+    message
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| message.to_string())
 }
 
 #[cfg(test)]

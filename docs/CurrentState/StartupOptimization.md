@@ -34,6 +34,7 @@
 
 - `src/init.js`
   - 设置：`window.__TAURI_RUNNING__ = true`，并计算 `globalThis.__TAURITAVERN_PERF_ENABLED__`
+  - 等待[可选的开发资源桥就绪信号](../FrontendHostContract.md#22-就绪信号publicproject)
   - 通过 `importWithRetry()` 依次加载：
     1) `./lib.js`（静态依赖 `src/dist/lib.core.bundle.js`）
     2) `./tauri-main.js`（安装 Host Kernel：路由/拦截器/ABI）
@@ -50,7 +51,6 @@
     - same-origin iframe/window 的补丁（保证扩展/脚本在 iframe 内也能命中路由/下载桥）
   - 设置 readiness：
     - `window.__TAURITAVERN_MAIN_READY__ = readyPromise`
-    - 前端用 `waitForTauriMainReady()` 等它，确保首次 `/api/*` 调用前 Host 已就绪，且 Rust `BackendReadiness` 已完成。
   - Host Ready 后只加载不会传递导入主应用的模块。设置入口先注册同步/配对监听，事件呈现与设置 UI 共用一个 `APP_READY` Promise；请求参数面板本身依赖主应用，直接在 `APP_READY` 后导入。
 
 ### 2.4 前端启动编排：Shell → Core → Full（保持 APP_READY 语义）
@@ -59,9 +59,11 @@
   - **Shell 阶段**
     - `initLocales()` 先于任何可见界面：语言数据是静态资源，不依赖 Host 就绪；首帧界面与启动状态文案都已是用户语言
     - `removePreloader()`（`src/scripts/loader.js`）：移除 `#preloader`
+    - 答复[安全模式](SafeMode.md)询问
     - 初始化纯前端 UI/DOM handler、基础 patch（不会做 `/api/*`）
   - **Core 阶段**
-    - `await waitForTauriMainReady({ failFast: true })`：保证 Host 拦截器与 Rust backend readiness 就绪
+    - `await window.__TAURITAVERN_MAIN_READY__`：保证 Host 拦截器与 Rust backend readiness 就绪，失败直接传播
+    - 显示安全模式的恢复结果，然后加载 `css/user.css`
     - `/csrf-token` + 并发启动 `/api/bootstrap` 与 `/api/settings/get`
     - `initSecrets()` + `primeSecretStateSnapshot(...)` + `readSecretState()`
     - 默认 slash commands、模型/设置等核心模块初始化
@@ -94,8 +96,8 @@
 ### 3.2 Host 就绪（拦截器、路由与 BackendReadiness）
 
 - `window.__TAURITAVERN_MAIN_READY__`：在 `src/tauri/main/bootstrap.js` 设置
-- `waitForTauriMainReady()`：前端轮询等待该 promise 注册并 resolve（`src/scripts/extensions/runtime/tauri-ready.js`）
-- Tauri runtime 下，Host 初始化链会在任何需要 `AppState` 的首批工作前调用 `wait_for_backend_ready`，避免依赖 Tauri 的 “state not managed” 错误文本重试。
+- 主应用在 Core 阶段等待它一次，扩展发现与激活都在之后；第一方扩展通过 `window.__TAURITAVERN__.ready` 等待同一个 Promise。失败直接传播，见[就绪契约](../FrontendHostContract.md#22-就绪信号publicproject)。
+- Host 初始化链会在任何需要 `AppState` 的首批工作前调用 `wait_for_backend_ready`，避免依赖 Tauri 的 “state not managed” 错误文本重试。
 
 ---
 
@@ -103,9 +105,9 @@
 
 `/api/settings/get` 独立读取设置；`/api/bootstrap` 提供角色、群组、头像和密钥状态等启动元数据。前端并发获取，再按既有顺序应用；本次启动复用读取结果，避免重复请求。
 
-设置与角色是启动必需数据，失败会阻止启动；群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
+设置与角色是启动必需数据，失败会阻止启动，错误消息带上宿主返回的原因；内容无法加载或预设名重复的单个预设文件与 SillyTavern 一样被跳过，并显示可见错误。群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
 
-启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制或重新加载），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
+启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。后端初始化失败（包括宿主设置或 iOS 策略无法读取）时，`__TAURITAVERN_MAIN_READY__` 被拒绝，走第二个出口；原生 setup 不会因用户数据在窗口出现前退出。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制、重新加载或进入[安全模式](SafeMode.md)），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
 
 后端采样入口见 [bootstrap_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs)。
 
@@ -179,7 +181,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）与启动失败对话框（见 §4）
-- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
+  - `src/scripts/tauri/startup/startup-dialog.js`：启动对话框原语（Shadow DOM、只能经按钮离开），失败、安全模式询问与结果共用
+  - `src/scripts/tauri/startup/safe-mode.js`：安全模式的询问、请求与结果，以及 `css/user.css` 的加载
+- `tests/webview/startup-order.test.mjs`（`pnpm run test:dom`）验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。
 
 ---
 

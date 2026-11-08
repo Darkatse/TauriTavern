@@ -2,7 +2,6 @@ import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../scrip
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
 import { applyAdditionalParametersToRequest, oai_settings, POLLINATIONS_ENDPOINT, proxies, ZAI_ENDPOINT } from '../openai.js';
-import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
@@ -46,10 +45,6 @@ export async function getMultimodalCaption(base64Img, prompt, signal) {
         && extension_settings.caption.allow_reverse_proxy
         && oai_settings.reverse_proxy
         && isValidUrl(oai_settings.reverse_proxy);
-
-    if (globalThis.__TAURI_RUNNING__ !== true) {
-        throwIfInvalidModel(useReverseProxy);
-    }
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
     // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
@@ -197,141 +192,6 @@ export async function getMultimodalCaption(base64Img, prompt, signal) {
     return caption.trim();
 }
 
-function throwIfInvalidModel(useReverseProxy) {
-    const altEndpointEnabled = extension_settings.caption.alt_endpoint_enabled;
-    const altEndpointUrl = extension_settings.caption.alt_endpoint_url;
-    const multimodalModel = extension_settings.caption.multimodal_model;
-    const multimodalApi = extension_settings.caption.multimodal_api;
-
-    if (altEndpointEnabled && ['llamacpp', 'ooba', 'koboldcpp', 'vllm', 'ollama'].includes(multimodalApi) && !altEndpointUrl) {
-        throw new Error('Secondary endpoint URL is not set.');
-    }
-
-    if (multimodalApi === 'openai' && !secret_state[SECRET_KEYS.OPENAI] && !useReverseProxy) {
-        throw new Error('OpenAI API key is not set.');
-    }
-
-    if (multimodalApi === 'openrouter' && !secret_state[SECRET_KEYS.OPENROUTER]) {
-        throw new Error('OpenRouter API key is not set.');
-    }
-
-    if (multimodalApi === 'anthropic' && !secret_state[SECRET_KEYS.CLAUDE] && !useReverseProxy) {
-        throw new Error('Anthropic (Claude) API key is not set.');
-    }
-
-    if (multimodalApi === 'groq' && !secret_state[SECRET_KEYS.GROQ]) {
-        throw new Error('Groq API key is not set.');
-    }
-
-    if (multimodalApi === 'google' && !secret_state[SECRET_KEYS.MAKERSUITE] && !useReverseProxy) {
-        throw new Error('Google AI Studio API key is not set.');
-    }
-
-    if (multimodalApi === 'vertexai' && !useReverseProxy) {
-        // Check based on authentication mode
-        const authMode = oai_settings.vertexai_auth_mode || 'express';
-
-        if (authMode === 'express') {
-            // Express mode requires API key
-            if (!secret_state[SECRET_KEYS.VERTEXAI]) {
-                throw new Error('Google Vertex AI API key is not set for Express mode.');
-            }
-        } else if (authMode === 'full') {
-            // Full mode requires Service Account JSON and region settings
-            if (!secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]) {
-                throw new Error('Service Account JSON is required for Vertex AI Full mode. Please validate and save your Service Account JSON.');
-            }
-            if (!oai_settings.vertexai_region) {
-                throw new Error('Region is required for Vertex AI Full mode.');
-            }
-        }
-    }
-
-    if (multimodalApi === 'mistral' && !secret_state[SECRET_KEYS.MISTRALAI] && !useReverseProxy) {
-        throw new Error('Mistral AI API key is not set.');
-    }
-
-    if (multimodalApi === 'cohere' && !secret_state[SECRET_KEYS.COHERE]) {
-        throw new Error('Cohere API key is not set.');
-    }
-
-    if (multimodalApi === 'xai' && !secret_state[SECRET_KEYS.XAI] && !useReverseProxy) {
-        throw new Error('xAI API key is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && !textgenerationwebui_settings.server_urls[textgen_types.OLLAMA] && !altEndpointEnabled) {
-        throw new Error('Ollama server URL is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_current' && !textgenerationwebui_settings.ollama_model) {
-        throw new Error('Ollama model is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_custom' && !extension_settings.caption.ollama_custom_model) {
-        throw new Error('Ollama custom model tag is not set.');
-    }
-
-    if (multimodalApi === 'llamacpp' && !textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP] && !altEndpointEnabled) {
-        throw new Error('LlamaCPP server URL is not set.');
-    }
-
-    if (multimodalApi === 'ooba' && !textgenerationwebui_settings.server_urls[textgen_types.OOBA] && !altEndpointEnabled) {
-        throw new Error('Text Generation WebUI server URL is not set.');
-    }
-
-    if (multimodalApi === 'koboldcpp' && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP] && !altEndpointEnabled) {
-        throw new Error('KoboldCpp server URL is not set.');
-    }
-
-    if (multimodalApi === 'vllm' && !textgenerationwebui_settings.server_urls[textgen_types.VLLM] && !altEndpointEnabled) {
-        throw new Error('vLLM server URL is not set.');
-    }
-
-    if (multimodalApi === 'vllm' && multimodalModel === 'vllm_current' && !textgenerationwebui_settings.vllm_model) {
-        throw new Error('vLLM model is not set.');
-    }
-
-    if (multimodalApi === 'custom' && !oai_settings.custom_url) {
-        throw new Error('Custom API URL is not set.');
-    }
-
-    if (multimodalApi === 'custom' && multimodalModel === 'custom_custom' && !extension_settings.caption.custom_model) {
-        throw new Error('Custom OpenAI-compatible Model ID is not set.');
-    }
-
-    if (multimodalApi === 'aimlapi' && !secret_state[SECRET_KEYS.AIMLAPI]) {
-        throw new Error('AI/ML API key is not set.');
-    }
-
-    if (multimodalApi === 'moonshot' && !secret_state[SECRET_KEYS.MOONSHOT]) {
-        throw new Error('Moonshot AI API key is not set.');
-    }
-
-    if (multimodalApi === 'nanogpt' && !secret_state[SECRET_KEYS.NANOGPT]) {
-        throw new Error('NanoGPT API key is not set.');
-    }
-
-    if (multimodalApi === 'electronhub' && !secret_state[SECRET_KEYS.ELECTRONHUB]) {
-        throw new Error('Electron Hub API key is not set.');
-    }
-
-    if (multimodalApi === 'chutes' && !secret_state[SECRET_KEYS.CHUTES]) {
-        throw new Error('Chutes API key is not set.');
-    }
-
-    if (multimodalApi === 'zai' && !secret_state[SECRET_KEYS.ZAI]) {
-        throw new Error('Z.AI API key is not set.');
-    }
-
-    if (multimodalApi === 'pollinations' && oai_settings.pollinations_endpoint !== POLLINATIONS_ENDPOINT.ANONYMOUS && !secret_state[SECRET_KEYS.POLLINATIONS]) {
-        throw new Error('Pollinations API key is not set.');
-    }
-
-    if (multimodalApi === 'workers_ai' && (!secret_state[SECRET_KEYS.WORKERS_AI] || !oai_settings.workers_ai_account_id)) {
-        throw new Error('Workers AI API key or account ID is not set.');
-    }
-}
-
 /**
  * Check if the WebLLM extension is installed and supported.
  * @returns {boolean} Whether the extension is installed and supported
@@ -437,7 +297,6 @@ export class ConnectionManagerRequestService {
     static getAllowedTypes() {
         return {
             openai: t`Chat Completion`,
-            textgenerationwebui: t`Text Completion`,
         };
     }
 
@@ -450,13 +309,13 @@ export class ConnectionManagerRequestService {
      * @param {AbortSignal?} [custom.signal]
      * @param {boolean?} [custom.extractData=true]
      * @param {boolean?} [custom.includePreset=true]
-     * @param {boolean?} [custom.includeInstruct=true]
-     * @param {Partial<InstructSettings>?} [custom.instructSettings] Override instruct settings
+     * @param {boolean?} [custom.includeInstruct=true] Ignored; kept for upstream compatibility.
+     * @param {Partial<InstructSettings>?} [custom.instructSettings] Ignored; kept for upstream compatibility.
      * @param {Record<string, any>} [overridePayload] - Override payload for the request
      * @returns {Promise<import('../custom-request.js').ExtractedData | (() => AsyncGenerator<import('../custom-request.js').StreamResponse>)>} If not streaming, returns extracted data; if streaming, returns a function that creates an AsyncGenerator
      */
     static async sendRequest(profileId, prompt, maxTokens, custom = this.defaultSendRequestParams, overridePayload = {}) {
-        const { stream, signal, extractData, includePreset, includeInstruct, instructSettings } = { ...this.defaultSendRequestParams, ...custom };
+        const { stream, signal, extractData, includePreset } = { ...this.defaultSendRequestParams, ...custom };
 
         const context = SillyTavern.getContext();
         if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
@@ -467,102 +326,46 @@ export class ConnectionManagerRequestService {
         const selectedApiMap = this.validateProfile(profile);
 
         try {
-            switch (selectedApiMap.selected) {
-                case 'openai': {
-                    if (!selectedApiMap.source) {
-                        throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
-                    }
-
-                    const proxyPreset = proxies.find((p) => p.name === profile.proxy);
-
-                    const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
-                    return await context.ChatCompletionService.processRequest({
-                        stream,
-                        messages,
-                        max_tokens: maxTokens,
-                        model: profile.model,
-                        chat_completion_source: selectedApiMap.source,
-                        custom_api_format: profile['custom-api-format'],
-                        opencode_api_format: profile['custom-api-format'],
-                        opencode_endpoint: profile['api-url'],
-                        secret_id: profile['secret-id'],
-                        custom_url: profile['api-url'],
-                        vertexai_region: profile['api-url'],
-                        zai_endpoint: profile['api-url'],
-                        siliconflow_endpoint: profile['api-url'],
-                        minimax_endpoint: profile['api-url'],
-                        moonshot_endpoint: profile['api-url'],
-                        pollinations_endpoint: profile['api-url'],
-                        reverse_proxy: proxyPreset?.url,
-                        proxy_password: proxyPreset?.password,
-                        custom_prompt_post_processing: profile['prompt-post-processing'],
-                        ...overridePayload,
-                    }, {
-                        presetName: includePreset ? profile.preset : undefined,
-                    }, extractData, signal);
-                }
-                case 'textgenerationwebui': {
-                    if (!selectedApiMap.type) {
-                        throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
-                    }
-                    if (globalThis.__TAURI_RUNNING__ === true) {
-                        throw new Error('Text Completion profiles are not supported by the native TauriTavern generation backend yet. Use a Chat Completion profile.');
-                    }
-
-                    return await context.TextCompletionService.processRequest({
-                        stream,
-                        prompt,
-                        max_tokens: maxTokens,
-                        model: profile.model,
-                        api_type: selectedApiMap.type,
-                        api_server: profile['api-url'],
-                        secret_id: profile['secret-id'],
-                        ...overridePayload,
-                    }, {
-                        instructName: includeInstruct ? profile.instruct : undefined,
-                        presetName: includePreset ? profile.preset : undefined,
-                        instructSettings: includeInstruct ? instructSettings : undefined,
-                    }, extractData, signal);
-                }
-                default: {
-                    throw new Error(`Unknown API type ${selectedApiMap.selected}`);
-                }
-            }
+            const proxyPreset = proxies.find((p) => p.name === profile.proxy);
+            const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
+            return await context.ChatCompletionService.processRequest({
+                stream,
+                messages,
+                max_tokens: maxTokens,
+                model: profile.model,
+                chat_completion_source: selectedApiMap.source,
+                custom_api_format: profile['custom-api-format'],
+                opencode_api_format: profile['custom-api-format'],
+                opencode_endpoint: profile['api-url'],
+                secret_id: profile['secret-id'],
+                custom_url: profile['api-url'],
+                vertexai_region: profile['api-url'],
+                zai_endpoint: profile['api-url'],
+                siliconflow_endpoint: profile['api-url'],
+                minimax_endpoint: profile['api-url'],
+                moonshot_endpoint: profile['api-url'],
+                pollinations_endpoint: profile['api-url'],
+                reverse_proxy: proxyPreset?.url,
+                proxy_password: proxyPreset?.password,
+                custom_prompt_post_processing: profile['prompt-post-processing'],
+                ...overridePayload,
+            }, {
+                presetName: includePreset ? profile.preset : undefined,
+            }, extractData, signal);
         } catch (error) {
             throw new Error('API request failed', { cause: error });
         }
     }
 
     /**
-    * If using text completion, return a formatted prompt string given an array of messages, a given profile ID, and optional instruct settings.
-    * If using chat completion, simply return the given prompt as-is.
+    * Returns the prompt unchanged after validating the connection profile.
     * @param {ChatCompletionMessage[]} prompt An array of prompt messages.
     * @param {string} profileId ID of a given connection profile (from which to infer a completion preset).
-    * @param {InstructSettings} instructSettings optional instruct settings
+    * @param {InstructSettings} [_instructSettings] Ignored; kept for upstream compatibility.
     */
-    static constructPrompt(prompt, profileId, instructSettings = null) {
-        const context = SillyTavern.getContext();
-        const profile = this.getProfile(profileId);
-        const selectedApiMap = this.validateProfile(profile);
-        const instructName = profile.instruct;
-
-        switch (selectedApiMap.selected) {
-            case 'openai': {
-                if (!selectedApiMap.source) {
-                    throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
-                }
-                return prompt;
-            }
-            case 'textgenerationwebui': {
-                if (!selectedApiMap.type) {
-                    throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
-                }
-                return context.TextCompletionService.constructPrompt(prompt, instructName, instructSettings);
-            }
-            default: {
-                throw new Error(`Unknown API type ${selectedApiMap.selected}`);
-            }
-        }
+    static constructPrompt(prompt, profileId, _instructSettings = null) {
+        this.validateProfile(this.getProfile(profileId));
+        return prompt;
     }
 
     /**
@@ -628,15 +431,7 @@ export class ConnectionManagerRequestService {
             return false;
         }
 
-        // Some providers not need model, like koboldcpp. But I don't want to check by provider.
-        switch (apiMap.selected) {
-            case 'openai':
-                return !!apiMap.source;
-            case 'textgenerationwebui':
-                return !!apiMap.type;
-        }
-
-        return false;
+        return !!apiMap.source;
     }
 
     /**
@@ -659,6 +454,9 @@ export class ConnectionManagerRequestService {
         }
         if (!Object.hasOwn(this.getAllowedTypes(), selectedApiMap.selected)) {
             throw new Error(`API type ${selectedApiMap.selected} is not supported. Supported types: ${Object.values(this.getAllowedTypes()).join(', ')}`);
+        }
+        if (!selectedApiMap.source) {
+            throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
         }
 
         return selectedApiMap;

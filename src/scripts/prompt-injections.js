@@ -146,7 +146,7 @@ export function applyAttachedPromptsToMessages(attachedPrompts, messages, { warn
 
         if (Array.isArray(targetMessage.agentMessages)) {
             // Signed Agent history is immutable. Keep the preset instruction at
-            // the requested edge of the same budget group as a new message.
+            // the requested edge of the same message group as a new message.
             const message = { role: attachRole, parts: [{ type: 'text', text: attachContent }], providerMetadata: {} };
             if (side === 'start') targetMessage.agentMessages.unshift(message);
             else targetMessage.agentMessages.push(message);

@@ -10,7 +10,6 @@ import {
     normalizeAgentSystemPrompt,
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
 import { createMacroContextFromSnapshot, normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
-import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
 import { setParamOmitted } from '../../../scripts/tauri/generation-params/omission.js';
 
 const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
@@ -22,10 +21,11 @@ const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
  * @param {Record<string, unknown>} input
  */
 export async function buildPromptAssemblySnapshot(input = {}) {
-    const { payload, snapshotMetadata, ...assembled } = await buildPromptAssemblyPayload(input);
+    const { payload, snapshotInputs, ...assembled } = await buildPromptAssemblyPayload(input);
+    const { createAgentPromptSnapshot } = await import('../../../scripts/openai.js');
     return {
         ...assembled,
-        promptSnapshot: createAgentPromptSnapshot(payload, snapshotMetadata),
+        promptSnapshot: createAgentPromptSnapshot(payload, snapshotInputs),
     };
 }
 
@@ -63,16 +63,17 @@ export async function buildPromptAssemblyPayload(input = {}) {
     });
 
     if (request.frozenRunInputSnapshot.contextKind === 'session') {
-        // JSONL owns the full history; the Run retains only the budgeted prompt messages.
-        delete request.frozenRunInputSnapshot.promptInputs.agentMessages;
+        // JSONL owns Session history; the frozen input retains the macro environment.
+        delete request.frozenRunInputSnapshot.promptInputs.sessionHistory;
     }
 
     const payload = result.chatCompletionPayload;
     return {
         payload,
-        snapshotMetadata: {
+        snapshotInputs: {
+            settings,
             contextPolicy: request.agentContextPolicy,
-            ...(request.worldInfoActivation ? { worldInfoActivation: request.worldInfoActivation } : {}),
+            worldInfoActivation: request.worldInfoActivation,
         },
         frozenRunInputSnapshot: request.frozenRunInputSnapshot,
         generationIntent: {
@@ -98,7 +99,7 @@ async function normalizePromptAssemblyRequest(input) {
     const profileId = normalizeOptionalString(input.profileId ?? input.profile_id);
     const frozenRunInputSnapshot = normalizeRequiredFrozenRunInputSnapshot(input);
     const generationType = normalizeGenerationType(
-        input.generationType ?? input.generation_type ?? frozenRunInputSnapshot?.generationType,
+        input.generationType ?? input.generation_type ?? frozenRunInputSnapshot.generationType,
     );
     if (frozenRunInputSnapshot.generationType !== generationType) {
         throw new Error('prompt_assembly.generation_type_mismatch: generationType must match FrozenRunInputSnapshot.generationType');

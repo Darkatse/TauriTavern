@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import {
     getStreamingRenderInterval,
     normalizeStreamingFps,
-    shouldCommitStreamingMessage,
 } from '../src/scripts/tauri/perf/streaming-render-policy.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,11 +50,4 @@ test('valid FPS is normalized without warning', () => {
     }
 
     assert.deepEqual(warnings, []);
-});
-
-test('streaming DOM commits skip unchanged HTML but always commit final state', () => {
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '', nextHtml: '', final: false, fadeIn: false }), false);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>old</p>', nextHtml: '<p>new</p>', final: false, fadeIn: false }), true);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: true, fadeIn: false }), true);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: false, fadeIn: true }), true);
 });

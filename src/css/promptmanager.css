@@ -84,12 +84,16 @@
     transition: var(--animation-duration-2x) ease-in-out;
     height: 20px;
     width: 20px;
-    filter: drop-shadow(0px 0px 2px black);
-    opacity: 0.4;
+    /* Repeated on every row: a filter or opacity here gives each icon its own compositing effect. */
+    --pm-icon-alpha: 40%;
+    -webkit-text-fill-color: color-mix(in srgb, currentColor var(--pm-icon-alpha), transparent);
+    text-shadow:
+        0px 0px calc(var(--shadowWidth) * 1px) color-mix(in srgb, var(--SmartThemeShadowColor) var(--pm-icon-alpha), transparent),
+        0px 0px 2px color-mix(in srgb, black var(--pm-icon-alpha), transparent);
 }
 
-#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt span span:hover {
-    opacity: 1;
+#completion_prompt_manager #completion_prompt_manager_list li.completion_prompt_manager_prompt span span span:hover {
+    --pm-icon-alpha: 100%;
 }
 
 /* Sortable measures its body clone before adding .ui-sortable-helper. */

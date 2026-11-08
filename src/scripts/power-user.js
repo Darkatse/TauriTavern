@@ -447,6 +447,8 @@ export function collapseNewlines(x) {
     return x.replaceAll(/\n+/g, '\n');
 }
 
+export const MARKDOWN_FIX_PAIRS = /([*_]{1,2})([\s\S]*?)\1/gm;
+
 /**
  * Fix formatting problems in markdown.
  * @param {string} text Text to be processed.
@@ -465,13 +467,7 @@ export function collapseNewlines(x) {
  * "^example * text* * harder problem *\n" // "^example *text* *harder problem*\n"
  */
 export function fixMarkdown(text, forDisplay) {
-    // Find pairs of formatting characters and capture the text in between them
-    const format = /([*_]{1,2})([\s\S]*?)\1/gm;
-    let matches = [];
-    let match;
-    while ((match = format.exec(text)) !== null) {
-        matches.push(match);
-    }
+    const matches = [...text.matchAll(MARKDOWN_FIX_PAIRS)];
 
     // Iterate through the matches and replace adjacent spaces immediately beside formatting characters
     let newText = text;

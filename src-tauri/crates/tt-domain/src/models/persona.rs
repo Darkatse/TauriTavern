@@ -24,8 +24,15 @@ pub fn take_personas(settings: &mut Value) -> Result<Option<Personas>, DomainErr
     else {
         return Ok(None);
     };
-    let names = power_user.remove("personas");
-    let descriptions = power_user.remove("persona_descriptions");
+    take_personas_with(|field| power_user.remove(field))
+}
+
+/// [`take_personas`] for a `power_user` object held in another form: `take` removes a field.
+pub fn take_personas_with(
+    mut take: impl FnMut(&str) -> Option<Value>,
+) -> Result<Option<Personas>, DomainError> {
+    let names = take("personas");
+    let descriptions = take("persona_descriptions");
     if names.is_none() && descriptions.is_none() {
         return Ok(None);
     }

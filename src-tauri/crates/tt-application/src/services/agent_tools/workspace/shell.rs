@@ -9,7 +9,7 @@ use tt_ports::workspace_shell::{
     WorkspaceShellResult,
 };
 
-use super::args::{ensure_only_args, required_raw_string_arg, tool_error};
+use super::args::{ensure_only_args, required_raw_string_arg};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
@@ -24,7 +24,7 @@ pub(in crate::services::agent_tools) async fn shell(
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let invalid = |message: &str| {
         Ok((
-            tool_error(call, "tool.invalid_arguments", message),
+            AgentToolResult::error(call, "tool.invalid_arguments", message),
             AgentToolEffect::None,
         ))
     };
@@ -55,14 +55,14 @@ pub(in crate::services::agent_tools) async fn shell(
         WorkspaceShellExit::TimedOut => (None, Some("workspace.shell_timeout")),
         WorkspaceShellExit::Failed => (None, Some("workspace.shell_failed")),
     };
-    let result = AgentToolResult {
-        call_id: call.call_id.clone(),
-        tool_id: call.tool_id.clone(),
-        content: render_output(&output),
-        structured: json!({"exitCode": exit_code, "outputTruncated": output.output_truncated}),
-        is_error: error_code.is_some(),
-        error_code: error_code.map(str::to_string),
-        resource_refs: Vec::new(),
+    let content = render_output(&output);
+    let structured = json!({"exitCode": exit_code, "outputTruncated": output.output_truncated});
+    let result = if let Some(code) = error_code {
+        let mut result = AgentToolResult::error(call, code, &content);
+        result.structured = structured;
+        result
+    } else {
+        AgentToolResult::ok(call, content, structured)
     };
     let effect = if result.is_error {
         AgentToolEffect::AutoCommitCandidateUpdated { path: None }

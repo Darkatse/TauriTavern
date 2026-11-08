@@ -1,6 +1,8 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tokio::fs::{self as tokio_fs, create_dir_all};
 use tokio::io as tokio_io;
 use tt_domain::errors::DomainError;
@@ -226,6 +228,72 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
     serde_json::from_str(&contents).map_err(|error| {
         DomainError::InvalidData(format!("Invalid JSON in {}: {error}", path.display()))
     })
+}
+
+/// SillyTavern's `generateTimestamp()` in local time.
+pub const BACKUP_TIMESTAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+
+/// Why a replaced file is kept, which names the copy beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptOriginal {
+    Corrupt,
+    SafeMode,
+}
+
+impl KeptOriginal {
+    fn path_beside(self, path: &Path) -> PathBuf {
+        let suffix = match self {
+            Self::Corrupt => format!("corrupt-{}", Uuid::new_v4()),
+            Self::SafeMode => format!(
+                "safe-mode-{}",
+                chrono::Local::now().format(BACKUP_TIMESTAMP_FORMAT)
+            ),
+        };
+        let mut name = path.file_name().expect("a file path").to_owned();
+        name.push(".");
+        name.push(suffix);
+        path.with_file_name(name)
+    }
+}
+
+/// Publishes `bytes` at `path` unless the file already holds them.
+pub fn persist_changed_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    if read_stored_blocking(path)?.as_deref() != Some(bytes) {
+        persist_bytes_file_blocking(path, bytes)?;
+    }
+    Ok(())
+}
+
+/// Publishes `bytes` at `path` like [`persist_changed_blocking`], first keeping a copy of the
+/// file it replaces, and returns the copy. `path` always holds a whole file, so a failure
+/// leaves the original in place.
+pub fn replace_keeping_original_blocking(
+    path: &Path,
+    kept: KeptOriginal,
+    bytes: &[u8],
+) -> Result<Option<PathBuf>, DomainError> {
+    let kept = match read_stored_blocking(path)? {
+        Some(original) if original == bytes => return Ok(None),
+        Some(original) => {
+            let kept = kept.path_beside(path);
+            persist_bytes_file_blocking(&kept, &original)?;
+            Some(kept)
+        }
+        None => None,
+    };
+    persist_bytes_file_blocking(path, bytes)?;
+    Ok(kept)
+}
+
+fn read_stored_blocking(path: &Path) -> Result<Option<Vec<u8>>, DomainError> {
+    match std::fs::read(path) {
+        Ok(stored) => Ok(Some(stored)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 /// Generate a unique temporary file path adjacent to `target_path`.
@@ -469,6 +537,26 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
     path: &Path,
     data: &T,
 ) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        serde_json::to_writer_pretty(writer, data).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
+        })
+    })
+}
+
+/// Write bytes into a staging file, sync it, then publish by atomic replacement.
+pub fn persist_bytes_file_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        io::Write::write_all(writer, bytes).map_err(|error| {
+            DomainError::InternalError(format!("Failed to write {}: {error}", path.display()))
+        })
+    })
+}
+
+fn persist_written_blocking(
+    path: &Path,
+    write: impl FnOnce(&mut io::BufWriter<std::fs::File>) -> Result<(), DomainError>,
+) -> Result<(), DomainError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
@@ -483,10 +571,8 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", temp_path.display()))
         })?;
     let result = (|| {
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, data).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
-        })?;
+        let mut writer = io::BufWriter::new(file);
+        write(&mut writer)?;
         let file = writer.into_inner().map_err(|error| {
             DomainError::InternalError(format!("Failed to finish {}: {error}", temp_path.display()))
         })?;
@@ -562,6 +648,16 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
         let _ = tokio_fs::remove_file(&temp_path).await;
     }
     result
+}
+
+/// How many files a directory scan reads at once.
+pub fn scan_parallelism() -> usize {
+    static PARALLELISM: LazyLock<usize> = LazyLock::new(|| {
+        std::thread::available_parallelism()
+            .map_or(4, NonZeroUsize::get)
+            .min(8)
+    });
+    *PARALLELISM
 }
 
 /// List files in a directory with a specific extension
@@ -655,6 +751,20 @@ mod tests {
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"old");
 
         tokio_fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[test]
+    fn replace_keeping_original_leaves_a_file_that_already_holds_the_bytes() {
+        let root = unique_temp_root();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, b"same").unwrap();
+
+        let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, b"same");
+
+        assert_eq!(kept.unwrap(), None);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

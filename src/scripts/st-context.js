@@ -65,6 +65,7 @@ import {
     getMediaDisplay,
     getMediaIndex,
     scrollChatToBottom,
+    scrollChatSurfaceTo,
     scrollOnMediaLoad,
     getOneCharacter,
     getCharacterSource,
@@ -248,6 +249,7 @@ export function getContext() {
         getMediaDisplay,
         getMediaIndex,
         scrollChatToBottom,
+        scrollChatSurfaceTo, // TT Project Contract: FrontendHostContract §3.7.
         scrollOnMediaLoad,
         macros,
         messageFormatter: MessageFormatter,

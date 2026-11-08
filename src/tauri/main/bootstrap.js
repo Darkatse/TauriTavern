@@ -1,6 +1,7 @@
 import { installWindowLayout } from '../../scripts/util/window-layout.js';
 import { installWindowBackdrop } from '../../scripts/window-backdrop.js';
-import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
+import { installDrawerBar } from '../../scripts/drawer-bar.js';
+import { invoke } from '../../tauri-bridge.js';
 import { eventSource, event_types } from '../../scripts/events.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
@@ -41,6 +42,7 @@ import {
     getMethod,
     getMethodHint,
     jsonResponse,
+    ownedJsonResponse,
     readRequestBody,
     textResponse,
     toUrl,
@@ -231,7 +233,7 @@ function installSameOriginWindowPatches(interceptors, downloadBridge, { runtimeC
 }
 
 export function bootstrapTauriMain() {
-    if (!isTauriRuntime() || bootstrapped) {
+    if (bootstrapped) {
         return;
     }
     bootstrapped = true;
@@ -255,7 +257,9 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke });
-    installHostAbi(context); installLayoutApi(); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
+    installHostAbi(context); installLayoutApi(); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context);
+    const restoreAgentAssemblyBridges = installAgentApi(context);
+    installLlmConnectionsApi(context); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -268,7 +272,7 @@ export function bootstrapTauriMain() {
         window.__TAURITAVERN_PERF_READY__ = perfReadyPromise;
     }
     const router = createRouteRegistry();
-    registerRoutes(router, context, { jsonResponse, textResponse });
+    registerRoutes(router, context, { jsonResponse, ownedJsonResponse, textResponse });
 
     const nextTraceId = createTraceIdFactory('req');
 
@@ -326,7 +330,6 @@ export function bootstrapTauriMain() {
     };
 
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: window.fetch.bind(window),
         canHandleRequest,
         toUrl,
@@ -365,26 +368,23 @@ export function bootstrapTauriMain() {
         perfReadyPromise,
         safePerfMark,
     );
-    void readyPromise.catch((error) => {
-        console.error('Failed to initialize Tauri integration:', error);
-    });
     const runAfterTauriReady = (callback) => {
         void readyPromise.then(callback, () => {});
     };
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
-    if (window.__TAURITAVERN__) {
-        window.__TAURITAVERN__.ready = readyPromise;
-    }
+    window.__TAURITAVERN__.ready = readyPromise;
 
     runAfterTauriReady(() => setFrontendLogBackendForwardingEnabled(true));
     runAfterTauriReady(() => {
         installWindowBackdrop(context);
+        installDrawerBar(context);
         void installWindowLayout(context).catch(error => console.error('[TauriTavern] Window layout:', error));
     });
 
     runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
+    eventSource.once(event_types.APP_READY, restoreAgentAssemblyBridges);
     // This panel imports application state as well as rendering it.
     eventSource.once(event_types.APP_READY, () => {
         void import('../../scripts/tauri/generation-params/panel.js')

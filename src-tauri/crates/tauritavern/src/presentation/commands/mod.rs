@@ -41,6 +41,7 @@ pub mod registry;
 pub mod resource_bridge_commands;
 #[cfg(desktop)]
 pub mod runtime_paths_commands;
+pub mod safe_mode_commands;
 pub mod searxng_search_commands;
 pub mod secret_commands;
 pub mod settings_commands;

@@ -74,18 +74,6 @@ fn build_claude_payload_inner(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if assistant_prefill.is_some() && reasoning_effort.is_some() {
-        return Err(ApplicationError::ValidationError(format!(
-            "Claude model `{model}` does not support assistant_prefill with reasoning_effort"
-        )));
-    }
-    if assistant_prefill.is_some()
-        && contract.is_some_and(|contract| !contract.supports_assistant_prefill)
-    {
-        return Err(ApplicationError::ValidationError(format!(
-            "Claude model `{model}` does not support assistant_prefill"
-        )));
-    }
     if let Some(assistant_prefill) = assistant_prefill {
         messages.push(json!({
             "role": "assistant",
@@ -130,11 +118,7 @@ fn build_claude_payload_inner(
     // `speed: "fast"` is Anthropic's fast-mode beta; the HTTP adapter adds the
     // matching `anthropic-beta` value when it sees this field.
     insert_if_present(&mut request, payload, "speed");
-    insert_claude_sampling_params(
-        &mut request,
-        payload,
-        contract.map(|contract| contract.supports_sampling),
-    );
+    insert_claude_sampling_params(&mut request, payload, contract);
 
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
@@ -278,6 +262,23 @@ fn build_claude_payload_inner(
         output_config.insert("effort".to_string(), reasoning_effort.clone());
     }
 
+    if contract.is_some_and(|contract| {
+        !contract.supports_assistant_prefill || request.contains_key("thinking")
+    }) && let Some(last) = messages.last_mut()
+        && last.get("role").and_then(Value::as_str) == Some("assistant")
+        && last
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .all(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            })
+    {
+        last["role"] = json!("user");
+        merge_consecutive_messages(&mut messages);
+    }
+
     if !output_config.is_empty() {
         request.insert("output_config".to_string(), Value::Object(output_config));
     }
@@ -351,16 +352,20 @@ fn claude_output_effort(
 fn insert_claude_sampling_params(
     request: &mut Map<String, Value>,
     payload: &Map<String, Value>,
-    supports_sampling: Option<bool>,
+    contract: Option<ClaudeModelContract>,
 ) {
-    if supports_sampling == Some(false) {
+    if contract.is_some_and(|contract| !contract.supports_sampling) {
         return;
     }
 
-    if has_non_default_temperature(payload) {
+    let send_top_p = has_non_default_top_p(payload);
+    if has_non_default_temperature(payload)
+        && !(send_top_p
+            && contract.is_some_and(|contract| contract.sampling_params_mutually_exclusive))
+    {
         insert_if_present(request, payload, "temperature");
     }
-    if has_non_default_top_p(payload) {
+    if send_top_p {
         insert_if_present(request, payload, "top_p");
     }
     if has_non_default_top_k(payload) {

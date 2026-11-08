@@ -6,7 +6,9 @@ use tt_application::dto::agent_dto::{AgentCancelRunDto, AgentReadSessionDto, Age
 use tt_contracts::extension_tools::{ExtensionToolDefinition, ExtensionToolReply};
 use tt_domain::models::tool::{AgentToolScope, ToolId};
 
-use super::session::{configure_session_profile, prepare_input, wait_until_session_idle};
+use super::session::{
+    configure_session_profile, prepare_input, user_input, wait_until_session_idle,
+};
 
 fn register_tool(
     fixture: &AgentRuntimeFixture,
@@ -23,6 +25,7 @@ fn register_tool(
         Ok(())
     });
     let id = fixture.extension_tools.register("main", ExtensionToolDefinition {
+                returns_images: false,
         extension_id: extension_id.into(),
         name: name.into(),
         description: "Inspect application state".into(),
@@ -139,7 +142,10 @@ async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools()
         assert!(fixture.extension_tools.resolve(
             "main",
             event["requestId"].as_str().unwrap(),
-            ExtensionToolReply::Value { value },
+            ExtensionToolReply::Value {
+                value,
+                images: vec![]
+            },
         ));
     }
     wait_until_session_idle(&fixture, &handle.run_id).await;
@@ -242,7 +248,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .extension_tools
         .set_enabled("main", &tool_id, false)
         .unwrap();
-    let input = prepare_input(&fixture, &session.id, &profile, "Continue while disabled.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Continue while disabled."),
+    )
+    .await;
     let disabled = fixture.service.start_session_run(input).await.unwrap();
     wait_until_session_idle(&fixture, &disabled.run_id).await;
     let requests = fixture.model_gateway.requests().await;
@@ -257,7 +269,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .extension_tools
         .set_enabled("main", &tool_id, true)
         .unwrap();
-    let input = prepare_input(&fixture, &session.id, &profile, "Inspect the application.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Inspect the application."),
+    )
+    .await;
     let enabled = fixture.service.start_session_run(input).await.unwrap();
     let event = next_event(&mut events).await;
     assert_eq!(
@@ -319,7 +337,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .profile
         .unwrap();
     assert!(stored.tools.allow.contains(&tool_id.to_string()));
-    let input = prepare_input(&fixture, &session.id, &stored, "Continue after reload.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &stored,
+        user_input("Continue after reload."),
+    )
+    .await;
     let missing = fixture.service.start_session_run(input).await.unwrap();
     wait_until_session_idle(&fixture, &missing.run_id).await;
     assert_eq!(
@@ -370,7 +394,13 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
         .await
         .unwrap();
     let session = fixture.service.create_session().await.unwrap().session;
-    let input = prepare_input(&fixture, &session.id, &profile, "Wait for cancellation.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Wait for cancellation."),
+    )
+    .await;
     let handle = fixture.service.start_session_run(input).await.unwrap();
     let event = next_event(&mut events).await;
     fixture
@@ -397,7 +427,10 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
     assert!(!fixture.extension_tools.resolve(
         "main",
         event["requestId"].as_str().unwrap(),
-        ExtensionToolReply::Value { value: Value::Null }
+        ExtensionToolReply::Value {
+            value: Value::Null,
+            images: vec![]
+        }
     ));
     let run_events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
     assert!(
@@ -407,4 +440,189 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 1);
     fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_the_model() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use tt_contracts::extension_tools::ExtensionToolImage;
+
+    for accepts_images in [true, false] {
+        let root = temp_root("session-tool-images");
+        let fixture = agent_runtime_fixture_with_responses(
+            &root,
+            vec![
+                model_tool_response(vec![model_tool_call("capture", "inspect", json!({}))]),
+                model_tool_response(vec![model_tool_call(
+                    "list",
+                    "workspace_list_files",
+                    json!({}),
+                )]),
+                json!({"choices":[{"message":{"role":"assistant","content":"Inspected."}}]}),
+            ],
+        );
+        let (tool_id, mut events) = register_tool(
+            &fixture,
+            "contract",
+            "inspect",
+            vec![AgentToolScope::Session],
+        );
+        let mut profile = configure_session_profile(&fixture, &root).await;
+        profile.tools.allow = vec![tool_id.to_string(), "builtin:workspace.list_files".into()];
+        let session = fixture.service.create_session().await.unwrap().session;
+        let mut input = prepare_input(
+            &fixture,
+            &session.id,
+            &profile,
+            user_input("Inspect the page."),
+        )
+        .await;
+        input.prompt_snapshot["acceptsImages"] = json!(accepts_images);
+        let handle = fixture.service.start_session_run(input).await.unwrap();
+        let event = next_event(&mut events).await;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2000,
+            1000,
+            image::Rgb([24, 80, 160]),
+        ))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+        assert!(fixture.extension_tools.resolve(
+            "main",
+            event["requestId"].as_str().unwrap(),
+            ExtensionToolReply::Value {
+                value: json!("Page captured."),
+                images: vec![
+                    ExtensionToolImage {
+                        data: "invalid base64!".into()
+                    },
+                    ExtensionToolImage {
+                        data: STANDARD.encode(png.into_inner())
+                    },
+                    ExtensionToolImage {
+                        data: STANDARD.encode(b"not an image")
+                    }
+                ],
+            }
+        ));
+        wait_until_session_idle(&fixture, &handle.run_id).await;
+        assert_eq!(
+            fixture
+                .agent_repository
+                .load_run(&handle.run_id)
+                .await
+                .unwrap()
+                .status,
+            AgentRunStatus::Completed
+        );
+        let history = fixture
+            .service
+            .read_session(AgentReadSessionDto {
+                session_id: session.id,
+                before_seq: None,
+                limit: Some(100),
+            })
+            .await
+            .unwrap();
+        let result = history
+            .messages
+            .iter()
+            .flat_map(|entry| &entry.message.parts)
+            .find_map(|part| match part {
+                AgentModelContentPart::ToolResult { result } if result.call_id == "capture" => {
+                    Some(result)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(result.images.len(), 1);
+        assert_eq!(result.images[0].mime_type, "image/jpeg");
+        assert!(result.content.starts_with("Page captured."));
+        assert_eq!(result.content.matches("could not be decoded").count(), 2);
+        assert!(
+            result
+                .content
+                .ends_with("[The tool returned an image that could not be decoded.]")
+        );
+        assert!(
+            history
+                .messages
+                .iter()
+                .flat_map(|entry| &entry.message.parts)
+                .all(|part| !matches!(part, AgentModelContentPart::Media { .. }))
+        );
+        let files = fixture
+            .agent_repository
+            .open_filesystem(&handle.run_id)
+            .await
+            .unwrap();
+        let stored_files = files.list_files(None, 8, 100).await.unwrap().entries;
+        let image_files = stored_files
+            .iter()
+            .filter(|entry| {
+                result
+                    .images
+                    .iter()
+                    .any(|image| image.path == entry.path.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(image_files.len(), 1);
+        assert_eq!(image_files[0].path.as_str(), result.images[0].path);
+        let bytes = files
+            .read_file(
+                &image_files[0].path,
+                tt_ports::tool_images::MAX_TOOL_IMAGE_BYTES,
+            )
+            .await
+            .unwrap();
+        let image = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((image.width(), image.height()), (1280, 640));
+        let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+        let stored = events
+            .iter()
+            .find(|event| {
+                event.event_type == "tool_result_stored" && event.payload["callId"] == "capture"
+            })
+            .unwrap();
+        let audit_path = WorkspacePath::parse(stored.payload["path"].as_str().unwrap()).unwrap();
+        let audit: Value =
+            serde_json::from_str(&files.read_text(&audit_path).await.unwrap().text).unwrap();
+        assert_eq!(
+            audit["images"],
+            serde_json::to_value(&result.images).unwrap()
+        );
+        assert_eq!(audit["structured"], json!("Page captured."));
+        assert_eq!(audit["content"], result.content);
+        let requests = fixture.model_gateway.requests().await;
+        assert_eq!(requests.len(), 3);
+        let mut previous_media = None;
+        for request in &requests[1..] {
+            let message = request.messages.iter().find(|message| message.parts.iter().any(|part| matches!(part, AgentModelContentPart::ToolResult { result } if result.call_id == "capture"))).unwrap();
+            let media = message
+                .parts
+                .iter()
+                .filter(|part| matches!(part, AgentModelContentPart::Media { .. }))
+                .collect::<Vec<_>>();
+            if accepts_images {
+                assert_eq!(media.len(), 1);
+                if let Some(previous) = previous_media {
+                    assert_eq!(previous, media[0]);
+                }
+                previous_media = Some(media[0]);
+                let AgentModelContentPart::Media { mime_type, value } = media[0] else {
+                    unreachable!()
+                };
+                assert_eq!(mime_type, "image/jpeg");
+                assert_eq!(
+                    value["image_url"]["url"],
+                    format!("data:image/jpeg;base64,{}", STANDARD.encode(&bytes))
+                );
+            } else {
+                assert!(media.is_empty());
+                assert!(message.parts.iter().any(|part| matches!(part, AgentModelContentPart::ToolResult { result } if result.content.ends_with("[The image is not shown: this model does not accept images.]"))));
+            }
+        }
+        fs::remove_dir_all(root).await.unwrap();
+    }
 }

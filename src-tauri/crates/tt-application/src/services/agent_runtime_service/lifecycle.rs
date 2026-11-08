@@ -5,19 +5,16 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::prompt_snapshot::{
-    reject_external_tool_request, request_from_prompt_snapshot,
-    validate_prompt_snapshot_context_policy,
-};
+use super::prompt_snapshot::admit_prompt_snapshot;
 use super::skill_scope::{
     resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
 };
 use super::timeline_projection::build_run_timeline_projection;
 use super::{AgentRunLiveProjection, AgentRuntimeService};
 use crate::dto::agent_dto::{
-    AgentCancelRunDto, AgentCancelRunResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadWorkspaceFileDto, AgentRunHandleDto, AgentSessionRunHandleDto, AgentStartRunDto,
-    AgentWorkspaceFileDto,
+    AgentActiveRunDto, AgentCancelRunDto, AgentCancelRunResultDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadWorkspaceFileDto, AgentRunHandleDto,
+    AgentSessionRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_identity::{validate_stable_chat_id, workspace_id_for_stable_chat_id};
@@ -31,6 +28,7 @@ use tt_domain::models::agent::{
 };
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunEventReadQuery;
+use tt_ports::tool_images::MAX_TOOL_IMAGE_BYTES;
 
 impl AgentRuntimeService {
     pub async fn start_run(
@@ -45,9 +43,6 @@ impl AgentRuntimeService {
                     .to_string(),
             ));
         };
-        let request = request_from_prompt_snapshot(&prompt_snapshot)?;
-        reject_external_tool_request(&request.payload)?;
-
         let generation_type = dto.generation_type.trim().to_string();
         if generation_type.is_empty() {
             return Err(ApplicationError::ValidationError(
@@ -69,7 +64,7 @@ impl AgentRuntimeService {
             )));
         }
         ensure_profile_model_configured(&resolved_profile)?;
-        validate_prompt_snapshot_context_policy(&prompt_snapshot, &resolved_profile)?;
+        let request = admit_prompt_snapshot(&prompt_snapshot, &resolved_profile.context)?;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
             prompt_snapshot,
             dto.frozen_run_input_snapshot.take(),
@@ -204,11 +199,14 @@ impl AgentRuntimeService {
         tokio::spawn(async move {
             service
                 .execute_agent_loop_run(
-                    background_run_id,
-                    prompt_snapshot,
-                    request,
-                    resolved_profile,
-                    effective_skills,
+                    super::RootInvocationInput {
+                        run_id: background_run_id,
+                        prompt_snapshot,
+                        request,
+                        resolved_profile,
+                        effective_skills,
+                        session: None,
+                    },
                     cancel_receiver,
                 )
                 .await;
@@ -340,6 +338,18 @@ impl AgentRuntimeService {
         })
     }
 
+    pub async fn read_workspace_bytes(
+        &self,
+        dto: AgentReadWorkspaceFileDto,
+    ) -> Result<Vec<u8>, ApplicationError> {
+        let path = WorkspacePath::parse(dto.path)?;
+        Ok(self
+            .workspace_files(&dto.run_id)
+            .await?
+            .read_file(&path, MAX_TOOL_IMAGE_BYTES)
+            .await?)
+    }
+
     pub async fn read_workspace_file(
         &self,
         dto: AgentReadWorkspaceFileDto,
@@ -350,7 +360,6 @@ impl AgentRuntimeService {
             .await?
             .read_text(&path)
             .await?;
-
         let metrics = TextMetrics::from_text(&file.text);
         Ok(AgentWorkspaceFileDto {
             path: file.path.as_str().to_string(),
@@ -383,18 +392,32 @@ fn normalize_read_events_invocation_id(
     Ok(Some(invocation_id.to_string()))
 }
 
-#[async_trait::async_trait]
-impl AgentRunActivity for AgentRuntimeService {
-    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
-        let mut run_ids = self
+impl AgentRuntimeService {
+    pub async fn list_active_runs(&self) -> Vec<AgentActiveRunDto> {
+        let mut runs = self
             .active_runs
             .read()
             .await
-            .keys()
-            .cloned()
+            .iter()
+            .map(|(run_id, handle)| AgentActiveRunDto {
+                run_id: run_id.clone(),
+                after_seq: handle.after_seq,
+            })
             .collect::<Vec<_>>();
-        run_ids.sort();
-        Ok(run_ids)
+        runs.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+        runs
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRunActivity for AgentRuntimeService {
+    async fn active_run_ids(&self) -> Result<Vec<String>, ApplicationError> {
+        Ok(self
+            .list_active_runs()
+            .await
+            .into_iter()
+            .map(|run| run.run_id)
+            .collect())
     }
 
     async fn active_run_ids_for_workspace(
@@ -429,6 +452,7 @@ fn cancel_run_handle(run: AgentRun) -> AgentCancelRunResultDto {
                 session_id,
                 run_id: run.id,
                 status: run.status,
+                created_at: run.created_at,
             })
         }
     }

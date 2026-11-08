@@ -2,15 +2,13 @@ mod agent;
 mod archive;
 mod sync;
 
+use std::path::Path;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
-use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
-use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_triviumdb::TriviumDatabaseBackend;
@@ -55,23 +53,25 @@ use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
-use super::{adapters, repositories};
+use super::{HostEnvironment, adapters, repositories};
 
 pub(super) async fn build(
-    app_handle: &AppHandle,
+    environment: &HostEnvironment,
+    app_root: &Path,
     data_directory: &DataDirectory,
     startup_profile: &StartupProfile,
 ) -> Result<AppServices, DomainError> {
     let tauritavern_settings = &startup_profile.tauritavern_settings;
     let repositories = repositories::build(
-        app_handle,
+        environment,
+        app_root,
         data_directory,
         tauritavern_settings.chat_backups,
     )
     .await?;
     let ios_policy = startup_profile.ios_policy.clone();
 
-    let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
+    let http_client_pool = environment.http_client_pool.clone();
     let external_import_downloader: Arc<dyn ExternalImportDownloader> =
         Arc::new(HttpExternalImportDownloader::new(http_client_pool.clone()));
     let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool.clone();
@@ -127,13 +127,12 @@ pub(super) async fn build(
         repositories.mcp_server_repository.clone(),
         mcp_gateway,
     ));
-    let generation_background_runtime = crate::platform::generation_background::runtime(app_handle);
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository.clone(),
         repositories.secret_repository.clone(),
         repositories.settings_repository.clone(),
         repositories.prompt_cache_repository.clone(),
-        generation_background_runtime,
+        environment.generation_background_runtime.clone(),
         ios_policy.clone(),
     ));
     let provider_metadata_service = Arc::new(ProviderMetadataService::new(
@@ -151,21 +150,22 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
-    let agent_services = agent::build(
-        &repositories,
-        skill_service.clone(),
-        chat_completion_service.clone(),
-        llm_connection_service.clone(),
-        mcp_service.clone(),
-        Arc::new(WorkspaceShellEngine),
-        app_handle
-            .state::<Arc<AgentExtensionTools>>()
-            .inner()
-            .clone(),
-    );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),
     ));
+    let agent_services = agent::build(
+        &repositories,
+        agent::AgentDependencies {
+            tool_image_normalizer: Arc::new(tt_adapter_media::MediaToolImageNormalizer),
+            skill_service: skill_service.clone(),
+            chat_completion_service: chat_completion_service.clone(),
+            llm_connection_service: llm_connection_service.clone(),
+            mcp_service: mcp_service.clone(),
+            tokenization_service: tokenization_service.clone(),
+            workspace_shell: Arc::new(WorkspaceShellEngine),
+            extension_tools: environment.agent_extension_tools.clone(),
+        },
+    );
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository.clone(),
         repositories.secret_repository.clone(),
@@ -247,12 +247,12 @@ pub(super) async fn build(
         data_directory.root().join("_tauritavern").join("databases"),
     ))));
     let data_archive_service = archive::build(
-        app_handle,
+        environment,
         data_change_reconciler.clone(),
         database_service.clone(),
     );
     let sync_services = sync::build(
-        app_handle,
+        environment,
         data_directory,
         data_change_reconciler,
         &ios_policy,

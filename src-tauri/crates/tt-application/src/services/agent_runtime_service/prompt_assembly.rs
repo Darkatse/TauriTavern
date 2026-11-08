@@ -1,78 +1,80 @@
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::oneshot;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use uuid::Uuid;
 
+use super::prompt_snapshot::{AgentPromptRequest, admit_prompt_snapshot};
+use super::session::session_user_message;
+use super::session_context::{holds_context, session_context, session_history_groups};
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
 };
 use crate::dto::agent_dto::{
     AgentPreparePromptAssemblyDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPromptAssemblyScopeDto, AgentReadPromptAssemblyRequestDto, AgentResolvePromptAssemblyDto,
+    AgentSessionMacroMessagesDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::{
-    AgentInvocationPromptAssemblyContext, FROZEN_RUN_INPUT_SNAPSHOT_KIND,
-    FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+    FROZEN_RUN_INPUT_SNAPSHOT_KIND, FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
 };
-use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
+use tt_domain::models::agent::{
+    AgentInvocation, AgentModelRole, AgentRunEventLevel, WorkspacePath,
+};
 
 impl AgentRuntimeService {
     pub async fn prepare_session_run(
         &self,
         dto: crate::dto::agent_dto::AgentPrepareSessionRunDto,
     ) -> Result<crate::dto::agent_dto::AgentPrepareSessionRunResultDto, ApplicationError> {
-        use tt_domain::models::agent::{
-            AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRole,
-        };
-        use tt_ports::repositories::agent_session_repository::AgentSessionMessageReadQuery;
+        use tt_domain::models::agent::AgentInvocationExitPolicy;
 
         self.session_repository
             .load_session(&dto.session_id)
             .await?;
-        if dto.text.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "agent.session_text_required: text must not be empty".into(),
-            ));
-        }
+        let user_message = session_user_message(&dto.input)?;
         let profile = self
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_catalog())
             .await?;
-        // Assembly needs the full transcript; read it once, then let PromptManager budget it.
+        let roles = [AgentModelRole::User, AgentModelRole::Assistant];
         let history = self
-            .session_repository
-            .read_session_messages(
-                &dto.session_id,
-                AgentSessionMessageReadQuery {
-                    after_seq: Some(0),
-                    before_seq: None,
-                    limit: usize::MAX,
-                },
-            )
+            .read_session_tail(&dto.session_id, |entries| {
+                holds_context(entries)
+                    && roles
+                        .iter()
+                        .all(|role| entries.iter().any(|entry| entry.message.role == *role))
+            })
             .await?;
         let last_seq = history.last().map_or(0, |entry| entry.seq);
-        let mut messages = history
-            .into_iter()
-            .map(|entry| entry.message)
-            .collect::<Vec<_>>();
-        messages.push(AgentModelMessage {
-            role: AgentModelRole::User,
-            parts: vec![AgentModelContentPart::Text { text: dto.text }],
-            provider_metadata: Value::Null,
-        });
+        let newest_first = || {
+            user_message
+                .iter()
+                .chain(history.iter().rev().map(|entry| &entry.message))
+        };
+        let latest = |role| newest_first().find(|message| message.role == role).cloned();
+        let macro_messages = AgentSessionMacroMessagesDto {
+            message_count: last_seq + u64::from(user_message.is_some()),
+            last_message: newest_first().next().cloned(),
+            last_user_message: latest(AgentModelRole::User),
+            last_assistant_message: latest(AgentModelRole::Assistant),
+        };
+        let mut groups = session_history_groups(&session_context(&history)?)?;
+        if let Some(message) = user_message {
+            groups.push(vec![message]);
+        }
         let tools = self
             .prepare_invocation_tools(
                 &profile,
                 tt_domain::models::tool::AgentToolScope::Session,
                 AgentInvocationExitPolicy::ReplyAllowed,
                 "session_prepare",
+                false,
             )
             .await?;
-        let assembly = self
+        let request = self
             .prompt_assembly_service
-            .prepare_frontend_prompt_assembly(
+            .build_prompt_assembly_request(
                 AgentPreparePromptAssemblyDto {
                     profile_id: None,
                     generation_type: "normal".into(),
@@ -83,7 +85,7 @@ impl AgentRuntimeService {
                         "generationType": "normal",
                         "promptInputs": {
                             "messages": [],
-                            "agentMessages": messages,
+                            "sessionHistory": groups,
                             "messageExamples": [],
                             "worldInfoExamples": { "before": [], "after": [] },
                             "extensionPrompts": {},
@@ -96,18 +98,20 @@ impl AgentRuntimeService {
                 profile,
                 &tools.model_tools,
                 AgentInvocationExitPolicy::ReplyAllowed,
+                Default::default(),
             )
             .await?;
         Ok(crate::dto::agent_dto::AgentPrepareSessionRunResultDto {
             expected_history_seq: last_seq,
-            assembly,
+            macro_messages,
+            request,
         })
     }
 
     pub async fn read_prompt_assembly_request(
         &self,
         dto: AgentReadPromptAssemblyRequestDto,
-    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
+    ) -> Result<Option<AgentPromptAssemblyBrokerRequestDto>, ApplicationError> {
         let run_id = dto.run_id.trim();
         let assembly_id = dto.assembly_id.trim();
         if run_id.is_empty() || assembly_id.is_empty() {
@@ -118,14 +122,14 @@ impl AgentRuntimeService {
         }
 
         let assemblies = self.active_prompt_assemblies.read().await;
-        let pending = assemblies
-            .get(assembly_id)
-            .ok_or_else(|| prompt_assembly_not_pending_error(assembly_id))?;
+        let Some(pending) = assemblies.get(assembly_id) else {
+            return Ok(None);
+        };
         if pending.run_id != run_id {
             return Err(prompt_assembly_run_mismatch_error(assembly_id));
         }
 
-        Ok(pending.request.clone())
+        Ok(Some(pending.request.clone()))
     }
 
     pub async fn resolve_prompt_assembly(
@@ -188,49 +192,33 @@ impl AgentRuntimeService {
         })
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "prompt assembly boundary keeps profile, tools, snapshot, scope, and cancellation explicit"
-    )]
-    pub(super) async fn assemble_invocation_prompt_snapshot(
+    pub(super) async fn request_host_prompt_assembly(
         &self,
-        profile: &ResolvedAgentProfile,
-        visible_tools: &[AgentModelTool],
-        generation_type: &str,
-        frozen_run_input_snapshot: Value,
-        scope: &AgentPromptAssemblyScopeDto,
-        agent_task_prompt: String,
+        invocation: &AgentInvocation,
+        task_id: Option<String>,
+        mut request: AgentPromptAssemblyBrokerRequestDto,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<AgentPromptRequest, ApplicationError> {
+        let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
+        let scope = AgentPromptAssemblyScopeDto {
+            run_id: invocation.run_id.clone(),
+            invocation_id: invocation.id.clone(),
+            invocation_kind: invocation.kind,
+            parent_invocation_id: invocation.parent_invocation_id.clone(),
+            task_id,
+            exit_policy: invocation.exit_policy,
+        };
+        request.assembly_id = Some(assembly_id.clone());
+        request.scope = Some(scope.clone());
         let run_id = scope.run_id.as_str();
         let invocation_id = scope.invocation_id.as_str();
-        let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
-        let (request, request_metadata) = self
-            .prompt_assembly_service
-            .prepare_invocation_frontend_prompt_assembly(
-                AgentPreparePromptAssemblyDto {
-                    profile_id: Some(profile.id.as_str().to_string()),
-                    generation_type: generation_type.to_string(),
-                    frozen_run_input_snapshot,
-                    json_schema: None,
-                },
-                profile.clone(),
-                visible_tools,
-                AgentInvocationPromptAssemblyContext {
-                    assembly_id: assembly_id.clone(),
-                    scope: scope.clone(),
-                    agent_task_prompt: Some(agent_task_prompt),
-                    required_agent_prompt_components: vec![
-                        "agentSystemPrompt".to_string(),
-                        "agentTask".to_string(),
-                    ],
-                },
-            )
-            .await?;
+        let profile_id = request.profile_id.clone();
+        let context_policy = request.agent_context_policy.clone();
+        let request_metadata = request.metadata();
         let requested_event = json!({
             "assemblyId": assembly_id.as_str(),
             "invocationId": invocation_id,
-            "profileId": profile.id.as_str(),
+            "profileId": profile_id.as_str(),
             "scope": &scope,
             "requestKind": request.kind.as_str(),
             "requestSchemaVersion": request.schema_version,
@@ -238,7 +226,7 @@ impl AgentRuntimeService {
         });
 
         let (sender, receiver) = oneshot::channel();
-        let previous = self.active_prompt_assemblies.write().await.insert(
+        self.active_prompt_assemblies.write().await.insert(
             assembly_id.clone(),
             PendingHostPromptAssembly {
                 run_id: run_id.to_string(),
@@ -246,11 +234,6 @@ impl AgentRuntimeService {
                 sender,
             },
         );
-        if previous.is_some() {
-            return Err(ApplicationError::InternalError(format!(
-                "agent.prompt_assembly_id_collision: duplicate assembly id `{assembly_id}`"
-            )));
-        }
 
         if let Err(error) = self
             .event(
@@ -286,24 +269,25 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
-                if let Err(error) = super::prompt_snapshot::validate_prompt_snapshot_context_policy(
-                    &result.prompt_snapshot,
-                    profile,
-                ) {
-                    self.event(
-                        run_id,
-                        AgentRunEventLevel::Error,
-                        "prompt_assembly_failed",
-                        json!({
-                            "assemblyId": assembly_id.as_str(),
-                            "invocationId": invocation_id,
-                            "profileId": profile.id.as_str(),
-                            "message": error.to_string(),
-                        }),
-                    )
-                    .await?;
-                    return Err(error);
-                }
+                let admitted = match admit_prompt_snapshot(&result.prompt_snapshot, &context_policy)
+                {
+                    Ok(request) => request,
+                    Err(error) => {
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Error,
+                            "prompt_assembly_failed",
+                            json!({
+                                "assemblyId": assembly_id.as_str(),
+                                "invocationId": invocation_id,
+                                "profileId": profile_id.as_str(),
+                                "message": error.to_string(),
+                            }),
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                };
                 let snapshot_path = WorkspacePath::parse(format!(
                     "input/invocations/{invocation_id}/prompt_snapshot.json"
                 ))?;
@@ -331,7 +315,7 @@ impl AgentRuntimeService {
                         &serde_json::to_string_pretty(&json!({
                             "assemblyId": assembly_id.as_str(),
                             "invocationId": invocation_id,
-                            "profileId": profile.id.as_str(),
+                            "profileId": profile_id.as_str(),
                             "scope": scope,
                             "requestMetadata": request_metadata,
                             "frozenRunInputSnapshot": result.frozen_run_input_snapshot,
@@ -353,13 +337,13 @@ impl AgentRuntimeService {
                     json!({
                         "assemblyId": assembly_id.as_str(),
                         "invocationId": invocation_id,
-                        "profileId": profile.id.as_str(),
+                        "profileId": profile_id.as_str(),
                         "promptSnapshotPath": snapshot_path.as_str(),
                         "promptAssemblyPath": assembly_path.as_str(),
                     }),
                 )
                 .await?;
-                Ok(result.prompt_snapshot)
+                Ok(admitted)
             }
             Err(message) => {
                 self.event(
@@ -369,7 +353,7 @@ impl AgentRuntimeService {
                     json!({
                         "assemblyId": assembly_id.as_str(),
                         "invocationId": invocation_id,
-                        "profileId": profile.id.as_str(),
+                        "profileId": profile_id.as_str(),
                         "message": message,
                     }),
                 )

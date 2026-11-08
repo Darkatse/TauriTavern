@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::dto::agent_dto::{
     AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
     AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyFingerprintDto,
-    AgentPromptAssemblyModeDto, AgentPromptAssemblyRequestMetadataDto, AgentPromptAssemblyScopeDto,
+    AgentPromptAssemblyModeDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
@@ -50,10 +50,8 @@ pub struct PromptAssemblyService {
     llm_connection_service: Arc<LlmConnectionService>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentInvocationPromptAssemblyContext {
-    pub assembly_id: String,
-    pub scope: AgentPromptAssemblyScopeDto,
     pub agent_task_prompt: Option<String>,
     pub required_agent_prompt_components: Vec<String>,
 }
@@ -106,32 +104,20 @@ impl PromptAssemblyService {
                 assembly: None,
             });
         }
-        let (request, metadata) = self
-            .build_prompt_assembly_request(dto, profile, visible_tools, None, exit_policy)
+        let request = self
+            .build_prompt_assembly_request(
+                dto,
+                profile,
+                visible_tools,
+                exit_policy,
+                AgentInvocationPromptAssemblyContext::default(),
+            )
             .await?;
         Ok(AgentPreparePromptAssemblyResultDto {
             mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
+            assembly: Some(request.metadata()),
             request: Some(request),
-            assembly: Some(metadata),
         })
-    }
-
-    pub async fn prepare_invocation_frontend_prompt_assembly(
-        &self,
-        dto: AgentPreparePromptAssemblyDto,
-        profile: ResolvedAgentProfile,
-        visible_tools: &[AgentModelTool],
-        context: AgentInvocationPromptAssemblyContext,
-    ) -> Result<
-        (
-            AgentPromptAssemblyBrokerRequestDto,
-            AgentPromptAssemblyRequestMetadataDto,
-        ),
-        ApplicationError,
-    > {
-        let exit_policy = context.scope.exit_policy;
-        self.build_prompt_assembly_request(dto, profile, visible_tools, Some(context), exit_policy)
-            .await
     }
 
     pub fn build_current_model_connection_snapshot(
@@ -156,20 +142,14 @@ impl PromptAssemblyService {
         Ok(settings)
     }
 
-    async fn build_prompt_assembly_request(
+    pub async fn build_prompt_assembly_request(
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
-        invocation_context: Option<AgentInvocationPromptAssemblyContext>,
         exit_policy: AgentInvocationExitPolicy,
-    ) -> Result<
-        (
-            AgentPromptAssemblyBrokerRequestDto,
-            AgentPromptAssemblyRequestMetadataDto,
-        ),
-        ApplicationError,
-    > {
+        context: AgentInvocationPromptAssemblyContext,
+    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
             normalize_frozen_run_input_snapshot(&dto.frozen_run_input_snapshot, &generation_type)?;
@@ -184,62 +164,33 @@ impl PromptAssemblyService {
         let fingerprint = AgentPromptAssemblyFingerprintDto {
             preset_sha256,
             frozen_run_input_snapshot_sha256: sha256_value(&frozen_run_input_snapshot)?,
-            agent_task_prompt_sha256: invocation_context
-                .as_ref()
-                .and_then(|context| context.agent_task_prompt.as_ref())
-                .map(|prompt| sha256_string(prompt)),
+            agent_task_prompt_sha256: context.agent_task_prompt.as_deref().map(sha256_string),
         };
-        let metadata = AgentPromptAssemblyRequestMetadataDto {
-            assembly_id: invocation_context
-                .as_ref()
-                .map(|context| context.assembly_id.clone()),
-            schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
-            engine: "frontend-prompt-assembly-broker".to_string(),
-            profile_id: profile.id.as_str().to_string(),
-            preset_ref: preset_ref.clone(),
-            scope: invocation_context
-                .as_ref()
-                .map(|context| context.scope.clone()),
-            fingerprint: fingerprint.clone(),
-        };
-        let agent_task_prompt = invocation_context
-            .as_ref()
-            .and_then(|context| context.agent_task_prompt.clone());
-        let required_agent_prompt_components = invocation_context
-            .as_ref()
-            .map(|context| context.required_agent_prompt_components.clone())
-            .unwrap_or_default();
 
-        Ok((
-            AgentPromptAssemblyBrokerRequestDto {
-                schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
-                kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
-                assembly_id: invocation_context
-                    .as_ref()
-                    .map(|context| context.assembly_id.clone()),
-                scope: invocation_context
-                    .as_ref()
-                    .map(|context| context.scope.clone()),
-                profile_id: profile.id.as_str().to_string(),
-                generation_type,
-                frozen_run_input_snapshot,
-                settings,
-                model_id,
-                preset_ref,
-                reasoning_effort: profile.preset.reasoning_effort,
-                agent_context_policy: profile.context.clone(),
-                agent_system_prompt: materialize_agent_system_prompt(
-                    visible_tools,
-                    &profile,
-                    exit_policy,
-                ),
-                agent_task_prompt,
-                required_agent_prompt_components,
-                json_schema: dto.json_schema,
-                fingerprint,
-            },
-            metadata,
-        ))
+        let request = AgentPromptAssemblyBrokerRequestDto {
+            schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
+            kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
+            assembly_id: None,
+            scope: None,
+            profile_id: profile.id.as_str().to_string(),
+            generation_type,
+            frozen_run_input_snapshot,
+            settings,
+            model_id,
+            preset_ref,
+            reasoning_effort: profile.preset.reasoning_effort,
+            agent_context_policy: profile.context.clone(),
+            agent_system_prompt: materialize_agent_system_prompt(
+                visible_tools,
+                &profile,
+                exit_policy,
+            ),
+            agent_task_prompt: context.agent_task_prompt,
+            required_agent_prompt_components: context.required_agent_prompt_components,
+            json_schema: dto.json_schema,
+            fingerprint,
+        };
+        Ok(request)
     }
 
     async fn resolve_openai_preset(

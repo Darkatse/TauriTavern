@@ -21,29 +21,45 @@ use tt_ports::repositories::agent_profile_storage_health_repository::{
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrepareSessionRunDto {
     pub session_id: String,
-    pub text: String,
+    pub input: AgentSessionRunInput,
     pub profile: AgentProfileDefinition,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentSessionRunInput {
+    Message { text: String },
+    Compaction,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrepareSessionRunResultDto {
     pub expected_history_seq: u64,
-    #[serde(flatten)]
-    pub assembly: AgentPreparePromptAssemblyResultDto,
+    pub macro_messages: AgentSessionMacroMessagesDto,
+    pub request: AgentPromptAssemblyBrokerRequestDto,
+}
+
+/// What the Session macros read from the whole history, the new user message included.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionMacroMessagesDto {
+    pub message_count: u64,
+    pub last_message: Option<tt_domain::models::agent::AgentModelMessage>,
+    pub last_user_message: Option<tt_domain::models::agent::AgentModelMessage>,
+    pub last_assistant_message: Option<tt_domain::models::agent::AgentModelMessage>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartSessionRunDto {
     pub session_id: String,
-    pub text: String,
+    pub input: AgentSessionRunInput,
     pub profile: AgentProfileDefinition,
     pub expected_history_seq: u64,
     pub prompt_snapshot: Value,
-    pub frozen_run_input_snapshot: Value,
-    #[serde(default)]
-    pub generation_intent: Option<Value>,
+    pub prompt_assembly_request: AgentPromptAssemblyBrokerRequestDto,
+    pub generation_intent: serde_json::Map<String, Value>,
     #[serde(default)]
     pub stream: Option<bool>,
 }
@@ -54,6 +70,7 @@ pub struct AgentSessionRunHandleDto {
     pub session_id: String,
     pub run_id: String,
     pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,7 +237,7 @@ pub enum AgentPromptAssemblyModeDto {
     FrontendPromptAssembly,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyBrokerRequestDto {
     pub schema_version: u32,
@@ -249,7 +266,7 @@ pub struct AgentPromptAssemblyBrokerRequestDto {
     pub fingerprint: AgentPromptAssemblyFingerprintDto,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyFingerprintDto {
     pub preset_sha256: String,
@@ -258,12 +275,12 @@ pub struct AgentPromptAssemblyFingerprintDto {
     pub agent_task_prompt_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyScopeDto {
     pub run_id: String,
     pub invocation_id: String,
-    pub invocation_kind: String,
+    pub invocation_kind: AgentInvocationKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_invocation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,6 +300,20 @@ pub struct AgentPromptAssemblyRequestMetadataDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<AgentPromptAssemblyScopeDto>,
     pub fingerprint: AgentPromptAssemblyFingerprintDto,
+}
+
+impl AgentPromptAssemblyBrokerRequestDto {
+    pub fn metadata(&self) -> AgentPromptAssemblyRequestMetadataDto {
+        AgentPromptAssemblyRequestMetadataDto {
+            assembly_id: self.assembly_id.clone(),
+            schema_version: self.schema_version,
+            engine: "frontend-prompt-assembly-broker".into(),
+            profile_id: self.profile_id.clone(),
+            preset_ref: self.preset_ref.clone(),
+            scope: self.scope.clone(),
+            fingerprint: self.fingerprint.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -426,8 +457,6 @@ pub struct AgentReadRunCheckpointResultDto {
     pub terminal_seq: u64,
     pub presentation: Option<Value>,
     pub next_step: String,
-    pub round: usize,
-    pub max_rounds: usize,
     pub blocked_reason: Option<String>,
 }
 
@@ -438,8 +467,6 @@ pub struct AgentResumeRunDto {
     pub expected_terminal_seq: u64,
     pub chat_ref: AgentChatRef,
     pub stable_chat_id: String,
-    #[serde(default)]
-    pub additional_rounds: usize,
     #[serde(default)]
     pub host_presentation: bool,
     #[serde(default)]
@@ -778,6 +805,13 @@ pub enum AgentRunPruneBlockReasonDto {
     MissingTerminalEvent,
     InvalidJournal,
     InvalidStorage,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActiveRunDto {
+    pub run_id: String,
+    pub after_seq: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

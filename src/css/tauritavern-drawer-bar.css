@@ -1,0 +1,22 @@
+/* The host draws the top drawer buttons in a system bar region, so the page drops its top bar. */
+:root[data-tt-drawer-bar] {
+    --topBarBlockSize: 0px;
+    --tt-drawer-hidden-clip: inset(0);
+    --tt-drawer-easing: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root[data-tt-drawer-bar="right"] {
+    --tt-drawer-hidden-translate: 100% 0;
+}
+
+:root[data-tt-drawer-bar="left"] {
+    --tt-drawer-hidden-translate: -100% 0;
+}
+
+:root[data-tt-drawer-bar="top"] {
+    --tt-drawer-hidden-translate: 0 -100%;
+}
+
+:root[data-tt-drawer-bar] :is(#top-bar, #top-settings-holder > .drawer > .drawer-toggle) {
+    display: none;
+}

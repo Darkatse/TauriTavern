@@ -2,6 +2,7 @@
 import { resolveStableChatId } from './agent-chat-identity.js';
 import { createAgentRunGuidanceApi } from './agent-run-guidance.js';
 import { createAgentRunRetentionApi } from './agent-run-retention.js';
+import { readByteResponse } from '../kernel/byte-protocol.js';
 const DEFAULT_EVENT_POLL_MS = 500;
 const MAX_RUN_LIST_LIMIT = 200;
 const AGENT_RUN_STATUSES = new Set([
@@ -9,6 +10,7 @@ const AGENT_RUN_STATUSES = new Set([
     'initializing_workspace',
     'assembling_context',
     'calling_model',
+    'compacting_context',
     'dispatching_tool',
     'applying_workspace_patch',
     'awaiting_host_commit',
@@ -80,10 +82,12 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
     }
 
     async function readWorkspaceFile(input) {
-        const runId = requireRunId(input?.runId);
-        const path = String(input?.path || '').trim();
-        if (!path) throw new Error('path is required');
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
+        return safeInvoke('read_agent_workspace_file', { dto: workspaceReadInput(input) });
+    }
+
+    async function readWorkspaceBytes(input) {
+        const data = await safeInvoke('read_agent_workspace_bytes', { dto: workspaceReadInput(input) });
+        return readByteResponse(data);
     }
 
     async function readTaskDetail(input) {
@@ -207,11 +211,19 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         retention: createAgentRunRetentionApi({ safeInvoke }),
         readEvents,
         readWorkspaceFile,
+        readWorkspaceBytes,
         readTaskDetail,
         readModelTurn,
         pruneChatPersistentStates,
         subscribe,
     };
+}
+
+function workspaceReadInput(input) {
+    const runId = requireRunId(input?.runId);
+    const path = String(input?.path || '').trim();
+    if (!path) throw new Error('path is required');
+    return { runId, path };
 }
 
 function requireRunId(value) {

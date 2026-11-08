@@ -5,28 +5,30 @@ import { createRoot } from 'react-dom/client';
 import { AssistantApp } from './AssistantApp';
 import { installAssistantDrawer, type DrawerState } from './drawer';
 import { assistantSelection, createAssistantActions, requireContext } from './host';
-import { createInteractionCursor } from './ui/cursor';
+import { createInteractionCursor } from '@tauritavern/app-use';
+import '@tauritavern/app-use/cursor.css';
+import '../style.css';
 
 const host = window.__TAURITAVERN__;
 if (host?.ready == null) throw new Error('in-app-agent: Host readiness is unavailable');
 await host.ready;
 const api = host.api;
-if (!api?.agent || !api.dev || !api.extension) throw new Error('in-app-agent: required Host APIs are unavailable');
+if (!api?.agent || !api.dev || !api.extension || !api.layout) throw new Error('in-app-agent: required Host APIs are unavailable');
 const hostApi: TauriTavernHostApi = api;
 const { agent, dev } = api;
 const context = requireContext();
 const controller = createAssistantController();
 const cursor = createInteractionCursor(() => context.Popup.util.getTopmostModalLayer());
 const unsubscribeCursor = controller.subscribe(() => {
-    const { activeRun, sendingSessionId } = controller.getSnapshot();
-    if (!activeRun && sendingSessionId === undefined) cursor.clear();
+    const { activeRun, startingSessionId } = controller.getSnapshot();
+    if (!activeRun && startingSessionId === undefined) cursor.clear();
 });
 let pageReady = false;
-await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, (point, toolContext) => {
-    const { activeRun, sendingSessionId } = controller.getSnapshot();
+await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, context.scrollChatSurfaceTo, (point, toolContext) => {
+    const { activeRun, startingSessionId } = controller.getSnapshot();
     // Only the task owned by this assistant drives its cursor, including the send admission window.
     if (activeRun?.runId === toolContext.runId
-        || (toolContext.target.kind === 'session' && sendingSessionId === toolContext.target.sessionId)) {
+        || (toolContext.target.kind === 'session' && startingSessionId === toolContext.target.sessionId)) {
         cursor.move(point);
     }
 });

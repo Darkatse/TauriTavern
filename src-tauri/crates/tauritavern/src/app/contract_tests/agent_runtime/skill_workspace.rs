@@ -47,7 +47,10 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
         ],
     );
     let profile = super::delegation::configure_return_mode_profiles(&fixture).await;
-    let repository = FileSkillRepository::new(root.join("_tauritavern/skills"));
+    let repository = FileSkillRepository::new(
+        root.join("_tauritavern/skills"),
+        root.join("builtin-skills"),
+    );
     for (profile_id, description, body) in [
         (
             profile.id.as_str(),
@@ -108,14 +111,10 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
     let (_cancel, mut receiver) = watch::channel(false);
     tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
         let (result, _) = tokio::join!(
-            fixture.service.execute_agent_loop_run_inner(
-                &run.id,
-                snapshot,
-                request,
-                profile,
-                &mut receiver,
-            ),
-            resolve_contract_prompt_assembly(&fixture, &run.id)
+            fixture
+                .service
+                .execute_agent_loop_run_inner(&run.id, snapshot, profile, &mut receiver,),
+            resolve_contract_prompt_assembly(&fixture, &run.id, delegated_prompt_snapshot)
         );
         result
     })

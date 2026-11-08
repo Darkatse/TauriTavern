@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::policy::AgentOperation;
-use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::AgentProfileResolveInput;
 use crate::services::agent_runtime_service::AgentCancelReceiver;
@@ -37,7 +36,7 @@ impl AgentRuntimeService {
         let args = match serde_json::from_value::<AgentDelegateArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &format!("Invalid agent_delegate arguments: {error}"),
@@ -46,7 +45,7 @@ impl AgentRuntimeService {
             }
         };
         if let Err(message) = validate_delegate_task_packet(&args.task) {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "tool.invalid_arguments",
                 &message,
@@ -54,7 +53,7 @@ impl AgentRuntimeService {
             ));
         }
         if !profile.delegation.can_delegate {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.delegation_policy_denied",
                 "Delegation is not available to you.",
@@ -115,7 +114,7 @@ impl AgentRuntimeService {
             .validate_parent_delegate_budget(run_id, invocation_id, profile)
             .await?
         {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.delegation_budget_exhausted",
                 &message,
@@ -155,23 +154,19 @@ impl AgentRuntimeService {
             "status": task.status,
             "agentId": target.id.as_str(),
         });
-        Ok(AgentToolDispatchOutcome {
-            result: AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content: format!(
+        Ok(AgentToolDispatchOutcome::new(
+            AgentToolResult::ok(
+                call,
+                format!(
                     "Started delegated task `{}` with Agent `{}`. You can continue other work and call `agent_await` when you need its result or current status.",
                     structured["taskId"].as_str().unwrap_or(""),
                     target.id.as_str()
                 ),
                 structured,
-                is_error: false,
-                error_code: None,
-                resource_refs: Vec::new(),
-            },
-            effect: AgentToolEffect::None,
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+            ),
+            AgentToolEffect::None,
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn validate_parent_delegate_budget(

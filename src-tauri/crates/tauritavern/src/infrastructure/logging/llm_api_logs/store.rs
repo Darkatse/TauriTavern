@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use super::LLM_API_LOG_EVENT;
 use super::files::{
@@ -17,7 +17,7 @@ use super::types::{
 const DEFAULT_KEEP: usize = 5;
 
 pub struct LlmApiLogStore {
-    app_handle: AppHandle,
+    publish_entry: Box<dyn Fn(&LlmApiLogIndexEntry) + Send + Sync>,
     log_root: PathBuf,
     next_id: AtomicU64,
     stream_enabled: AtomicBool,
@@ -26,7 +26,7 @@ pub struct LlmApiLogStore {
 }
 
 impl LlmApiLogStore {
-    pub fn new(app_handle: AppHandle, log_root: PathBuf) -> Self {
+    pub fn new<R: Runtime>(app_handle: AppHandle<R>, log_root: PathBuf) -> Self {
         let mut index = VecDeque::new();
         let mut next_id = 1_u64;
 
@@ -40,7 +40,9 @@ impl LlmApiLogStore {
         }
 
         Self {
-            app_handle,
+            publish_entry: Box::new(move |entry| {
+                let _ = app_handle.emit(LLM_API_LOG_EVENT, entry);
+            }),
             log_root,
             next_id: AtomicU64::new(next_id),
             stream_enabled: AtomicBool::new(false),
@@ -143,7 +145,7 @@ impl LlmApiLogStore {
         };
 
         if should_stream {
-            let _ = self.app_handle.emit(LLM_API_LOG_EVENT, index_entry);
+            (self.publish_entry)(&index_entry);
         }
 
         let log_root = self.log_root.clone();

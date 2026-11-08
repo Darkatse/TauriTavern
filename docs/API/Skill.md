@@ -14,7 +14,7 @@ const installed = await skill.list();
 
 | 方法 | 行为 |
 | --- | --- |
-| `list({ scope? }?)` | 返回安装索引列表，可按作用域筛选 |
+| `list({ scope? }?)` | 返回 Skill 列表；`all` 表示所有用户安装的 Skill，内置包须用 `builtin` 筛选 |
 | `listFiles({ scope?, name })` | 列出包内文件 |
 | `readFile({ scope?, name, path, startLine?, lineCount? })` | 读取 UTF-8 文件，支持 1-based 行范围 |
 | `writeFile({ scope?, name, path, content, expectedSha256? })` | 写入文件，可按读取到的 SHA 检查并发修改 |
@@ -22,7 +22,7 @@ const installed = await skill.list();
 | `export({ scope?, name })` | 返回 `{ fileName, contentBase64, sha256 }`，内容为 ZIP |
 | `delete({ scope?, name })` | 删除安装索引与包目录 |
 
-作用域有 `global`、`preset`、`profile`、`character`，省略时按全局处理。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
+作用域有 `global`、`preset`、`profile`、`character` 和 `builtin`，省略作用域时按全局处理。`builtin` 随应用分发，只提供列表与读取，不支持安装、写入、移动、改作用域、删除或导出；通过 `list({ scope: { kind: 'builtin' } })` 单独列出。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
 
 文件路径相对于 Skill 包。`readFile` 返回原文与原始 SHA，不展开宏；省略范围时读取全文，较长内容返回行预览和 `nextStartLine`。`writeFile` 的 SHA 不匹配时返回错误。
 

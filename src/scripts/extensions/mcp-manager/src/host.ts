@@ -1,3 +1,7 @@
+import type { ReactNode } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+
 const PREFIX = 'mcp_manager.';
 const DEFAULT_MESSAGES = Object.freeze({
     active: 'Active',
@@ -161,9 +165,13 @@ function formatMessage(message: string, params: McpMessageParams): string {
     ));
 }
 
+// SillyTavern's translate stays the same function for the page's lifetime.
+let translate: SillyTavernContext['translate'];
+
 export const tr: McpTranslator = (key, params = {}) => {
     const fallback = DEFAULT_MESSAGES[key];
-    const message = context()?.translate?.(fallback, `${PREFIX}${key}`) ?? fallback;
+    translate ??= context()?.translate;
+    const message = translate?.(fallback, `${PREFIX}${key}`) ?? fallback;
     return formatMessage(message, params);
 };
 
@@ -174,11 +182,12 @@ export function errorText(error: unknown, fallback: string): string {
     return typeof error === 'string' && error ? error : fallback;
 }
 
-export async function waitForHostReady(): Promise<void> {
-    const ready = window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__;
-    if (ready !== undefined && ready !== null) {
-        await ready;
+export function waitForHostReady(): Promise<void> {
+    const ready = window.__TAURITAVERN__?.ready;
+    if (ready == null) {
+        throw new Error(tr('hostApiUnavailable'));
     }
+    return ready;
 }
 
 export function requireMcpApi(): TauriTavernMcpApi {
@@ -203,6 +212,18 @@ export function createTextPopup(content: Element, options: PopupOptions): PopupI
 
 export function createConfirmPopup(content: Element, options: PopupOptions): PopupInstance {
     return createTypedPopup(content, options, context()?.POPUP_TYPE?.CONFIRM);
+}
+
+/** The content commits before the popup opens: the popup may run onOpen while it shows. */
+export async function showReactPopup(content: ReactNode, createPopup: (mount: HTMLElement) => PopupInstance): Promise<void> {
+    const mount = document.createElement('div');
+    const root = createRoot(mount);
+    try {
+        flushSync(() => root.render(content));
+        await createPopup(mount).show();
+    } finally {
+        root.unmount();
+    }
 }
 
 export function isPopupAffirmative(result: unknown): boolean {

@@ -1,4 +1,4 @@
-use tauri::{Manager, Resource, ResourceId, Webview};
+use tauri::{Manager, Resource, ResourceId, Runtime, Webview};
 use tokio::sync::Mutex;
 use tt_ports::byte_reader::ByteReader;
 
@@ -22,9 +22,9 @@ impl ByteResource {
 impl Resource for ByteResource {}
 
 #[tauri::command]
-pub async fn read_bytes(
+pub async fn read_bytes<R: Runtime>(
     rid: ResourceId,
-    webview: Webview,
+    webview: Webview<R>,
 ) -> Result<tauri::ipc::Response, CommandError> {
     let resource = webview
         .resources_table()

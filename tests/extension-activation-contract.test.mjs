@@ -44,7 +44,6 @@ test('discovery excludes unavailable manifests and activation preserves required
             getExtensionResourceUrl: resourceUrl,
             isThirdPartyExtension: extension => extension.startsWith('third-party/'),
         },
-        './extensions/runtime/tauri-ready.js': { waitForTauriMainReady: noop },
         [resourceUrl(name, manifest.js)]: {
             activate() {
                 hookCalls++;

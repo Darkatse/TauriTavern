@@ -39,6 +39,7 @@ pub enum AgentRunStatus {
     InitializingWorkspace,
     AssemblingContext,
     CallingModel,
+    CompactingContext,
     DispatchingTool,
     ApplyingWorkspacePatch,
     AwaitingHostCommit,
@@ -315,6 +316,14 @@ pub struct AgentModelTool {
     pub input_schema: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolImage {
+    /// Workspace path of the image file, readable by later Runs of a Session.
+    pub path: String,
+    pub mime_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolResult {
@@ -329,6 +338,38 @@ pub struct AgentToolResult {
     pub error_code: Option<String>,
     #[serde(default)]
     pub resource_refs: Vec<String>,
+    // Existing history, checkpoints and audit records predate tool images.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<AgentToolImage>,
+}
+
+impl AgentToolResult {
+    pub fn ok(call: &ToolInvocation, content: String, structured: Value) -> Self {
+        Self {
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
+            content,
+            structured,
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    /// The model reads `message`; callers may replace the default structured error details.
+    pub fn error(call: &ToolInvocation, code: &str, message: &str) -> Self {
+        let mut result = Self::ok(
+            call,
+            message.to_owned(),
+            serde_json::json!({
+                "error": { "code": code, "message": message }
+            }),
+        );
+        result.is_error = true;
+        result.error_code = Some(code.to_owned());
+        result
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

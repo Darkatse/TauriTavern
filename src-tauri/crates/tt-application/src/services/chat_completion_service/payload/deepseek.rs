@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 use crate::errors::ApplicationError;
@@ -132,7 +132,27 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         .and_then(Value::as_array)
         .is_some_and(|tools| !tools.is_empty());
 
+    let schema_prompt = payload
+        .get("json_schema")
+        .and_then(|schema| schema.get("value"))
+        .filter(|schema| !schema.is_null())
+        .map(|schema| {
+            format!(
+                "JSON schema for the response:\n{}",
+                serde_json::to_string_pretty(schema).expect("JSON value serializes"),
+            )
+        });
+    if schema_prompt.is_some() {
+        payload.insert(
+            "response_format".to_string(),
+            json!({ "type": "json_object" }),
+        );
+    }
+
     if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
+        if let Some(content) = schema_prompt {
+            messages.push(json!({ "role": "user", "content": content }));
+        }
         if is_vision {
             // Filter before SemiTools rewrites system roles; keep tool/native metadata.
             messages.retain_mut(|message| {

@@ -1,4 +1,5 @@
 mod archive;
+mod builtin;
 mod delete;
 mod files;
 mod fs_ops;
@@ -19,7 +20,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use tokio::fs;
@@ -46,14 +47,18 @@ const MAX_ZIP_COMPRESSION_RATIO: u64 = 100;
 
 pub struct FileSkillRepository {
     pub(super) root: PathBuf,
+    builtin_root: PathBuf,
+    builtin_entries: OnceLock<Vec<SkillIndexEntry>>,
     mutation_lock: Mutex<()>,
     discovered_archives: Mutex<HashMap<String, Arc<materialize::DiscoveredArchive>>>,
 }
 
 impl FileSkillRepository {
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf, builtin_root: PathBuf) -> Self {
         Self {
             root,
+            builtin_root,
+            builtin_entries: OnceLock::new(),
             mutation_lock: Mutex::new(()),
             discovered_archives: Mutex::new(HashMap::new()),
         }
@@ -80,6 +85,36 @@ impl FileSkillRepository {
         }
 
         let skill_root = self.installed_scope_root(scope)?.join(&name);
+        Self::checked_skill_root(skill_root, scope, &name).await
+    }
+
+    async fn readable_skill_root(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<PathBuf, DomainError> {
+        if !matches!(scope, SkillScope::Builtin) {
+            return self.installed_skill_root(scope, name).await;
+        }
+        let name = paths::validate_skill_name(name)?;
+        if !self
+            .builtin_entries()
+            .await?
+            .iter()
+            .any(|skill| skill.name == name)
+        {
+            return Err(DomainError::NotFound(format!(
+                "Skill not found: builtin/{name}"
+            )));
+        }
+        Self::checked_skill_root(self.builtin_root.join(&name), scope, &name).await
+    }
+
+    async fn checked_skill_root(
+        skill_root: PathBuf,
+        scope: &SkillScope,
+        name: &str,
+    ) -> Result<PathBuf, DomainError> {
         let root_metadata = fs::symlink_metadata(&skill_root)
             .await
             .map_err(|error| DomainError::file_io("stat", format!("skills/{name}"), error))?;
@@ -137,6 +172,9 @@ impl SkillRepository for FileSkillRepository {
         scope_filter: SkillScopeFilter,
     ) -> Result<Vec<SkillIndexEntry>, DomainError> {
         paths::validate_skill_scope_filter(&scope_filter)?;
+        if matches!(scope_filter, SkillScopeFilter::Builtin) {
+            return Ok(self.builtin_entries().await?.to_vec());
+        }
         let index = self.load_index_view_filtered_missing_dirs().await?;
         Ok(index
             .skills
@@ -150,7 +188,7 @@ impl SkillRepository for FileSkillRepository {
         scope: SkillScope,
         name: &str,
     ) -> Result<Vec<SkillFileRef>, DomainError> {
-        let skill_root = self.installed_skill_root(&scope, name).await?;
+        let skill_root = self.readable_skill_root(&scope, name).await?;
         package::collect_skill_files(&skill_root)
     }
 

@@ -54,11 +54,13 @@ mod prompt_snapshot;
 mod revision;
 mod scheduler;
 mod session;
+mod session_context;
 mod skill_scope;
 mod task_details;
 mod timeline_projection;
 mod tool_catalog;
 mod tool_execution;
+mod tool_images;
 mod tool_results;
 mod tool_snapshot;
 
@@ -111,7 +113,21 @@ struct PreparedInvocation {
     tool_snapshot: InvocationToolSnapshot,
     tool_turn: ToolTurnContract,
     request: AgentModelRequest,
+    // Old checkpoints predate tool images.
+    #[serde(default)]
+    accepts_images: bool,
     effective_skills: Vec<SkillIndexEntry>,
+    #[serde(skip)]
+    session: Option<session_context::SessionInvocation>,
+}
+
+struct RootInvocationInput {
+    run_id: String,
+    prompt_snapshot: serde_json::Value,
+    request: prompt_snapshot::AgentPromptRequest,
+    resolved_profile: ResolvedAgentProfile,
+    effective_skills: Vec<SkillIndexEntry>,
+    session: Option<session_context::SessionInvocation>,
 }
 
 struct PreparedInvocationTools {
@@ -135,6 +151,8 @@ pub struct AgentRuntimeService {
     skill_service: Arc<SkillService>,
     mcp_service: Arc<McpService>,
     extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
+    tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
+    tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, Arc<ActiveRunHandle>>>,
@@ -165,6 +183,8 @@ impl AgentRuntimeService {
         mcp_service: Arc<McpService>,
         workspace_shell: Arc<dyn WorkspaceShell>,
         extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
+        tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
+        tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -188,6 +208,8 @@ impl AgentRuntimeService {
             skill_service,
             mcp_service,
             extension_tools,
+            tokenization,
+            tool_image_normalizer,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),

@@ -29,6 +29,13 @@ impl fmt::Display for UserSettingsRepairReport {
     }
 }
 
+/// The settings objects holding PromptManager lists: the settings root and this member of it.
+pub const PROMPT_MANAGER_SETTINGS: &str = "oai_settings";
+/// The only fields of a PromptManager settings object that the repair reads.
+pub const PROMPT_MANAGER_LISTS: [&str; 2] = [PROMPTS, PROMPT_ORDER];
+const PROMPTS: &str = "prompts";
+const PROMPT_ORDER: &str = "prompt_order";
+
 pub fn repair_sillytavern_prompt_manager_settings(
     settings: &mut UserSettings,
 ) -> UserSettingsRepairReport {
@@ -37,29 +44,30 @@ pub fn repair_sillytavern_prompt_manager_settings(
         return report;
     };
 
-    repair_prompt_manager_settings_object(root, &mut report);
+    repair_prompt_manager_object(root, &mut report);
 
-    if let Some(oai_settings) = root.get_mut("oai_settings").and_then(Value::as_object_mut) {
-        repair_prompt_manager_settings_object(oai_settings, &mut report);
+    if let Some(oai_settings) = root
+        .get_mut(PROMPT_MANAGER_SETTINGS)
+        .and_then(Value::as_object_mut)
+    {
+        repair_prompt_manager_object(oai_settings, &mut report);
     }
 
     report
 }
 
-fn repair_prompt_manager_settings_object(
+/// Repairs one PromptManager settings object; only its [`PROMPT_MANAGER_LISTS`] are read.
+pub fn repair_prompt_manager_object(
     settings: &mut Map<String, Value>,
     report: &mut UserSettingsRepairReport,
 ) {
-    if let Some(prompts) = settings.get_mut("prompts").and_then(Value::as_array_mut) {
+    if let Some(prompts) = settings.get_mut(PROMPTS).and_then(Value::as_array_mut) {
         let before = prompts.len();
         prompts.retain(|prompt| !prompt.is_null());
         report.null_prompts += before - prompts.len();
     }
 
-    let Some(prompt_order) = settings
-        .get_mut("prompt_order")
-        .and_then(Value::as_array_mut)
-    else {
+    let Some(prompt_order) = settings.get_mut(PROMPT_ORDER).and_then(Value::as_array_mut) else {
         return;
     };
 

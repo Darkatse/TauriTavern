@@ -17,7 +17,7 @@
 
 当前前端启动顺序如下（宿主身份在页面脚本运行前已写入，见 2.1）：
 
-1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
+1. `src/init.js` 等待[可选的开发资源桥就绪信号](FrontendHostContract.md#22-就绪信号publicproject)，随后动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
 2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js`，统一提供 ESM 导出；`highlight.js` 通过 `getHljs()` 按需加载
 3. `src/tauri-main.js` 仅调用 `bootstrapTauriMain()`（薄入口）
 4. `src/tauri/main/bootstrap.js` 负责：
@@ -28,12 +28,12 @@
    - 安装同源窗口下载桥（所有宿主的浏览器式导出 → 原生交付）
    - 安装 Tauri mobile 兼容层（runtime polyfills，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
-   - 初始化 bridge 与目录信息
-   - Tauri 就绪后安装窗口快照与窗口背景发布（仅移动端）
+   - 安装后端错误桥并等待 `BackendReadiness`
+   - Tauri 就绪后安装窗口快照、窗口背景发布与抽屉栏发布（仅移动端）
 
 ### 2.1 宿主身份
 
-宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试用 `tests/helpers/host-identity.mjs` 安装身份。
+宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试由 harness 安装身份。
 
 与平台有关的判断，先分清在问什么：
 
@@ -51,6 +51,10 @@
 - 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与窗口方向时（如聊天宽度），组合 `isMobileHost()` 与 `util/window-layout.js` 的 `isWindowPortrait()`。
 
 `pnpm run check:platform`（已接入 `pnpm run check`）检查以上约束，报错指向本节。
+
+### 2.2 原生能力
+
+TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中”。应用模块只通过 `tauri-bridge.js` 使用原生能力，能力缺失时由 bridge 在调用处报错。可选插件由对应 service 判断是否可用，例如扫码的 `canScanQrCode()`。唯一例外是 Rust 在 document-start 注入的 Android 语音脚本，见[系统 TTS](CurrentState/TTS.md#接入位置)。`__TAURI_RUNNING__` 只是对外标记，内部不读取。`check:frontend` 检查这条边界。
 
 ## 3. 目录结构（前端集成相关）
 
@@ -89,7 +93,7 @@ src/
 
 - 组装模块依赖并执行初始化。
 - 确保只 bootstrap 一次。
-- 在 bridge 初始化后再次尝试 patch 运行时补丁（处理加载时序问题）。
+- 在后端就绪后再次尝试 patch 运行时补丁（处理加载时序问题）。
 - 维护对第三方可见的宿主 ABI（`window.__TAURITAVERN__`）与请求追踪 header。
 
 ### 4.2 `context.js`
@@ -175,6 +179,7 @@ src/
 - renderer 在入口只调用一次 `isManagedOwnershipRequired()`：`true` 时只启用 participant owner，`false` 时只启用原 static owner；API 是否存在和当前 DOM 形状都不能替代该决策。
 - 结构 reconcile 与纯 range projection 分离：前者只在 canonical `chat[]` 结构改变时 O(N) 执行，后者携带 epoch/revision token 并保持 O(M)。
 - mount lease 与 content lease 分离；streaming 中间帧只提交内容，最终帧才恢复 decorator/runtime。
+- streaming 中间帧（含思考中的 reasoning）按顶层块格式化和写入：regex 仍作用于整条文本，切块见 [message-blocks.js](../src/scripts/tauri/message/message-blocks.js)；未变的块沿用 HTML 与节点，变化的块原地 morph。最终帧用 `messageFormatting` 整体写入。
 - `chat_virtualization_enabled=false` 是默认值并保持上游 Show More 语义；TauriTavern Settings 的“聊天 DOM 虚拟化”开关直接绑定这个布尔值并在保存后 reload。用户显式开启后，experimental bounded 使用 TanStack 几何提交 `V ∪ T`，true tail 常驻且 `.mes` 上界为 `32 + 1`。
 - TanStack symbols 由 `lib.js` vendor facade 在 composition root 注入单一 adapter；原生 ESM 源码不直接解析 bare package。virtualizer 的 `scrollToFn` 也注入既有 ChatScrollAdapter，因此 `#chat` 的物理滚动写入仍只有一个 owner。
 - bounded 的 runtime candidate 由独立 grant lease 管理；viewport 滚动可以 revoke/re-grant，而不会伪造 content commit 或消息业务事件。
@@ -200,6 +205,34 @@ src/
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
 
+## 6.5 CodeMirror 编辑器
+
+挂载与生命周期在 `src/scripts/tauri/codemirror-editor.js`，编辑器本体在按需加载的 `src/lib-bundle-editor.js`。设置关闭时保留原生 textarea。
+
+- 源 textarea 是唯一的值来源。编辑器通过 `onChange` 通知有改动，调用方需要文本时用 `flush()` 写回源 textarea；`flush({ input: true })` 会在源上派发 `input`，沿用 textarea 原有的处理链。
+- 外壳 `.tt-codemirror-editor` 接管源 textarea 的盒子，并继承其 `resize`。读取尺寸时不排版源文本，除非源的高度由内容决定（`field-sizing: content`）。挂载先等调用方当前的同步工作结束（例如抽屉显示出源 textarea），编辑器包加载后在下一帧之前完成，源 textarea 不会先单独渲染；编辑器在页面外建好，再一次性放入页面。全屏结束后恢复用户调整过的高度。
+- 编辑器 DOM 的位置随引擎而定，判断集中在 `codemirror-editor.js`。Chromium 宿主（Windows、Android、OpenHarmony）把它放在外壳的 open shadow root 中：Blink 每次 DOM 变化都会重查编辑器外围的 `:has()` 锚点，隔离后页面选择器既不匹配它，也不会因它重算样式。WebKit 宿主（macOS、iOS、Linux）把它留在页面中：在 WebKit 的 shadow root 里，替换一段延伸到最后一行的选区的编辑，会把页面内容拉进编辑器。页面 CSS 和脚本不依赖编辑器内部 DOM 是否可见。
+- 页面中的编辑器样式由 style-mod 写进 `<head>` 的一个 `<style>`。它原本每次挂载都重写这段文本，让整页重算样式；`patches/style-mod@4.1.3.patch` 在文本不变时跳过重写，升级 style-mod 时确认上游是否已经修好。
+- 原始 `input`/`beforeinput` 停在外壳；键盘与焦点事件照常冒泡，判断焦点时需要看进 shadow root（见 `isInputElementInFocus()`）。
+- 页面通过两处与编辑器样式交互：主题自定义属性自然继承，`--tt-editor-tools: none` 隐藏工具栏（查找替换仍可打开）；查找面板打开时外壳带 `data-search-open`。
+- 使用原生光标和选区，每次按键只产生一帧。
+
+## 6.6 样式与合成成本
+
+- Blink 的所有 `:has()` 规则共用一个失效集，锚点包住的界面越大，DOM 变化时重查的代价越大。所以：
+  - `:has()` 写在规则主体上，不挂在 `body`、`#top-settings-holder` 这类大容器上；
+  - 参数里不检查 `style` 属性，需要按显示状态选择时，由改变状态的代码写类或属性；
+  - `:has()` 之后的最右复合带类、ID 或属性；
+  - 不要为了绕开 `:has()` 改用已知类名的白名单，扩展插入的控件会漏掉。
+- 兄弟组合子不要以 `*` 或纯伪类结尾、左侧又没有特征（如 `* + *`），否则 `body` 的子元素一有增删，整个 `body` 都要重算。`> * + *` 写成 `> :not(:first-child)`。
+- WebKit 中，`:has()` 后面接兄弟组合子、参数又检查状态伪类时（如 `#a:has(#b:checked) ~ #c`），页面上任何该状态的变化都会引起整页重查。改写成后代关系：`#共同父元素:has(#b:checked) #c`。
+- 成批出现的控件不要成为滚动容器，每个可见的滚动容器都会增加每一帧的合成成本。世界书标题因此按内容自适应高度，设为 `overflow: hidden`。
+- WebKit 有两种情况会重算整个文档的样式：内存占用较高时（macOS 上约 1.5 GB 以上）每 30 s 一次，以及每次打开、关闭模态 `<dialog>`。成本随渲染树里的元素数增长；原生下拉框还要重新测量选项文字，含 U+FE0F（emoji 表现选择符）的文字尤其慢。所以成批出现的下拉框，选项文字不带 U+FE0F；长列表里远离可见区域的行，不留在渲染树里。
+- 长列表的条目用 `content-visibility: auto`，并按实际高度给出 `contain-intrinsic-block-size`。WebKit 的 `content-visibility` 不省样式计算，所以世界书还会让远离可见区域的条目休眠：由 `IntersectionObserver` 判断远近，休眠条目设为 `content-visibility: hidden`，标题栏 `display: none`。休眠要守住两点：
+  - 不改变条目尺寸。`hidden` 让条目保持上次渲染的高度；否则条目会在唤醒前塌缩，快速滚动停下后列表会反复伸缩、闪烁。
+  - 不让内容变得无法测量。只隐藏标题栏，其余部分仍能读取布局，休眠时打开的条目也能正确挂载编辑器。依赖布局的初始化（如测量标题）放到唤醒时做；持有焦点的条目不休眠。
+- WebKit 每次按下鼠标、或删除持有选区的节点时，会在页面里搜索放置选区的位置，在由表单组成的长列表里要好几秒。世界书列表因此对字段以外的按下调用 `preventDefault()`，同时让当前焦点 `blur()`（`change` 时保存的字段靠失焦提交）；拆除列表前先清除其中的选区。不要用 `user-select: none` 代替，WKWebView 仍会搜索。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标
@@ -214,14 +247,14 @@ src/
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
 - `src/scripts/util/window-layout.js`：移动端原生窗口快照；`src/scripts/window-backdrop.js`：第一方背景唯一写入与条带发布入口。
+- `src/scripts/drawer-bar.js`：iOS 宿主在系统 bar 区域绘制抽屉按钮时，发布顶层抽屉并转发原生点按。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
-- `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
 
-1. `loadExtensionSettings()` 先等待 `waitForTauriMainReady()`。
+1. 启动 core 阶段确认宿主就绪后，才开始扩展发现。
 2. 前端通过 `/api/extensions/discover` 获取扩展列表与类型，读取 manifest 并进入 `activateExtensions()`。
 3. 对每个扩展执行 `addExtensionLocale()` + `addExtensionScript()` + `addExtensionStyle()`。
 4. 当扩展为 `third-party/*` 时：
@@ -307,7 +340,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 #### 7.7.3 原生内容视口与窗口背景
 
-原生宿主拥有主 WebView 的矩形，系统栏、刘海和停靠键盘在原生层消费一次，网页按普通视口排版。前端只做两件事：`util/window-layout.js` 接收窗口快照并设置 `#bg1` 的窗口矩形；`window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点，新增背景来源接入它。只有高度变化的 resize 不触发与宽度相关的工作。
+原生宿主拥有主 WebView 的矩形，系统栏、刘海和停靠键盘在原生层消费一次，网页按普通视口排版。前端只做三件事：`util/window-layout.js` 接收窗口快照并设置 `#bg1` 的窗口矩形；`window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点，新增背景来源接入它；快照宣告 `drawerBar` 时，`drawer-bar.js` 把顶层抽屉发布给原生抽屉栏，页面隐藏自己的顶栏。只有高度变化的 resize 不触发与宽度相关的工作。
 
 细节见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)，扩展可见的契约见 [API/Layout.md](API/Layout.md)。
 
@@ -366,7 +399,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 3. 若该命令为高频/可合并写入的调用，按需在 `src/tauri/main/kernel/invokes/invoke-policies.js` 增加/调整策略（dedupe / write-behind）。
 4. 在 `src/tauri/main/routes/` 对应业务域中新增路由：路由层禁止直接引用 `window`，需要浏览器能力时下沉到 `adapters/` 或 `services/`。
 5. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用；错误直接暴露（避免 silent fallback）。
-6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
+6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。返回本次请求新建、JSON 兼容且路由不再持有的大对象时用 `ownedJsonResponse`：`json()` 直接交出该对象，其他读取方式按需序列化。
 7. 跑 `pnpm run check`，确保完整工程门禁通过。
 
 ## 10. 调试与验证
@@ -400,6 +433,10 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
   - `window.__TAURITAVERN_PERF__.exportJson({ includeResources: true })` 直接拿到 JSON 字符串
   - `await window.__TAURITAVERN_PERF__.copyReport()` 通过原生写入器复制到剪贴板
 - HUD 操作：拖动标题栏移动（位置持久化），点击标题栏展开/收起；桌面端可用 `Ctrl+Alt+P` 切换开关。
+
+### 10.2 性能基线
+
+`pnpm run check` 会在固定场景里计量工作量并与记录比较。失败时的处理、重新记录与新增场景见 [性能基线](CurrentState/PerfBaseline.md)。
 
 ## 11. 工程守护（Guardrails + 类型检查）
 

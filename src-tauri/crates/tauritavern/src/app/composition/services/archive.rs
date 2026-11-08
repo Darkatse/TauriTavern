@@ -1,29 +1,27 @@
 use std::sync::Arc;
 
-use tauri::AppHandle;
-
-use crate::infrastructure::persistence::data_archive_adapters::{
-    DataDirectoryDataRootInitializer, TauriDataArchiveFileGateway,
-};
+use crate::infrastructure::persistence::data_archive_adapters::DataDirectoryDataRootInitializer;
 use tt_adapter_archive::FileDataArchiveExecutor;
 use tt_application::services::data_archive_service::{DataArchiveJobRegistry, DataArchiveService};
 use tt_application::services::database_service::DatabaseService;
 use tt_ports::sync::DataChangeReconciler;
 
+use super::super::HostEnvironment;
+
 pub(super) fn build(
-    app_handle: &AppHandle,
+    environment: &HostEnvironment,
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
     database_service: Arc<DatabaseService>,
 ) -> Arc<DataArchiveService> {
     Arc::new(DataArchiveService::new(
         database_service,
         Arc::new(DataArchiveJobRegistry::new()),
-        tauri::async_runtime::handle().inner().clone(),
+        tokio::runtime::Handle::current(),
         Arc::new(FileDataArchiveExecutor {
             prepare_personas: tt_adapter_media::persona_cards::migrate_personas,
             read_personas: tt_adapter_media::persona_cards::read_personas,
         }),
-        Arc::new(TauriDataArchiveFileGateway::new(app_handle.clone())),
+        environment.data_archive_file_gateway.clone(),
         Arc::new(DataDirectoryDataRootInitializer),
         data_change_reconciler,
     ))

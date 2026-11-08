@@ -790,10 +790,15 @@ export function restoreCaretPosition(element, position) {
     selection.addRange(range);
 }
 
-export async function resetScrollHeight(element) {
-    const control = $(element);
-    control.css('height', 'auto');
-    control.css('height', control.prop('scrollHeight') + 3 + 'px');
+/**
+ * Fits each element's height to its content. All heights are read before any is set, so the page lays out once.
+ * @param {JQuery<HTMLElement> | HTMLElement | HTMLElement[]} elements
+ */
+export async function resetScrollHeight(elements) {
+    const controls = $(elements).get();
+    for (const control of controls) control.style.height = 'auto';
+    const heights = controls.map(control => control.scrollHeight);
+    controls.forEach((control, index) => { control.style.height = `${heights[index] + 3}px`; });
 }
 
 /**
@@ -961,12 +966,14 @@ export function formatTime(seconds) {
  * countOccurrences('Hello, world!', 'x'); // 0
  */
 export function countOccurrences(string, character) {
-    let count = 0;
+    if (!character) {
+        return string.length;
+    }
 
-    for (let i = 0; i < string.length; i++) {
-        if (string.substring(i, i + character.length) === character) {
-            count++;
-        }
+    // Occurrences may overlap.
+    let count = 0;
+    for (let at = string.indexOf(character); at !== -1; at = string.indexOf(character, at + 1)) {
+        count++;
     }
 
     return count;

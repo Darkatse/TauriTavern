@@ -7,14 +7,12 @@ use tokio::task::JoinSet;
 use tt_domain::errors::DomainError;
 
 use crate::chat_directory_identity::{self, SharedChatAliasStore};
-use crate::file_system::list_files_with_extension;
+use crate::file_system::{list_files_with_extension, scan_parallelism};
 
 use super::super::FileChatRepository;
 use super::index::ChatStatsCacheEntry;
 use super::projection;
-use super::{ChatFileDescriptor, SummaryCache, directory_date, summary_cache_key};
-
-const MAX_CONCURRENT_READS: usize = 8;
+use super::{ChatFileDescriptor, SummaryCache, directory_date};
 
 impl FileChatRepository {
     pub async fn calculate_character_chat_stats(
@@ -39,7 +37,7 @@ impl FileChatRepository {
         character_names: Vec<String>,
     ) -> Result<Vec<(String, Result<(u64, i64), DomainError>)>, DomainError> {
         let mut results = Vec::with_capacity(character_names.len());
-        let semaphore = Arc::new(Semaphore::new(Self::chat_stats_parallelism()));
+        let semaphore = Arc::new(Semaphore::new(scan_parallelism()));
         let mut jobs = JoinSet::new();
 
         for character_name in character_names {
@@ -135,12 +133,11 @@ impl FileChatRepository {
             ))
         })?;
         let signature = Self::file_signature_from_metadata(&metadata);
-        let cache_key = summary_cache_key(&descriptor.path);
 
         {
             let mut cache = summary_cache.lock().await;
             cache.ensure_loaded().await;
-            if let Some(entry) = cache.get_stats(&cache_key, signature) {
+            if let Some(entry) = cache.get_stats(&descriptor.path, signature) {
                 return Ok(entry);
             }
         }
@@ -152,14 +149,7 @@ impl FileChatRepository {
         };
 
         let mut cache = summary_cache.lock().await;
-        cache.set_stats(cache_key, entry.clone());
+        cache.set_stats(&descriptor.path, entry.clone());
         Ok(entry)
-    }
-
-    pub(in crate::repositories::file_chat_repository) fn chat_stats_parallelism() -> usize {
-        std::thread::available_parallelism()
-            .map(|value| value.get())
-            .unwrap_or(4)
-            .clamp(1, MAX_CONCURRENT_READS)
     }
 }

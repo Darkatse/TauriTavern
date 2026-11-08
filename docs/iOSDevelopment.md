@@ -31,9 +31,20 @@ scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 
 
 ### 1.2 Xcode 27 构建
 
+发布用的 iOS 构建（canary 与 stable 的 `mobile` job）运行在 `xcode-27` runner 上，并选用 Xcode 27.2。应用的行为跟随链接的 SDK：用 iOS 26 SDK 链接的应用在 iPhone Duo 上以兼容模式运行，画布为旧 iPhone 尺寸，没有竖栏。
+
 Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符号，Rust 因此链接不到 Swift 入口。swift-rs 1.0.9、Tauri 2.12.3 与当前锁定的官方插件已把这些入口声明为 `public`；引入新的带 Swift 包的插件时，确认它的 `init_plugin_*` 也是 `public`。
 
 `swift-rs` 按所在 crate 的调试设置选择 Swift 优化级别。Tauri 与带 Swift 包的插件必须以同一模式构建：dev profile 对所有依赖关闭调试信息，不为其中个别 crate 单独开启。模式不一致时，真机在 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。
+
+### 1.3 iPhone Duo
+
+抽屉栏的规则见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md) 的抽屉栏一节。模拟器验证使用 Xcode 27.2：
+
+- iPhone Duo 的 iOS 27.2 runtime 与通用 runtime 分开下载，只包含 iPhone Duo；其他机型用通用 runtime。
+- 开合只能在 Device Hub 中切换。不要用 `simctl io screenConfig ... power` 模拟：它不改变形态，还会让 SpringBoard 崩溃。
+- 外屏可以用 `requestGeometryUpdateWithPreferences:` 旋转，内屏拒绝程序旋转。
+- 截图：外屏 `xcrun simctl io <udid> screenshot --display=primary`，内屏 `--display=primary-1`；加 `--mask=black` 才能看到显示圆角的裁切，外屏四角的圆角并不相同。
 
 ## 2. 文件导入与导出
 
@@ -73,7 +84,7 @@ iOS 外测/内测分发裁剪与能力分级已落地为 iOS-only 的 `ios_polic
 
 - 当前实现快照：`docs/CurrentState/iOSPolicy.md`
 
-## 6. iOS 18+ App Icon 外观变体
+## 6. App Icon 外观变体（iOS 18+ / macOS 26+）
 
 ### 6.1 现象
 
@@ -119,6 +130,21 @@ xcrun assetutil --info /tmp/tt-appicon/Assets.car
 ```
 
 输出应包含 `UIAppearanceDark` 与 `ISAppearanceTintable`。若未来重新运行 `tauri icon`，必须重新生成并保留这三个 appearance 变体。
+
+### 6.4 macOS 26+
+
+macOS 26 会把不规则形状的 `.icns` 缩小放进灰色底板。`src-tauri/crates/tauritavern/icons/AppIcon.icon` 是 Icon Composer 文档：底色与 iOS `Any` 相同，logo 为单一图层，深色、着色与透明外观由系统生成。Tauri 打包时用 `actool`（Xcode 26+）把它编译为 `Assets.car` 并写入 `CFBundleIconName`；`icon.icns` 仍作为 `CFBundleIconFile` 供 macOS 15 及更早版本使用。
+
+Tauri npm CLI 当前会让 `actool` 继承已关闭的 stdin，导致图标编译失败（[上游问题 #15315](https://github.com/tauri-apps/tauri/issues/15315)）。统一入口 `scripts/tauri-app.mjs` 在 macOS 上把 `scripts/macos` 加到子进程 PATH 前端，`actool` 入口用 `xcrun actool "$@" </dev/null` 显式提供空 stdin。升级到包含 [#15991](https://github.com/tauri-apps/tauri/pull/15991) 修复的 CLI 后，删除这个入口和 PATH 设置。
+
+更换 logo 时，用 Icon Composer 打开该文档替换 `Assets/logo.png`（1024px 透明 PNG）。预览各外观：
+
+```sh
+"$(xcode-select -p)/../Applications/Icon Composer.app/Contents/Executables/ictool" \
+  src-tauri/crates/tauritavern/icons/AppIcon.icon \
+  --export-image --output-file /tmp/tt-macos-icon.png \
+  --platform macOS --rendition Dark --width 512 --height 512 --scale 1
+```
 
 ## 7. AI 生成后台执行
 

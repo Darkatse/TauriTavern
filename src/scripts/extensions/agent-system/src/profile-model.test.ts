@@ -3,34 +3,45 @@ import { expect, test } from '@rstest/core';
 import { defaultProfile, normalizeProfileForSave, profileForEdit } from './profile-model';
 
 test('profileForEdit migrates legacy tools without widening permissions', () => {
-    for (const version of [1, 2, 3]) {
+    for (const version of [1, 2, 3, 4]) {
         const profile = defaultProfile('legacy-profile');
         profile.schemaVersion = version;
-        const id = (name: string) => version < 3 ? name : `builtin:${name}`;
-        profile.tools.allow = [id('workspace.read_file'), id('agent.list'), id('skill.read'), id('skill.run_script')];
-        profile.tools.deny = [id('workspace.shell'), id('agent.list'), id('skill.search')];
-        profile.tools.toolDescriptions = {
-            [id('workspace.read_file')]: { description: 'Read' },
-            [id('skill.read')]: { description: 'Old Skill read' },
-            [id('agent.list')]: { description: 'Old Agent list' },
-        };
-        profile.tools.maxCallsPerTool = { [id('workspace.read_file')]: 4, [id('agent.list')]: 1, [id('skill.list')]: 2 };
-        Object.assign(profile.skills, { maxReadCharsPerCall: 20_000, maxReadCharsPerRun: 80_000 });
+        profile.tools.allow = ['builtin:workspace.read_file'];
+        profile.tools.deny = ['builtin:workspace.shell'];
+        profile.tools.toolDescriptions = { 'builtin:workspace.read_file': { description: 'Read' } };
+        if (version < 4) {
+            const id = (name: string) => version < 3 ? name : `builtin:${name}`;
+            profile.tools.allow = [id('workspace.read_file'), id('agent.list'), id('skill.read'), id('skill.run_script')];
+            profile.tools.deny = [id('workspace.shell'), id('agent.list'), id('skill.search')];
+            profile.tools.toolDescriptions = {
+                [id('workspace.read_file')]: { description: 'Read' },
+                [id('skill.read')]: { description: 'Old Skill read' },
+                [id('agent.list')]: { description: 'Old Agent list' },
+            };
+            Object.assign(profile.skills, { maxReadCharsPerCall: 20_000, maxReadCharsPerRun: 80_000 });
+        }
+        Object.assign(profile.tools, {
+            maxRounds: 80,
+            maxCallsPerRun: 80,
+            maxCallsPerTool: { 'builtin:workspace.read_file': 4 },
+        });
         // Older persisted profiles can predate this field.
         Reflect.deleteProperty(profile.tools, 'externalResultInlineCharLimit');
 
         const migrated = profileForEdit(profile);
-        expect(migrated.schemaVersion).toBe(4);
+        expect(migrated.schemaVersion).toBe(5);
         expect(migrated.tools.allow).toEqual(['builtin:workspace.read_file']);
         expect(migrated.tools.deny).toEqual(['builtin:workspace.shell']);
-        expect(Object.keys(migrated.tools.toolDescriptions ?? {})).toEqual(['builtin:workspace.read_file']);
-        expect(Object.keys(migrated.tools.maxCallsPerTool ?? {})).toEqual(['builtin:workspace.read_file']);
+        expect(migrated.tools.toolDescriptions).toEqual({ 'builtin:workspace.read_file': { description: 'Read' } });
+        expect('maxRounds' in migrated.tools).toBe(false);
+        expect('maxCallsPerRun' in migrated.tools).toBe(false);
+        expect('maxCallsPerTool' in migrated.tools).toBe(false);
         expect(migrated.tools.externalResultInlineCharLimit).toBe(50_000);
         expect('maxReadCharsPerCall' in migrated.skills).toBe(false);
         expect('maxReadCharsPerRun' in migrated.skills).toBe(false);
 
-        profile.schemaVersion = 5;
-        expect(() => profileForEdit(profile)).toThrow(/profile\.schemaVersion is unsupported: 5/);
+        profile.schemaVersion = 6;
+        expect(() => profileForEdit(profile)).toThrow(/profile\.schemaVersion is unsupported: 6/);
     }
 });
 

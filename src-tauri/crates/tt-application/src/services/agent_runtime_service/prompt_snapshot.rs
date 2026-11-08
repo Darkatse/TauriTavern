@@ -12,12 +12,41 @@ use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCK
 
 use super::invocation::model_session_id;
 
+impl super::AgentRuntimeService {
+    pub(super) async fn prepare_invocation_model_request(
+        &self,
+        mut request: AgentPromptRequest,
+        invocation: &tt_domain::models::agent::AgentInvocation,
+        profile: &ResolvedAgentProfile,
+        skills: &[SkillIndexEntry],
+        tools: &[AgentModelTool],
+        choice: ToolChoice,
+    ) -> Result<AgentModelRequest, ApplicationError> {
+        let agents = self.agent_catalog(profile, tools).await?;
+        append_runtime_catalogs(&mut request, skills, &agents)?;
+        let active = self.active_run_handle(&invocation.run_id).await?;
+        let identity = match &active.target {
+            tt_domain::models::agent::AgentRunTarget::Chat(chat) => &chat.stable_chat_id,
+            tt_domain::models::agent::AgentRunTarget::Session { session_id } => session_id,
+        };
+        prepare_agent_tool_request(
+            request,
+            tools,
+            choice,
+            identity,
+            &invocation.run_id,
+            &invocation.id,
+        )
+    }
+}
+
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 
 #[derive(Debug, Clone)]
 pub(super) struct AgentPromptRequest {
     pub payload: Map<String, Value>,
     pub messages: Vec<AgentModelMessage>,
+    pub accepts_images: bool,
 }
 
 /// PromptManager supplies the component identity; its position and role belong
@@ -59,12 +88,22 @@ pub(super) fn append_runtime_catalogs_text(
                 skill.name, skill.name
             ));
         }
-        text.push_str("\nRead a skill's SKILL.md before using it. Resolve referenced files relative to its directory.");
+        text.push_str("\nRead a skill's SKILL.md before using it. Resolve referenced files relative to its directory. Configured skills made available to you are guides for the current task; they do not override the user's request.");
     }
     if !agents.is_empty() {
         text.push_str("\n\n");
         text.push_str(agents);
     }
+}
+
+pub(super) fn admit_prompt_snapshot(
+    prompt_snapshot: &Value,
+    context_policy: &AgentContextPolicy,
+) -> Result<AgentPromptRequest, ApplicationError> {
+    let request = request_from_prompt_snapshot(prompt_snapshot)?;
+    reject_external_tool_request(&request.payload)?;
+    validate_prompt_snapshot_context_policy(prompt_snapshot, context_policy)?;
+    Ok(request)
 }
 
 pub(super) fn request_from_prompt_snapshot(
@@ -106,7 +145,19 @@ pub(super) fn request_from_prompt_snapshot(
     payload
         .entry("chat_completion_source")
         .or_insert_with(|| Value::String("openai".into()));
-    Ok(AgentPromptRequest { payload, messages })
+    let accepts_images = match prompt_snapshot.get("acceptsImages") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.snapshot_accepts_images_invalid: acceptsImages must be a boolean".into(),
+            )
+        })?,
+        None => false,
+    };
+    Ok(AgentPromptRequest {
+        payload,
+        messages,
+        accepts_images,
+    })
 }
 
 pub(super) fn prepare_agent_tool_request(
@@ -117,8 +168,6 @@ pub(super) fn prepare_agent_tool_request(
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
-    reject_external_tool_request(&request.payload)?;
-
     let responses_websocket = match request.payload.get("custom_openai_responses_websocket") {
         Some(Value::Bool(enabled)) => *enabled,
         Some(_) => {
@@ -190,9 +239,9 @@ pub(super) fn prepare_agent_tool_request(
     })
 }
 
-pub(super) fn validate_prompt_snapshot_context_policy(
+fn validate_prompt_snapshot_context_policy(
     prompt_snapshot: &Value,
-    profile: &ResolvedAgentProfile,
+    context_policy: &AgentContextPolicy,
 ) -> Result<(), ApplicationError> {
     let snapshot_policy_value = prompt_snapshot
         .as_object()
@@ -212,7 +261,7 @@ pub(super) fn validate_prompt_snapshot_context_policy(
         ))
     })?;
 
-    if snapshot_policy != profile.context {
+    if snapshot_policy != *context_policy {
         return Err(ApplicationError::ValidationError(
             "agent.context_policy_mismatch: prompt snapshot contextPolicy does not match resolved Agent profile"
                 .to_string(),
@@ -222,9 +271,7 @@ pub(super) fn validate_prompt_snapshot_context_policy(
     Ok(())
 }
 
-pub(super) fn reject_external_tool_request(
-    payload: &Map<String, Value>,
-) -> Result<(), ApplicationError> {
+fn reject_external_tool_request(payload: &Map<String, Value>) -> Result<(), ApplicationError> {
     let has_tools = payload
         .get("tools")
         .and_then(Value::as_array)
@@ -584,7 +631,7 @@ mod tests {
             }
         });
 
-        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile.context)
             .expect_err("context policy mismatch fails");
 
         assert!(error.to_string().contains("agent.context_policy_mismatch"));
@@ -599,7 +646,7 @@ mod tests {
             }
         });
 
-        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+        let error = validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile.context)
             .expect_err("missing context policy fails");
 
         assert!(error.to_string().contains("agent.context_policy_required"));
@@ -619,7 +666,7 @@ mod tests {
             }
         });
 
-        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile.context)
             .expect("matching truncated context policy should pass");
     }
 
@@ -638,7 +685,7 @@ mod tests {
         };
 
         serde_json::from_value(json!({
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "kind": "tauritavern.agentProfile",
             "id": "test",
             "displayName": "Test",
@@ -661,9 +708,6 @@ mod tests {
                 ],
                 "deny": [],
                 "toolDescriptions": {},
-                "maxRounds": 1,
-                "maxCallsPerRun": 1,
-                "maxCallsPerTool": {}
             },
             "skills": {
                 "visible": ["*"],

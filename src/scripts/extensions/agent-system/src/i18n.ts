@@ -19,19 +19,21 @@ const SKILL_ACTION_KEYS: Readonly<Record<string, AgentSystemMessageKey>> = Objec
     skipped: 'skillActionSkipped',
 });
 
-type SillyTavernI18nContext = {
-    translate?: (fallback: string, key: string) => string;
-};
+type SillyTavernTranslate = (fallback: string, key: string) => string;
 
 type SillyTavernWindow = Window & {
-    SillyTavern?: { getContext?: () => SillyTavernI18nContext | null };
+    SillyTavern?: { getContext?: () => { translate?: SillyTavernTranslate } | null };
 };
 
-function getSillyTavernContext(): SillyTavernI18nContext | null {
+// SillyTavern's translate stays the same function for the page's lifetime.
+let sillyTavernTranslate: SillyTavernTranslate | undefined;
+
+function getSillyTavernTranslate(): SillyTavernTranslate | undefined {
     if (typeof window === 'undefined') {
-        return null;
+        return undefined;
     }
-    return (window as SillyTavernWindow).SillyTavern?.getContext?.() ?? null;
+    sillyTavernTranslate ??= (window as SillyTavernWindow).SillyTavern?.getContext?.()?.translate;
+    return sillyTavernTranslate;
 }
 
 function formatMessage(message: string, params: AgentSystemMessageParams): string {
@@ -42,7 +44,7 @@ function formatMessage(message: string, params: AgentSystemMessageParams): strin
 
 export const translateAgentSystem: AgentSystemTr = (key, params = {}) => {
     const defaultMessage = DEFAULT_MESSAGES[key];
-    const translate = getSillyTavernContext()?.translate;
+    const translate = getSillyTavernTranslate();
     const message = typeof translate === 'function'
         ? translate(defaultMessage, `${PREFIX}${key}`)
         : defaultMessage;

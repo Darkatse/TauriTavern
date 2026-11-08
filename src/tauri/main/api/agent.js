@@ -33,6 +33,19 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
     const subscribeLiveProjection = createAgentRunLiveSubscribe({ safeInvoke });
     const commitBridges = new Map();
 
+    function subscribeRunEvents(run) {
+        return createSharedRunEventSubscribe(run.runId, runtime.subscribe, run.afterSeq);
+    }
+
+    function attachAssemblyBridge(run) {
+        attachHostPromptAssemblyBridge({ runId: run.runId, safeInvoke, promptAssembly, subscribe: subscribeRunEvents(run) });
+    }
+
+    async function restoreAssemblyBridges() {
+        const runs = await safeInvoke('list_active_agent_runs');
+        for (const run of runs) attachAssemblyBridge(run);
+    }
+
     async function startRunWithPromptSnapshot(input) {
         return startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection: true });
     }
@@ -64,7 +77,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
     }
 
     function attachRunBridges(handle, dto, presentation = null, chatLength = presentation?.chatLength) {
-        const hostSubscribe = createSharedRunEventSubscribe(handle.runId, runtime.subscribe, handle.afterSeq);
+        const hostSubscribe = subscribeRunEvents(handle);
         const commitBridge = attachHostCommitBridge({
             runId: handle.runId,
             chatRef: dto.chatRef,
@@ -87,12 +100,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
                 : null,
         });
         commitBridges.set(handle.runId, commitBridge);
-        attachHostPromptAssemblyBridge({
-            runId: handle?.runId,
-            safeInvoke,
-            promptAssembly,
-            subscribe: hostSubscribe,
-        });
+        attachHostPromptAssemblyBridge({ runId: handle.runId, safeInvoke, promptAssembly, subscribe: hostSubscribe });
     }
 
     async function readCheckpoint(runId) {
@@ -103,11 +111,8 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         return safeInvoke('read_agent_run_checkpoint', { dto: { runId } });
     }
 
-    async function resume({ runId, additionalRounds = 0, checkpoint = null, revisionGuidance = null } = {}) {
+    async function resume({ runId, checkpoint = null, revisionGuidance = null } = {}) {
         runId = String(runId || '').trim();
-        if (!Number.isInteger(additionalRounds) || additionalRounds < 0) {
-            throw new Error('agent.resume_rounds_invalid: additionalRounds must be a non-negative integer');
-        }
         checkpoint ??= await readCheckpoint(runId);
         if (checkpoint.run.sessionId) throw new Error('agent.session_resume_unsupported: Session runs cannot be resumed');
         if (checkpoint.run.runId !== runId) throw new Error('agent.resume_checkpoint_mismatch: checkpoint belongs to another run');
@@ -123,7 +128,6 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
             expectedTerminalSeq: checkpoint.terminalSeq,
             chatRef,
             stableChatId,
-            additionalRounds,
             hostPresentation: true,
             ...(revision ? { revision: { guidance: revisionGuidance, previousOutput: presentation.rawCommittedText } } : {}),
         } });
@@ -182,7 +186,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         if (bridge) await settleHostCommitBridge(bridge);
     }
 
-    return {
+    const api = {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
         readCheckpoint,
@@ -191,6 +195,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         submitGuidance: runtime.submitGuidance,
         readEvents: runtime.readEvents,
         readWorkspaceFile: runtime.readWorkspaceFile,
+        readWorkspaceBytes: runtime.readWorkspaceBytes,
         readTaskDetail: runtime.readTaskDetail,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,
@@ -200,7 +205,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         subscribeLiveProjection,
         settleChatPresentation,
         profiles,
-        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly }),
+        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssemblyBridge }),
         tools: createAgentToolsApi({ safeInvoke }),
         promptAssembly,
         approveToolCall() {
@@ -208,6 +213,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         },
         listRuns: runtime.listRuns,
     };
+    return { api, restoreAssemblyBridges };
 }
 
 function normalizeGenerationType(value) {
@@ -315,5 +321,7 @@ export function installAgentApi(context) {
         hostAbi.api = {};
     }
 
-    hostAbi.api.agent = createAgentApi({ safeInvoke });
+    const { api, restoreAssemblyBridges } = createAgentApi({ safeInvoke });
+    hostAbi.api.agent = api;
+    return restoreAssemblyBridges;
 }

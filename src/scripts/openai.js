@@ -12,7 +12,7 @@ import {
     event_types,
     eventSource,
     Generate,
-    getExtensionPromptMaxDepth,
+    getInChatInjectionDepths,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
@@ -32,7 +32,7 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
-import { agentMessageProjection } from './tauritavern/agent/agent-model-messages.js';
+import { toAgentModelMessage } from './tauritavern/agent/agent-model-messages.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -1243,6 +1243,7 @@ function getPromptAssemblyRuntime(runtime = null) {
 
 function createHeadlessChatCompletionPromptManager(settings, {
     macroContext,
+    contextKind,
 } = {}) {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         throw new Error('prompt_assembly.settings_required: Headless prompt assembly requires chat-completion settings');
@@ -1257,7 +1258,9 @@ function createHeadlessChatCompletionPromptManager(settings, {
     assemblyPromptManager.activeCharacter = { id: configuration.promptOrder.dummyId };
     assemblyPromptManager.saveServiceSettings = () => Promise.resolve();
     assemblyPromptManager.tryGenerate = () => Promise.resolve();
-    assemblyPromptManager.tokenHandler = new TokenHandler((messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
+    assemblyPromptManager.tokenHandler = new TokenHandler(contextKind === 'session'
+        ? async () => 0
+        : (messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
     assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content ?? '', options, {
         macroContext,
     });
@@ -1399,8 +1402,8 @@ async function populationInjectionPrompts(prompts, messages, extensionPrompts = 
         'assistant': extension_prompt_roles.ASSISTANT,
     };
 
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
+    const injectedDepths = prompts.filter(prompt => prompt.content).map(prompt => prompt.injection_depth);
+    for (const i of getInChatInjectionDepths(normalizePromptAssemblyExtensionPrompts(extensionPrompts), injectedDepths)) {
         // Get prompts for current depth
         const depthPrompts = prompts.filter(prompt => prompt.injection_depth === i && prompt.content);
 
@@ -1591,12 +1594,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         const chatPrompt = chatPool[index];
 
         if (Array.isArray(chatPrompt.agentMessages)) {
-            const group = await Promise.all(chatPrompt.agentMessages.map((message, partIndex) =>
-                Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`, assemblyTokenHandler)));
-            if (!chatCompletion.canAffordAll(group)) {
-                if (chatPrompt.required) throw new TokenBudgetExceededError('agentCurrentUserMessage');
-                break;
-            }
+            const group = chatPrompt.agentMessages.map((message, partIndex) =>
+                Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`));
             for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
             sourceCount += chatPrompt.sourceCount;
             index += 1;
@@ -2443,7 +2442,11 @@ export async function prepareOpenAIMessages({
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
     const userSettings = activePromptManager.serviceSettings;
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    // Runtime compaction owns the budget for the entire Session prompt.
+    chatCompletion.setTokenBudget(
+        assemblyRuntime.contextKind === 'session' ? Number.POSITIVE_INFINITY : userSettings.openai_max_context,
+        assemblyRuntime.contextKind === 'session' ? 0 : userSettings.openai_max_tokens,
+    );
     let chatSourceCount = 0;
     let toolData = null;
 
@@ -2520,6 +2523,25 @@ export async function prepareOpenAIMessages({
     return [chat, activePromptManager.tokenHandler.counts, toolData];
 }
 
+export function createAgentPromptSnapshot(payload, { settings, contextPolicy, worldInfoActivation }) {
+    if (!Array.isArray(payload?.messages)) {
+        throw new Error('agent.prompt_snapshot_messages_required: prompt assembly must produce messages');
+    }
+    const { messages, prompt: _prompt, ...generationParameters } = payload;
+    return {
+        acceptsImages: isImageInliningSupported(settings) === true,
+        contextLimits: {
+            context: settings.openai_max_context,
+            response: settings.openai_max_tokens,
+            tokenizerModel: getTokenizerModel(settings),
+        },
+        contextPolicy,
+        ...(worldInfoActivation ? { worldInfoActivation } : {}),
+        messages: messages.map(toAgentModelMessage),
+        generationParameters,
+    };
+}
+
 /**
  * @param {{
  *   settings?: Record<string, unknown>;
@@ -2562,6 +2584,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     const extensionPrompts = normalizePromptAssemblyExtensionPrompts(promptInputs.extensionPrompts);
     const assemblyPromptManager = createHeadlessChatCompletionPromptManager(settings, {
         macroContext,
+        contextKind,
     });
     const runtime = createPromptAssemblyRuntime({
         promptManager: assemblyPromptManager,
@@ -2605,7 +2628,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     return {
         messages,
         chatCompletionPayload,
-        tokenCounts,
+        ...(contextKind === 'chat' ? { tokenCounts } : {}),
     };
 }
 
@@ -4746,7 +4769,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                     if (type !== 'impersonate' && !jsonSchema) {
                         text = appendClaudeRefusalWarning(text, stopStatus.message);
                     }
-                } else if (stopStatus?.code === 'model.output_truncated') {
+                } else if (stopStatus) {
                     toastr.error(stopStatus.message, t`Claude response truncated`);
                 }
 
@@ -4790,7 +4813,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                 message.content = appendClaudeRefusalWarning(message.content, stopStatus.message);
                 data.content?.push({ type: 'text', text: warning });
             }
-        } else if (stopStatus?.code === 'model.output_truncated') {
+        } else if (stopStatus) {
             toastr.error(stopStatus.message, t`Claude response truncated`);
         }
 
@@ -5177,15 +5200,9 @@ class Message {
         return message;
     }
 
-    static async fromAgentMessage(agentMessage, identifier, messageTokenHandler) {
-        const projection = agentMessageProjection(agentMessage);
-        const message = new Message(projection.role, projection.content, identifier);
+    static fromAgentMessage(agentMessage, identifier) {
+        const message = new Message(agentMessage.role, '', identifier);
         message.agentMessage = agentMessage;
-        message.tokens = await messageTokenHandler.countAsync({
-            ...projection,
-            ...(projection.tool_calls ? { tool_calls: JSON.stringify(projection.tool_calls) } : {}),
-            ...(projection.native ? { native: JSON.stringify(projection.native) } : {}),
-        });
         return message;
     }
 
@@ -6971,55 +6988,35 @@ function getMaxContextOpenAI(value) {
     if (oai_settings.max_context_unlocked) {
         return unlocked_max;
     }
-    else if (/^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value.startsWith('gpt-6-') || value.startsWith('gpt-6.')) {
-        return max_1050k;
+
+    /** @type {[RegExp, number][]} */
+    const contextMap = [
+        [/^gpt-6[-.]/, max_1050k],
+        [/^gpt-5\.6/, max_1050k],
+        [/^gpt-5\.[45]/, max_1mil],
+        [/^gpt-5/, max_400k],
+        [/gpt-4\.1/, max_1mil],
+        [/gpt-audio/, max_128k],
+        [/^o1/, max_128k],
+        [/^o[34]/, max_200k],
+        [/chatgpt-4o-latest|gpt-4-turbo|gpt-4o|gpt-4-1106|gpt-4-0125|gpt-4-vision/, max_128k],
+        [/gpt-3\.5-turbo-1106/, max_16k],
+        [/^(gpt-4|gpt-4-0314|gpt-4-0613)$/, max_8k],
+        [/^(gpt-4-32k|gpt-4-32k-0314|gpt-4-32k-0613)$/, max_32k],
+        [/gpt-realtime/, max_32k],
+        [/^(gpt-3\.5-turbo-16k|gpt-3\.5-turbo-16k-0613)$/, max_16k],
+        [/^code-davinci-002$/, max_8k],
+        [/^(text-curie-001|text-babbage-001|text-ada-001)$/, max_2k],
+        [/gpt-3/, max_4k],
+    ];
+
+    for (const [regex, max] of contextMap) {
+        if (regex.test(value)) {
+            return max;
+        }
     }
-    else if (/^gpt-5\.[45](?:$|-\d)/.test(value)) {
-        return max_1mil;
-    }
-    else if (value.startsWith('gpt-5')) {
-        return max_400k;
-    }
-    else if (value.includes('gpt-4.1')) {
-        return max_1mil;
-    }
-    else if (value.includes('gpt-audio')) {
-        return max_128k;
-    }
-    else if (value.startsWith('o1')) {
-        return max_128k;
-    }
-    else if (value.startsWith('o4') || value.startsWith('o3')) {
-        return max_200k;
-    }
-    else if (value.includes('chatgpt-4o-latest') || value.includes('gpt-4-turbo') || value.includes('gpt-4o') || value.includes('gpt-4-1106') || value.includes('gpt-4-0125') || value.includes('gpt-4-vision')) {
-        return max_128k;
-    }
-    else if (value.includes('gpt-3.5-turbo-1106')) {
-        return max_16k;
-    }
-    else if (['gpt-4', 'gpt-4-0314', 'gpt-4-0613'].includes(value)) {
-        return max_8k;
-    }
-    else if (['gpt-4-32k', 'gpt-4-32k-0314', 'gpt-4-32k-0613'].includes(value)) {
-        return max_32k;
-    }
-    else if (value.includes('gpt-realtime')) {
-        return max_32k;
-    }
-    else if (['gpt-3.5-turbo-16k', 'gpt-3.5-turbo-16k-0613'].includes(value)) {
-        return max_16k;
-    }
-    else if (value == 'code-davinci-002') {
-        return max_8k;
-    }
-    else if (['text-curie-001', 'text-babbage-001', 'text-ada-001'].includes(value)) {
-        return max_2k;
-    }
-    else {
-        // default to gpt-3 (4095 tokens)
-        return max_4k;
-    }
+
+    return max_128k;
 }
 
 /**
@@ -7842,15 +7839,8 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.DEEPSEEK) {
-        if (oai_settings.max_context_unlocked) {
-            $('#openai_max_context').attr('max', unlocked_max);
-        } else if (['deepseek-chat', 'deepseek-reasoner', 'deepseek-flash'].includes(oai_settings.deepseek_model) || oai_settings.deepseek_model.startsWith('deepseek-v4')) {
-            $('#openai_max_context').attr('max', max_1mil);
-        } else if (oai_settings.deepseek_model == 'deepseek-coder') {
-            $('#openai_max_context').attr('max', max_16k);
-        } else {
-            $('#openai_max_context').attr('max', max_64k);
-        }
+        const maxContext = oai_settings.max_context_unlocked ? unlocked_max : max_1mil;
+        $('#openai_max_context').attr('max', maxContext);
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');

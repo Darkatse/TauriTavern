@@ -1,0 +1,75 @@
+{
+  "agentProfiles": {
+    "issues": [],
+    "profiles": [
+      {
+        "description": "General creative writing.",
+        "directRunnable": true,
+        "displayName": "Default Writer",
+        "id": "default-writer"
+      }
+    ]
+  },
+  "settings": {
+    "agent": {
+      "retention": {
+        "auto_prune_enabled": false,
+        "keep_full_recent_runs": 20,
+        "keep_recent_terminal_runs": 100
+      }
+    },
+    "allow_keys_exposure": false,
+    "avatar_persona_original_images_enabled": false,
+    "chat_backups": {
+      "automatic_enabled": true,
+      "max_files_per_prefix": 20,
+      "max_total_bytes": 1073741824,
+      "max_total_files": 500,
+      "zstd_compression_enabled": false
+    },
+    "chat_virtualization_enabled": false,
+    "close_to_tray_on_close": true,
+    "codemirror_editor_enabled": true,
+    "cold_swipes_enabled": false,
+    "dev": {
+      "frontend_console_capture": false,
+      "llm_api_keep": 5
+    },
+    "dynamic_theme": {
+      "day_theme": "",
+      "day_wallpaper": "",
+      "enabled": false,
+      "night_theme": "",
+      "night_wallpaper": "",
+      "wallpaper_enabled": false
+    },
+    "embedded_runtime_profile": "auto",
+    "models": {
+      "claude": {
+        "prompt_cache_ttl": "off"
+      }
+    },
+    "panel_runtime_profile": "off",
+    "perf_profile": "auto",
+    "request_proxy": {
+      "bypass": [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        ".local"
+      ],
+      "enabled": false,
+      "url": ""
+    },
+    "updates": {
+      "channel": null,
+      "startup_popup": {
+        "dismissed_release_token": null
+      }
+    }
+  }
+}

@@ -472,8 +472,8 @@
         "top_p_openai": 1,
         "top_k_openai": 0,
         "stream_openai": true,
-        "openai_max_context": 4095,
-        "openai_max_tokens": 300,
+        "openai_max_context": 128000,
+        "openai_max_tokens": 8192,
         "wrap_in_quotes": false,
         "prompts": [
             {

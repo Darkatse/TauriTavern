@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const OWNED_UI_ROOTS = [
+    'packages/app-use/src',
     'src/scripts/extensions/agent-system/src',
     'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',
@@ -9,6 +10,7 @@ const OWNED_UI_ROOTS = [
 ];
 
 const COMPILER_OWNED_ROOTS = [
+    'packages/app-use/src',
     'src/scripts/extensions/agent-system/src',
     'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',

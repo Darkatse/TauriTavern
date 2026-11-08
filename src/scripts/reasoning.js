@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { chat, closeMessageEditor, event_types, eventSource, getChatScrollTop, main_api, messageFormatting, offsetChatScrollTop, saveChatConditional, saveChatDebounced, saveSettingsDebounced, setChatScrollTop, substituteParams, syncChatSurfaceProjectionHold, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { chat, closeMessageEditor, createStreamingMessageFormatter, event_types, eventSource, getChatScrollTop, main_api, messageFormatting, offsetChatScrollTop, saveChatConditional, saveChatDebounced, saveSettingsDebounced, setChatScrollTop, substituteParams, syncChatSurfaceProjectionHold, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
@@ -14,7 +14,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
-import { shouldCommitStreamingMessage } from './tauri/perf/streaming-render-policy.js';
+import { createBlockContent } from './tauri/message/block-content.js';
 import { textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { applyStreamFadeIn } from './util/stream-fadein.js';
 import { copyText, escapeRegex, isFalseBoolean, isTrueBoolean, setDatasetProperty, stringToRange, trimSpaces } from './utils.js';
@@ -294,6 +294,10 @@ export class ReasoningHandler {
     #isParsingReasoning = false;
     /** @type {number?} When reasoning is being parsed manually, and the reasoning has ended, this will be the index at which the actual messages starts */
     #parsingReasoningMesStartIndex = null;
+    /** @type {{ format: ReturnType<typeof createStreamingMessageFormatter>, content: ReturnType<typeof createBlockContent> } | null} */
+    #stream = null;
+    /** @type {string?} The reasoning text the content element last received whole */
+    #writtenText = null;
 
     /**
      * @param {Date?} [timeStarted=null] - When the generation started
@@ -324,8 +328,6 @@ export class ReasoningHandler {
         this.messageReasoningDetailsDom = null;
         /** @type {HTMLElement} Reasoning content DOM element `.mes_reasoning` */
         this.messageReasoningContentDom = null;
-        /** @type {string|null} Last canonical reasoning HTML committed during streaming. */
-        this.lastCommittedHtml = null;
         /** @type {HTMLElement} Reasoning header DOM element `.mes_reasoning_header_title` */
         this.messageReasoningHeaderDom = null;
     }
@@ -589,20 +591,20 @@ export class ReasoningHandler {
         const hasContent = Boolean(String(rawReasoning).trim());
         const hadContent = this.messageReasoningDetailsDom.dataset.hasContent === 'true';
         setDatasetPropertyIfChanged(this.messageReasoningDetailsDom, 'hasContent', hasContent ? 'true' : null);
-        const displayReasoning = messageFormatting(trimSpaces(rawReasoning), '', false, false, messageId, {}, true);
-
-        if (shouldCommitStreamingMessage({
-            lastCommittedHtml: this.lastCommittedHtml,
-            nextHtml: displayReasoning,
-            final,
-            fadeIn: power_user.stream_fade_in,
-        })) {
+        const reasoningText = trimSpaces(rawReasoning);
+        if (this.state === ReasoningState.Thinking && !final) {
+            this.#stream ??= { format: createStreamingMessageFormatter(), content: createBlockContent() };
+            const blocks = this.#stream.format(reasoningText, '', false, false, messageId, {}, true);
+            this.#stream.content.prepare(this.messageReasoningContentDom, blocks, { fadeIn: power_user.stream_fade_in })?.commit();
+            this.#writtenText = null;
+        } else if (final || reasoningText !== this.#writtenText) {
+            const displayReasoning = messageFormatting(reasoningText, '', false, false, messageId, {}, true);
             if (power_user.stream_fade_in) {
                 applyStreamFadeIn(this.messageReasoningContentDom, displayReasoning);
             } else {
                 this.messageReasoningContentDom.innerHTML = displayReasoning;
             }
-            this.lastCommittedHtml = displayReasoning;
+            this.#writtenText = reasoningText;
         }
 
         // Update tooltip for hidden reasoning edit

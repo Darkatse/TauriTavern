@@ -17,7 +17,9 @@ use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
     RequestProxySettings, UserSettings,
 };
-use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
+use tt_ports::repositories::settings_repository::{
+    SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
+};
 pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
 #[derive(Clone)]
@@ -455,8 +457,10 @@ impl SettingsService {
         &self,
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         let settings_json = async {
-            let mut user_settings = self.settings_repository.load_user_settings().await?;
-            let revision = UserSettingsRevisionDto::from_settings(&user_settings)?;
+            let StoredUserSettings {
+                settings: mut user_settings,
+                revision,
+            } = self.settings_repository.load_user_settings().await?;
             insert_personas(&mut user_settings.data, &self.avatars.get_personas().await?);
             let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
                 ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
@@ -570,11 +574,7 @@ impl SettingsService {
 
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
         tracing::info!("Creating settings snapshot");
-
-        let mut settings = self.settings_repository.load_user_settings().await?;
-        insert_personas(&mut settings.data, &self.avatars.get_personas().await?);
-        self.settings_repository.create_snapshot(settings).await?;
-
+        snapshot_user_settings(self.settings_repository.as_ref(), self.avatars.as_ref()).await?;
         Ok(())
     }
 
@@ -613,6 +613,16 @@ impl SettingsService {
 
         Ok(())
     }
+}
+
+/// Snapshots hold the Persona registry, as SillyTavern's settings file does.
+pub(crate) async fn snapshot_user_settings(
+    settings_repository: &dyn SettingsRepository,
+    avatars: &dyn AvatarRepository,
+) -> Result<String, ApplicationError> {
+    let mut settings = settings_repository.load_user_settings().await?.settings;
+    insert_personas(&mut settings.data, &avatars.get_personas().await?);
+    Ok(settings_repository.create_snapshot(settings).await?)
 }
 
 fn validate_agent_retention_settings(
@@ -936,11 +946,22 @@ mod tests {
             Ok(self.settings.lock().await.clone())
         }
 
+        async fn reset_tauritavern_settings(
+            &self,
+            _chat_backups: ChatBackupSettings,
+        ) -> Result<(), DomainError> {
+            unreachable!()
+        }
+
+        async fn reset_user_settings(&self, _disabled: &[String]) -> Result<(), DomainError> {
+            unreachable!()
+        }
+
         async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
             unreachable!()
         }
 
-        async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
+        async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError> {
             unreachable!()
         }
 
@@ -965,7 +986,7 @@ mod tests {
             unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
             unimplemented!("not used by these tests")
         }
 

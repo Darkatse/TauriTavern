@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,8 @@ const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(60);
 #[derive(Clone)]
 struct CachedAccessToken {
     value: String,
-    refresh_at: Instant,
+    // Google judges expiry by wall time, which keeps running while the device sleeps.
+    refresh_at: SystemTime,
 }
 
 #[derive(Deserialize)]
@@ -65,7 +66,7 @@ async fn get_service_account_access_token_at(
         let cache = access_token_cache().read().await;
         cache
             .get(&cache_key)
-            .filter(|token| token.refresh_at > Instant::now())
+            .filter(|token| token.refresh_at > SystemTime::now())
             .cloned()
     };
     if let Some(cached) = cached {
@@ -98,7 +99,7 @@ async fn get_service_account_access_token_at(
         Duration::from_secs(response.expires_in).saturating_sub(TOKEN_REFRESH_MARGIN);
     let cached = CachedAccessToken {
         value: response.access_token,
-        refresh_at: Instant::now() + refresh_after,
+        refresh_at: SystemTime::now() + refresh_after,
     };
     access_token_cache()
         .write()

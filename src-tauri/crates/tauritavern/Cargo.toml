@@ -1,9 +1,10 @@
 [package]
 name = "tauritavern"
-version = "2.3.0"
+version = "2.4.0"
 description = "SillyTavern backend rebuilt with Tauri and Rust"
 authors = ["TauriTavern Team"]
 edition = "2024"
+default-run = "tauritavern"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,9 +15,14 @@ edition = "2024"
 name = "tauritavern_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "tt-perf"
+required-features = ["perf"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.2", features = [] }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.12.3", features = ["protocol-asset"] }
@@ -84,6 +90,12 @@ tauri-plugin-window-state = "2.5.0"
 # Linux bundling won't demand appindicator. Revert once the CLI respects cfgs.
 tauri = { workspace = true, features = ["tray-icon"] }
 tauri-winrt-notification = "0.8.1"
+webview2-com = "0.39.1"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
+
+[target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
+webkit2gtk = "2.0.2"
+cairo-rs = { version = "0.18.5", features = ["png"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.5.2"
@@ -99,15 +111,17 @@ dispatch2 = "0.3.1"
 objc2-background-tasks = "0.3.2"
 objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSData", "NSGeometry", "objc2-core-foundation", "NSItemProvider", "NSString", "NSURL"] }
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSLayoutAnchor", "NSLayoutConstraint", "UIKeyboardLayoutGuide", "UILayoutGuide", "UITrackingLayoutGuide", "UIColor", "UIImage", "UIImageView", "UIScreen", "UIActivity", "UIActivityItemsConfiguration", "UIActivityItemsConfigurationReading", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UIGestureRecognizer", "UIPanGestureRecognizer", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSLayoutAnchor", "NSLayoutConstraint", "UIKeyboardLayoutGuide", "UILayoutGuide", "UITrackingLayoutGuide", "UIColor", "UIImage", "UIImageView", "UIScreen", "UIActivity", "UIActivityItemsConfiguration", "UIActivityItemsConfigurationReading", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UIGestureRecognizer", "UIPanGestureRecognizer", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry", "UIAccessibility", "UIAction", "UIButton", "UIButtonConfiguration", "UICornerConfiguration", "UIGlassEffect", "UIImageConfiguration", "UIImageSymbolConfiguration", "UIInteraction", "UIInterface", "UILargeContentViewer", "UIMenuElement", "UIStackView", "UITraitCollection", "UIViewLayoutRegion", "UIVisualEffect", "UIVisualEffectView"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 devtools-pilot = ["dep:tauri-plugin-pilot"]
 portable = []
+# The backend perf replay (tests/perf/backend.mjs).
+perf = ["tauri/test"]

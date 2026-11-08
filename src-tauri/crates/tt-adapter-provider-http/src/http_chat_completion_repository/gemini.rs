@@ -19,7 +19,7 @@ pub(super) async fn consume_generate_content_stream(
     })
     .await?;
 
-    accumulator.finish()
+    Ok(accumulator.finish())
 }
 
 pub(super) async fn stream_generate_content_with_native(
@@ -42,7 +42,8 @@ pub(super) async fn stream_generate_content_with_native(
     }
 
     // Keep Gemini deltas unchanged; publish the complete native turn for history replay.
-    let normalized = super::normalizers::normalize_gemini_response(accumulator.finish()?).body;
+    let normalized =
+        super::normalizers::normalize_gemini_response(provider_name, accumulator.finish())?.body;
     if let Some(native) = normalized.pointer("/choices/0/message/native") {
         let _ = sender.send(
             serde_json::json!({
@@ -57,7 +58,7 @@ pub(super) async fn stream_generate_content_with_native(
 #[derive(Default)]
 struct GeminiStreamAccumulator {
     response: Map<String, Value>,
-    candidate: Map<String, Value>,
+    candidate: Option<Map<String, Value>>,
     content: Map<String, Value>,
     parts: Vec<Value>,
     tool_call_count: usize,
@@ -96,7 +97,7 @@ impl GeminiStreamAccumulator {
             return Err(invalid_stream("candidate must be an object"));
         };
         let content = candidate.remove("content");
-        self.candidate.extend(candidate);
+        self.candidate.get_or_insert_default().extend(candidate);
 
         let mut content = match content {
             None | Some(Value::Null) => return Ok(()),
@@ -181,25 +182,17 @@ impl GeminiStreamAccumulator {
         self.parts.push(Value::Object(part));
     }
 
-    fn finish(mut self) -> Result<Value, DomainError> {
-        if self
-            .candidate
-            .get("finishReason")
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            return Err(invalid_stream("ended without a finish reason"));
+    fn finish(mut self) -> Value {
+        if let Some(mut candidate) = self.candidate {
+            self.content
+                .insert("parts".to_string(), Value::Array(self.parts));
+            candidate.insert("content".to_string(), Value::Object(self.content));
+            self.response.insert(
+                "candidates".to_string(),
+                Value::Array(vec![Value::Object(candidate)]),
+            );
         }
-
-        self.content
-            .insert("parts".to_string(), Value::Array(self.parts));
-        self.candidate
-            .insert("content".to_string(), Value::Object(self.content));
-        self.response.insert(
-            "candidates".to_string(),
-            Value::Array(vec![Value::Object(self.candidate)]),
-        );
-        Ok(Value::Object(self.response))
+        Value::Object(self.response)
     }
 }
 
@@ -253,7 +246,7 @@ mod tests {
             ]
         );
 
-        let response = accumulator.finish().unwrap();
+        let response = accumulator.finish();
         assert_eq!(response["modelVersion"], "gemini-test");
         assert_eq!(response["usageMetadata"]["totalTokenCount"], 12);
         assert_eq!(response["candidates"][0]["finishReason"], "STOP");

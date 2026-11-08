@@ -1,6 +1,8 @@
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         super::window_layout_commands::get_window_snapshot,
+        super::window_layout_commands::set_drawer_bar_items,
+        super::window_layout_commands::capture_content_viewport,
         super::window_layout_commands::set_window_backdrop,
         // TriviumDB commands
         super::database_commands::database_handle,
@@ -111,6 +113,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bootstrap_commands::get_bootstrap_metadata,
         super::bootstrap_commands::backend_error_bridge_ready,
         super::bootstrap_commands::wait_for_backend_ready,
+        // Safe mode commands
+        super::safe_mode_commands::get_safe_mode_prompt,
+        super::safe_mode_commands::dismiss_safe_mode_prompt,
+        super::safe_mode_commands::request_safe_mode,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::get_chat_backup_storage_stats,
@@ -347,10 +353,12 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::cancel_agent_run,
         super::agent_commands::submit_agent_run_guidance,
         super::agent_commands::list_agent_runs,
+        super::agent_commands::list_active_agent_runs,
         super::agent_commands::plan_agent_run_prune,
         super::agent_commands::apply_agent_run_prune,
         super::agent_commands::read_agent_run_events,
         super::agent_commands::read_agent_workspace_file,
+        super::agent_commands::read_agent_workspace_bytes,
         super::agent_commands::read_agent_task_detail,
         super::agent_commands::read_agent_model_turn,
         super::agent_commands::read_agent_prompt_assembly_request,
@@ -400,9 +408,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::update_commands::check_for_update,
         // Bridge commands
         super::bridge::emit_event,
-        super::bridge::get_version,
         super::bridge::get_client_version,
-        super::bridge::is_ready,
         #[cfg(any(dev, debug_assertions))]
         super::bridge::read_dev_web_resource,
         super::resource_bridge_commands::read_frontend_template,

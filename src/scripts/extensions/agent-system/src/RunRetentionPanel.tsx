@@ -187,7 +187,7 @@ export function RunRetentionPanel({ controller, tr, onPruned }: RunRetentionPane
                     <label className="ttas-retention-auto-toggle">
                         <input type="checkbox" checked={draft.autoPruneEnabled} onChange={(event) => controller.setAutoPruneEnabled(event.target.checked)} />
                         <span className="ttas-retention-auto-track" aria-hidden="true">
-                            <span></span>
+                            <span className="ttas-retention-auto-knob"></span>
                         </span>
                         {autoPruneCopy}
                     </label>

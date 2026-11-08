@@ -34,7 +34,7 @@ pub(super) fn validate_skill_name(raw: &str) -> Result<String, DomainError> {
 
 pub(super) fn validate_skill_scope(scope: &SkillScope) -> Result<(), DomainError> {
     match scope {
-        SkillScope::Global => Ok(()),
+        SkillScope::Builtin | SkillScope::Global => Ok(()),
         SkillScope::Preset { api_id, name } => {
             validate_scope_text(api_id, "preset api_id")?;
             validate_scope_text(name, "preset name")
@@ -46,7 +46,7 @@ pub(super) fn validate_skill_scope(scope: &SkillScope) -> Result<(), DomainError
 
 pub(super) fn validate_skill_scope_filter(filter: &SkillScopeFilter) -> Result<(), DomainError> {
     match filter {
-        SkillScopeFilter::All => Ok(()),
+        SkillScopeFilter::Builtin | SkillScopeFilter::All => Ok(()),
         SkillScopeFilter::Global => validate_skill_scope(&SkillScope::Global),
         SkillScopeFilter::Preset { api_id, name } => validate_skill_scope(&SkillScope::Preset {
             api_id: api_id.clone(),
@@ -66,6 +66,11 @@ pub(super) fn validate_skill_scope_filter(filter: &SkillScopeFilter) -> Result<(
 pub(super) fn skill_scope_storage_dir(scope: &SkillScope) -> Result<String, DomainError> {
     validate_skill_scope(scope)?;
     Ok(match scope {
+        SkillScope::Builtin => {
+            return Err(DomainError::InvalidData(
+                "skill.builtin_read_only: built-in skills are read-only".to_string(),
+            ));
+        }
         SkillScope::Global => "global".to_string(),
         SkillScope::Preset { .. } => format!("preset_{}", scope_digest(scope)),
         SkillScope::Profile { .. } => format!("profile_{}", scope_digest(scope)),

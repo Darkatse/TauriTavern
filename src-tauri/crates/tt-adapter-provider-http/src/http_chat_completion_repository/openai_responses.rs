@@ -888,8 +888,11 @@ fn terminal_response_from_event(event: &Value) -> Result<Option<&Value>, DomainE
         "response.incomplete" => Err(response_incomplete_error(
             event.get("response").unwrap_or(event),
         )),
-        "response.failed" | "error" => Err(response_failure_error(
-            event.get("response").unwrap_or(event),
+        "response.failed" => Err(response_failure_error(
+            &event.get("response").unwrap_or(event)["error"],
+        )),
+        "error" => Err(response_failure_error(
+            super::response_body::provider_error(event).unwrap_or(event),
         )),
         _ => Ok(None),
     }
@@ -913,7 +916,7 @@ fn validate_terminal_response(response: &Value) -> Result<(), DomainError> {
     match response.get("status").and_then(Value::as_str) {
         None | Some("completed") => Ok(()),
         Some("incomplete") => Err(response_incomplete_error(response)),
-        Some("failed") => Err(response_failure_error(response)),
+        Some("failed") => Err(response_failure_error(&response["error"])),
         Some(status) => Err(DomainError::InternalError(format!(
             "OpenAI Responses response did not complete (status: {status})"
         ))),
@@ -926,18 +929,25 @@ fn response_incomplete_error(response: &Value) -> DomainError {
         .and_then(Value::as_str)
         .unwrap_or("unspecified reason");
 
+    if reason == "max_output_tokens" {
+        return DomainError::InvalidData(format!(
+            "model.output_truncated: OpenAI Responses response incomplete: {reason}"
+        ));
+    }
     DomainError::InternalError(format!("OpenAI Responses response incomplete: {reason}"))
 }
 
-fn response_failure_error(response: &Value) -> DomainError {
-    let message = response
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .or_else(|| response.get("message"))
+fn response_failure_error(error: &Value) -> DomainError {
+    let message = error
+        .get("message")
         .and_then(Value::as_str)
         .unwrap_or("OpenAI Responses response failed");
 
-    DomainError::InternalError(message.to_string())
+    super::context_overflow::context_overflow_or(
+        error,
+        message.to_string(),
+        DomainError::InternalError,
+    )
 }
 
 fn parse_ws_event(payload: &[u8], operation: &str) -> Result<Value, DomainError> {
@@ -1086,16 +1096,40 @@ mod tests {
         let error = validate_terminal_response(&incomplete).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "Internal error: OpenAI Responses response incomplete: max_output_tokens"
+            "Invalid data: model.output_truncated: OpenAI Responses response incomplete: max_output_tokens"
         );
 
         let failed = json!({
-            "status": "failed",
-            "error": { "message": "provider rejected the response" }
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": { "message": "provider rejected the response" },
+                "tools": [{ "description": "prompt is too long" }],
+                "output": [{ "text": "context_length_exceeded" }]
+            }
         });
         assert_eq!(
-            validate_terminal_response(&failed).unwrap_err().to_string(),
+            terminal_response_from_event(&failed)
+                .unwrap_err()
+                .to_string(),
             "Internal error: provider rejected the response"
+        );
+
+        let websocket_error = json!({
+            "type": "error",
+            "status": 400,
+            "error": {
+                "type": "invalid_request_error",
+                "code": "previous_response_not_found",
+                "message": "Previous response with id 'resp_abc' not found.",
+                "param": "previous_response_id"
+            }
+        });
+        assert_eq!(
+            terminal_response_from_event(&websocket_error)
+                .unwrap_err()
+                .to_string(),
+            "Internal error: Previous response with id 'resp_abc' not found."
         );
     }
 

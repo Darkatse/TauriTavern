@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
@@ -7,7 +5,7 @@ use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
-use super::shared::message_content_to_text;
+use super::shared::{json_schema_fields, message_content_to_text};
 use super::tool_calls::message_tool_call_id;
 
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
@@ -36,7 +34,7 @@ fn build_openai_responses_payload(
         })?;
 
     let previous_response_id = non_empty_string(payload.get("previous_response_id"));
-    let input = build_input_items(payload.get("messages"), previous_response_id.is_some())?;
+    let input = build_input_items(payload.get("messages"))?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
@@ -91,13 +89,21 @@ fn build_openai_responses_payload(
         );
     }
 
+    let mut text = Map::new();
+    if let Some(mut format) = json_schema_fields(payload) {
+        format.insert("type".to_string(), json!("json_schema"));
+        text.insert("format".to_string(), Value::Object(format));
+    }
     if let Some(verbosity) = payload
         .get("verbosity")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
     {
-        request.insert("text".to_string(), json!({ "verbosity": verbosity }));
+        text.insert("verbosity".to_string(), json!(verbosity));
+    }
+    if !text.is_empty() {
+        request.insert("text".to_string(), Value::Object(text));
     }
 
     let mut tools = payload
@@ -128,10 +134,7 @@ fn build_openai_responses_payload(
     Ok(request)
 }
 
-fn build_input_items(
-    messages: Option<&Value>,
-    allow_orphan_tool_outputs: bool,
-) -> Result<Vec<Value>, ApplicationError> {
+fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, ApplicationError> {
     let Some(messages) = messages else {
         return Ok(Vec::new());
     };
@@ -149,18 +152,12 @@ fn build_input_items(
         )
     })?;
 
-    ResponsesTranscriptCompiler {
-        allow_orphan_tool_outputs,
-        ..Default::default()
-    }
-    .compile(entries)
+    ResponsesTranscriptCompiler::default().compile(entries)
 }
 
 #[derive(Default)]
 struct ResponsesTranscriptCompiler {
     input: Vec<Value>,
-    function_call_ids: HashSet<String>,
-    allow_orphan_tool_outputs: bool,
 }
 
 impl ResponsesTranscriptCompiler {
@@ -210,10 +207,7 @@ impl ResponsesTranscriptCompiler {
         message: &Map<String, Value>,
     ) -> Result<(), ApplicationError> {
         if let Some(native_output) = message_native_openai_responses_output(message)? {
-            for item in native_output {
-                self.remember_function_call_item(&item)?;
-                self.input.push(item);
-            }
+            self.input.extend(native_output);
             return Ok(());
         }
 
@@ -227,7 +221,6 @@ impl ResponsesTranscriptCompiler {
         }
 
         for call in assistant_function_calls(message.get("tool_calls"))? {
-            self.function_call_ids.insert(call.call_id.clone());
             self.input.push(call.into_responses_item());
         }
 
@@ -245,38 +238,11 @@ impl ResponsesTranscriptCompiler {
             )
         })?;
 
-        if !self.allow_orphan_tool_outputs && !self.function_call_ids.contains(&call_id) {
-            return Err(ApplicationError::ValidationError(format!(
-                "Responses function_call_output references call_id without preceding function_call: {call_id}"
-            )));
-        }
-
         self.input.push(json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": message_content_to_text(message.get("content")),
+            "output": responses_input_message_content(message.get("content"), true)?,
         }));
-
-        Ok(())
-    }
-
-    fn remember_function_call_item(&mut self, item: &Value) -> Result<(), ApplicationError> {
-        let object = item.as_object().ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenAI Responses native output item must be an object".to_string(),
-            )
-        })?;
-
-        if object.get("type").and_then(Value::as_str) != Some("function_call") {
-            return Ok(());
-        }
-
-        let call_id = non_empty_string(object.get("call_id")).ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenAI Responses native function_call item is missing call_id".to_string(),
-            )
-        })?;
-        self.function_call_ids.insert(call_id);
 
         Ok(())
     }
@@ -674,6 +640,41 @@ mod tests {
     use super::build;
 
     #[test]
+    fn openai_responses_payload_preserves_json_schema_and_verbosity() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "answer": { "type": "string" } },
+            "required": ["answer"],
+            "additionalProperties": false,
+        });
+        let payload = json!({
+            "model": "gpt-6-astra",
+            "messages": [{ "role": "user", "content": "Answer in JSON" }],
+            "verbosity": "low",
+            "json_schema": {
+                "name": "answer",
+                "value": schema,
+                "strict": false,
+                "description": "A short answer",
+            },
+        });
+        let (_, upstream) = build(payload.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            upstream["text"],
+            json!({
+                "verbosity": "low",
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer",
+                    "schema": schema,
+                    "strict": false,
+                    "description": "A short answer",
+                },
+            })
+        );
+    }
+
+    #[test]
     fn openai_responses_payload_maps_system_and_tool_turns_to_typed_items() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -1039,29 +1040,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_rejects_orphan_tool_output() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "tool", "tool_call_id": "call_1", "content": "orphan" }
-            ]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("without preceding function_call")
-        );
-    }
-
-    #[test]
     fn openai_responses_payload_allows_incremental_tool_output_after_previous_response() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -1086,6 +1064,27 @@ mod tests {
                 "call_id": "call_123",
                 "output": "ok"
             }])
+        );
+    }
+
+    #[test]
+    fn tool_result_images_are_preserved() {
+        let payload = json!({"model":"gpt-5",
+            "messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+            ]}).as_object().unwrap().clone();
+        let (_, upstream) = build(payload).unwrap();
+        let output = upstream["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "function_call_output")
+            .unwrap();
+        assert_eq!(
+            output["output"],
+            json!([{"type":"input_text","text":"screen"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}])
         );
     }
 }

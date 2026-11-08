@@ -22,7 +22,7 @@
 
 数值都经 range 的 `input` 提交到业务值，数字框与 Zen 滑块只从 range 投影；改变 `min/max/step` 后同样发送 `input`。格式化与保存仍由各 API 负责。
 
-恢复保存值（启动、切换预设、应用模型上下文）按“最终约束 → 写值 → `input`”进行，数值统一经 `restoreNumericInput` 写入。它只接受有限 number，缺省值由各 API 的数据层提供：Kobold、NovelAI 使用各自的默认表，Text Completion 预设只覆盖所提供的字段。超出最终范围的值会被调整，由操作入口用 `showNumericAdjustments` 按来源分组汇总提示一次；用户自己收紧约束时直接截断，不提示。
+恢复保存值（启动、切换预设、应用模型上下文）按“最终约束 → 写值 → `input`”进行，数值统一经 `restoreNumericInput` 写入。它只接受有限 number，缺省值由各 API 的数据层提供：Kobold、NovelAI 使用各自的默认表，Text Completion 预设只覆盖所提供的字段，通用的回复长度与上下文保留声明的默认值。超出最终范围的值会被调整，由操作入口用 `showNumericAdjustments` 按来源分组汇总提示一次；用户自己收紧约束时直接截断，不提示。
 
 Zen 滑块创建和刷新时不写业务值。值不在档位上时显示真实值、位置取最近档位，用户拖动后才提交档位值。
 
@@ -34,7 +34,7 @@ Zen 滑块创建和刷新时不写业务值。值不在档位上时显示真实�
 
 [`sortable-list.js`](../src/scripts/sortable-list.js) 为列表提供拖拽和上移/下移按钮。DOM 顺序是唯一的位置事实，功能在 `onReorder` 中读取并保存；后加入的条目经返回的 `addItem` 接入。`setSortableListEnabled` 同时停用拖拽与排序按钮。
 
-`.tt-control-shell` 是原生控件的可见外壳：控件本身用 `.sr-only`，仍参与键盘、读屏与 Agent 操作；外壳相对定位并显示内部焦点环。图标开关（checkbox，关联 label 加 `.not_focusable`）、头像上传与列表条目共用这一写法。legacy 适配层不为外壳推断角色或键盘行为；Agent 以外壳为可见点击表面，click 派发给原生控件。
+`.tt-control-shell` 是原生控件的可见外壳：控件本身用 `.sr-only`，仍参与键盘、读屏与 Agent 操作；外壳相对定位并显示内部焦点环。图标开关（checkbox，关联 label 加 `.not_focusable`）、头像上传与列表条目共用这一写法。legacy 适配层不为外壳推断角色或键盘行为；Agent 以外壳为可见点击表面，click 派发给原生控件。这条规则写在 in-app-agent 的 `createInteractionOptions`，外壳结构变化时要同步修改。
 
 列表条目保留原有容器，第一个子元素是原生主操作按钮（`:scope > .sr-only`，JS 用 `CONTROL_SHELL_CLASS`），点击冒泡到原有条目处理器。主操作名称引用条目标题，说明只引用日期、计数等简短事实；子操作是并列的原生按钮，读作“动作 + 对象”（`title` 提供动作，`aria-labelledby` 引用自身与条目名称）。列表与 listitem 角色由模板声明。
 

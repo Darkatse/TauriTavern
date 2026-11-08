@@ -4,7 +4,7 @@
     "requires": [],
     "optional": [],
     "js": "dist/index.bundle.js",
-    "css": "style.css",
+    "css": "dist/index.bundle.css",
     "i18n": {
         "zh-cn": "i18n/zh-cn.json",
         "zh-tw": "i18n/zh-tw.json"

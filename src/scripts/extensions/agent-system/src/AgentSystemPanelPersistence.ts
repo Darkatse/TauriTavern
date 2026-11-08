@@ -134,7 +134,8 @@ export function createAgentSystemPanelPersistence(
     }
 
     function profileDraftHasUnsavedChanges(savedProfile: TauriTavernAgentProfileDefinition): boolean {
-        return prettyJson(normalizeProfileForSave(context.getSnapshot().draft)) !== prettyJson(savedProfile);
+        return prettyJson(normalizeProfileForSave(context.getSnapshot().draft))
+            !== prettyJson(normalizeProfileForSave(savedProfile));
     }
 
     async function saveProfile(): Promise<void> {

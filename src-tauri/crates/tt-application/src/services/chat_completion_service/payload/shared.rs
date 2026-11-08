@@ -20,6 +20,29 @@ pub(super) fn insert_if_present(dst: &mut Map<String, Value>, src: &Map<String, 
     }
 }
 
+pub(super) fn json_schema_fields(payload: &Map<String, Value>) -> Option<Map<String, Value>> {
+    let json_schema = payload.get("json_schema")?.as_object()?;
+    let schema = json_schema.get("value").filter(|value| !value.is_null())?;
+    let mut fields = Map::new();
+    fields.insert(
+        "name".to_string(),
+        json_schema
+            .get("name")
+            .cloned()
+            .unwrap_or_else(|| Value::String("response".to_string())),
+    );
+    fields.insert(
+        "strict".to_string(),
+        json_schema
+            .get("strict")
+            .cloned()
+            .unwrap_or(Value::Bool(true)),
+    );
+    fields.insert("schema".to_string(), schema.clone());
+    insert_if_present(&mut fields, json_schema, "description");
+    Some(fields)
+}
+
 pub(super) fn message_content_to_text(content: Option<&Value>) -> String {
     openai_chat_content_to_lossy_text(content)
 }

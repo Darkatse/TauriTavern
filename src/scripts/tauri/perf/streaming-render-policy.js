@@ -35,16 +35,3 @@ export function getStreamingRenderInterval({ configuredFps, hidden }) {
 
     return configuredInterval;
 }
-
-/**
- * Decides whether canonical streaming HTML should be committed to the DOM.
- * @param {object} options Commit policy inputs.
- * @param {string|null} options.lastCommittedHtml Last canonical HTML committed by the state owner.
- * @param {string} options.nextHtml Next canonical HTML to render.
- * @param {boolean} options.final Whether this is the final render.
- * @param {boolean} options.fadeIn Whether the existing fade-in path must run.
- * @returns {boolean} Whether the caller should commit and update its canonical cache.
- */
-export function shouldCommitStreamingMessage({ lastCommittedHtml, nextHtml, final, fadeIn }) {
-    return Boolean(final) || Boolean(fadeIn) || lastCommittedHtml !== nextHtml;
-}
