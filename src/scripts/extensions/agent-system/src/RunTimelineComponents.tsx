@@ -64,6 +64,8 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
         const scroller = scrollerRef.current;
         if (!scroller) return;
         const onScroll = () => {
+            // A scroll dispatched after the list was hidden reads scrollTop 0.
+            if (!scroller.offsetParent) return;
             onViewport(readTimelineViewport(scroller));
             if (scroller.scrollTop <= HISTORY_TOP_LOAD_THRESHOLD_PX) onTopReached();
         };

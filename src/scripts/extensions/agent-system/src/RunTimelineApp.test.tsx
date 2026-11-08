@@ -161,13 +161,18 @@ test('detail navigation scrolls through older pages with bounded buttons and laz
     document.body.append(size);
     render(<RunTimelineApp controller={controller} tr={translate} />);
     await act(() => controller.init());
-    await userEvent.setup().click(screen.getByRole('button', { name: 'showTimelineDetails' }));
+    const events = document.querySelector<HTMLElement>('#detail-history .ttas-run-event-scroll');
+    if (!events) throw new Error('expected the event scroller');
+    // Details hide the event list before its last scroll is dispatched.
+    events.scrollTop = 1000;
+    act(() => screen.getByRole('button', { name: 'showTimelineDetails' }).click());
     const nav = screen.getByRole('navigation', { name: 'timelineDetails' });
     nav.scrollTop = 192;
     const earlier = await within(nav).findByTitle('timelineEventFileWritten:file-501.txt');
     await userEvent.setup().click(earlier);
     await screen.findByText('content:file-501.txt');
     expect(nav.querySelectorAll('button').length).toBeLessThan(40);
+    expect(reads).toEqual([Number.MAX_SAFE_INTEGER]);
 
     nav.scrollTop = 0;
     await waitFor(() => expect(controller.getSnapshot().displayItems).toHaveLength(480));
