@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 
 use crate::png_card_metadata::read_character_data_from_png_file;
 use tt_adapter_storage_core::file_system::{
-    list_files_with_extension, replace_file, unique_temp_path,
+    list_files_with_extension, replace_file, scan_parallelism, unique_temp_path,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
@@ -23,7 +23,6 @@ use super::cache::{
 };
 use super::helpers::{file_ctime_millis, file_modified_millis};
 
-const MAX_CONCURRENT_SHALLOW_READS: usize = 8;
 const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
@@ -295,7 +294,7 @@ impl FileCharacterRepository {
         let mut results: Vec<Option<CharacterShallowIndexScanEntry>> =
             (0..character_files.len()).map(|_| None).collect();
         let mut complete = true;
-        let semaphore = Arc::new(Semaphore::new(Self::shallow_index_parallelism()));
+        let semaphore = Arc::new(Semaphore::new(scan_parallelism()));
         let mut jobs = JoinSet::new();
 
         for (index, path) in character_files.into_iter().enumerate() {
@@ -422,7 +421,7 @@ impl FileCharacterRepository {
     ) -> Result<(Vec<CharacterShallowIndexCachedCharacter>, bool), DomainError> {
         let mut results = vec![None; scan_entries.len()];
         let mut complete = true;
-        let semaphore = Arc::new(Semaphore::new(Self::shallow_index_parallelism()));
+        let semaphore = Arc::new(Semaphore::new(scan_parallelism()));
         let mut jobs = JoinSet::new();
 
         for (index, entry) in scan_entries.into_iter().enumerate() {
@@ -474,13 +473,6 @@ impl FileCharacterRepository {
         }
 
         Ok((results.into_iter().flatten().collect(), complete))
-    }
-
-    fn shallow_index_parallelism() -> usize {
-        std::thread::available_parallelism()
-            .map(|value| value.get())
-            .unwrap_or(4)
-            .clamp(1, MAX_CONCURRENT_SHALLOW_READS)
     }
 
     async fn read_shallow_character_from_entry(

@@ -9,6 +9,7 @@ use tt_domain::models::chat::strip_jsonl_extension;
 
 use super::FileChatRepository;
 use super::summary::ChatFileDescriptor;
+use crate::file_system::scan_parallelism;
 
 #[derive(Clone)]
 struct RankedChatDescriptor {
@@ -78,7 +79,7 @@ impl FileChatRepository {
         }
 
         let mut ranked_non_pinned = Vec::new();
-        let semaphore = Arc::new(Semaphore::new(Self::chat_stats_parallelism()));
+        let semaphore = Arc::new(Semaphore::new(scan_parallelism()));
         let mut jobs = JoinSet::new();
 
         for descriptor in non_pinned {
