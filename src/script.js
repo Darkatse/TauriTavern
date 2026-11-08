@@ -9710,13 +9710,10 @@ export function setGenerationParamsFromPreset(preset, adjustments) {
 // Common code for message editor done and auto-save
 function updateMessage(div) {
     const mesBlock = div.closest('.mes_block');
-    const editTextarea = mesBlock.find('.edit_textarea');
-    if (!editTextarea.length) {
-        // The editor was closed by a concurrent re-render. Reading the rendered .mes_text
-        // here would write extension HTML/CSS into the message; fail loudly instead.
-        throw new Error('messageEdit: the editor closed before the edit was saved; reopen the message to retry');
+    let text = mesBlock.find('.edit_textarea').val();
+    if (text === undefined) {
+        throw new Error('The message editor is no longer open');
     }
-    let text = editTextarea.val();
     const mesElement = div.closest('.mes');
     const messageId = Number(mesElement.attr('mesid'));
     const mes = chat[messageId];
@@ -9925,6 +9922,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     const ownedFocus = thisMesDiv[0].contains(document.activeElement);
     thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
     thisMesBlock.find('.mes_buttons').css('display', '');
+    thisMesBlock.find('.edit_textarea').remove();
 
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (thisMesDiv[0]),
@@ -10054,18 +10052,12 @@ async function messageEditDone(div) {
     const mes = chat[this_edit_mes_id];
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
+    mesBlock.find('.edit_textarea').remove();
 
-    // A display refresh never replaces an editor or a detached message: while we awaited
-    // the event, a concurrent re-render (or a newer edit on this message) may have replaced
-    // the DOM. Re-rendering now would destroy an open editor, and updateMessage would then
-    // read rendered text and corrupt the message.
-    const mesElement = div.closest('.mes');
-    if (mesElement.length && !mesElement.find('.edit_textarea').length) {
-        replaceMesTextHtmlWithRuntimePolicy(
-            /** @type {HTMLElement} */ (mesElement[0]),
-            getMessageTextHTML(mes, { messageId: this_edit_mes_id }),
-        );
-    }
+    replaceMesTextHtmlWithRuntimePolicy(
+        /** @type {HTMLElement} */ (div.closest('.mes')[0]),
+        getMessageTextHTML(mes, { messageId: this_edit_mes_id }),
+    );
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
     appendMediaToMessage(mes, div.closest('.mes'));

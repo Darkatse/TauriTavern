@@ -94,7 +94,8 @@ await registration.refresh();
 - 宿主仅保存 participant 加入 wrapper/runtime 之前的 HTML 字符串，不保存 DOM、不写回 `extra.display_text`，聊天 epoch 结束后释放结果。
 - 首次准备或更新等待期间，`.mes_text` 为空且标记 `aria-busy`；`didMount` 仍表达楼层挂载。准备完成后，通过现有内容事务提交，再运行 `prepareContent`、`didCommitContent` 与 runtime admission。
 - 编辑与流式中间内容不执行处理器或启动 runtime。核心生成路径在 `MESSAGE_RECEIVED` 处理完成后提交最终内容，再发送 rendered 事件；同步 `addOneMessage()` / `updateMessageBlock()` 仍同步返回，异步显示完成以 `didCommitContent` 为准。
-- `refresh()` 更新已挂载的正文与 reasoning，保留 root 和 mount lease；编辑/流式内容延至结束后更新。reasoning 不进入正文异步处理链。
+- 消息编辑器打开期间，正文更新（包括 `updateMessageBlock()`）不替换它；完成或取消编辑时按消息数据重新渲染。
+- `refresh()` 更新已挂载的正文与 reasoning，保留 root 和 mount lease；流式内容与正在编辑的 reasoning 延至结束后更新。reasoning 不进入正文异步处理链。
 - 内容被替代、处理中消息被删除或重编号、聊天切换时，signal abort，旧结果不得回写。扩展需要配合取消自己的异步操作；宿主无法回滚模板已经产生的业务副作用。
 - 注册必须早于首次投影；重复 id、非法返回值与处理异常立即报错，处理异常带处理器 id 和消息位置并 fault 当前 epoch。`refresh()` 返回的 Promise 等待当前挂载消息完成准备并传播错误。
 
