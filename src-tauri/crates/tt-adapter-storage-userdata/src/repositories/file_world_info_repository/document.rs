@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use serde::Deserialize;
 use serde::de::IgnoredAny;
 use serde_json::value::RawValue;
+use tt_contracts::world_info::WorldInfoListItem;
 use tt_domain::errors::DomainError;
 
 /// A validated document borrowing its original representation.
@@ -37,6 +39,35 @@ pub(super) fn replacement(bytes: &[u8]) -> Result<(String, Document<'_>), Domain
         .ok_or_else(|| DomainError::InvalidData("World file must have a name".into()))?;
     let data = fields.get("data").ok_or_else(invalid_document)?;
     Ok((name, Document::parse(data.get().as_bytes())?))
+}
+
+pub(super) fn list_item(file_id: &str, bytes: &[u8]) -> WorldInfoListItem {
+    // Capturing only these fields leaves the others, entries included, undecoded.
+    #[derive(Default, Deserialize)]
+    struct Fields<'a> {
+        #[serde(borrow)]
+        name: Option<&'a RawValue>,
+        #[serde(borrow)]
+        extensions: Option<&'a RawValue>,
+    }
+    let fields: Fields = serde_json::from_slice(bytes).unwrap_or_default();
+    let name = fields
+        .name
+        .and_then(|value| serde_json::from_str::<String>(value.get()).ok())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| file_id.to_owned());
+    let extensions = fields
+        .extensions
+        .filter(|value| value.get().starts_with(['{', '[']))
+        .map_or_else(
+            || RawValue::from_string("{}".to_owned()).expect("`{}` is JSON"),
+            RawValue::to_owned,
+        );
+    WorldInfoListItem {
+        file_id: file_id.to_owned(),
+        name,
+        extensions,
+    }
 }
 
 fn invalid_document() -> DomainError {

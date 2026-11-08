@@ -17,3 +17,4 @@ pub mod settings;
 pub mod sync;
 pub mod sync_automation;
 pub mod window_layout;
+pub mod world_info;

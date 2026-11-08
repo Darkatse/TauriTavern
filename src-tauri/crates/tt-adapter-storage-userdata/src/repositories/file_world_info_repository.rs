@@ -9,8 +9,11 @@ use tokio::fs;
 use crate::png_card_metadata::read_text_chunks_from_png;
 use tt_adapter_storage_core::commit_stage::{CommitSessions, PageGeneration};
 use tt_adapter_storage_core::file_system::{delete_file, list_files_with_extension};
-use tt_adapter_storage_core::sillytavern_sorting::sort_strings_sillytavern_name;
+use tt_adapter_storage_core::sillytavern_sorting::{
+    sort_paths_by_file_name_sillytavern_name, sort_strings_sillytavern_name,
+};
 use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::world_info::WorldInfoListItem;
 use tt_domain::errors::DomainError;
 use tt_domain::models::world_info::{
     WORLD_INFO_EXTENSION, sanitize_world_info_file_name, sanitize_world_info_import_name,
@@ -253,6 +256,37 @@ impl WorldInfoRepository for FileWorldInfoRepository {
 
         Ok(names)
     }
+
+    async fn list_world_info(&self) -> Result<Vec<WorldInfoListItem>, DomainError> {
+        let mut paths = list_files_with_extension(&self.worlds_dir, WORLD_INFO_EXTENSION).await?;
+        sort_paths_by_file_name_sillytavern_name(&mut paths)?;
+        tokio::task::spawn_blocking(move || {
+            paths
+                .iter()
+                .filter_map(|path| {
+                    let file_id = path
+                        .file_stem()
+                        .and_then(OsStr::to_str)
+                        .expect("sorting rejects file names that are not UTF-8");
+                    match std::fs::read(path) {
+                        Ok(bytes) => Some(document::list_item(file_id, &bytes)),
+                        Err(error) => {
+                            tracing::error!(
+                                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                                "Skipped world info {}: {error}",
+                                path.display()
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect()
+        })
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("World info list task failed: {error}"))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -287,6 +321,31 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(self.path.parent().expect("test root"));
         }
+    }
+
+    #[tokio::test]
+    async fn list_passes_book_metadata_through_in_file_name_order() {
+        let dir = TestDir::new();
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
+        let books: [(&str, &[u8]); 3] = [
+            (
+                "Lore",
+                br#"{"entries":{"0":{"content":"\ud800","order":9007199254740993}},"name":"Display","extensions": {"z": 1, "a": 2}}"#,
+            ),
+            ("Lore - 2", br#"{"entries":{},"name":"","extensions":42}"#),
+            ("Broken", b"not json"),
+        ];
+        for (name, bytes) in books {
+            std::fs::write(dir.path().join(format!("{name}.json")), bytes).expect("write world");
+        }
+
+        let items = repository.list_world_info().await.expect("list world info");
+
+        assert_eq!(
+            serde_json::to_string(&items).expect("encode list"),
+            r#"[{"file_id":"Broken","name":"Broken","extensions":{}},{"file_id":"Lore - 2","name":"Lore - 2","extensions":{}},{"file_id":"Lore","name":"Display","extensions":{"z": 1, "a": 2}}]"#
+        );
     }
 
     #[tokio::test]

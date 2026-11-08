@@ -144,6 +144,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::dev_logging_commands::devlog_get_llm_api_log_preview,
         super::dev_logging_commands::devlog_get_llm_api_log_raw,
         // World info commands
+        super::world_info_commands::list_world_info,
         super::world_info_commands::get_world_info,
         super::world_info_commands::normalize_world_info_name,
         super::world_info_commands::begin_world_info_commit,

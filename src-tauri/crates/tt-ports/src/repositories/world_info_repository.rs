@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::path::Path;
 
 use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::world_info::WorldInfoListItem;
 use tt_domain::errors::DomainError;
 
 #[async_trait]
@@ -49,4 +50,5 @@ pub trait WorldInfoRepository: Send + Sync {
         converted_data: Option<&str>,
     ) -> Result<String, DomainError>;
     async fn list_world_names(&self) -> Result<Vec<String>, DomainError>;
+    async fn list_world_info(&self) -> Result<Vec<WorldInfoListItem>, DomainError>;
 }

@@ -258,6 +258,8 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 世界书 get/edit 直接读写磁盘，保留未知字段和键顺序，不合并编辑缓存；get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
 
+`/api/worldinfo/list` 只列出扩展名为小写 `.json` 的文件，与 get/edit 寻址的范围相同；上游不区分扩展名大小写。
+
 最关键的启动依赖：
 
 - `/csrf-token`：返回固定 token（用于兼容上游初始化对 CSRF 的假设）
