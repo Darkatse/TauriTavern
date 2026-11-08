@@ -199,6 +199,9 @@ export class SettingsUi {
                 this.color.color = qrs.color;
                 return;
             }
+            // The picker also reports colors set from code, which are not changes.
+            // @ts-ignore
+            if (evt.detail.rgb === qrs.color) return;
             // @ts-ignore
             qrs.color = evt.detail.rgb;
             qrs.save();
