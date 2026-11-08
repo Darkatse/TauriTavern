@@ -11,7 +11,6 @@ use crate::file_system::list_files_with_extension;
 use super::super::FileChatRepository;
 use super::{
     ChatFileDescriptor, FileSignature, SummaryCacheEntry, message_display_text, projection,
-    summary_cache_key,
 };
 
 impl FileChatRepository {
@@ -159,12 +158,11 @@ impl FileChatRepository {
             ))
         })?;
         let signature = Self::file_signature_from_metadata(&metadata);
-        let cache_key = summary_cache_key(&descriptor.path);
 
         let mut cache = self.summary_cache.lock().await;
         cache.ensure_loaded().await;
         let entry = cache
-            .get(&cache_key)
+            .get(&descriptor.path)
             .filter(|entry| entry.signature == signature)
             .filter(|entry| !require_fingerprint || entry.fingerprint.is_some())
             .cloned();
@@ -195,7 +193,7 @@ impl FileChatRepository {
         self.summary_cache
             .lock()
             .await
-            .set(summary_cache_key(&descriptor.path), scanned.clone());
+            .set(&descriptor.path, scanned.clone());
         Ok(scanned)
     }
 
@@ -251,7 +249,7 @@ impl FileChatRepository {
             self.summary_cache
                 .lock()
                 .await
-                .set(summary_cache_key(&descriptor.path), entry.clone());
+                .set(&descriptor.path, entry.clone());
             (entry, text)
         };
         Ok((entry.summary.into(), text))

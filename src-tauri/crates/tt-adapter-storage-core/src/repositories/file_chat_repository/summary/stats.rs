@@ -12,7 +12,7 @@ use crate::file_system::list_files_with_extension;
 use super::super::FileChatRepository;
 use super::index::ChatStatsCacheEntry;
 use super::projection;
-use super::{ChatFileDescriptor, SummaryCache, directory_date, summary_cache_key};
+use super::{ChatFileDescriptor, SummaryCache, directory_date};
 
 const MAX_CONCURRENT_READS: usize = 8;
 
@@ -135,12 +135,11 @@ impl FileChatRepository {
             ))
         })?;
         let signature = Self::file_signature_from_metadata(&metadata);
-        let cache_key = summary_cache_key(&descriptor.path);
 
         {
             let mut cache = summary_cache.lock().await;
             cache.ensure_loaded().await;
-            if let Some(entry) = cache.get_stats(&cache_key, signature) {
+            if let Some(entry) = cache.get_stats(&descriptor.path, signature) {
                 return Ok(entry);
             }
         }
@@ -152,7 +151,7 @@ impl FileChatRepository {
         };
 
         let mut cache = summary_cache.lock().await;
-        cache.set_stats(cache_key, entry.clone());
+        cache.set_stats(&descriptor.path, entry.clone());
         Ok(entry)
     }
 
