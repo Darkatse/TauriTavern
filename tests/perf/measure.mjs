@@ -21,7 +21,7 @@ export async function measure({ rust } = {}) {
     await rm(inputs, { recursive: true, force: true });
     await mkdir(inputs, { recursive: true });
     await writeDataRoot(path.join(inputs, 'data'));
-    await writeFile(path.join(inputs, 'trace.json'), JSON.stringify({ calls: frontend.calls }));
+    await writeFile(path.join(inputs, 'trace.json'), JSON.stringify({ previousLaunch: frontend.previousLaunch, calls: frontend.calls }));
     const backend = measureBackend({ root, inputs, rust });
     const steps = {};
     for (const step of new Set([...Object.keys(frontend.steps), ...Object.keys(backend.steps)])) {

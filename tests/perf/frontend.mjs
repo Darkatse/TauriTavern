@@ -152,6 +152,9 @@ const fixture = createWebHostFixture(data.settings, data.theme, data.extensions)
 fixture.chatFiles.set('review-chat', data.chat.map(record => JSON.stringify(record)).join('\\n'));
 fixture.chatFiles.set('ledger-chat', data.ledgerChat.map(record => JSON.stringify(record)).join('\\n'));
 fixture.chatFiles.set('atlas-chat', data.atlasChat.map(record => JSON.stringify(record)).join('\\n'));
+// A reload is the same user's next launch, which finds what the earlier ones wrote.
+const kept = sessionStorage.getItem('perf-host');
+if (kept) fixture.restore(JSON.parse(kept));
 const respond = (body, status = 200) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const cards = {
     'Review.png': () => JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/characters/get', headers: {}, body: '{}' }).body),
@@ -235,8 +238,12 @@ installWebHost({
 // Host traffic as the native host sees it: the UTF-8 JSON of every command's arguments and result, with binary
 // data counted by its bytes. The trace records every call in order for the backend replay; strings the host
 // issued (session ids, revisions) become references to the result that issued them, including results that are
-// JSON documents in binary form.
-globalThis.__perfHost = { bytes: 0, recording: true, step: 'app/startup', calls: [], issued: new Map() };
+// JSON documents in binary form. Resource ids are small numbers, so only a result's \`readerId\` issues one and
+// only an argument's \`rid\` refers to one.
+globalThis.__perfHost = {
+    bytes: 0, recording: true, step: 'app/startup', calls: [], issued: new Map(),
+    keep: () => sessionStorage.setItem('perf-host', JSON.stringify(fixture.snapshot())),
+};
 const utf8 = new TextEncoder();
 function hostBytes(value) {
     let binary = 0;
@@ -260,6 +267,7 @@ function traced(value, issued) {
     if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return { $bytes: base64(bytesOf(value)) };
     return JSON.parse(JSON.stringify(value ?? {}, (key, item) => {
         if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) return Array.from(bytesOf(item));
+        if (typeof item === 'number' && key !== 'rid') return item;
         return issued.has(item) ? { $result: issued.get(item) } : item;
     }));
 }
@@ -273,7 +281,8 @@ function parsedResult(value) {
     }
 }
 function rememberIssued(issued, index, value, at = []) {
-    if (issuedToken(value) && !issued.has(value)) issued.set(value, [index, at]);
+    const resourceId = typeof value === 'number' && at.at(-1) === 'readerId';
+    if ((issuedToken(value) || resourceId) && !issued.has(value)) issued.set(value, [index, at]);
     else if (value && typeof value === 'object' && !ArrayBuffer.isView(value) && !(value instanceof ArrayBuffer)) {
         for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, [...at, key]);
     }
@@ -281,6 +290,8 @@ function rememberIssued(issued, index, value, at = []) {
 // Native commands the Web Host lacks, answered as the native host would.
 const { session, messages, runs } = data.assistant;
 const nativeOnly = {
+    // A user on the latest release.
+    check_for_update: ({ channel }) => ({ has_update: false, current_version: '2.3.0', channel, release_token: null, latest_release: null }),
     count_openai_tokens_batch: ({ dto }) => ({ token_counts: dto.requests.map(request => Math.ceil(JSON.stringify(request.messages).length / 4)) }),
     load_agent_session_profile: () => ({ profile: null }),
     list_agent_sessions: () => ({ sessions: [session], activeRuns: [] }),
@@ -309,7 +320,13 @@ window.__TAURI__.core.invoke = async (command, args, options) => {
     host.bytes += hostBytes(args);
     const index = host.calls.length;
     host.calls.push({ step: host.step, command, args: traced(args, host.issued), headers: traced(options?.headers, host.issued) });
-    const result = await invoke(command, args, options);
+    let result;
+    try {
+        result = await invoke(command, args, options);
+    } catch (error) {
+        host.calls[index].rejected = error instanceof Error ? error.message : JSON.stringify(error);
+        throw error;
+    }
     host.bytes += hostBytes(result);
     rememberIssued(host.issued, index, parsedResult(result));
     return result;
@@ -636,11 +653,8 @@ async function openFrontend({ allocations = false } = {}) {
         }
     }
 
-    // Startup's work depends on when resources finish loading, so it records the page it produces.
-    try {
-        // index.html declares <base href="/">: with a query string, jQuery UI Tabs treats its tabs as remote and
-        // loads the whole page into a tab panel.
-        await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    async function launch(load) {
+        await load();
         // The fixture's character opens its chat, review-chat, once startup has finished.
         await page.waitForFunction(() => globalThis.__TAURITAVERN_STARTUP_STAGE__ === 'full'
             && globalThis.SillyTavern?.getContext().chatId === 'review-chat', null, { polling: 100 });
@@ -648,6 +662,20 @@ async function openFrontend({ allocations = false } = {}) {
         // the pointer starts at a fixed point.
         await page.mouse.move(1, 1);
         await settle();
+    }
+
+    // The measured launch is the user's second, which finds what the first left; the backend replays the first's
+    // host calls before it. A launch's work depends on when resources finish loading, so startup records only the page.
+    let previousLaunch;
+    try {
+        // index.html declares <base href="/">: with a query string, jQuery UI Tabs treats its tabs as remote and
+        // loads the whole page into a tab panel.
+        await launch(() => page.goto(`http://127.0.0.1:${server.address().port}/`));
+        previousLaunch = await page.evaluate(() => {
+            globalThis.__perfHost.keep();
+            return globalThis.__perfHost.calls;
+        });
+        await launch(() => page.reload());
         if (allocations) {
             await page.evaluate(() => { globalThis.__perfHost.recording = false; });
             await cdp.send('HeapProfiler.enable');
@@ -675,7 +703,9 @@ async function openFrontend({ allocations = false } = {}) {
         results,
         problems,
         chromium: browser.version(),
-        /** Every host call so far, in order, with the step it belongs to: `app/startup`, a measured step or null. */
+        previousLaunch,
+        /** The host calls since the measured launch began, in order, with the step each belongs to: `app/startup`, a
+         * measured step or null. */
         hostCalls: () => page.evaluate(() => globalThis.__perfHost.calls),
         close,
     };
@@ -690,6 +720,10 @@ async function runScenarios(options) {
             await scenario(app);
         }
         app.calls = await app.hostCalls();
+        // The page went on down a path the native host would not have sent it.
+        for (const call of [...app.previousLaunch, ...app.calls]) {
+            if (call.rejected) app.problems.push(`The host rejected ${call.command}: ${call.rejected}`);
+        }
     } finally {
         await app.close();
     }
@@ -701,7 +735,8 @@ async function runScenarios(options) {
 
 /**
  * Runs every *.perf.mjs scenario in two sessions, one for engine work and host traffic and one for JavaScript
- * allocations. Returns each step's counters, the browser version and the first session's host calls.
+ * allocations. Returns each step's counters, the browser version, and the first session's host calls: the previous
+ * launch's and those from the measured launch on.
  */
 export async function measureFrontend() {
     const engine = await runScenarios();
@@ -711,5 +746,5 @@ export async function measureFrontend() {
         if (!allocations[step]) throw new Error(`The allocation session did not measure ${step}`);
         Object.assign(engine.results[step], allocations[step]);
     }
-    return { chromium: engine.chromium, steps: engine.results, calls: engine.calls };
+    return { chromium: engine.chromium, steps: engine.results, previousLaunch: engine.previousLaunch, calls: engine.calls };
 }

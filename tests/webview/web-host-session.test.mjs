@@ -30,6 +30,9 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
         expect(await main.saveSettings()).toBe(true);
         await invoke('update_tauritavern_settings', { dto: { dynamic_theme: { day_theme: 'Dark Lite' } } });
         await invoke('update_tauritavern_settings', { dto: { dynamic_theme: { night_theme: 'Dark Lite' } } });
+        const { extension, mcp } = window.__TAURITAVERN__.api;
+        await extension.store.setJson({ namespace: 'webHostSession', key: 'note', value: { kept: true } });
+        await mcp.servers.create({ displayName: 'Session tools', endpoint: 'https://tools.invalid/mcp' });
         await window.fetch('/api/themes/save', {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name: 'Session theme', blur_strength: 17 }),
@@ -79,6 +82,9 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
         const stored = await second.window.__TAURI__.core.invoke('get_tauritavern_settings');
         expect(stored.dynamic_theme.day_theme).toBe('Dark Lite');
         expect(stored.dynamic_theme.night_theme).toBe('Dark Lite');
+        const api = second.window.__TAURITAVERN__.api;
+        expect(await api.extension.store.getJson({ namespace: 'webHostSession', key: 'note' })).toEqual({ kept: true });
+        expect((await api.mcp.servers.list()).servers.map(server => server.displayName)).toContain('Session tools');
         const response = JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/settings/get', headers: {}, body: '{}' }).body);
         expect(response.themes.find(theme => theme.name === 'Session theme').blur_strength).toBe(17);
         const reloadedCard = JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/characters/get', headers: {}, body: '{}' }).body);

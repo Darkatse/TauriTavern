@@ -126,6 +126,16 @@ export function createWebHostFixture(defaultSettings, theme, extensions) {
         backend,
         chatFiles,
         store: { load: () => state, save: value => { state = structuredClone(value); } },
+        /** What the pages of this session have written, as JSON, for a later page to start from. */
+        snapshot: () => ({ payload, cardJson, chatFiles: [...chatFiles], lore, state }),
+        restore(saved) {
+            Object.assign(payload, saved.payload);
+            cardJson = saved.cardJson;
+            chatFiles.clear();
+            for (const [file, text] of saved.chatFiles) chatFiles.set(file, text);
+            lore = saved.lore;
+            state = saved.state;
+        },
     };
 }
 

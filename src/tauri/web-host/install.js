@@ -11,6 +11,8 @@ import { createWorldInfoCommits } from './protocols/world-info-commit.js';
 import { createWriteCommands } from './commands/write.js';
 import { createGenerationCommands } from './protocols/generation.js';
 import { createExtensionCommands } from './commands/extensions.js';
+import { createExtensionStore } from './protocols/extension-store.js';
+import { createMcpCommands } from './commands/mcp.js';
 import { TAURI_GRACEFUL_EXIT_EVENT } from '../main/services/lifecycle/lifecycle-flush-service.js';
 
 /**
@@ -23,6 +25,7 @@ import { TAURI_GRACEFUL_EXIT_EVENT } from '../main/services/lifecycle/lifecycle-
  *   store: { load: () => Record<string, any> | null, save: (value: Record<string, any>) => void },
  * }} WebHostOptions
  * @typedef {Record<string, (args: any, options: any) => any>} CommandHandlers
+ * @typedef {{ load: () => any, save: (value: any) => void }} HostStatePart
  */
 
 /** Install before init.js. Backend and store belong to the embedding Session. @param {WebHostOptions} options */
@@ -37,7 +40,13 @@ export function installWebHost({ identity, backend, store }) {
             return response.json();
         });
     }
-    const settings = createSettings(store, async () => (await loadDefaults()).settings);
+    // The store document keeps each kind of host state under its own name.
+    /** @param {string} name @returns {HostStatePart} */
+    const part = name => ({
+        load: () => store.load()?.[name] ?? null,
+        save: value => store.save({ ...store.load(), [name]: value }),
+    });
+    const settings = createSettings(part('settings'), async () => (await loadDefaults()).settings);
     const st = createBackend(backend);
     const resources = createResources();
     /** @type {CommandHandlers} */
@@ -51,6 +60,8 @@ export function installWebHost({ identity, backend, store }) {
         ...createWriteCommands(st),
         ...createGenerationCommands(st),
         ...createExtensionCommands(st, fetchResource, loadDefaults),
+        ...createExtensionStore(part('extensionStore'), resources),
+        ...createMcpCommands(part('mcpServers')),
         wait_for_backend_ready: () => undefined,
         backend_error_bridge_ready: () => [],
         get_safe_mode_prompt: () => null,

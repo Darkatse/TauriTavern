@@ -4,19 +4,19 @@
     "steps": {
         "app/startup": {
             "frontend": {
-                "elements": 13797,
+                "elements": 13812,
                 "scrollContainers": 82,
-                "liveNodes": 43732,
+                "liveNodes": 43749,
                 "layoutObjects": 3857,
-                "eventListeners": 3336
+                "eventListeners": 3338
             },
             "backend": {
-                "readBytes": 7510941,
-                "readOps": 446,
-                "resultBytes": 664557,
-                "writeBytes": 107802,
-                "writeOps": 15,
-                "instructions": 591327610
+                "readBytes": 668291,
+                "readOps": 389,
+                "resultBytes": 686328,
+                "writeBytes": 33531,
+                "writeOps": 4,
+                "instructions": 440501286
             }
         },
         "assistant/open-session": {
@@ -33,12 +33,12 @@
                 "requests": 2,
                 "consoleMessages": 0,
                 "hostBytes": 239302,
-                "elements": 14707,
+                "elements": 14722,
                 "scrollContainers": 89,
-                "liveNodes": 45054,
+                "liveNodes": 45071,
                 "layoutObjects": 4360,
-                "eventListeners": 3495,
-                "jsAllocatedBytes": 4790472
+                "eventListeners": 3497,
+                "jsAllocatedBytes": 4727108
             },
             "backend": {
                 "readBytes": 1019906,
@@ -46,7 +46,7 @@
                 "resultBytes": 247837,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 46265638
+                "instructions": 46288893
             }
         },
         "assistant/load-older": {
@@ -63,12 +63,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 221488,
-                "elements": 17919,
+                "elements": 17934,
                 "scrollContainers": 98,
-                "liveNodes": 49424,
+                "liveNodes": 49441,
                 "layoutObjects": 4726,
-                "eventListeners": 3978,
-                "jsAllocatedBytes": 4979152
+                "eventListeners": 3980,
+                "jsAllocatedBytes": 4999332
             },
             "backend": {
                 "readBytes": 1180026,
@@ -76,7 +76,7 @@
                 "resultBytes": 221769,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 7589156
+                "instructions": 7544337
             }
         },
         "character/open-heavy-card": {
@@ -93,20 +93,20 @@
                 "requests": 1,
                 "consoleMessages": 19,
                 "hostBytes": 4488352,
-                "elements": 8105,
+                "elements": 8120,
                 "scrollContainers": 14,
-                "liveNodes": 29232,
+                "liveNodes": 29249,
                 "layoutObjects": 501,
-                "eventListeners": 3326,
-                "jsAllocatedBytes": 11194048
+                "eventListeners": 3328,
+                "jsAllocatedBytes": 11003848
             },
             "backend": {
                 "readBytes": 2807726,
                 "readOps": 20,
-                "resultBytes": 4143996,
+                "resultBytes": 4144001,
                 "writeBytes": 41530,
                 "writeOps": 3,
-                "instructions": 285242319
+                "instructions": 282773754
             }
         },
         "character/open-back": {
@@ -123,20 +123,20 @@
                 "requests": 1,
                 "consoleMessages": 36,
                 "hostBytes": 79177,
-                "elements": 13901,
+                "elements": 13916,
                 "scrollContainers": 88,
-                "liveNodes": 43981,
+                "liveNodes": 43998,
                 "layoutObjects": 4118,
-                "eventListeners": 3400,
-                "jsAllocatedBytes": 40979616
+                "eventListeners": 3402,
+                "jsAllocatedBytes": 41047976
             },
             "backend": {
                 "readBytes": 56384,
                 "readOps": 14,
-                "resultBytes": 712,
+                "resultBytes": 717,
                 "writeBytes": 28579,
                 "writeOps": 2,
-                "instructions": 6422625
+                "instructions": 6448254
             }
         },
         "chat/send-and-stream": {
@@ -153,12 +153,12 @@
                 "requests": 1,
                 "consoleMessages": 66,
                 "hostBytes": 190824,
-                "elements": 14053,
+                "elements": 14068,
                 "scrollContainers": 84,
-                "liveNodes": 44377,
+                "liveNodes": 44394,
                 "layoutObjects": 3942,
-                "eventListeners": 3402,
-                "jsAllocatedBytes": 22361800
+                "eventListeners": 3404,
+                "jsAllocatedBytes": 22402540
             },
             "backend": {
                 "readBytes": 32768,
@@ -166,7 +166,7 @@
                 "resultBytes": 224,
                 "writeBytes": 145871,
                 "writeOps": 2,
-                "instructions": 3367860
+                "instructions": 3352487
             }
         },
         "chat/stream-long-reply": {
@@ -183,12 +183,12 @@
                 "requests": 1,
                 "consoleMessages": 0,
                 "hostBytes": 9560,
-                "elements": 14267,
+                "elements": 14282,
                 "scrollContainers": 87,
-                "liveNodes": 44939,
+                "liveNodes": 44956,
                 "layoutObjects": 4171,
-                "eventListeners": 3405,
-                "jsAllocatedBytes": 10613764
+                "eventListeners": 3407,
+                "jsAllocatedBytes": 10551036
             },
             "backend": {
                 "readBytes": 0,
@@ -196,7 +196,7 @@
                 "resultBytes": 0,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 19086
+                "instructions": 19878
             }
         },
         "chat/finish-long-reply": {
@@ -213,12 +213,12 @@
                 "requests": 0,
                 "consoleMessages": 33,
                 "hostBytes": 90628,
-                "elements": 14267,
+                "elements": 14282,
                 "scrollContainers": 88,
-                "liveNodes": 44943,
+                "liveNodes": 44960,
                 "layoutObjects": 4186,
-                "eventListeners": 3404,
-                "jsAllocatedBytes": 15521000
+                "eventListeners": 3406,
+                "jsAllocatedBytes": 15527132
             },
             "backend": {
                 "readBytes": 16384,
@@ -226,7 +226,7 @@
                 "resultBytes": 112,
                 "writeBytes": 85754,
                 "writeOps": 1,
-                "instructions": 6194949
+                "instructions": 6185132
             }
         },
         "frontend-card/open-chat": {
@@ -243,20 +243,20 @@
                 "requests": 5,
                 "consoleMessages": 432,
                 "hostBytes": 1309276,
-                "elements": 21705,
+                "elements": 21720,
                 "scrollContainers": 91,
-                "liveNodes": 77431,
+                "liveNodes": 77448,
                 "layoutObjects": 42867,
-                "eventListeners": 3481,
-                "jsAllocatedBytes": 111427988
+                "eventListeners": 3483,
+                "jsAllocatedBytes": 111472888
             },
             "backend": {
                 "readBytes": 209440,
                 "readOps": 20,
-                "resultBytes": 242914,
+                "resultBytes": 242919,
                 "writeBytes": 41987,
                 "writeOps": 4,
-                "instructions": 103576976
+                "instructions": 103446486
             }
         },
         "frontend-card/send": {
@@ -273,12 +273,12 @@
                 "requests": 1,
                 "consoleMessages": 173,
                 "hostBytes": 1708718,
-                "elements": 21853,
+                "elements": 21868,
                 "scrollContainers": 86,
-                "liveNodes": 77805,
+                "liveNodes": 77822,
                 "layoutObjects": 43131,
-                "eventListeners": 3484,
-                "jsAllocatedBytes": 7944100
+                "eventListeners": 3486,
+                "jsAllocatedBytes": 7968992
             },
             "backend": {
                 "readBytes": 16384,
@@ -286,7 +286,7 @@
                 "resultBytes": 102,
                 "writeBytes": 1542191,
                 "writeOps": 2,
-                "instructions": 22887322
+                "instructions": 22841243
             }
         },
         "frontend-card/stream-reply": {
@@ -303,12 +303,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 46867,
-                "elements": 22389,
+                "elements": 22404,
                 "scrollContainers": 89,
-                "liveNodes": 80232,
+                "liveNodes": 80249,
                 "layoutObjects": 45126,
-                "eventListeners": 3484,
-                "jsAllocatedBytes": 65824628
+                "eventListeners": 3486,
+                "jsAllocatedBytes": 65840688
             },
             "backend": {
                 "readBytes": 0,
@@ -316,7 +316,7 @@
                 "resultBytes": 0,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 22829
+                "instructions": 23950
             }
         },
         "frontend-card/finish-reply": {
@@ -333,12 +333,12 @@
                 "requests": 0,
                 "consoleMessages": 176,
                 "hostBytes": 1618042,
-                "elements": 22394,
+                "elements": 22409,
                 "scrollContainers": 90,
-                "liveNodes": 83684,
+                "liveNodes": 83701,
                 "layoutObjects": 45611,
-                "eventListeners": 3490,
-                "jsAllocatedBytes": 26871660
+                "eventListeners": 3492,
+                "jsAllocatedBytes": 26869492
             },
             "backend": {
                 "readBytes": 16384,
@@ -346,7 +346,7 @@
                 "resultBytes": 98,
                 "writeBytes": 1617527,
                 "writeOps": 2,
-                "instructions": 24048542
+                "instructions": 24040914
             }
         },
         "world-info/open-list": {
@@ -363,12 +363,12 @@
                 "requests": 2,
                 "consoleMessages": 0,
                 "hostBytes": 701,
-                "elements": 15344,
+                "elements": 15359,
                 "scrollContainers": 92,
-                "liveNodes": 50581,
+                "liveNodes": 50598,
                 "layoutObjects": 5716,
-                "eventListeners": 3763,
-                "jsAllocatedBytes": 4521576
+                "eventListeners": 3765,
+                "jsAllocatedBytes": 4502432
             },
             "backend": {
                 "readBytes": 622,
@@ -376,7 +376,7 @@
                 "resultBytes": 662,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 50807
+                "instructions": 51120
             }
         },
         "world-info/type-title-10-keys": {
@@ -393,12 +393,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 447214,
-                "elements": 15344,
+                "elements": 15359,
                 "scrollContainers": 92,
-                "liveNodes": 50586,
+                "liveNodes": 50603,
                 "layoutObjects": 5614,
-                "eventListeners": 3763,
-                "jsAllocatedBytes": 35306188
+                "eventListeners": 3765,
+                "jsAllocatedBytes": 35307308
             },
             "backend": {
                 "readBytes": 447052,
@@ -406,7 +406,7 @@
                 "resultBytes": 86,
                 "writeBytes": 894074,
                 "writeOps": 2,
-                "instructions": 13690525
+                "instructions": 13686609
             }
         },
         "world-info/open-entry": {
@@ -423,12 +423,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 100549,
-                "elements": 15565,
+                "elements": 15580,
                 "scrollContainers": 96,
-                "liveNodes": 52950,
+                "liveNodes": 52967,
                 "layoutObjects": 5611,
-                "eventListeners": 3995,
-                "jsAllocatedBytes": 7244512
+                "eventListeners": 3997,
+                "jsAllocatedBytes": 7230300
             },
             "backend": {
                 "readBytes": 0,
@@ -436,7 +436,7 @@
                 "resultBytes": 24,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 79179412
+                "instructions": 79202065
             }
         },
         "world-info/type-10-keys": {
@@ -453,12 +453,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 547653,
-                "elements": 15565,
+                "elements": 15580,
                 "scrollContainers": 96,
-                "liveNodes": 52952,
+                "liveNodes": 52969,
                 "layoutObjects": 5611,
-                "eventListeners": 3995,
-                "jsAllocatedBytes": 5808368
+                "eventListeners": 3997,
+                "jsAllocatedBytes": 5809260
             },
             "backend": {
                 "readBytes": 446932,
@@ -466,7 +466,7 @@
                 "resultBytes": 110,
                 "writeBytes": 893834,
                 "writeOps": 2,
-                "instructions": 92848518
+                "instructions": 93492546
             }
         },
         "world-info/close-entry": {
@@ -483,12 +483,12 @@
                 "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 0,
-                "elements": 15344,
+                "elements": 15359,
                 "scrollContainers": 92,
-                "liveNodes": 52894,
+                "liveNodes": 52911,
                 "layoutObjects": 5614,
-                "eventListeners": 3853,
-                "jsAllocatedBytes": 3306348
+                "eventListeners": 3855,
+                "jsAllocatedBytes": 3304604
             }
         }
     }
