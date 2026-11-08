@@ -164,6 +164,8 @@ export function createChatSurfaceController({
     /** @param {HTMLElement} element @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {{ transient?: boolean }} [options] */
     function updateContent(element, transaction, { transient = false } = {}) {
         const record = contentReconciler.resolve(element, transaction);
+        // An open message editor owns the draft; closing it renders the message.
+        if (record.contentElement.querySelector('.edit_textarea')) return record.element;
         const ready = contentPreparation?.prepare({ message: record.message, messageId: record.messageId, content: transaction.content, transient }) ?? true;
         return contentReconciler.commit(record, transaction, { notifyParticipants: !transient && ready });
     }
