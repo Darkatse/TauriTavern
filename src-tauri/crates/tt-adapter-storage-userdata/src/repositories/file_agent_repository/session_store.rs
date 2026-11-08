@@ -390,11 +390,11 @@ impl HistoryFromEnd {
         let start = self
             .offset
             .saturating_sub(Self::BLOCK.max(self.pending.len() as u64));
-        let mut block = vec![0; (self.offset - start) as usize];
+        let read = (self.offset - start) as usize;
+        let mut block = vec![0; read + self.pending.len()];
+        block[read..].copy_from_slice(&self.pending);
         self.file.seek(SeekFrom::Start(start)).await?;
-        self.file.read_exact(&mut block).await?;
-        let read = block.len();
-        block.extend_from_slice(&self.pending);
+        self.file.read_exact(&mut block[..read]).await?;
         self.pending = block;
         self.offset = start;
         Ok(read)
