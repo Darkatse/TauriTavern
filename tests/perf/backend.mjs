@@ -1,7 +1,8 @@
 // The backend layer: tt-perf, the host crate's `perf` feature, replays the frontend's host calls through the real
-// command layer over a copy of the data and counts each step's work. Linux counts exactly: callgrind instructions
-// and /proc/self/io. macOS and Windows read OS counters, which also take in work the system does for the process
-// and only ever add, so the least of three runs leaves the code's own.
+// command layer over a copy of the data and counts each step's work. OS counters come from native runs. Linux's are
+// exact, so one run gives them; elsewhere they also take in work the system does for the process, which only ever
+// adds, so the least of three runs leaves the code's own. Linux adds callgrind instructions from a separate run,
+// which keeps Valgrind's own I/O out of the counts.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -27,19 +28,17 @@ export function measureBackend({ root, inputs, rust }) {
         copyFileSync(path.join(target, 'perf', path.basename(binary)), binary);
         const report = path.join(work, 'report.json');
         const replay = [path.join(inputs, 'data'), path.join(inputs, 'trace.json'), report, root];
-        if (process.platform === 'linux') {
-            run('valgrind', ['--tool=callgrind', '--dump-before=tt_perf_step_boundary', '--dump-instr=no',
-                `--callgrind-out-file=${path.join(work, 'callgrind')}`, binary, ...replay], { stdio: ['ignore', 'ignore', 'inherit'] });
-            const { steps, boundaries } = JSON.parse(readFileSync(report, 'utf8'));
-            addInstructions(steps, boundaries, work);
-            return { rust: release, steps };
-        }
-        const runs = [0, 1, 2].map(() => {
+        const runs = Array.from({ length: process.platform === 'linux' ? 1 : 3 }, () => {
             run(binary, replay);
             return JSON.parse(readFileSync(report, 'utf8')).steps;
         });
         const steps = Object.fromEntries(Object.entries(runs[0]).map(([step, counters]) => [step,
             Object.fromEntries(Object.keys(counters).map(counter => [counter, Math.min(...runs.map(each => each[step][counter]))]))]));
+        if (process.platform === 'linux') {
+            run('valgrind', ['--tool=callgrind', '--dump-before=tt_perf_step_boundary', '--dump-instr=no',
+                `--callgrind-out-file=${path.join(work, 'callgrind')}`, binary, ...replay], { stdio: ['ignore', 'ignore', 'inherit'] });
+            addInstructions(steps, JSON.parse(readFileSync(report, 'utf8')).boundaries, work);
+        }
         return { rust: release, steps };
     } finally {
         rmSync(work, { recursive: true, force: true });

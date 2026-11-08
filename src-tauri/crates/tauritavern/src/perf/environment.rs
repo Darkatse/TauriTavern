@@ -35,7 +35,7 @@ use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::SyncAutomationEventPublisher;
 
 /// `root` holds the data root at `root/data`; `repo` is the checkout whose bundled resources the app ships.
-pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, String> {
+pub(super) async fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, String> {
     let resources = Arc::new(RepositoryResources::load(repo)?);
     let app = mock_builder()
         .manage(Arc::new(BundledTemplateService::new(resources.clone())))
@@ -105,16 +105,15 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
         lan_server_events: Arc::new(Detached),
         sync_automation_events: Arc::new(Detached),
     };
-    let state = tauri::async_runtime::block_on(async {
-        let state = AppState::new(environment, runtime_paths, startup_profile).await?;
-        state
-            .services
-            .content_service
-            .initialize_default_content("default-user")
-            .await?;
-        Ok::<_, DomainError>(state)
-    })
-    .map_err(|error| error.to_string())?;
+    let state = AppState::new(environment, runtime_paths, startup_profile)
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .services
+        .content_service
+        .initialize_default_content("default-user")
+        .await
+        .map_err(|error| error.to_string())?;
     app.manage(Arc::new(state));
     Ok(app)
 }

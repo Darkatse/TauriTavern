@@ -11,8 +11,8 @@ use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
-use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
-use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response};
+use tauri::ipc::{CallbackFn, InvokeBody, InvokeError, InvokeResponse, InvokeResponseBody};
+use tauri::test::{INVOKE_KEY, MockRuntime};
 use tauri::webview::InvokeRequest;
 use tauri::{WebviewWindow, WebviewWindowBuilder};
 
@@ -51,7 +51,7 @@ fn replayed(command: &str) -> bool {
 
 struct OpenStep {
     name: String,
-    before: counters::Counters,
+    before: counters::Snapshot,
     result_bytes: u64,
 }
 
@@ -67,17 +67,19 @@ pub fn run() -> Result<(), String> {
         &std::fs::read(&trace).map_err(|error| format!("{trace}: {error}"))?,
     )
     .map_err(|error| format!("{trace}: {error}"))?;
-    // One worker and one blocking thread: per-thread caches then warm the same way on every run.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
+    // Commands run on this thread while it awaits their responses, so a call's work is done when the call returns.
+    // One blocking thread serves the whole replay, so per-thread caches warm the same way on every run. Without an
+    // I/O driver, waking this thread takes no eventfd write for the I/O counters to count.
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .max_blocking_threads(1)
-        .enable_all()
+        .thread_keep_alive(std::time::Duration::MAX)
+        .enable_time()
         .build()
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::set(runtime.handle().clone());
     let root = std::env::temp_dir().join(format!("tt-perf-{}", std::process::id()));
     copy_dir(Path::new(&data), &root.join("data"))?;
-    let outcome = replay(&trace, &root, Path::new(&repo));
+    let outcome = runtime.block_on(replay(&trace, &root, Path::new(&repo)));
     std::fs::remove_dir_all(&root).map_err(|error| format!("{}: {error}", root.display()))?;
     let (steps, boundaries) = outcome?;
     std::fs::write(
@@ -87,12 +89,12 @@ pub fn run() -> Result<(), String> {
     .map_err(|error| format!("{report}: {error}"))
 }
 
-fn replay(
+async fn replay(
     trace: &Trace,
     root: &Path,
     repo: &Path,
 ) -> Result<(BTreeMap<String, counters::Counters>, Vec<Value>), String> {
-    let app = environment::mock_app(root, repo)?;
+    let app = environment::mock_app(root, repo).await?;
     let window = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .map_err(|error| error.to_string())?;
@@ -122,6 +124,7 @@ fn replay(
             continue;
         }
         let response = invoke(&window, call, &results)
+            .await
             .map_err(|error| format!("call {index} ({}): {error}", call.command))?;
         if let Some(step) = &mut open {
             step.result_bytes += match &response {
@@ -147,7 +150,7 @@ fn close_step(
     steps: &mut BTreeMap<String, counters::Counters>,
     boundaries: &mut Vec<Value>,
 ) -> Result<(), String> {
-    let mut work = counters::difference(&counters::snapshot()?, &step.before);
+    let mut work = counters::since(&step.before)?;
     counters::tt_perf_step_boundary();
     boundaries.push(json!({ "step": step.name, "edge": "end" }));
     work.insert("resultBytes", step.result_bytes);
@@ -157,7 +160,7 @@ fn close_step(
     Ok(())
 }
 
-fn invoke(
+async fn invoke(
     webview: &WebviewWindow<MockRuntime>,
     call: &Call,
     results: &BTreeMap<usize, Value>,
@@ -184,8 +187,8 @@ fn invoke(
             );
         }
     }
-    get_ipc_response(
-        webview,
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    webview.as_ref().clone().on_message(
         InvokeRequest {
             cmd: call.command.clone(),
             callback: CallbackFn(0),
@@ -195,8 +198,17 @@ fn invoke(
             headers,
             invoke_key: INVOKE_KEY.to_string(),
         },
-    )
-    .map_err(|error| error.to_string())
+        Box::new(move |_, _, response, _, _| {
+            let _ = sender.send(response);
+        }),
+    );
+    match receiver
+        .await
+        .map_err(|_| "the command dropped its responder".to_string())?
+    {
+        InvokeResponse::Ok(body) => Ok(body),
+        InvokeResponse::Err(InvokeError(error)) => Err(error.to_string()),
+    }
 }
 
 /// A binary result is the JSON document the page parses from it, as the trace recorded it.

@@ -59,7 +59,7 @@ CI 只比较 Linux。
 
 ## 后端层
 
-前端层运行时按顺序记录每次 `core.invoke` 的命令、参数和所属步骤，连同数据写入 `tests/perf/out/`。`tt-perf`（`perf` feature，`perf` profile）在 Tauri 的 mock runtime 上调用真实的命令与服务，在数据副本上重放这些调用。宿主签发的值（会话 id、修订号）从重放时的实际结果里取。插件、网络、通知与回调页面的命令不重放。重放只用一个 async worker 和一个 blocking 线程，按线程划分的缓存每次都以同样的方式预热。
+前端层运行时按顺序记录每次 `core.invoke` 的命令、参数和所属步骤，连同数据写入 `tests/perf/out/`。`tt-perf`（`perf` feature，`perf` profile）在 Tauri 的 mock runtime 上调用真实的命令与服务，在数据副本上重放这些调用。宿主签发的值（会话 id、修订号）从重放时的实际结果里取。插件、网络、通知与回调页面的命令不重放。命令在重放自己的线程上运行，一次调用返回时它的工作已经做完，不会落进后面的步骤；文件操作交给唯一的 blocking 线程，它在整次重放中存活，按线程划分的缓存每次都以同样的方式预热。运行时不启用 I/O 驱动，线程间唤醒不经 eventfd，不进读写计数。
 
 每个步骤都计结果字节，此外：
 
@@ -69,7 +69,7 @@ CI 只比较 Linux。
 | macOS | 进程指令数 |
 | Windows | I/O 字节与次数 |
 
-macOS 与 Windows 的计数还包含系统替进程做的工作，只增不减，所以取三次运行的最小值。每棵源码树构建到自己的 target 目录，两个检出不共用构建产物。
+系统计数取自原生重放。Linux 的读写是精确的，重放一次即可，读取 `/proc/self/io` 本身的那次读不计入步骤；指令数另由 callgrind 重放一次，Valgrind 自身的读写因此不进计数。macOS 与 Windows 的计数还包含系统替进程做的工作，只增不减，所以取三次运行的最小值。每棵源码树构建到自己的 target 目录，两个检出不共用构建产物。
 
 新步骤用到还没重放过的命令时，重放会报出命令名。把它加入 `src/perf/environment.rs` 的命令表；接收 `Webview` 的命令写成对 `R: Runtime` 泛型。
 

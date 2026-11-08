@@ -368,7 +368,9 @@ function countEngineWork(events) {
         if (threads.has(thread)) threads.set(thread, threads.get(thread) + 1);
     }
     const main = [...threads].sort((a, b) => b[1] - a[1])[0][0];
-    const work = events.filter(event => event.ph === 'X' && `${event.pid}:${event.tid}` === main).sort((a, b) => a.ts - b.ts);
+    // Work shorter than a microsecond is recorded as an instant event, without a duration.
+    const work = events.filter(event => (event.ph === 'X' || event.ph === 'I') && `${event.pid}:${event.tid}` === main)
+        .sort((a, b) => a.ts - b.ts);
     const counters = {
         eventDispatches: 0, styleRecalcs: 0, forcedStyleRecalcs: 0, elementsRestyled: 0,
         layouts: 0, forcedLayouts: 0, layoutObjectsLaidOut: 0, frames: 0, compositorUpdates: 0,
