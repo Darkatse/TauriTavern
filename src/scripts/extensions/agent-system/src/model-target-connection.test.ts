@@ -60,11 +60,7 @@ function installHost(targets: AgentModelTarget[]): {
     savedConnections: TauriTavernLlmConnectionDefinition[];
     deletedConnections: string[];
     errors: string[];
-    restore: () => void;
 } {
-    const hostDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURITAVERN__');
-    const sillyTavernDescriptor = Object.getOwnPropertyDescriptor(window, 'SillyTavern');
-    const toastrDescriptor = Object.getOwnPropertyDescriptor(window, 'toastr');
     const eventSource = new TestEventSource();
     const savedConnections: TauriTavernLlmConnectionDefinition[] = [];
     const deletedConnections: string[] = [];
@@ -93,17 +89,7 @@ function installHost(targets: AgentModelTarget[]): {
     });
     rs.stubGlobal('toastr', { error: (message: string) => errors.push(message) });
 
-    return {
-        eventSource,
-        savedConnections,
-        deletedConnections,
-        errors,
-        restore: () => {
-            restoreProperty(window, '__TAURITAVERN__', hostDescriptor);
-            restoreProperty(window, 'SillyTavern', sillyTavernDescriptor);
-            restoreProperty(window, 'toastr', toastrDescriptor);
-        },
-    };
+    return { eventSource, savedConnections, deletedConnections, errors };
 }
 
 test('Model Target sync and UI changes use the context-owned event source', async () => {
@@ -135,24 +121,13 @@ test('Model Target sync and UI changes use the context-owned event source', asyn
     } finally {
         unsubscribeChanges();
         stopSync();
-        host.restore();
     }
 });
 
 test('startup sync invalidates a stale connection when materialization fails', async () => {
     const host = installHost([sampleTarget({ secretRef: { key: 'api_key_custom', id: '' } })]);
-    const warn = rs.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-        await syncSavedModelTargetLlmConnections();
-        expect(host.savedConnections).toEqual([]);
-        expect(host.deletedConnections).toEqual(['model-target-writer-target']);
-    } finally {
-        warn.mockRestore();
-        host.restore();
-    }
+    rs.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await syncSavedModelTargetLlmConnections();
+    expect(host.savedConnections).toEqual([]);
+    expect(host.deletedConnections).toEqual(['model-target-writer-target']);
 });
-
-function restoreProperty(target: object, key: PropertyKey, descriptor?: PropertyDescriptor): void {
-    if (descriptor) Object.defineProperty(target, key, descriptor);
-    else Reflect.deleteProperty(target, key);
-}

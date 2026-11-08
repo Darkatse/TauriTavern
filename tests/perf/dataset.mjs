@@ -3,7 +3,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { createWebHostFixture } from '../browser/web-host-fixture.mjs';
+import { createWebHostFixture } from '../helpers/web-host-fixture.mjs';
 import { defaultSettings, defaultTheme, systemExtensions } from '../helpers/frontend-content.mjs';
 import { statusBarDocument } from './status-bar.mjs';
 

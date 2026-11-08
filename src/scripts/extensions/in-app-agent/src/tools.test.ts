@@ -45,11 +45,6 @@ test('log levels are filtered before the limit without changing console capture'
 });
 
 test('registered snapshots omit TT secrets and assistant history while keeping public content', async () => {
-    document.body.style.visibility = 'visible';
-    const rects = [new DOMRect(10, 10, 100, 30)];
-    rs.spyOn(Element.prototype, 'getClientRects').mockReturnValue(
-        Object.assign(rects, { item: (index: number) => rects[index] ?? null }),
-    );
     document.body.innerHTML = `
         <label>Public field<input value="public-value"></label>
         <input data-tt-sensitive aria-label="API key" value="secret-value">

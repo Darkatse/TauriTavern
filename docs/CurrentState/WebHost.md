@@ -6,7 +6,7 @@ Web Host 是给浏览器嵌入方用的 TT 宿主实现，位于 `src/tauri/web-
 
 TT 的前端代码不知道自己运行在哪个宿主上，也不需要为 Web Host 写任何分支。只有下面三种情况需要改这里：
 
-- `tests/browser/web-host-startup.test.mjs` 或 `web-host-session.test.mjs` 失败：Web Host 还不支持的命令，或测试后端没有准备的请求，让启动、会话写入或生成出错了。在 `src/tauri/web-host/` 补上映射，必要时给 `tests/browser/web-host-fixture.mjs` 补上对应的端点。
+- `tests/webview/web-host-startup.test.mjs` 或 `web-host-session.test.mjs` 失败：Web Host 还不支持的命令，或测试后端没有准备的请求，让启动、会话写入或生成出错了。在 `src/tauri/web-host/` 补上映射，必要时给 `tests/helpers/web-host-fixture.mjs` 补上对应的端点。
 - `tt-application` 的 `web_host_defaults` 测试失败：原生默认值或 DTO 变了，按“维护”一节重新生成默认状态。
 - 修改了下表中命令的 DTO 或协议，例如设置提交、聊天文件读取、Persona 增量：同步修改这里的映射。
 

@@ -5,15 +5,12 @@ import { createServer } from 'node:http';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium } from 'playwright';
 import { frontendRoot } from '../helpers/frontend-content.mjs';
+import { CONTENT_TYPES, frontendFile } from '../helpers/frontend-server.mjs';
 import { pageData } from './dataset.mjs';
 
-const fixtureFile = fileURLToPath(new URL('../browser/web-host-fixture.mjs', import.meta.url));
-const TYPES = {
-    '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
-    '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
-};
+const fixtureFile = fileURLToPath(new URL('../helpers/web-host-fixture.mjs', import.meta.url));
 
 function bootstrap() {
     const data = pageData();
@@ -330,8 +327,9 @@ async function serve() {
     async function resource(pathname) {
         if (pathname === '/') return { type: 'text/html', body: index };
         if (USER_DATA.test(pathname)) return pathname.endsWith('.css') ? { type: 'text/css', body: '' } : { type: 'image/png', body: EMPTY_PNG };
-        const file = pathname === '/__perf/web-host-fixture.mjs' ? fixtureFile : path.join(frontendRoot, decodeURIComponent(pathname));
-        return { type: TYPES[path.extname(file)] ?? 'application/octet-stream', body: await readFile(file) };
+        const file = pathname === '/__perf/web-host-fixture.mjs' ? fixtureFile : frontendFile(pathname);
+        if (!file) throw new Error(`No frontend file at ${pathname}`);
+        return { type: CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream', body: await readFile(file) };
     }
     const server = createServer(async (request, response) => {
         try {

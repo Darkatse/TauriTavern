@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import '../style.css';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, rs, test } from '@rstest/core';
 
@@ -154,30 +155,28 @@ test('detail navigation scrolls through older pages with bounded buttons and laz
         },
     });
     controllers.push(controller);
+    // Sized before mounting: the list anchors its scroll position as it mounts.
+    const size = document.createElement('style');
+    size.textContent = '.ttas-run-nav-list { flex: none; width: 340px; height: 64px; }';
+    document.body.append(size);
     render(<RunTimelineApp controller={controller} tr={translate} />);
     await act(() => controller.init());
     await userEvent.setup().click(screen.getByRole('button', { name: 'showTimelineDetails' }));
     const nav = screen.getByRole('navigation', { name: 'timelineDetails' });
-    Object.defineProperties(nav, { clientWidth: { value: 340 }, clientHeight: { value: 64 } });
-    fireEvent.scroll(nav);
     nav.scrollTop = 192;
-    fireEvent.scroll(nav);
     const earlier = await within(nav).findByTitle('timelineEventFileWritten:file-501.txt');
     await userEvent.setup().click(earlier);
     await screen.findByText('content:file-501.txt');
     expect(nav.querySelectorAll('button').length).toBeLessThan(40);
 
     nav.scrollTop = 0;
-    fireEvent.scroll(nav);
     await waitFor(() => expect(controller.getSnapshot().displayItems).toHaveLength(480));
     await within(nav).findByTitle('timelineEventFileWritten:file-481.txt');
     expect(controller.getSnapshot().selectedSeq).toBe(501);
     nav.scrollTop = 0;
-    fireEvent.scroll(nav);
     await waitFor(() => expect(controller.getSnapshot().displayItems).toHaveLength(720));
     expect(detailReads).toEqual(['file-720.txt', 'file-501.txt']);
     nav.scrollTop = 0;
-    fireEvent.scroll(nav);
     await userEvent.setup().click(await within(nav).findByTitle('timelineEventFileWritten:file-1.txt'));
     await screen.findByText('content:file-1.txt');
     expect(reads).toEqual([Number.MAX_SAFE_INTEGER, 481, 241]);
@@ -398,19 +397,6 @@ test('active timeline renders a streaming write card with tail and metric', asyn
 });
 
 test('SubAgent tray opens and closes its native dialog through controller-local state', async () => {
-    const showModalDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
-    const closeDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
-    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
-        configurable: true,
-        value(this: HTMLDialogElement) { this.open = true; },
-    });
-    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
-        configurable: true,
-        value(this: HTMLDialogElement) {
-            this.open = false;
-            this.dispatchEvent(new Event('close'));
-        },
-    });
     const reads: Array<{ invocationId?: string }> = [];
     const controller = createRunTimelineController({
         mode: 'active',
@@ -459,24 +445,17 @@ test('SubAgent tray opens and closes its native dialog through controller-local 
         },
     });
     controllers.push(controller);
-    try {
-        render(<RunTimelineApp controller={controller} tr={tr} />);
-        await act(() => controller.init());
-        const user = userEvent.setup();
-        await user.click(screen.getByRole('button', { name: 'expandTimeline' }));
-        await user.click(screen.getByTitle('timelineExpandSubAgents'));
-        await user.click(screen.getByRole('button', { name: /critic/ }));
-        const dialog = document.querySelector<HTMLDialogElement>('dialog.ttas-subagent-dialog');
-        await waitFor(() => expect(dialog?.open).toBe(true));
-        expect(reads.at(-1)?.invocationId).toBe('inv-child');
-        if (!dialog) throw new Error('expected the SubAgent dialog');
-        await user.click(within(dialog).getByRole('button', { name: 'close' }));
-        expect(dialog.open).toBe(false);
-        expect(controller.getSnapshot().subAgent.open).toBe(false);
-    } finally {
-        if (showModalDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', showModalDescriptor);
-        else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
-        if (closeDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'close', closeDescriptor);
-        else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
-    }
+    render(<RunTimelineApp controller={controller} tr={tr} />);
+    await act(() => controller.init());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'expandTimeline' }));
+    await user.click(screen.getByTitle('timelineExpandSubAgents'));
+    await user.click(screen.getByRole('button', { name: /critic/ }));
+    const dialog = document.querySelector<HTMLDialogElement>('dialog.ttas-subagent-dialog');
+    await waitFor(() => expect(dialog?.open).toBe(true));
+    expect(reads.at(-1)?.invocationId).toBe('inv-child');
+    if (!dialog) throw new Error('expected the SubAgent dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'close' }));
+    await waitFor(() => expect(controller.getSnapshot().subAgent.open).toBe(false));
+    expect(dialog.open).toBe(false);
 });

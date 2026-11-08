@@ -146,6 +146,7 @@ pnpm test
 pnpm run check:frontend
 pnpm run check:types
 pnpm run test:contracts
+pnpm run test:dom
 pnpm run check:rust-boundaries
 pnpm run test:rust
 pnpm run check:rust:dev

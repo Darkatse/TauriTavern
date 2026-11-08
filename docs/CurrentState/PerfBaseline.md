@@ -15,7 +15,7 @@ CI 只比较 Linux。
 
 ## 失败时
 
-先确认变化来自本次改动。有意的变化在 Linux 上用 `pnpm run test:perf -- --update` 重新记录；在其他系统开发时，Linux CI 失败日志末尾会给出这次的完整测量，直接提交为 `tests/perf/baseline.json`。基线随提交评审。在 macOS、Windows 上，有意的增长提交之后就成为新的 HEAD。升级 `playwright-core`（换了 Chromium）或 Rust 版本后，也要重新记录。
+先确认变化来自本次改动。有意的变化在 Linux 上用 `pnpm run test:perf -- --update` 重新记录；在其他系统开发时，Linux CI 失败日志末尾会给出这次的完整测量，直接提交为 `tests/perf/baseline.json`。基线随提交评审。在 macOS、Windows 上，有意的增长提交之后就成为新的 HEAD。升级 `playwright`（换了 Chromium）或 Rust 版本后，也要重新记录。
 
 ## 场景与数据
 
@@ -33,7 +33,7 @@ CI 只比较 Linux。
 
 ## 前端层
 
-在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目、`simple` 只返回文件名；Web Host 没有的原生命令（分词、助手会话）按原生的结果应答。首次运行前安装浏览器：`pnpm exec playwright-core install --only-shell chromium`。
+在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目、`simple` 只返回文件名；Web Host 没有的原生命令（分词、助手会话）按原生的结果应答。首次运行前安装浏览器：`pnpm exec playwright install --only-shell chromium`。
 
 每个步骤计：
 

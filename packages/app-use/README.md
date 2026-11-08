@@ -113,9 +113,9 @@ normal frontend watch picks up its changes. `pnpm --filter @tauritavern/app-use
 build` writes ESM and type declarations to `dist`. Packing runs this build, and
 `publishConfig.exports` points the published package at `dist`.
 
-- Tests: `pnpm exec rstest packages/app-use`. `pnpm run check` runs them too.
-- Real-browser iframe checks: run `node tests/browser/build-app-use.mjs` from the
-  repository root.
+- Tests: `pnpm exec rstest packages/app-use`, plus the iframe checks in
+  `tests/webview/app-use-iframe.test.mjs`. `pnpm run test:dom` runs both in
+  Chromium and WebKit.
 
 The version is independent of TauriTavern. To release, bump `version` and push
 the tag `app-use-v<VERSION>`. `.github/workflows/app-use-release.yml` then

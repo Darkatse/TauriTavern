@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, rs, test } from '@rstest/core';
+import { expect, rs, test } from '@rstest/core';
 import { act, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { createObservation } from './snapshot.ts';
@@ -9,22 +9,6 @@ const observationOptions = {
     sensitiveSelector: '[data-private]',
     omit: (element: Element) => element.matches('.agent-history') ? 'assistant conversation and tool logs' : null,
 };
-
-let hit: Element | null = null;
-beforeEach(() => {
-    document.body.style.visibility = 'visible';
-    // Supply layout for semantic/event tests; visibility and hit testing belong to native WebView checks.
-    rs.spyOn(Element.prototype, 'getClientRects').mockImplementation(() => clientRects());
-    rs.spyOn(document, 'elementFromPoint').mockImplementation(() => hit);
-});
-afterEach(() => {
-    hit = null;
-});
-
-function clientRects(): DOMRectList {
-    const rects = [new DOMRect(10, 10, 100, 30)];
-    return Object.assign(rects, { item: (index: number) => rects[index] ?? null });
-}
 
 function ref(tree: string, text: string) {
     const line = tree.split('\n').find(candidate => candidate.includes(text));
@@ -59,7 +43,7 @@ test('a paginated region stays actionable while earlier page and run refs expire
     expect(() => observation.snapshot({ root: oldRef })).toThrow();
     const button = screen.getByRole('button', { name: 'Action 109' });
     button.onclick = () => button.setAttribute('aria-pressed', 'true');
-    hit = screen.getByText('Action 109');
+    screen.getByText('Action 109').scrollIntoView();
     const action = interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, {
         surfaceCandidates: element => element.matches('.control-surface > .sr-only') && element.parentElement
             ? [element.parentElement] : [],
@@ -106,7 +90,6 @@ test('selectors reach a replaced region beyond pagination without choosing hidde
 
     const save = screen.getByRole('button', { name: 'Save' });
     save.onclick = () => { clicks++; save.textContent = 'Saved'; };
-    hit = save;
     interact({ action: 'click', selector: '.phone button' }, observation);
     expect(save.textContent).toBe('Saved');
     expect(clicks).toBe(1);
@@ -157,7 +140,7 @@ test('long formatted messages leave embedded controls and following swipes actio
     for (const name of ['Embedded action', 'Previous swipe']) {
         const button = screen.getByRole('button', { name });
         button.onclick = () => { button.textContent = 'Done'; };
-        hit = button;
+        button.scrollIntoView();
         interact({ action: 'click', ref: ref(snapshot.tree, name) }, observation);
         expect(button.textContent).toBe('Done');
     }
@@ -232,7 +215,6 @@ test('fill updates React controlled state, not just the DOM value', () => {
     render(<Form />);
     const observation = createObservation(observationOptions);
     observation.enterRun('run');
-    hit = screen.getByRole('textbox');
     act(() => {
         interact({ action: 'fill', selector: 'input[aria-label="Text"]', value: 'after' }, observation);
     });
@@ -249,9 +231,9 @@ test('capture layout masks private regions and clips targets to the visible view
         'history-child': new DOMRect(210, 30, 100, 20), editor: new DOMRect(10, 200, 300, 100),
         partial: new DOMRect(-20, 300, 100, 30), outside: new DOMRect(window.innerWidth + 10, 300, 100, 30),
     };
-    rs.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-        return bounds[this.id] ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
-    });
+    for (const [id, { x, y, width, height }] of Object.entries(bounds)) {
+        document.getElementById(id)!.style.cssText = `position: fixed; box-sizing: border-box; margin: 0; left: ${x}px; top: ${y}px; width: ${width}px; height: ${height}px`;
+    }
     const observation = createObservation(observationOptions);
     observation.enterRun('capture');
     expect(() => observation.captureLayout({ marks: true })).toThrow('Call app_snapshot first');
