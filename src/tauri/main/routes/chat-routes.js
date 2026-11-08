@@ -10,6 +10,7 @@ import { registerChatImportRoutes } from './chat-import-routes.js';
 import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
 import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { streamResponse } from '../http-utils.js';
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
     registerChatImportRoutes(router, context, { jsonResponse });
@@ -22,7 +23,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         const rid = await context.invokeTransport('open_chat_payload_json', { target, allowNotFound });
         return rid === null
             ? jsonResponse([])
-            : new Response(createByteStream(rid), { headers: { 'Content-Type': 'application/json' } });
+            : streamResponse(createByteStream(rid), { headers: { 'Content-Type': 'application/json' } });
     }
 
     router.post('/api/chats/get', async ({ body }) => {

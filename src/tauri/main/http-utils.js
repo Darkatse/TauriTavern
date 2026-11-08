@@ -159,6 +159,28 @@ export function jsonResponse(data, status = 200, statusText) {
 }
 
 /**
+ * A response whose body reads fail with the stream's own error, or with the abort reason once `signal` aborts;
+ * Chromium would report either as TypeError('Failed to fetch'). A used or locked body still rejects at once, since
+ * that read never reaches the stream. Piping keeps `signal` attached while a reader holds the body.
+ */
+export function streamResponse(stream, init, signal) {
+    const { readable, writable } = new TransformStream();
+    const failure = stream.pipeTo(writable, { signal }).then(() => null, error => error);
+    const response = new Response(readable, init);
+    for (const method of ['arrayBuffer', 'blob', 'bytes', 'formData', 'json', 'text']) {
+        const read = response[method];
+        if (typeof read !== 'function') continue;
+        Object.defineProperty(response, method, {
+            configurable: true,
+            value: () => response.bodyUsed || response.body.locked
+                ? read.call(response)
+                : read.call(response).catch(async (error) => { throw (await failure) ?? error; }),
+        });
+    }
+    return response;
+}
+
+/**
  * A JSON response whose `json()` resolves to `data` itself; any other body read serializes it.
  * `data` must be JSON-compatible and no longer referenced by the handler.
  */
