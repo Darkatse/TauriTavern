@@ -258,7 +258,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 世界书 get/edit 直接读写磁盘，保留未知字段和键顺序，不合并编辑缓存；get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
 
-`POST /api/worldinfo/list` 返回磁盘世界书清单，每项包含 `file_id`（不带 `.json` 的文件名）、`name` 和书级 `extensions`。扩展可据此发现自己管理的世界书；清单不依赖已选世界书或编辑器缓存，也不包含条目正文。确认没有世界书时返回 `[]`；目录或世界书文件读取失败时请求失败，不得返回空清单或不完整清单。
+`/api/worldinfo/list` 只列出扩展名为小写 `.json` 的文件，与 get/edit 寻址的范围相同；上游不区分扩展名大小写。
 
 最关键的启动依赖：
 

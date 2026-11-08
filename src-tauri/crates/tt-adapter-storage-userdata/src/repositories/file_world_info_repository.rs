@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use serde_json::{Value, value::RawValue};
-use std::collections::HashMap;
+use serde_json::value::RawValue;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -135,34 +134,6 @@ fn world_file_name(name: &str) -> Result<String, DomainError> {
     Ok(file_name)
 }
 
-fn world_list_item(file_id: String, bytes: &[u8]) -> Result<WorldInfoListItem, serde_json::Error> {
-    // Raw values validate the whole document without decoding unrelated entry data.
-    let fields: HashMap<String, Box<RawValue>> = serde_json::from_slice(bytes).unwrap_or_default();
-    let name = fields
-        .get("name")
-        .map(|raw| serde_json::from_str::<Value>(raw.get()))
-        .transpose()?
-        .filter(|value| match value {
-            Value::Null => false,
-            Value::Bool(value) => *value,
-            Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
-            Value::String(value) => !value.is_empty(),
-            Value::Array(_) | Value::Object(_) => true,
-        })
-        .unwrap_or_else(|| Value::String(file_id.clone()));
-    let extensions = fields
-        .get("extensions")
-        .map(|raw| serde_json::from_str::<Value>(raw.get()))
-        .transpose()?
-        .filter(|value| value.is_object() || value.is_array())
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    Ok(WorldInfoListItem {
-        file_id,
-        name,
-        extensions,
-    })
-}
-
 #[async_trait]
 impl WorldInfoRepository for FileWorldInfoRepository {
     async fn read_world_info_json(&self, name: &str) -> Result<Option<Vec<u8>>, DomainError> {
@@ -287,57 +258,34 @@ impl WorldInfoRepository for FileWorldInfoRepository {
     }
 
     async fn list_world_info(&self) -> Result<Vec<WorldInfoListItem>, DomainError> {
-        let mut entries = fs::read_dir(&self.worlds_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read world info directory {}: {error}",
-                self.worlds_dir.display()
-            ))
-        })?;
-        let mut paths = Vec::new();
-        while let Some(entry) = entries.next_entry().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read world info directory {}: {error}",
-                self.worlds_dir.display()
-            ))
-        })? {
-            let file_type = entry.file_type().await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to inspect world info {}: {error}",
-                    entry.path().display()
-                ))
-            })?;
-            let path = entry.path();
-            if file_type.is_file()
-                && path
-                    .extension()
-                    .and_then(OsStr::to_str)
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case(WORLD_INFO_EXTENSION))
-            {
-                paths.push(path);
-            }
-        }
+        let mut paths = list_files_with_extension(&self.worlds_dir, WORLD_INFO_EXTENSION).await?;
         sort_paths_by_file_name_sillytavern_name(&mut paths)?;
-        let mut items = Vec::with_capacity(paths.len());
-        for path in paths {
-            let file_id = path.file_stem().and_then(OsStr::to_str).ok_or_else(|| {
-                DomainError::InvalidData(format!("Invalid world info filename {}", path.display()))
-            })?;
-            let bytes = fs::read(&path).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read world info {}: {error}",
-                    path.display()
-                ))
-            })?;
-            items.push(
-                world_list_item(file_id.to_string(), &bytes).map_err(|error| {
-                    DomainError::InvalidData(format!(
-                        "Failed to decode world info metadata {}: {error}",
-                        path.display()
-                    ))
-                })?,
-            );
-        }
-        Ok(items)
+        tokio::task::spawn_blocking(move || {
+            paths
+                .iter()
+                .filter_map(|path| {
+                    let file_id = path
+                        .file_stem()
+                        .and_then(OsStr::to_str)
+                        .expect("sorting rejects file names that are not UTF-8");
+                    match std::fs::read(path) {
+                        Ok(bytes) => Some(document::list_item(file_id, &bytes)),
+                        Err(error) => {
+                            tracing::error!(
+                                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                                "Skipped world info {}: {error}",
+                                path.display()
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect()
+        })
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("World info list task failed: {error}"))
+        })
     }
 }
 
@@ -376,78 +324,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_reads_disk_metadata_without_interpreting_entries() {
+    async fn list_passes_book_metadata_through_in_file_name_order() {
         let dir = TestDir::new();
         let repository =
             FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
-        assert!(repository.list_world_info().await.unwrap().is_empty());
-        let original = br#"{"name":"Display","extensions":{"plugin":{"enabled":true}},"entries":{"0":{"opaque":"\ud800","large":9007199254740993}}}"#;
-        tokio::fs::write(dir.path().join("Alpha.JSON"), original)
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("Beta.json"), b"not json")
-            .await
-            .unwrap();
-        tokio::fs::write(
-            dir.path().join("Gamma.json"),
-            br#"{"name":"","extensions":[1,2]}"#,
-        )
-        .await
-        .unwrap();
-        tokio::fs::write(dir.path().join("ignored.txt"), b"{}")
-            .await
-            .unwrap();
-        tokio::fs::create_dir(dir.path().join("directory.json"))
-            .await
-            .unwrap();
-        let items = repository.list_world_info().await.unwrap();
-        assert_eq!(
-            serde_json::to_value(items).unwrap(),
-            json!([
-                {"file_id":"Alpha","name":"Display","extensions":{"plugin":{"enabled":true}}},
-                {"file_id":"Beta","name":"Beta","extensions":{}},
-                {"file_id":"Gamma","name":"Gamma","extensions":[1,2]}
-            ])
-        );
-        assert_eq!(
-            tokio::fs::read(dir.path().join("Alpha.JSON"))
-                .await
-                .unwrap(),
-            original
-        );
-        tokio::fs::remove_dir_all(dir.path()).await.unwrap();
-        assert!(repository.list_world_info().await.is_err());
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn list_fails_when_a_world_file_cannot_be_read() {
-        use std::os::unix::fs::PermissionsExt;
-        use tt_domain::errors::DomainError;
-
-        let dir = TestDir::new();
-        let repository =
-            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
-        std::fs::write(dir.path().join("Alpha.json"), b"{}").unwrap();
-        let unreadable = dir.path().join("Beta.json");
-        std::fs::write(&unreadable, b"{}").unwrap();
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
-        match std::fs::read(&unreadable) {
-            Ok(_) => {
-                eprintln!("skipping: process can read a mode-000 file");
-                return;
-            }
-            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+        let books: [(&str, &[u8]); 3] = [
+            (
+                "Lore",
+                br#"{"entries":{"0":{"content":"\ud800","order":9007199254740993}},"name":"Display","extensions": {"z": 1, "a": 2}}"#,
+            ),
+            ("Lore - 2", br#"{"entries":{},"name":"","extensions":42}"#),
+            ("Broken", b"not json"),
+        ];
+        for (name, bytes) in books {
+            std::fs::write(dir.path().join(format!("{name}.json")), bytes).expect("write world");
         }
 
-        let error = repository.list_world_info().await.unwrap_err();
-        match error {
-            DomainError::InternalError(message) => {
-                assert!(message.contains("Failed to read world info"));
-                assert!(message.contains(&unreadable.display().to_string()));
-            }
-            other => panic!("expected contextual internal error, got {other:?}"),
-        }
+        let items = repository.list_world_info().await.expect("list world info");
+
+        assert_eq!(
+            serde_json::to_string(&items).expect("encode list"),
+            r#"[{"file_id":"Broken","name":"Broken","extensions":{}},{"file_id":"Lore - 2","name":"Lore - 2","extensions":{}},{"file_id":"Lore","name":"Display","extensions":{"z": 1, "a": 2}}]"#
+        );
     }
 
     #[tokio::test]

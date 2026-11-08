@@ -10,18 +10,18 @@ use tt_application::dto::world_info_dto::{
     NormalizeWorldInfoNameDto, NormalizeWorldInfoNameResponseDto,
 };
 use tt_contracts::byte_commit::CommitBegin;
-use tt_contracts::world_info::WorldInfoListItem;
 
 #[tauri::command]
 pub async fn list_world_info(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<WorldInfoListItem>, CommandError> {
-    app_state
+) -> Result<tauri::ipc::Response, CommandError> {
+    let result = app_state
         .services
         .world_info_service
         .list_world_info()
         .await
-        .map_err(map_command_error("Failed to list world info"))
+        .map_err(map_command_error("Failed to list world info"))?;
+    Ok(tauri::ipc::Response::new(result.bytes))
 }
 
 #[tauri::command]

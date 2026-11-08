@@ -10,8 +10,8 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
     }
 
     router.post('/api/worldinfo/list', async () => {
-        const inventory = await context.safeInvoke('list_world_info');
-        return jsonResponse(inventory);
+        const bytes = await context.safeInvoke('list_world_info');
+        return jsonBytes(bytes);
     });
 
     router.post('/api/worldinfo/get', async ({ body }) => {

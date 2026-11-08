@@ -1,9 +1,10 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
+use serde_json::value::RawValue;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Serialized as one item of SillyTavern's `POST /api/worldinfo/list` response.
+#[derive(Debug, Serialize)]
 pub struct WorldInfoListItem {
     pub file_id: String,
-    pub name: Value,
-    pub extensions: Value,
+    pub name: String,
+    pub extensions: Box<RawValue>,
 }
