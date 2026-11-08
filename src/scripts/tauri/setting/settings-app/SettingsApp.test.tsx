@@ -20,14 +20,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const tr = (key: string) => key;
 
 const handles: SettingsHandle[] = [];
-const containers: HTMLElement[] = [];
 
 afterEach(() => {
     for (const handle of handles.splice(0)) {
         act(() => handle.unmount());
-    }
-    for (const container of containers.splice(0)) {
-        container.remove();
     }
 });
 
@@ -126,7 +122,6 @@ function createOptions(overrides: Partial<SettingsMountOptions> = {}): SettingsM
 function mountApp(options: SettingsMountOptions = createOptions()): { container: HTMLElement; handle: SettingsHandle } {
     const container = document.createElement('div');
     document.body.append(container);
-    containers.push(container);
     let handle!: SettingsHandle;
     act(() => {
         handle = mountTauriTavernSettingsApp(container, options);

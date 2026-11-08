@@ -1,6 +1,6 @@
 import { act, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test } from '@rstest/core';
+import { expect, rs, test } from '@rstest/core';
 
 import { openAgentSystemPanel } from './panel-popup';
 import { defaultProfile } from './profile-model';
@@ -34,51 +34,45 @@ function installHost(tryGetJson: () => Promise<StoredSettingsResult>): void {
         save: () => Promise.resolve(),
         delete: () => Promise.resolve(),
     };
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            ready: Promise.resolve(),
-            api: {
-                extension: {
-                    store: {
-                        tryGetJson,
-                        setJson: () => Promise.resolve(),
-                    },
+    rs.stubGlobal('__TAURITAVERN__', {
+        ready: Promise.resolve(),
+        api: {
+            extension: {
+                store: {
+                    tryGetJson,
+                    setJson: () => Promise.resolve(),
                 },
-                agent: {
-                    profiles,
-                    tools: {
-                        list: () => Promise.resolve({ tools: [], diagnostics: [] }),
-                    },
+            },
+            agent: {
+                profiles,
+                tools: {
+                    list: () => Promise.resolve({ tools: [], diagnostics: [] }),
                 },
-                llmConnections: {
-                    save: () => Promise.resolve(),
-                },
+            },
+            llmConnections: {
+                save: () => Promise.resolve(),
             },
         },
     });
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                extensionSettings: { connectionManager: { modelTargets: [] } },
-                eventSource: {
-                    on: () => undefined,
-                    removeListener: () => undefined,
-                },
-                eventTypes: {
-                    MODEL_TARGET_CREATED: 'model_target_created',
-                    MODEL_TARGET_UPDATED: 'model_target_updated',
-                    MODEL_TARGET_DELETED: 'model_target_deleted',
-                },
-                getPresetManager: () => ({
-                    getAllPresets: () => [],
-                    findPreset: () => null,
-                }),
-                POPUP_RESULT: { AFFIRMATIVE: 1 },
-                Popup: { show: { confirm: () => Promise.resolve(1) } },
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            extensionSettings: { connectionManager: { modelTargets: [] } },
+            eventSource: {
+                on: () => undefined,
+                removeListener: () => undefined,
+            },
+            eventTypes: {
+                MODEL_TARGET_CREATED: 'model_target_created',
+                MODEL_TARGET_UPDATED: 'model_target_updated',
+                MODEL_TARGET_DELETED: 'model_target_deleted',
+            },
+            getPresetManager: () => ({
+                getAllPresets: () => [],
+                findPreset: () => null,
             }),
-        },
+            POPUP_RESULT: { AFFIRMATIVE: 1 },
+            Popup: { show: { confirm: () => Promise.resolve(1) } },
+        }),
     });
 }
 

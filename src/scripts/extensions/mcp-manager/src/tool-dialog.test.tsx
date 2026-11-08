@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 
@@ -27,10 +27,7 @@ function currentPopup(): TestPopup {
     return popup;
 }
 
-afterEach(() => {
-    cleanup();
-    uninstallPopupHost();
-});
+afterEach(uninstallPopupHost);
 
 test('editing a description preserves sibling settings and removes an empty override', async () => {
     installPopupHost();

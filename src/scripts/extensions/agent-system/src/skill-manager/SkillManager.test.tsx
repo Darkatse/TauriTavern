@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, expect, rs, test } from '@rstest/core';
 import { StrictMode, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 
@@ -15,19 +15,19 @@ import {
 import { buildSkillFileTree, SkillFileViewer } from './SkillManagerFiles';
 import { ensureSkillManagerContainer } from './settings-entry';
 
-const { loadBundle } = rstest.hoisted(() => ({
-    loadBundle: rstest.fn<() => Promise<typeof import('../../../../../lib-bundle-editor.js')>>(),
+const { loadBundle } = rs.hoisted(() => ({
+    loadBundle: rs.fn<() => Promise<typeof import('../../../../../lib-bundle-editor.js')>>(),
 }));
-rstest.mock('../../../../../lib.js', () => ({ getCodeMirrorEditor: loadBundle }));
-rstest.mock('../../../../popup.js', () => ({ callGenericPopup: rstest.fn(), POPUP_TYPE: { TEXT: 1 } }));
-rstest.mock('../../../../i18n.js', () => ({ t: (strings: TemplateStringsArray) => strings.join('') }));
-rstest.mock('../../../../utils.js', () => ({ copyText: rstest.fn() }));
+rs.mock('../../../../../lib.js', () => ({ getCodeMirrorEditor: loadBundle }));
+rs.mock('../../../../popup.js', () => ({ callGenericPopup: rs.fn(), POPUP_TYPE: { TEXT: 1 } }));
+rs.mock('../../../../i18n.js', () => ({ t: (strings: TemplateStringsArray) => strings.join('') }));
+rs.mock('../../../../utils.js', () => ({ copyText: rs.fn() }));
 
 beforeEach(() => {
-    Object.defineProperty(window, '__TAURITAVERN_HOST__', { configurable: true, value: { platform: 'windows', kind: 'desktop' } });
+    rs.stubGlobal('__TAURITAVERN_HOST__', { platform: 'windows', kind: 'desktop' });
     editorRuntime.initializeCodeMirrorEditor({ codemirror_editor_enabled: true });
     loadBundle.mockImplementation(() => import('../../../../../lib-bundle-editor.js'));
-    rstest.spyOn(hostApi, 'loadCodeMirrorEditor').mockResolvedValue(editorRuntime);
+    rs.spyOn(hostApi, 'loadCodeMirrorEditor').mockResolvedValue(editorRuntime);
 });
 
 const tr = (key: string): string => key;
@@ -130,14 +130,11 @@ function createViewController() {
 }
 
 afterEach(() => {
-    cleanup();
-    document.body.replaceChildren();
-    rstest.restoreAllMocks();
     loadBundle.mockReset();
 });
 
 test('Skill preview and edits share CodeMirror history and submit the current draft', async () => {
-    const save = rstest.fn((content: string) => Promise.resolve({ ...readFile(), content }));
+    const save = rs.fn((content: string) => Promise.resolve({ ...readFile(), content }));
     const result = render(<StrictMode><SkillFileViewer file={readFile()} onSave={save} onClose={() => undefined} tr={tr} /></StrictMode>);
     await waitFor(() => expect(editorRoot(result.container).querySelectorAll('.cm-editor').length).toBe(1));
     expect(editorRoot(result.container).querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
@@ -170,7 +167,7 @@ test('controlled Skill text survives cancelled mounts, permission changes, and t
     }
     let release!: (runtime: typeof editorRuntime) => void;
     const pending = new Promise<typeof editorRuntime>(resolve => { release = resolve; });
-    const loadRuntime = rstest.spyOn(hostApi, 'loadCodeMirrorEditor').mockReturnValueOnce(pending).mockResolvedValue(editorRuntime);
+    const loadRuntime = rs.spyOn(hostApi, 'loadCodeMirrorEditor').mockReturnValueOnce(pending).mockResolvedValue(editorRuntime);
     const first = render(<StrictMode><Source /></StrictMode>);
     await waitFor(() => expect(loadRuntime).toHaveBeenCalled());
     first.unmount();

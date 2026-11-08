@@ -1,6 +1,6 @@
 import * as drawers from '../../../drawers.js';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, test, rstest as vi } from '@rstest/core';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { expect, rs, test } from '@rstest/core';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { AssistantApp } from './AssistantApp';
 import { Transcript } from './Transcript';
@@ -9,7 +9,6 @@ import { installAssistantDrawer } from './drawer';
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController, ModelTarget } from './host';
 
-afterEach(() => { cleanup(); document.body.replaceChildren(); });
 function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>(done => { resolve = done; });
@@ -31,7 +30,7 @@ function harness() {
     };
     const listeners = new Set<() => void>();
     function publish(patch: Partial<AssistantSnapshot>) { snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener()); }
-    const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
+    const sendMessage = rs.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
     const controller: AssistantController = {
         getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage, compact: sendMessage,
@@ -60,7 +59,7 @@ test('IME and modified Enter never send to character chat; switching formatting 
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
-    const globalKey = vi.fn();
+    const globalKey = rs.fn();
     document.addEventListener('keydown', globalKey);
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     let input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message the app assistant' });
@@ -83,7 +82,7 @@ test('IME and modified Enter never send to character chat; switching formatting 
 test('Escape closes the composer menu before the drawer', () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
-    const close = vi.spyOn(drawer, 'close');
+    const close = rs.spyOn(drawer, 'close');
     const h = harness();
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     const trigger = screen.getByRole('button', { name: 'Model: Test model' });
@@ -273,7 +272,7 @@ for (const { visible, deny, checked, nextVisible, nextDeny } of [
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     h.snapshot.profile.skills = { visible, deny };
-    const saveProfile = vi.fn(() => Promise.resolve());
+    const saveProfile = rs.fn(() => Promise.resolve());
     h.controller.saveProfile = saveProfile;
     h.actions.loadOptions = () => Promise.resolve({ presets: ['Agent'], tools: [], diagnostics: [], skills: [
         { scope: { kind: 'builtin' }, name: 'test-skill', description: 'Test reference', tags: [], installedHash: 'hash',
@@ -298,7 +297,7 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     h.snapshot.profile.skills.deny = ['test-skill'];
-    const saveProfile = vi.fn(() => Promise.resolve());
+    const saveProfile = rs.fn(() => Promise.resolve());
     h.controller.saveProfile = saveProfile;
     let importing = false;
     const input: TauriTavernSkillImportInput = { kind: 'inlineFiles', files: [] };

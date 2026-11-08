@@ -1,5 +1,5 @@
 import { act, waitFor } from '@testing-library/react';
-import { expect, test } from '@rstest/core';
+import { expect, rs, test } from '@rstest/core';
 
 import { openAgentRunTimelineDialog } from './run-timeline-panel';
 
@@ -39,14 +39,11 @@ test('history timelines support multiple roots and clean every dialog path', asy
         }],
         timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
     });
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                agent: {
-                    profiles: {},
-                    readEvents,
-                },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            agent: {
+                profiles: {},
+                readEvents,
             },
         },
     });

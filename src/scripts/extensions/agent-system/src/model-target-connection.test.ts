@@ -70,37 +70,28 @@ function installHost(targets: AgentModelTarget[]): {
     const deletedConnections: string[] = [];
     const errors: string[] = [];
 
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                extensionSettings: { connectionManager: { modelTargets: targets } },
-                eventSource,
-                eventTypes: EVENT_TYPES,
-            }),
-        },
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            extensionSettings: { connectionManager: { modelTargets: targets } },
+            eventSource,
+            eventTypes: EVENT_TYPES,
+        }),
     });
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                llmConnections: {
-                    save: ({ connection }: { connection: TauriTavernLlmConnectionDefinition }) => {
-                        savedConnections.push(structuredClone(connection));
-                        return Promise.resolve();
-                    },
-                    delete: ({ connectionId }: { connectionId: string }) => {
-                        deletedConnections.push(connectionId);
-                        return Promise.resolve();
-                    },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            llmConnections: {
+                save: ({ connection }: { connection: TauriTavernLlmConnectionDefinition }) => {
+                    savedConnections.push(structuredClone(connection));
+                    return Promise.resolve();
+                },
+                delete: ({ connectionId }: { connectionId: string }) => {
+                    deletedConnections.push(connectionId);
+                    return Promise.resolve();
                 },
             },
         },
     });
-    Object.defineProperty(window, 'toastr', {
-        configurable: true,
-        value: { error: (message: string) => errors.push(message) },
-    });
+    rs.stubGlobal('toastr', { error: (message: string) => errors.push(message) });
 
     return {
         eventSource,

@@ -1,4 +1,4 @@
-import { expect, test } from '@rstest/core';
+import { expect, rs, test } from '@rstest/core';
 
 import { EMBEDDED_SKILL_ARCHIVE_FORMAT, readEmbeddedSkillPackage } from '../embedded-asset-packages';
 import { syncSkillWritePortability } from './embedded-skill-sync';
@@ -63,28 +63,22 @@ test('portable Skill sync writes character assets without edit-form coupling', a
         }),
     };
 
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                skill: {
-                    export: () => Promise.resolve({
-                        fileName: 'writer.zip',
-                        contentBase64: 'UEsDBAo=',
-                        sha256: 'abc123',
-                    }),
-                },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            skill: {
+                export: () => Promise.resolve({
+                    fileName: 'writer.zip',
+                    contentBase64: 'UEsDBAo=',
+                    sha256: 'abc123',
+                }),
             },
         },
     });
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                characters: [character],
-                getRequestHeaders: () => ({ 'content-type': 'application/json' }),
-            }),
-        },
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            characters: [character],
+            getRequestHeaders: () => ({ 'content-type': 'application/json' }),
+        }),
     });
     globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         if (typeof input !== 'string' || typeof init?.body !== 'string') {

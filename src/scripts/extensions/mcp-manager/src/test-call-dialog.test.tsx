@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
@@ -91,10 +91,7 @@ function renderDialog(overrides: Partial<TestCallDialogDeps> = {}) {
     return render(<TestCallDialog {...deps(overrides)} tr={tr} ref={createRef()} />);
 }
 
-afterEach(() => {
-    cleanup();
-    uninstallPopupHost();
-});
+afterEach(uninstallPopupHost);
 
 test('uses explicit refresh when the user retries a failed catalog load', async () => {
     let refreshes = 0;

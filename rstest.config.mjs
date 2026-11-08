@@ -9,6 +9,9 @@ export default defineConfig({
     'src/scripts/tauri/setting/**/*.test.{ts,tsx}',
   ],
   testEnvironment: 'happy-dom',
+  setupFiles: ['./tests/helpers/rstest-setup.mjs'],
+  restoreMocks: true,
+  unstubGlobals: true,
   tools: {
     swc: {
       jsc: {

@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test } from '@rstest/core';
+import { afterEach, expect, rs, test } from '@rstest/core';
 
 import type { AgentSystemSettings } from './settings-store';
 import { RunTimelineApp } from './RunTimelineApp';
@@ -35,25 +35,20 @@ function fileEvent(seq: number): TauriTavernAgentRunEvent {
 }
 
 afterEach(() => {
-    cleanup();
     controllers.splice(0).forEach(controller => controller.dispose());
-    Reflect.deleteProperty(window, '__TAURITAVERN__');
 });
 
 test('active hide/show and timeline/detail switches preserve the mounted event scroller', async () => {
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                agent: {
-                    readWorkspaceFile: ({ path }: { path: string }) => Promise.resolve({
-                        path,
-                        text: 'hello',
-                        chars: 5,
-                        words: 1,
-                        sha256: 'hash',
-                    }),
-                },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            agent: {
+                readWorkspaceFile: ({ path }: { path: string }) => Promise.resolve({
+                    path,
+                    text: 'hello',
+                    chars: 5,
+                    words: 1,
+                    sha256: 'hash',
+                }),
             },
         },
     });
@@ -136,13 +131,10 @@ test('detail navigation scrolls through older pages with bounded buttons and laz
     const reads: number[] = [];
     const detailReads: string[] = [];
     const translate: AgentSystemTr = (key, params) => params?.path ? `${key}:${params.path}` : key;
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: { api: { agent: { readWorkspaceFile: ({ path }: { path: string }) => {
-            detailReads.push(path);
-            return Promise.resolve({ path, text: `content:${path}`, chars: 5, words: 1, sha256: 'hash' });
-        } } } },
-    });
+    rs.stubGlobal('__TAURITAVERN__', { api: { agent: { readWorkspaceFile: ({ path }: { path: string }) => {
+        detailReads.push(path);
+        return Promise.resolve({ path, text: `content:${path}`, chars: 5, words: 1, sha256: 'hash' });
+    } } } });
     const controller = createRunTimelineController({
         mode: 'history',
         rootId: 'detail-history',
@@ -225,10 +217,7 @@ async function renderTaskTimeline(
         reads.push(input);
         return Promise.resolve(task);
     };
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: { api: { agent: { readTaskDetail } } },
-    });
+    rs.stubGlobal('__TAURITAVERN__', { api: { agent: { readTaskDetail } } });
     const controller = createRunTimelineController({
         mode: 'history', rootId: 'task-details', run: { runId: task.runId }, requestClose: () => undefined,
         deps: {

@@ -16,11 +16,8 @@ rs.mock('../../../utils.js', () => ({
 }));
 
 afterEach(() => {
-    rs.restoreAllMocks();
-    rs.unstubAllGlobals();
     Popup.util.popups.length = 0;
     Popup.util.lastResult = null;
-    document.body.replaceChildren();
 });
 
 test('device input retries command failures and preserves the first result during asynchronous closing', async () => {

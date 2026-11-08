@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test, rstest } from '@rstest/core';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, expect, rs, test } from '@rstest/core';
+import { act, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { createObservation } from './snapshot.ts';
 import { interact } from './interact.ts';
@@ -14,13 +14,10 @@ let hit: Element | null = null;
 beforeEach(() => {
     document.body.style.visibility = 'visible';
     // Supply layout for semantic/event tests; visibility and hit testing belong to native WebView checks.
-    rstest.spyOn(Element.prototype, 'getClientRects').mockImplementation(() => clientRects());
-    rstest.spyOn(document, 'elementFromPoint').mockImplementation(() => hit);
+    rs.spyOn(Element.prototype, 'getClientRects').mockImplementation(() => clientRects());
+    rs.spyOn(document, 'elementFromPoint').mockImplementation(() => hit);
 });
 afterEach(() => {
-    cleanup();
-    rstest.restoreAllMocks();
-    document.body.replaceChildren();
     hit = null;
 });
 
@@ -74,13 +71,13 @@ test('a paginated region stays actionable while earlier page and run refs expire
 
 test('short refs are not reused when the page module reloads', async () => {
     document.body.innerHTML = '<button>Before reload</button>';
-    rstest.resetModules();
+    rs.resetModules();
     const beforeReload = (await import('./snapshot.ts')).createObservation(observationOptions);
     beforeReload.enterRun('run');
     const oldRef = ref(beforeReload.snapshot({}).tree, 'Before reload');
 
     // Reload the module as a page would, keeping browser storage and conversation history.
-    rstest.resetModules();
+    rs.resetModules();
     document.body.innerHTML = '<button>After reload</button>';
     const afterReload = (await import('./snapshot.ts')).createObservation(observationOptions);
     afterReload.enterRun('run');
@@ -252,7 +249,7 @@ test('capture layout masks private regions and clips targets to the visible view
         'history-child': new DOMRect(210, 30, 100, 20), editor: new DOMRect(10, 200, 300, 100),
         partial: new DOMRect(-20, 300, 100, 30), outside: new DOMRect(window.innerWidth + 10, 300, 100, 30),
     };
-    rstest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    rs.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
         return bounds[this.id] ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
     });
     const observation = createObservation(observationOptions);

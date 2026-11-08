@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 
@@ -72,10 +72,7 @@ function initial(servers: TauriTavernMcpServer[] = []): McpManagerInitial {
     return { servers, storageIssues: [] };
 }
 
-afterEach(() => {
-    cleanup();
-    uninstallPopupHost();
-});
+afterEach(uninstallPopupHost);
 test('creates the Exa recommendation once and does not restore it after deletion', async () => {
     let handled = false;
     const creates: Array<{ displayName: string; endpoint: string }> = [];
