@@ -1,3 +1,7 @@
+import type { ReactNode } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
+
 const PREFIX = 'mcp_manager.';
 const DEFAULT_MESSAGES = Object.freeze({
     active: 'Active',
@@ -208,6 +212,18 @@ export function createTextPopup(content: Element, options: PopupOptions): PopupI
 
 export function createConfirmPopup(content: Element, options: PopupOptions): PopupInstance {
     return createTypedPopup(content, options, context()?.POPUP_TYPE?.CONFIRM);
+}
+
+/** The content commits before the popup opens: the popup may run onOpen while it shows. */
+export async function showReactPopup(content: ReactNode, createPopup: (mount: HTMLElement) => PopupInstance): Promise<void> {
+    const mount = document.createElement('div');
+    const root = createRoot(mount);
+    try {
+        flushSync(() => root.render(content));
+        await createPopup(mount).show();
+    } finally {
+        root.unmount();
+    }
 }
 
 export function isPopupAffirmative(result: unknown): boolean {

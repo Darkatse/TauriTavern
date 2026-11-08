@@ -1,4 +1,4 @@
-import { expect, test } from '@rstest/core';
+import { expect, rs, test } from '@rstest/core';
 
 import { EMBEDDED_SKILL_ARCHIVE_FORMAT, readEmbeddedSkillPackage } from '../embedded-asset-packages';
 import { syncSkillWritePortability } from './embedded-skill-sync';
@@ -32,9 +32,6 @@ test('persisted embedded Skill items are fully validated before use', () => {
 });
 
 test('portable Skill sync writes character assets without edit-form coupling', async () => {
-    const hostDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURITAVERN__');
-    const sillyTavernDescriptor = Object.getOwnPropertyDescriptor(window, 'SillyTavern');
-    const previousFetch = globalThis.fetch;
     const fetchCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const character: TestCharacter = {
         name: 'Aurelia',
@@ -63,30 +60,24 @@ test('portable Skill sync writes character assets without edit-form coupling', a
         }),
     };
 
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                skill: {
-                    export: () => Promise.resolve({
-                        fileName: 'writer.zip',
-                        contentBase64: 'UEsDBAo=',
-                        sha256: 'abc123',
-                    }),
-                },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            skill: {
+                export: () => Promise.resolve({
+                    fileName: 'writer.zip',
+                    contentBase64: 'UEsDBAo=',
+                    sha256: 'abc123',
+                }),
             },
         },
     });
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                characters: [character],
-                getRequestHeaders: () => ({ 'content-type': 'application/json' }),
-            }),
-        },
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            characters: [character],
+            getRequestHeaders: () => ({ 'content-type': 'application/json' }),
+        }),
     });
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    rs.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         if (typeof input !== 'string' || typeof init?.body !== 'string') {
             throw new Error('expected a string request');
         }
@@ -96,25 +87,19 @@ test('portable Skill sync writes character assets without edit-form coupling', a
         }
         fetchCalls.push({ url: input, body });
         return Promise.resolve(new Response('', { status: 200 }));
-    };
+    });
 
-    try {
-        await syncSkillWritePortability({
-            scope: { kind: 'character', characterId: 'Aurelia' },
-            name: 'writer',
-        });
+    await syncSkillWritePortability({
+        scope: { kind: 'character', characterId: 'Aurelia' },
+        name: 'writer',
+    });
 
-        expect(fetchCalls).toHaveLength(1);
-        expect(fetchCalls[0]?.url).toBe('/api/characters/merge-attributes');
-        const tauriTavernPatch = nestedObject(fetchCalls[0]?.body, 'data', 'extensions', 'tauritavern');
-        expect(Object.keys(tauriTavernPatch)).toEqual(['skills']);
-        expect(character.data.extensions.tauritavern.skills?.items[0]?.contentBase64).toBe('UEsDBAo=');
-        expect(character.data.extensions.tauritavern.agentProfiles.items[0]?.profile.id).toBe('stale-local-profile');
-    } finally {
-        globalThis.fetch = previousFetch;
-        restoreProperty(window, '__TAURITAVERN__', hostDescriptor);
-        restoreProperty(window, 'SillyTavern', sillyTavernDescriptor);
-    }
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]?.url).toBe('/api/characters/merge-attributes');
+    const tauriTavernPatch = nestedObject(fetchCalls[0]?.body, 'data', 'extensions', 'tauritavern');
+    expect(Object.keys(tauriTavernPatch)).toEqual(['skills']);
+    expect(character.data.extensions.tauritavern.skills?.items[0]?.contentBase64).toBe('UEsDBAo=');
+    expect(character.data.extensions.tauritavern.agentProfiles.items[0]?.profile.id).toBe('stale-local-profile');
 });
 
 function nestedObject(source: unknown, ...path: string[]): Record<string, unknown> {
@@ -129,9 +114,4 @@ function nestedObject(source: unknown, ...path: string[]): Record<string, unknow
 
 function plainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function restoreProperty(target: object, key: PropertyKey, descriptor?: PropertyDescriptor): void {
-    if (descriptor) Object.defineProperty(target, key, descriptor);
-    else Reflect.deleteProperty(target, key);
 }

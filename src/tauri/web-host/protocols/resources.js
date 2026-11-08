@@ -3,7 +3,7 @@
 import { FILE_READ_COUNT_BYTES } from '../../main/kernel/byte-protocol.js';
 
 export function createResources() {
-    /** @type {Map<number, { bytes: Uint8Array, offset: number }>} */
+    /** @type {Map<number, { bytes: Uint8Array, offset: number, chunkBytes?: number }>} */
     const readers = new Map();
     /** @type {Map<string, Uint8Array>} */
     const paths = new Map();
@@ -14,12 +14,25 @@ export function createResources() {
         if (!value) throw new Error(`Unknown Web Host resource: ${rid}`);
         return value;
     }
+    /** @param {number} rid @param {number} len */
+    function take(rid, len) {
+        const value = reader(rid);
+        const chunk = value.bytes.subarray(value.offset, value.offset + len);
+        value.offset += chunk.length;
+        return chunk;
+    }
     return {
         /** @param {Uint8Array} bytes */
         path(bytes) {
             const path = `web-host:chat/${++nextId}`;
             paths.set(path, bytes);
             return path;
+        },
+        /** A byte reader that `read_bytes` drains `chunkBytes` at a time. @param {Uint8Array} bytes @param {number} chunkBytes */
+        open(bytes, chunkBytes) {
+            const rid = ++nextId;
+            readers.set(rid, { bytes, offset: 0, chunkBytes });
+            return rid;
         },
         commands: /** @type {import('../install.js').CommandHandlers} */ ({
             'plugin:fs|open': ({ path }) => {
@@ -32,13 +45,16 @@ export function createResources() {
             },
             'plugin:fs|fstat': ({ rid }) => ({ size: reader(rid).bytes.length }),
             'plugin:fs|read': ({ rid, len }) => {
-                const value = reader(rid);
-                const chunk = value.bytes.subarray(value.offset, value.offset + len);
-                value.offset += chunk.length;
+                const chunk = take(rid, len);
                 const response = new Uint8Array(chunk.length + FILE_READ_COUNT_BYTES);
                 response.set(chunk);
                 new DataView(response.buffer).setBigUint64(chunk.length, BigInt(chunk.length));
                 return response;
+            },
+            read_bytes: ({ rid }) => {
+                const { chunkBytes } = reader(rid);
+                if (!chunkBytes) throw new Error(`Web Host resource ${rid} is not a byte reader`);
+                return take(rid, chunkBytes).slice();
             },
             'plugin:resources|close': ({ rid }) => { reader(rid); readers.delete(rid); },
         }),

@@ -1,6 +1,8 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tokio::fs::{self as tokio_fs, create_dir_all};
 use tokio::io as tokio_io;
 use tt_domain::errors::DomainError;
@@ -646,6 +648,16 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
         let _ = tokio_fs::remove_file(&temp_path).await;
     }
     result
+}
+
+/// How many files a directory scan reads at once.
+pub fn scan_parallelism() -> usize {
+    static PARALLELISM: LazyLock<usize> = LazyLock::new(|| {
+        std::thread::available_parallelism()
+            .map_or(4, NonZeroUsize::get)
+            .min(8)
+    });
+    *PARALLELISM
 }
 
 /// List files in a directory with a specific extension

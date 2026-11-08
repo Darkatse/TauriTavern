@@ -183,7 +183,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）与启动失败对话框（见 §4）
   - `src/scripts/tauri/startup/startup-dialog.js`：启动对话框原语（Shadow DOM、只能经按钮离开），失败、安全模式询问与结果共用
   - `src/scripts/tauri/startup/safe-mode.js`：安全模式的询问、请求与结果，以及 `css/user.css` 的加载
-- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
+- `tests/webview/startup-order.test.mjs`（`pnpm run test:dom`）验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。
 
 ---
 

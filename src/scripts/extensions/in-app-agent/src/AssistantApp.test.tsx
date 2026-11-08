@@ -1,6 +1,7 @@
+import '../style.css';
 import * as drawers from '../../../drawers.js';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, test, rstest as vi } from '@rstest/core';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { expect, rs, test } from '@rstest/core';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { AssistantApp } from './AssistantApp';
 import { Transcript } from './Transcript';
@@ -9,7 +10,6 @@ import { installAssistantDrawer } from './drawer';
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController, ModelTarget } from './host';
 
-afterEach(() => { cleanup(); document.body.replaceChildren(); });
 function deferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>(done => { resolve = done; });
@@ -31,7 +31,7 @@ function harness() {
     };
     const listeners = new Set<() => void>();
     function publish(patch: Partial<AssistantSnapshot>) { snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener()); }
-    const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
+    const sendMessage = rs.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
     const controller: AssistantController = {
         getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage, compact: sendMessage,
@@ -60,7 +60,7 @@ test('IME and modified Enter never send to character chat; switching formatting 
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
-    const globalKey = vi.fn();
+    const globalKey = rs.fn();
     document.addEventListener('keydown', globalKey);
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     let input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message the app assistant' });
@@ -83,7 +83,7 @@ test('IME and modified Enter never send to character chat; switching formatting 
 test('Escape closes the composer menu before the drawer', () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
-    const close = vi.spyOn(drawer, 'close');
+    const close = rs.spyOn(drawer, 'close');
     const h = harness();
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     const trigger = screen.getByRole('button', { name: 'Model: Test model' });
@@ -198,40 +198,51 @@ test('reused provider call IDs keep each roundâ€™s result with its own call', ()
     expect(within(second).getByText('second result')).toBeTruthy();
 });
 
+function renderTranscript(h: ReturnType<typeof harness>) {
+    const container = document.createElement('div');
+    container.className = 'ttia-root ttia-history-area';
+    container.style.height = '240px';
+    document.body.append(container);
+    const ui = () => <Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />;
+    const view = render(ui(), { container });
+    return { root: screen.getByRole('region', { name: 'Conversation' }), container: view.container, rerender: () => view.rerender(ui()) };
+}
+
 test('paging skips collapsed rows, preserves the visible anchor, and never follows an older user message', async () => {
     const h = harness();
     const page = deferred<void>();
     h.controller.loadOlder = () => page.promise;
-    const entry = (seq: number, role: 'user' | 'assistant'): TauriTavernAgentSessionMessage => ({
-        seq, runId: 'run', createdAt: '', message: { role, providerMetadata: null, parts: [{ type: 'text', text: `Message ${seq}` }] },
+    const entry = (seq: number, role: 'user' | 'assistant', text = `Message ${seq}`): TauriTavernAgentSessionMessage => ({
+        seq, runId: 'run', createdAt: '', message: { role, providerMetadata: null, parts: [{ type: 'text', text }] },
     });
-    h.publish({ messages: [entry(9, 'assistant'), entry(10, 'assistant'), { ...entry(11, 'user'), runId: 'next-run' }], nextBeforeSeq: 9 });
-    const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    const root = screen.getByRole('region', { name: 'Conversation' });
+    // The tail is taller than the viewport, so the reader stays far from it.
+    const tail = { ...entry(11, 'user', 'Next question? '.repeat(200)), runId: 'next-run' };
+    h.publish({ messages: [entry(9, 'assistant'), entry(10, 'assistant'), tail], nextBeforeSeq: 9 });
+    const view = renderTranscript(h);
+    const { root } = view;
     const clipped = view.container.querySelector<HTMLElement>('[data-message-seq="9"]');
     const row = view.container.querySelector<HTMLElement>('[data-message-seq="10"]');
     if (!clipped || !row) throw new Error('Expected the current page');
-    let rowContentOffset = 160;
-    root.getBoundingClientRect = () => DOMRect.fromRect({ y: 100, height: 300 });
-    // A clipped descendant retains its own layout box, despite being invisible.
-    clipped.getBoundingClientRect = () => DOMRect.fromRect({ y: 140, height: 80 });
-    row.getBoundingClientRect = () => DOMRect.fromRect({ y: 100 + rowContentOffset - root.scrollTop, height: 80 });
-    Object.defineProperty(root, 'scrollHeight', { value: 1000 });
-    root.scrollTop = 120;
+    row.scrollIntoView({ block: 'start' });
+    root.scrollTop -= 10;
+    // Mid-collapse, a clipped row keeps a visible box that no longer moves with the content.
+    const clippedBox = DOMRect.fromRect({ y: root.getBoundingClientRect().top, height: 80 });
+    clipped.getBoundingClientRect = () => clippedBox;
     const visibleOffset = () => row.getBoundingClientRect().top - root.getBoundingClientRect().top;
     const before = visibleOffset();
+    // WebKit keeps scroll offsets in whole pixels.
+    const expectAnchored = () => expect(Math.abs(visibleOffset() - before)).toBeLessThan(1);
     fireEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
     h.publish({ busy: true, responses: [] });
-    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    expect(visibleOffset()).toBe(before);
-    rowContentOffset += 200;
+    view.rerender();
+    expectAnchored();
     h.publish({ busy: false, messages: [entry(1, 'user'), ...h.snapshot.messages] });
-    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    view.rerender();
     await act(async () => { page.resolve(); await page.promise; });
-    expect(visibleOffset()).toBe(before);
+    expectAnchored();
     h.publish({ responses: [] });
-    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    expect(visibleOffset()).toBe(before);
+    view.rerender();
+    expectAnchored();
 });
 
 test('compaction stays in run order, opens its summary, and preserves a readerâ€™s scroll position', () => {
@@ -241,10 +252,9 @@ test('compaction stays in run order, opens its summary, and preserves a readerâ€
         ...(role === 'assistant' ? { origin: { invocationId: 'root', round: seq } } : {}),
         message: { role, providerMetadata: null, parts: [{ type: 'text', text }] },
     });
-    h.publish({ messages: [entry(1, 'user', 'Question'), entry(2, 'assistant', 'Earlier work')] });
-    const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    const root = screen.getByRole('region', { name: 'Conversation' });
-    Object.defineProperties(root, { scrollHeight: { value: 1000 }, clientHeight: { value: 300 } });
+    h.publish({ messages: [entry(1, 'user', 'Question? '.repeat(200)), entry(2, 'assistant', 'Earlier work')] });
+    const view = renderTranscript(h);
+    const { root } = view;
     root.scrollTop = 120;
     fireEvent.scroll(root);
     h.publish({ messages: [...h.snapshot.messages, {
@@ -252,10 +262,10 @@ test('compaction stays in run order, opens its summary, and preserves a readerâ€
         compaction: { keptFromSeq: 1, tokensBefore: 7000, tokensAfter: 1000 },
         message: { role: 'user', providerMetadata: null, parts: [{ type: 'text', text: 'Earlier context' }, { type: 'text', text: 'Summary notes' }] },
     }] });
-    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    view.rerender();
     expect(root.scrollTop).toBe(120);
     h.publish({ messages: [...h.snapshot.messages, entry(4, 'assistant', 'Next answer')] });
-    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    view.rerender();
     const compacted = screen.getByRole('button', { name: /Compacted context/ });
     expect(screen.getByText('Earlier work').compareDocumentPosition(compacted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(compacted.compareDocumentPosition(screen.getByText('Next answer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -273,7 +283,7 @@ for (const { visible, deny, checked, nextVisible, nextDeny } of [
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     h.snapshot.profile.skills = { visible, deny };
-    const saveProfile = vi.fn(() => Promise.resolve());
+    const saveProfile = rs.fn(() => Promise.resolve());
     h.controller.saveProfile = saveProfile;
     h.actions.loadOptions = () => Promise.resolve({ presets: ['Agent'], tools: [], diagnostics: [], skills: [
         { scope: { kind: 'builtin' }, name: 'test-skill', description: 'Test reference', tags: [], installedHash: 'hash',
@@ -298,7 +308,7 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     h.snapshot.profile.skills.deny = ['test-skill'];
-    const saveProfile = vi.fn(() => Promise.resolve());
+    const saveProfile = rs.fn(() => Promise.resolve());
     h.controller.saveProfile = saveProfile;
     let importing = false;
     const input: TauriTavernSkillImportInput = { kind: 'inlineFiles', files: [] };

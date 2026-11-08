@@ -64,10 +64,6 @@ pub(super) struct ChatFileDescriptor {
     pub path: PathBuf,
 }
 
-fn summary_cache_key(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
-}
-
 fn directory_date(send_date: Option<&Value>, modified_millis: i64) -> i64 {
     let parsed = parse_message_timestamp_value(send_date);
     if parsed > 0 { parsed } else { modified_millis }

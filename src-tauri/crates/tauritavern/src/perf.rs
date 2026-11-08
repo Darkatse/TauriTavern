@@ -1,23 +1,33 @@
-//! Replays the frontend perf suite's host calls through the command layer on Tauri's mock runtime, over a fresh
-//! copy of the suite's data root, and reports what each measured step cost. Driven by tests/perf/backend.mjs.
+//! Replays the frontend perf suite's host calls through the command layer on Tauri's mock runtime and reports what
+//! each measured step cost: `prepare` replays the previous launch over the data, and `measure` the rest.
 
 mod counters;
 mod environment;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use std::time::{Duration, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tauri::WebviewWindow;
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
-use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
-use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response};
+use tauri::ipc::{CallbackFn, InvokeBody, InvokeError, InvokeResponse, InvokeResponseBody};
+use tauri::test::{INVOKE_KEY, MockRuntime};
 use tauri::webview::InvokeRequest;
-use tauri::{WebviewWindow, WebviewWindowBuilder};
+
+const USAGE: &str = "usage: tt-perf prepare <app-root> <trace.json> <repo-root>
+       tt-perf measure <app-root> <trace.json> <report.json> <repo-root>";
+
+/// 2026-01-01T00:00:00Z.
+const FILE_TIME: Duration = Duration::from_secs(1_767_225_600);
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Trace {
+    previous_launch: Vec<Call>,
+    /// Starts with the measured launch's step.
     calls: Vec<Call>,
 }
 
@@ -31,12 +41,12 @@ struct Call {
     headers: Value,
 }
 
-/// Calls whose work lies outside the backend's code: Tauri plugins, the host shell's startup handshake, callbacks
-/// into the page, the network and the OS.
-fn replayed(command: &str) -> bool {
-    !command.starts_with("plugin:")
+/// Skips calls whose work lies outside the backend's code: Tauri plugins, the host shell's startup handshake,
+/// callbacks into the page, the network and the OS.
+fn replayed(call: &Call) -> bool {
+    !call.command.starts_with("plugin:")
         && !matches!(
-            command,
+            call.command.as_str(),
             "backend_error_bridge_ready"
                 | "wait_for_backend_ready"
                 | "register_agent_extension_tool"
@@ -49,85 +59,89 @@ fn replayed(command: &str) -> bool {
         )
 }
 
-struct OpenStep {
-    name: String,
-    before: counters::Counters,
-    result_bytes: u64,
-}
-
 pub fn run() -> Result<(), String> {
-    let [data, trace, report, repo]: [String; 4] = std::env::args()
-        .skip(1)
-        .collect::<Vec<_>>()
-        .try_into()
-        .map_err(|_| {
-            "usage: tt-perf <data-root> <trace.json> <report.json> <repo-root>".to_string()
-        })?;
-    let trace: Trace = serde_json::from_slice(
-        &std::fs::read(&trace).map_err(|error| format!("{trace}: {error}"))?,
-    )
-    .map_err(|error| format!("{trace}: {error}"))?;
-    // One worker and one blocking thread: per-thread caches then warm the same way on every run.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // Commands run on this thread while it awaits their responses, so a call's work is done when the call returns.
+    // One blocking thread serves the whole replay, so per-thread caches warm the same way on every run. Without an
+    // I/O driver, waking this thread takes no eventfd write for the I/O counters to count.
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .max_blocking_threads(1)
-        .enable_all()
+        .thread_keep_alive(Duration::MAX)
+        .enable_time()
         .build()
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::set(runtime.handle().clone());
-    let root = std::env::temp_dir().join(format!("tt-perf-{}", std::process::id()));
-    copy_dir(Path::new(&data), &root.join("data"))?;
-    let outcome = replay(&trace, &root, Path::new(&repo));
-    std::fs::remove_dir_all(&root).map_err(|error| format!("{}: {error}", root.display()))?;
-    let (steps, boundaries) = outcome?;
-    std::fs::write(
-        &report,
-        json!({ "steps": steps, "boundaries": boundaries }).to_string(),
-    )
-    .map_err(|error| format!("{report}: {error}"))
+    match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["prepare", root, trace, repo] => runtime.block_on(prepare(
+            Path::new(root),
+            &read_trace(trace)?,
+            Path::new(repo),
+        )),
+        ["measure", root, trace, report, repo] => {
+            let (steps, boundaries) = runtime.block_on(measure(
+                Path::new(root),
+                &read_trace(trace)?,
+                Path::new(repo),
+            ))?;
+            std::fs::write(
+                report,
+                json!({ "steps": steps, "boundaries": boundaries }).to_string(),
+            )
+            .map_err(|error| format!("{report}: {error}"))
+        }
+        _ => Err(USAGE.to_string()),
+    }
 }
 
-fn replay(
-    trace: &Trace,
+fn read_trace(path: &str) -> Result<Trace, String> {
+    serde_json::from_slice(&std::fs::read(path).map_err(|error| format!("{path}: {error}"))?)
+        .map_err(|error| format!("{path}: {error}"))
+}
+
+/// Every data file first takes the same modification time, so what the launch derives from file times is the same
+/// on every machine.
+async fn prepare(root: &Path, trace: &Trace, repo: &Path) -> Result<(), String> {
+    let (app, window) = environment::mock_app(repo)?;
+    environment::start_backend(&app, root).await?;
+    set_file_times(&root.join("data"))?;
+    replay(&window, &trace.previous_launch, None)
+        .await
+        .map_err(|error| format!("previous launch: {error}"))
+}
+
+/// The launch's step opens before the backend starts.
+async fn measure(
     root: &Path,
+    trace: &Trace,
     repo: &Path,
 ) -> Result<(BTreeMap<String, counters::Counters>, Vec<Value>), String> {
-    let app = environment::mock_app(root, repo)?;
-    let window = WebviewWindowBuilder::new(&app, "main", Default::default())
-        .build()
-        .map_err(|error| error.to_string())?;
-    let referenced = referenced_calls(&trace.calls);
+    let (app, window) = environment::mock_app(repo)?;
+    let mut steps = Steps::default();
+    steps.enter(trace.calls.first().and_then(|call| call.step.as_deref()))?;
+    environment::start_backend(&app, root).await?;
+    replay(&window, &trace.calls, Some(&mut steps)).await?;
+    steps.finish()
+}
+
+async fn replay(
+    window: &WebviewWindow<MockRuntime>,
+    calls: &[Call],
+    mut steps: Option<&mut Steps>,
+) -> Result<(), String> {
+    let referenced = referenced_calls(calls);
     let mut results = BTreeMap::new();
-    let mut steps = BTreeMap::new();
-    let mut boundaries = Vec::new();
-    let mut open: Option<OpenStep> = None;
-    for (index, call) in trace.calls.iter().enumerate() {
-        if open.as_ref().map(|step| &step.name) != call.step.as_ref() {
-            if let Some(step) = open.take() {
-                close_step(step, &mut steps, &mut boundaries)?;
-            }
-            if let Some(name) = &call.step {
-                // Callgrind writes a dump at each boundary, so the I/O window lies inside them.
-                counters::tt_perf_step_boundary();
-                boundaries.push(json!({ "step": name, "edge": "start" }));
-                let before = counters::snapshot()?;
-                open = Some(OpenStep {
-                    name: name.clone(),
-                    before,
-                    result_bytes: 0,
-                });
-            }
+    for (index, call) in calls.iter().enumerate() {
+        if let Some(steps) = steps.as_deref_mut() {
+            steps.enter(call.step.as_deref())?;
         }
-        if !replayed(&call.command) {
+        if !replayed(call) {
             continue;
         }
-        let response = invoke(&window, call, &results)
+        let response = invoke(window, call, &results)
+            .await
             .map_err(|error| format!("call {index} ({}): {error}", call.command))?;
-        if let Some(step) = &mut open {
-            step.result_bytes += match &response {
-                InvokeResponseBody::Json(json) => json.len(),
-                InvokeResponseBody::Raw(raw) => raw.len(),
-            } as u64;
+        if let Some(steps) = steps.as_deref_mut() {
+            steps.count_result(&response);
         }
         if referenced.contains(&index) {
             results.insert(
@@ -136,28 +150,90 @@ fn replay(
             );
         }
     }
-    if let Some(step) = open.take() {
-        close_step(step, &mut steps, &mut boundaries)?;
-    }
-    Ok((steps, boundaries))
+    Ok(())
 }
 
-fn close_step(
-    step: OpenStep,
-    steps: &mut BTreeMap<String, counters::Counters>,
-    boundaries: &mut Vec<Value>,
-) -> Result<(), String> {
-    let mut work = counters::difference(&counters::snapshot()?, &step.before);
-    counters::tt_perf_step_boundary();
-    boundaries.push(json!({ "step": step.name, "edge": "end" }));
-    work.insert("resultBytes", step.result_bytes);
-    if steps.insert(step.name.clone(), work).is_some() {
-        return Err(format!("step {} occurs twice in the trace", step.name));
+fn set_file_times(dir: &Path) -> Result<(), String> {
+    let failed = |path: &Path, error: std::io::Error| format!("{}: {error}", path.display());
+    for entry in std::fs::read_dir(dir).map_err(|error| failed(dir, error))? {
+        let path = entry.map_err(|error| failed(dir, error))?.path();
+        if path.is_dir() {
+            set_file_times(&path)?;
+        } else {
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| file.set_modified(UNIX_EPOCH + FILE_TIME))
+                .map_err(|error| failed(&path, error))?;
+        }
     }
     Ok(())
 }
 
-fn invoke(
+#[derive(Default)]
+struct Steps {
+    counted: BTreeMap<String, counters::Counters>,
+    boundaries: Vec<Value>,
+    open: Option<OpenStep>,
+}
+
+struct OpenStep {
+    name: String,
+    before: counters::Snapshot,
+    result_bytes: u64,
+}
+
+impl Steps {
+    fn enter(&mut self, step: Option<&str>) -> Result<(), String> {
+        if self.open.as_ref().map(|open| open.name.as_str()) == step {
+            return Ok(());
+        }
+        if let Some(open) = self.open.take() {
+            self.close(open)?;
+        }
+        if let Some(name) = step {
+            counters::tt_perf_step_boundary();
+            self.boundaries
+                .push(json!({ "step": name, "edge": "start" }));
+            self.open = Some(OpenStep {
+                name: name.to_string(),
+                before: counters::snapshot()?,
+                result_bytes: 0,
+            });
+        }
+        Ok(())
+    }
+
+    fn count_result(&mut self, response: &InvokeResponseBody) {
+        if let Some(open) = &mut self.open {
+            open.result_bytes += match response {
+                InvokeResponseBody::Json(json) => json.len(),
+                InvokeResponseBody::Raw(raw) => raw.len(),
+            } as u64;
+        }
+    }
+
+    fn close(&mut self, step: OpenStep) -> Result<(), String> {
+        let mut work = counters::since(&step.before)?;
+        counters::tt_perf_step_boundary();
+        self.boundaries
+            .push(json!({ "step": step.name, "edge": "end" }));
+        work.insert("resultBytes", step.result_bytes);
+        if self.counted.insert(step.name.clone(), work).is_some() {
+            return Err(format!("step {} occurs twice in the trace", step.name));
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<(BTreeMap<String, counters::Counters>, Vec<Value>), String> {
+        if let Some(open) = self.open.take() {
+            self.close(open)?;
+        }
+        Ok((self.counted, self.boundaries))
+    }
+}
+
+async fn invoke(
     webview: &WebviewWindow<MockRuntime>,
     call: &Call,
     results: &BTreeMap<usize, Value>,
@@ -184,8 +260,8 @@ fn invoke(
             );
         }
     }
-    get_ipc_response(
-        webview,
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    webview.as_ref().clone().on_message(
         InvokeRequest {
             cmd: call.command.clone(),
             callback: CallbackFn(0),
@@ -195,8 +271,17 @@ fn invoke(
             headers,
             invoke_key: INVOKE_KEY.to_string(),
         },
-    )
-    .map_err(|error| error.to_string())
+        Box::new(move |_, _, response, _, _| {
+            let _ = sender.send(response);
+        }),
+    );
+    match receiver
+        .await
+        .map_err(|_| "the command dropped its responder".to_string())?
+    {
+        InvokeResponse::Ok(body) => Ok(body),
+        InvokeResponse::Err(InvokeError(error)) => Err(error.to_string()),
+    }
 }
 
 /// A binary result is the JSON document the page parses from it, as the trace recorded it.
@@ -264,23 +349,4 @@ fn referenced_calls(calls: &[Call]) -> HashSet<usize> {
         collect(&call.headers, &mut found);
     }
     found
-}
-
-fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(to).map_err(|error| format!("{}: {error}", to.display()))?;
-    for entry in std::fs::read_dir(from).map_err(|error| format!("{}: {error}", from.display()))? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let target = to.join(entry.file_name());
-        if entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_dir()
-        {
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), &target)
-                .map_err(|error| format!("{}: {error}", target.display()))?;
-        }
-    }
-    Ok(())
 }

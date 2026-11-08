@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createFileStagingService } from '../services/files/file-staging-service.js';
+import { streamResponse } from '../http-utils.js';
 import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
 
 const CHARACTER_CARD_EXTENSIONS = ['json', 'png'];
@@ -67,7 +68,7 @@ function createCharacterCardsApi({
         const extension = characterCardExtension(fileName);
         const type = CHARACTER_CARD_MIME_BY_EXTENSION.get(extension) || 'application/octet-stream';
         const stream = await createReadableFileStream(filePath);
-        return new File([await new Response(stream).blob()], fileName, { type });
+        return new File([await streamResponse(stream).blob()], fileName, { type });
     }
 
     async function pickFiles({ multiple = false } = {}) {

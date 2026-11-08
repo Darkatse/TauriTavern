@@ -11,7 +11,7 @@ function mergeDefaults(defaults, saved) {
     return result;
 }
 
-/** @param {import('./install.js').WebHostOptions['store']} store @param {() => Promise<any>} loadDefaults */
+/** @param {import('./install.js').HostStatePart} store @param {() => Promise<any>} loadDefaults */
 export function createSettings(store, loadDefaults) {
     /** Option fields ignore null; arrays and scalar values replace, objects update declared fields. @param {any} target @param {any} patch @param {any} shape */
     function applyOptions(target, patch, shape) {

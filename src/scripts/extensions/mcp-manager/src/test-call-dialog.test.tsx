@@ -1,10 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, test } from '@rstest/core';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 
 import { tr } from './host';
-import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
+import { installPopupHost, TestPopup } from './popup-stub';
 import {
     openTestCallDialog,
     TestCallDialog,
@@ -91,10 +91,6 @@ function renderDialog(overrides: Partial<TestCallDialogDeps> = {}) {
     return render(<TestCallDialog {...deps(overrides)} tr={tr} ref={createRef()} />);
 }
 
-afterEach(() => {
-    cleanup();
-    uninstallPopupHost();
-});
 
 test('uses explicit refresh when the user retries a failed catalog load', async () => {
     let refreshes = 0;

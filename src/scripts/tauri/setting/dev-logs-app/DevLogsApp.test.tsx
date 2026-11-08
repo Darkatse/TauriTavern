@@ -15,11 +15,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const tr = (key: string) => key;
 const handles: DevLogsHandle[] = [];
-const containers: HTMLElement[] = [];
 
 afterEach(() => {
     for (const handle of handles.splice(0)) act(() => handle.unmount());
-    for (const container of containers.splice(0)) container.remove();
 });
 
 function createActions(overrides: Partial<DevLogsActions> = {}) {
@@ -100,7 +98,6 @@ function createLiveOptions(harness: LiveHarness, overrides: Partial<LiveLogPanel
 function mountApp(options: DevLogsMountOptions) {
     const container = document.createElement('div');
     document.body.append(container);
-    containers.push(container);
     let handle!: DevLogsHandle;
     act(() => {
         handle = mountTauriTavernDevLogsApp(container, options);

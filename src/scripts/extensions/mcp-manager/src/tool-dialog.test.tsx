@@ -1,8 +1,8 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from '@rstest/core';
+import { screen, waitFor } from '@testing-library/react';
+import { expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 
-import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
+import { installPopupHost, TestPopup } from './popup-stub';
 import { openToolDialog } from './tool-dialog';
 
 const SERVER_ID = '11111111-1111-4111-8111-111111111111';
@@ -27,10 +27,6 @@ function currentPopup(): TestPopup {
     return popup;
 }
 
-afterEach(() => {
-    cleanup();
-    uninstallPopupHost();
-});
 
 test('editing a description preserves sibling settings and removes an empty override', async () => {
     installPopupHost();

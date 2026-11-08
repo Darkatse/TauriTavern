@@ -1,9 +1,7 @@
-import { afterEach, expect, rstest, test } from '@rstest/core';
+import { afterEach, expect, rs, test } from '@rstest/core';
 import { registerAssistantTools } from './tools';
 
 afterEach(() => {
-    rstest.restoreAllMocks();
-    document.body.replaceChildren();
     document.body.style.removeProperty('visibility');
 });
 
@@ -19,7 +17,7 @@ async function registerTools(entries: TauriTavernFrontendLogEntry[] = []) {
         setEnabled: () => Promise.resolve(),
         list: () => Promise.resolve({ tools: [], diagnostics: [] }),
     };
-    const setConsoleCaptureEnabled = rstest.fn(() => Promise.resolve());
+    const setConsoleCaptureEnabled = rs.fn(() => Promise.resolve());
     await registerAssistantTools(api, tools, {
         list: () => Promise.resolve(entries),
         getConsoleCaptureEnabled: () => Promise.resolve(false),
@@ -47,11 +45,6 @@ test('log levels are filtered before the limit without changing console capture'
 });
 
 test('registered snapshots omit TT secrets and assistant history while keeping public content', async () => {
-    document.body.style.visibility = 'visible';
-    const rects = [new DOMRect(10, 10, 100, 30)];
-    rstest.spyOn(Element.prototype, 'getClientRects').mockReturnValue(
-        Object.assign(rects, { item: (index: number) => rects[index] ?? null }),
-    );
     document.body.innerHTML = `
         <label>Public field<input value="public-value"></label>
         <input data-tt-sensitive aria-label="API key" value="secret-value">

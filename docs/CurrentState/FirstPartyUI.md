@@ -120,16 +120,21 @@ Agent 与 MCP 由 manifest 加载后自行启动。它们的外部契约是 mani
 
 ## 7. 测试与开发
 
-Rstest、Testing Library 与 `happy-dom` 覆盖组件交互、controller 行为、订阅生命周期和稳定边界。Node contract tests 覆盖 Host ABI 与浏览器 JavaScript 集成；Rust tests 覆盖后端领域和适配器行为。
+需要 DOM 的测试由 Rstest 在 Chromium 和 WebKit 中各运行一次，也就是发布端 WebView 的两种引擎；纯 Node 逻辑由 node:test 运行（`tests/*.test.mjs`），Rust tests 覆盖后端领域和适配器行为。
 
-`happy-dom` 不提供真实布局、滚动和平台 WebView 行为。涉及 pointer、focus、native dialog、scroll anchor、移动端 viewport 或主题级联的改动，还需要在真实 Tauri WebView 中验证。
+- 第一方组件测试与源码放在一起；宿主 JavaScript 的测试位于 `tests/webview/`。
+- 测试按产品的方式加载代码：产品中打包的代码由 Rstest 打包；WebView 原生加载的宿主 JavaScript 从测试服务器按 URL 导入，不打包也不 mock，依赖整个应用的模块在应用帧中运行。入口见 `tests/helpers/frontend.mjs`。
+- 依赖布局的测试加载组件样式，并在挂载前给容器真实尺寸。
+- 测试之间的清理与还原由 `rstest.config.mjs` 统一负责。
 
-常用命令：
+移动端 viewport、软键盘、主题级联和平台权限属于 WebView 嵌入层，仍需在 Tauri WebView 中验证。
+
+首次运行前安装浏览器：`pnpm exec playwright install chromium webkit`。常用命令：
 
 ```bash
 pnpm run check:types
 pnpm run check:lint
-pnpm run test:ui
+pnpm run test:dom
 pnpm run web:build
 pnpm run check
 ```

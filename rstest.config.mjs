@@ -1,14 +1,14 @@
 import { defineConfig } from '@rstest/core';
 
+import { pluginTestFrontend } from './tests/helpers/frontend-server.mjs';
+
 export default defineConfig({
-  include: [
-    'packages/app-use/src/**/*.test.{ts,tsx}',
-    'src/scripts/extensions/agent-system/src/**/*.test.{ts,tsx}',
-    'src/scripts/extensions/in-app-agent/src/**/*.test.{ts,tsx}',
-    'src/scripts/extensions/mcp-manager/src/**/*.test.{ts,tsx}',
-    'src/scripts/tauri/setting/**/*.test.{ts,tsx}',
-  ],
-  testEnvironment: 'happy-dom',
+  include: ['{packages,src}/**/*.test.{ts,tsx}', 'tests/webview/*.test.mjs'],
+  plugins: [pluginTestFrontend()],
+  browser: { enabled: true, provider: 'playwright', headless: true },
+  setupFiles: ['./tests/helpers/rstest-setup.mjs'],
+  restoreMocks: true,
+  unstubGlobals: true,
   tools: {
     swc: {
       jsc: {

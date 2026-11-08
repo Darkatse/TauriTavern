@@ -46,6 +46,6 @@ export default tseslint.config(
   },
   {
     files: ['src/scripts/extensions/mcp-manager/src/test-call-dialog.tsx'],
-    rules: { 'max-lines': ['error', 613] },
+    rules: { 'max-lines': ['error', 603] },
   },
 );

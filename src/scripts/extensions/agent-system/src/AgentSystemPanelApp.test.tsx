@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
@@ -205,7 +205,6 @@ function renderPanel(controller: AgentSystemPanelController): void {
 }
 
 afterEach(() => {
-    cleanup();
     disposables.splice(0).forEach((disposable) => disposable.dispose());
 });
 

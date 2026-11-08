@@ -1,3 +1,5 @@
+import { rs } from '@rstest/core';
+
 /**
  * Test double for the SillyTavern Popup host API: records the instance,
  * appends content to the document like the real popup, and lets tests drive
@@ -27,7 +29,8 @@ export class TestPopup {
 
     show(): Promise<unknown> {
         document.body.append(this.content);
-        setTimeout(() => this.options.onOpen?.());
+        // Without an animation the real popup runs onOpen while showing.
+        this.options.onOpen?.();
         return new Promise(resolve => {
             this.resolve = resolve;
         });
@@ -45,20 +48,12 @@ export class TestPopup {
 }
 
 export function installPopupHost(): void {
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                Popup: TestPopup,
-                POPUP_TYPE: { TEXT: 1, CONFIRM: 2, INPUT: 3 },
-                POPUP_RESULT: { AFFIRMATIVE: 1 },
-            }),
-        },
-    });
-}
-
-export function uninstallPopupHost(): void {
-    TestPopup.current?.content.remove();
     TestPopup.current = undefined;
-    Reflect.deleteProperty(window, 'SillyTavern');
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            Popup: TestPopup,
+            POPUP_TYPE: { TEXT: 1, CONFIRM: 2, INPUT: 3 },
+            POPUP_RESULT: { AFFIRMATIVE: 1 },
+        }),
+    });
 }

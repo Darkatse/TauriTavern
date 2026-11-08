@@ -60,59 +60,36 @@ function installHost(targets: AgentModelTarget[]): {
     savedConnections: TauriTavernLlmConnectionDefinition[];
     deletedConnections: string[];
     errors: string[];
-    restore: () => void;
 } {
-    const hostDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURITAVERN__');
-    const sillyTavernDescriptor = Object.getOwnPropertyDescriptor(window, 'SillyTavern');
-    const toastrDescriptor = Object.getOwnPropertyDescriptor(window, 'toastr');
     const eventSource = new TestEventSource();
     const savedConnections: TauriTavernLlmConnectionDefinition[] = [];
     const deletedConnections: string[] = [];
     const errors: string[] = [];
 
-    Object.defineProperty(window, 'SillyTavern', {
-        configurable: true,
-        value: {
-            getContext: () => ({
-                extensionSettings: { connectionManager: { modelTargets: targets } },
-                eventSource,
-                eventTypes: EVENT_TYPES,
-            }),
-        },
+    rs.stubGlobal('SillyTavern', {
+        getContext: () => ({
+            extensionSettings: { connectionManager: { modelTargets: targets } },
+            eventSource,
+            eventTypes: EVENT_TYPES,
+        }),
     });
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: {
-            api: {
-                llmConnections: {
-                    save: ({ connection }: { connection: TauriTavernLlmConnectionDefinition }) => {
-                        savedConnections.push(structuredClone(connection));
-                        return Promise.resolve();
-                    },
-                    delete: ({ connectionId }: { connectionId: string }) => {
-                        deletedConnections.push(connectionId);
-                        return Promise.resolve();
-                    },
+    rs.stubGlobal('__TAURITAVERN__', {
+        api: {
+            llmConnections: {
+                save: ({ connection }: { connection: TauriTavernLlmConnectionDefinition }) => {
+                    savedConnections.push(structuredClone(connection));
+                    return Promise.resolve();
+                },
+                delete: ({ connectionId }: { connectionId: string }) => {
+                    deletedConnections.push(connectionId);
+                    return Promise.resolve();
                 },
             },
         },
     });
-    Object.defineProperty(window, 'toastr', {
-        configurable: true,
-        value: { error: (message: string) => errors.push(message) },
-    });
+    rs.stubGlobal('toastr', { error: (message: string) => errors.push(message) });
 
-    return {
-        eventSource,
-        savedConnections,
-        deletedConnections,
-        errors,
-        restore: () => {
-            restoreProperty(window, '__TAURITAVERN__', hostDescriptor);
-            restoreProperty(window, 'SillyTavern', sillyTavernDescriptor);
-            restoreProperty(window, 'toastr', toastrDescriptor);
-        },
-    };
+    return { eventSource, savedConnections, deletedConnections, errors };
 }
 
 test('Model Target sync and UI changes use the context-owned event source', async () => {
@@ -144,24 +121,13 @@ test('Model Target sync and UI changes use the context-owned event source', asyn
     } finally {
         unsubscribeChanges();
         stopSync();
-        host.restore();
     }
 });
 
 test('startup sync invalidates a stale connection when materialization fails', async () => {
     const host = installHost([sampleTarget({ secretRef: { key: 'api_key_custom', id: '' } })]);
-    const warn = rs.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-        await syncSavedModelTargetLlmConnections();
-        expect(host.savedConnections).toEqual([]);
-        expect(host.deletedConnections).toEqual(['model-target-writer-target']);
-    } finally {
-        warn.mockRestore();
-        host.restore();
-    }
+    rs.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await syncSavedModelTargetLlmConnections();
+    expect(host.savedConnections).toEqual([]);
+    expect(host.deletedConnections).toEqual(['model-target-writer-target']);
 });
-
-function restoreProperty(target: object, key: PropertyKey, descriptor?: PropertyDescriptor): void {
-    if (descriptor) Object.defineProperty(target, key, descriptor);
-    else Reflect.deleteProperty(target, key);
-}

@@ -1,13 +1,12 @@
 //! The host the replay runs in: Tauri's mock runtime, the repository's own bundled resources, and no page, peer,
-//! archive or background worker. The backend is ready as the app's startup leaves it: state built and the
-//! default user's content in place.
+//! archive or background worker.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::test::{MockRuntime, mock_builder, mock_context, noop_assets};
-use tauri::{App, Manager};
+use tauri::{App, Manager, WebviewWindow, WebviewWindowBuilder};
 
 use crate::app::{AppState, HostEnvironment, SafeMode, StartupProfile};
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
@@ -34,11 +33,14 @@ use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerEvents, PairingAppr
 use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::SyncAutomationEventPublisher;
 
-/// `root` holds the data root at `root/data`; `repo` is the checkout whose bundled resources the app ships.
-pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, String> {
+/// `repo` is the checkout whose bundled resources the app ships.
+pub(super) fn mock_app(
+    repo: &Path,
+) -> Result<(App<MockRuntime>, WebviewWindow<MockRuntime>), String> {
     let resources = Arc::new(RepositoryResources::load(repo)?);
     let app = mock_builder()
         .manage(Arc::new(BundledTemplateService::new(resources.clone())))
+        .manage(resources)
         .invoke_handler(tauri::generate_handler![
             c::settings_commands::get_tauritavern_settings,
             c::safe_mode_commands::get_safe_mode_prompt,
@@ -51,6 +53,10 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
             c::image_metadata_commands::get_background_folders,
             c::background_commands::get_all_background_metadata,
             c::extension_store_commands::open_extension_store_entry,
+            c::byte_reader_commands::read_bytes,
+            c::extension_store_commands::begin_extension_store_commit,
+            c::extension_store_commands::append_extension_store_commit_chunk,
+            c::extension_store_commands::finish_extension_store_commit,
             c::agent_commands::list_agent_profiles,
             c::skill_commands::list_skills,
             c::mcp_commands::list_mcp_servers,
@@ -84,7 +90,14 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
         ])
         .build(mock_context(noop_assets()))
         .map_err(|error| error.to_string())?;
+    let window = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok((app, window))
+}
 
+/// Starts the backend as the app's launch does. `root` holds the data root at `root/data`.
+pub(super) async fn start_backend(app: &App<MockRuntime>, root: &Path) -> Result<(), String> {
     let runtime_paths = RuntimePaths::new(RuntimeMode::Standard, root.to_path_buf());
     app.manage(Arc::new(SafeMode::register_launch(&runtime_paths.app_root)));
     let startup_profile =
@@ -97,7 +110,7 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
             runtime_paths.log_root.clone(),
         )),
         agent_extension_tools: Arc::new(AgentExtensionTools::default()),
-        bundled_resources: resources,
+        bundled_resources: app.state::<Arc<RepositoryResources>>().inner().clone(),
         generation_background_runtime: None,
         data_archive_file_gateway: Arc::new(Detached),
         sync_job_events: Arc::new(Detached),
@@ -106,18 +119,17 @@ pub(super) fn mock_app(root: &Path, repo: &Path) -> Result<App<MockRuntime>, Str
         lan_server_events: Arc::new(Detached),
         sync_automation_events: Arc::new(Detached),
     };
-    let state = tauri::async_runtime::block_on(async {
-        let state = AppState::new(environment, runtime_paths, startup_profile).await?;
-        state
-            .services
-            .content_service
-            .initialize_default_content("default-user")
-            .await?;
-        Ok::<_, DomainError>(state)
-    })
-    .map_err(|error| error.to_string())?;
+    let state = AppState::new(environment, runtime_paths, startup_profile)
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .services
+        .content_service
+        .initialize_default_content("default-user")
+        .await
+        .map_err(|error| error.to_string())?;
     app.manage(Arc::new(state));
-    Ok(app)
+    Ok(())
 }
 
 /// Bundled resources read from the checkout through the bundle's own source-to-resource mapping.

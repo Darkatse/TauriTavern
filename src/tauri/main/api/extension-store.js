@@ -1,6 +1,7 @@
 // @ts-check
 
 import { decodeBase64ToBytes, encodeBytesToBase64 } from '../binary-utils.js';
+import { streamResponse } from '../http-utils.js';
 import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 import { commitBytes } from '../services/files/byte-commit.js';
 import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
@@ -146,7 +147,7 @@ function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
 
     async function getBlob(options) {
         const { stream, mimeType } = await openBlob(options);
-        return new Response(stream, { headers: { 'Content-Type': mimeType } }).blob();
+        return streamResponse(stream, { headers: { 'Content-Type': mimeType } }).blob();
     }
 
     async function getBlobStream(options) {
