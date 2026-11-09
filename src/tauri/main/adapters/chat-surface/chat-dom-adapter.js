@@ -10,6 +10,19 @@ function directMessages(root) {
     return /** @type {HTMLElement[]} */ ([...root.querySelectorAll(':scope > .mes')]);
 }
 
+/** A direct child of the bounded chat that ChatSurface does not own, named by its tag, id and classes. */
+export class ChatSurfaceForeignChildError extends Error {
+    /** @param {Element} child */
+    constructor(child) {
+        const selector = child.localName
+            + (child.id ? `#${child.id}` : '')
+            + [...child.classList].map(name => `.${name}`).join('');
+        super(`Bounded ChatSurface contains a foreign direct child: ${selector}`);
+        this.name = 'ChatSurfaceForeignChildError';
+        this.selector = selector;
+    }
+}
+
 /**
  * Owns only direct `.mes` children. Auxiliary children such as style pins,
  * welcome content and the static Show More control keep their existing owners.
@@ -333,7 +346,7 @@ export function createChatDomAdapter({
             ) {
                 continue;
             }
-            throw new Error(`Bounded ChatSurface contains an unknown direct child: ${child.tagName.toLowerCase()}`);
+            throw new ChatSurfaceForeignChildError(child);
         }
 
         for (const messageId of layout.projection.indices) {

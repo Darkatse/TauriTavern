@@ -655,6 +655,16 @@ export function isCodeRenderDelegatedToThirdPartyRenderer() {
     return getEnabledChatSurfaceRendererCapabilities().length > 0;
 }
 
+/** More than one enabled renderer extension renders code blocks. */
+export class ChatSurfaceRendererConflictError extends Error {
+    /** @param {string[]} displayNames */
+    constructor(displayNames) {
+        super(`Bounded ChatSurface cannot start while multiple renderers have code block rendering enabled: ${displayNames.join(', ')}`);
+        this.name = 'ChatSurfaceRendererConflictError';
+        this.displayNames = displayNames;
+    }
+}
+
 /**
  * Initializes ChatSurface hooks and the required renderer before the first projection.
  */
@@ -662,10 +672,8 @@ export async function activateRequiredChatSurfaceExtensions() {
     const enabled = getEnabledChatSurfaceRendererCapabilities();
     const codeRenderers = enabled.filter(capability => capability.rendersCodeBlocks());
     if (codeRenderers.length > 1) {
-        throw new Error(
-            'Bounded ChatSurface cannot start while multiple renderers have code block rendering enabled: '
-            + codeRenderers.map(({ extensionName }) => extensionName).join(', '),
-        );
+        throw new ChatSurfaceRendererConflictError(codeRenderers.map(({ extensionName, internalName }) =>
+            manifests[internalName].display_name || extensionName));
     }
     const requiredNames = new Set(enabled.map(capability => capability.internalName));
     const contentExtensions = extensionNames.filter(name =>

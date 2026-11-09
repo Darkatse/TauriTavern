@@ -166,6 +166,7 @@ activate({ source, mesid, element, content, signal }) => Disposable
 - registration 字段、协议版本和 hook 参数不合法时立即抛错；
 - 必需 renderer 激活失败时向启动调用者传播原始错误；只有激活流程正常返回后才检查 required participant，避免掩盖加载或 hook 的实际失败原因；
 - duplicate claim、ownership 分歧、异步 disposer 或同步写重入会 fault 当前有界 epoch；
+- 有界模式下 `#chat` 的直接子元素只有楼层、spacer 与 style pins。其他直接子元素在下一次投影提交时 fault 当前有界 epoch，错误以 `tag#id.class` 描述该元素；扩展要在聊天末尾显示内容，应放在 `#chat` 之外或楼层内部；
 - participant 在 hook 外无法继续履约时调用 `registration.fault(error)`；
 - fault 保留完整 `chat[]` 和当前有界 DOM，不自动展开完整历史；
 - mount/remount/content/runtime lifecycle 不发送 `MESSAGE_UPDATED`、`MORE_MESSAGES_LOADED`、`USER_MESSAGE_RENDERED` 或 `CHARACTER_MESSAGE_RENDERED`。
@@ -179,6 +180,6 @@ activate({ source, mesid, element, content, signal }) => Disposable
 | JS-Slash-Runner | `js-slash-runner/message-runtime` |
 | LittleWhiteBox | `littlewhitebox/message-runtime` |
 
-缺少 required participant、协议不匹配或 participant fault 会拒绝 bounded epoch，不会退回 full DOM。static 策略仍运行原 renderer。
+缺少 required participant、多个已知 renderer 同时开启代码块渲染、协议不匹配或 participant fault 会拒绝 bounded epoch，不会退回 full DOM。static 策略仍运行原 renderer。
 
 managed 首版只承诺 capability matrix 中已经验证的核心 frontend/iframe runtime；不宣称支持 JSR managed streaming renderer，也不宣称支持 LWB immersive、TTS、draw、story-outline 或 custom-template 等未接入能力。

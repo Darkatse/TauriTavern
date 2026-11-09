@@ -3,6 +3,18 @@
 import { getChatSurfaceParticipantRegistry } from './runtime.js';
 import { CHAT_SURFACE_PROTOCOL_VERSION } from './participant-registry.js';
 
+/** A required renderer extension did not register its participant. */
+export class ChatSurfaceMissingParticipantError extends Error {
+    /** @param {{ extensionName: string; participantId: string }} requirement */
+    constructor({ extensionName, participantId }) {
+        super(
+            `Bounded ChatSurface requires extension "${extensionName}" `
+            + `to register protocol v${CHAT_SURFACE_PROTOCOL_VERSION} participant "${participantId}"`,
+        );
+        this.name = 'ChatSurfaceMissingParticipantError';
+    }
+}
+
 /**
  * Verifies capabilities only after the extension activation hook has returned.
  * Registry details stay internal; the public participant API remains narrow.
@@ -23,10 +35,7 @@ export function assertRequiredChatSurfaceParticipants(requirements) {
             throw new TypeError('ChatSurface renderer capability is malformed');
         }
         if (!registry.has(requirement.participantId)) {
-            throw new Error(
-                `Bounded ChatSurface requires extension "${requirement.extensionName}" `
-                + `to register protocol v${CHAT_SURFACE_PROTOCOL_VERSION} participant "${requirement.participantId}"`,
-            );
+            throw new ChatSurfaceMissingParticipantError(requirement);
         }
     }
 }

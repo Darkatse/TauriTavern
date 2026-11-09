@@ -25,7 +25,8 @@ import {
 import { createBlockContent } from './scripts/tauri/message/block-content.js';
 import { splitMessageBlocks } from './scripts/tauri/message/message-blocks.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
-import { assertRequiredChatSurfaceParticipants } from './tauri/main/services/chat-surface/capability-gate.js';
+import { ChatSurfaceForeignChildError } from './tauri/main/adapters/chat-surface/chat-dom-adapter.js';
+import { assertRequiredChatSurfaceParticipants, ChatSurfaceMissingParticipantError } from './tauri/main/services/chat-surface/capability-gate.js';
 import { installChatSurfaceRuntime } from './tauri/main/services/chat-surface/install.js';
 import {
     initializeChatVirtualization,
@@ -288,7 +289,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
-import { activateDeferredThirdPartyExtensions, activateRequiredChatSurfaceExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, isCodeRenderDelegatedToThirdPartyRenderer, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
+import { activateDeferredThirdPartyExtensions, activateRequiredChatSurfaceExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, ChatSurfaceRendererConflictError, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, isCodeRenderDelegatedToThirdPartyRenderer, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
 import { CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
@@ -692,6 +693,32 @@ export const chatElement = $('#chat');
 /** @type {Promise<boolean> | null} */
 let chatVirtualizationRecoveryPromise = null;
 
+/**
+ * Explains a ChatSurface fault through what the user can change; any other fault comes with details for a report.
+ * @param {unknown} fault
+ */
+function describeChatVirtualizationFault(fault) {
+    if (fault instanceof ChatSurfaceForeignChildError) {
+        return `<p>${t`Detected an element in the chat, added by an extension or script, that Chat DOM Virtualization cannot manage:`}</p>
+            <pre><code>${escapeHtml(fault.selector)}</code></pre>
+            <p>${t`Its class or ID usually shows which extension it belongs to. Please turn off that extension or its related feature and reload. You may also consider sending the line above to the extension's author.`}</p>`;
+    }
+    if (fault instanceof ChatSurfaceRendererConflictError) {
+        return `<p>${t`Multiple extensions have code block rendering enabled: ${escapeHtml(fault.displayNames.join(', '))}. Chat DOM Virtualization cannot support multiple renderers at once. Please enable rendering in only one extension.`}</p>`;
+    }
+    const help = fault instanceof ChatSurfaceMissingParticipantError
+        ? `<p>${t`Chat DOM Virtualization requires renderer extensions that support ChatSurface. Use the official versions listed below or later:`}</p>
+            <div>${t`JS-Slash-Runner 4.9.1 or later:`} <a href="https://github.com/N0VI028/JS-Slash-Runner" target="_blank" rel="noopener noreferrer">N0VI028/JS-Slash-Runner</a></div>
+            <div>${t`LittleWhiteBox 3.0.4 or later:`} <a href="https://github.com/RT15548/LittleWhiteBox" target="_blank" rel="noopener noreferrer">RT15548/LittleWhiteBox</a></div>
+            <p>${t`If an extension was installed from another repository, reinstall it from the official repository to receive upstream updates.`}</p>`
+        : `<p>${t`Include the details below when you report this problem.`}</p>`;
+    const details = [];
+    for (let error = fault; error !== undefined; error = error instanceof Error ? error.cause : undefined) {
+        details.push(error instanceof Error ? error.message : String(error));
+    }
+    return `${help}<pre><code>${escapeHtml(details.join('\n'))}</code></pre>`;
+}
+
 /** @param {unknown} fault @param {{ startup?: boolean }} [options] */
 function offerChatVirtualizationRecovery(fault, { startup = false } = {}) {
     if (chatVirtualizationRecoveryPromise) {
@@ -700,20 +727,11 @@ function offerChatVirtualizationRecovery(fault, { startup = false } = {}) {
 
     chatVirtualizationRecoveryPromise = (async () => {
         try {
-            const message = fault instanceof Error ? fault.message : String(fault);
-            const compatibilityHelp = message.startsWith('Bounded ChatSurface requires extension "')
-                ? `<p>${t`Chat DOM Virtualization requires renderer extensions that support ChatSurface. Use the official versions listed below or later:`}</p>
-                    <div>${t`JS-Slash-Runner 4.9.1 or later:`} <a href="https://github.com/N0VI028/JS-Slash-Runner" target="_blank" rel="noopener noreferrer">N0VI028/JS-Slash-Runner</a></div>
-                    <div>${t`LittleWhiteBox 3.0.4 or later:`} <a href="https://github.com/RT15548/LittleWhiteBox" target="_blank" rel="noopener noreferrer">RT15548/LittleWhiteBox</a></div>
-                    <p>${t`If an extension was installed from another repository, reinstall it from the official repository to receive upstream updates.`}</p>`
-                : '';
             const result = await Popup.show.confirm(
                 t`Chat DOM Virtualization stopped`,
-                `<p>${t`The bounded chat was stopped to protect your full chat history and avoid an unsafe full-DOM fallback.`}</p>
-                ${compatibilityHelp}
-                <pre><code>${escapeHtml(message)}</code></pre>`,
+                `${describeChatVirtualizationFault(fault)}<p>${t`Your chat history is not affected.`}</p>`,
                 {
-                    okButton: t`Disable and reload`,
+                    okButton: t`Disable virtualization and reload`,
                     cancelButton: startup ? t`Abort startup` : t`Keep stopped`,
                     allowVerticalScrolling: true,
                 },
