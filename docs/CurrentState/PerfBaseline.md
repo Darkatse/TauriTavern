@@ -1,6 +1,6 @@
 # 性能基线
 
-`pnpm run check` 在一组固定场景里计量前端与 Rust 后端各做了多少工作，并与记录比较。计的是工作量（样式重算、布局、宿主流量、内存分配、指令数与 I/O），不是耗时；计数设在生产代码绕不开的边界上：渲染引擎、宿主调用、JS 堆与进程。代码在 `tests/perf/` 与 host crate 的 `src/perf.rs`、`src/perf/`。
+`pnpm run check` 在 Linux 上计量一组固定场景里前端与 Rust 后端各做了多少工作，并与记录比较。计的是工作量（样式重算、布局、宿主流量、内存分配、指令数与 I/O），不是耗时；计数设在生产代码绕不开的边界上：渲染引擎、宿主调用、JS 堆与进程。代码在 `tests/perf/` 与 host crate 的 `src/perf.rs`、`src/perf/`。
 
 ## 比较方式
 
@@ -9,7 +9,7 @@
 | 平台 | 比较 |
 | --- | --- |
 | Linux | 与 `tests/perf/baseline.json` 比较，任一计数偏离超过 10%（至少 2）即失败，变少也算。基线写明 Chromium 与 Rust 版本，测量用这个 Rust 版本构建 |
-| macOS、Windows | `src`、`src-tauri`、`tests/perf` 有未提交改动时，与 HEAD 在本机的测量比较，计数增长超过余量即失败。HEAD 在 `src-tauri/target/perf-head/` 的工作树里测量，结果按提交、平台与 Rust 版本缓存 |
+| macOS、Windows | 计数只是近似，`pnpm run check` 不比较。需要时运行 `pnpm run test:perf -- --head`：`src`、`src-tauri`、`tests/perf` 有未提交改动时，与 HEAD 在本机的测量比较，计数增长超过余量即失败。HEAD 在 `src-tauri/target/perf-head/` 的工作树里测量，结果按提交、平台与 Rust 版本缓存 |
 
 CI 只比较 Linux。
 

@@ -2,8 +2,8 @@
 // the harness issues the frontend's frames and the backend runs under callgrind, so Linux compares them with
 // baseline.json and fails on any change past the slack, improvements included, so that every change is recorded
 // on purpose: `pnpm run test:perf -- --update`, or commit the measurement a failing run prints. macOS and Windows
-// compare the working tree with HEAD on this machine when sources changed, and fail on growth; a change is
-// recorded on Linux once committed.
+// leave the comparison to Linux unless asked: `pnpm run test:perf -- --head` compares the working tree with HEAD on
+// this machine when sources changed, and fails on growth; a change is recorded on Linux once committed.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -13,6 +13,7 @@ import { measure } from './measure.mjs';
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const baselineFile = fileURLToPath(new URL('baseline.json', import.meta.url));
 const update = process.argv.includes('--update');
+const againstHead = process.argv.includes('--head');
 // Counters differ by a frame or two between runs on one machine; the slack absorbs that and keeps small UI
 // additions from needing a new baseline.
 const slack = expected => Math.max(2, Math.ceil(expected * 0.1));
@@ -88,8 +89,8 @@ if (process.platform === 'linux') {
     console.log(`perf baseline: ${Object.keys(current.steps).length} steps match with Chromium ${current.chromium} and Rust ${rust}`);
 } else if (update) {
     throw new Error('The baseline is recorded on Linux, where the counters are exact: run `pnpm run test:perf -- --update` there, or commit the measurement a failing Linux run prints.');
-} else if (process.env.CI) {
-    console.log('perf counters: compared on Linux only in CI');
+} else if (!againstHead) {
+    console.log('perf counters: compared on Linux; `pnpm run test:perf -- --head` compares the working tree with HEAD on this machine');
 } else if (!output('git', ['-C', repo, 'status', '--porcelain', '--', 'src', 'src-tauri', 'tests/perf'])) {
     console.log('perf counters: no source changes against HEAD');
 } else {
