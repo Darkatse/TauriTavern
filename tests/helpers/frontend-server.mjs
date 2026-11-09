@@ -19,8 +19,7 @@ export function frontendFile(pathname) {
     return statSync(file, { throwIfNoEntry: false })?.isFile() ? file : null;
 }
 
-// The test starts the host itself: without init.js, and with DOM-ready callbacks held so that evaluating the
-// application's modules starts no chat or settings IO.
+// Tests start the host themselves; held DOM-ready callbacks keep module evaluation free of chat or settings IO.
 async function frontendPage() {
     const index = await readFile(path.join(frontendRoot, 'index.html'), 'utf8');
     const replace = (html, from, to) => {
@@ -46,6 +45,8 @@ export function pluginTestFrontend() {
             const resource = await respond(new URL(request.url, 'http://localhost').pathname);
             if (!resource) return next();
             response.setHeader('content-type', resource.type);
+            // A browser context serves one test file within one run, so src/ never changes under a cached response.
+            response.setHeader('cache-control', 'max-age=3600');
             response.end(resource.body);
         } catch (error) {
             next(error);
