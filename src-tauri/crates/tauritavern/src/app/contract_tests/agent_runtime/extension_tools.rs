@@ -482,8 +482,8 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
         let event = next_event(&mut events).await;
         let mut png = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-            2000,
-            1000,
+            1300,
+            65,
             image::Rgb([24, 80, 160]),
         ))
         .write_to(&mut png, image::ImageFormat::Png)
@@ -577,7 +577,7 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
             .await
             .unwrap();
         let image = image::load_from_memory(&bytes).unwrap();
-        assert_eq!((image.width(), image.height()), (1280, 640));
+        assert_eq!((image.width(), image.height()), (1280, 64));
         let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
         let stored = events
             .iter()

@@ -16,6 +16,12 @@ name = "tauritavern_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
+name = "tauritavern"
+path = "src/main.rs"
+# main.rs has no tests, and a test harness for it would link the whole app once more.
+test = false
+
+[[bin]]
 name = "tt-perf"
 required-features = ["perf"]
 

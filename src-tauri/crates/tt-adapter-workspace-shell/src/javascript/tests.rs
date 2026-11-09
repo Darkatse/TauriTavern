@@ -7,12 +7,16 @@ use super::Javascript;
 use crate::engine::MAX_OUTPUT_BYTES;
 
 async fn execute(command: &str) -> bashkit::Result<ExecResult> {
+    execute_within(command, Duration::from_secs(1)).await
+}
+
+async fn execute_within(command: &str, timeout: Duration) -> bashkit::Result<ExecResult> {
     let javascript = Arc::new(Javascript::new(Arc::default()));
     let mut bash = Bash::builder()
         .builtin("js", javascript.builtin("js"))
         .builtin("node", javascript.builtin("node"))
         .builtin("deno", javascript.builtin("deno"))
-        .limits(ExecutionLimits::new().timeout(Duration::from_secs(1)))
+        .limits(ExecutionLimits::new().timeout(timeout))
         .build();
     let result = bash.exec(command).await;
     javascript.finish().await.unwrap();
@@ -116,7 +120,9 @@ async fn exit_code_rejects_invalid_assignments_before_continuing() {
 
 #[tokio::test]
 async fn execution_failures_override_exit_code_and_bound_output() {
-    let timeout = execute("js -e 'while (true) {}'").await.unwrap_err();
+    let timeout = execute_within("js -e 'while (true) {}'", Duration::from_millis(100))
+        .await
+        .unwrap_err();
     assert!(
         matches!(timeout, bashkit::Error::ResourceLimit(_)),
         "{timeout}"
