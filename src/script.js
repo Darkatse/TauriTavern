@@ -9823,6 +9823,21 @@ function setMessageActionsExpanded(message, expanded) {
     if (!expanded && actions.contains(document.activeElement)) trigger.focus({ preventScroll: true });
 }
 
+/**
+ * Removes the message editor from its `.mes`. The edit session ends with the editor.
+ * @param {JQuery<HTMLElement>} message
+ * @param {number} messageId
+ */
+function removeMessageEditor(message, messageId) {
+    message.find('.mes_edit_buttons').css('display', 'none');
+    message.find('.mes_buttons').css('display', '');
+    message.find('.edit_textarea').remove();
+    if (messageId === this_edit_mes_id) {
+        this_edit_mes_id = undefined;
+        syncChatSurfaceProjectionHold();
+    }
+}
+
 function restoreMessageEditFocus(element, ownedFocus) {
     if (ownedFocus && element.isConnected
         && (document.activeElement === document.body || element.contains(document.activeElement))) {
@@ -9938,9 +9953,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
 
     const thisMesBlock = thisMesDiv.find('.mes_block');
     const ownedFocus = thisMesDiv[0].contains(document.activeElement);
-    thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
-    thisMesBlock.find('.mes_buttons').css('display', '');
-    thisMesBlock.find('.edit_textarea').remove();
+    removeMessageEditor(thisMesDiv, messageId);
 
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (thisMesDiv[0]),
@@ -9954,13 +9967,6 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     }
 
     await finalizeMessageContent(messageId, event_types.MESSAGE_UPDATED);
-    if (messageId == this_edit_mes_id) {
-        this_edit_mes_id = undefined;
-        syncChatSurfaceProjectionHold();
-    } else {
-        console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
-    }
-
     showSwipeButtons();
     restoreMessageEditFocus(thisMesDiv[0], ownedFocus);
 }
@@ -10057,7 +10063,8 @@ async function messageEditMove(sourceId, targetId) {
 }
 
 async function messageEditDone(div) {
-    if (!(this_edit_mes_id >= 0)) {
+    const messageId = this_edit_mes_id;
+    if (!(messageId >= 0)) {
         console.trace('this_edit_mes_id cannot be blank when calling messageEditDone.');
         return;
     }
@@ -10066,15 +10073,13 @@ async function messageEditDone(div) {
     const ownedFocus = element.contains(document.activeElement);
     const { mesBlock, bias } = updateMessage(div);
 
-    await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
-    const mes = chat[this_edit_mes_id];
-    mesBlock.find('.mes_edit_buttons').css('display', 'none');
-    mesBlock.find('.mes_buttons').css('display', '');
-    mesBlock.find('.edit_textarea').remove();
+    await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    const mes = chat[messageId];
+    removeMessageEditor(div.closest('.mes'), messageId);
 
     replaceMesTextHtmlWithRuntimePolicy(
         /** @type {HTMLElement} */ (div.closest('.mes')[0]),
-        getMessageTextHTML(mes, { messageId: this_edit_mes_id }),
+        getMessageTextHTML(mes, { messageId }),
     );
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
@@ -10085,9 +10090,7 @@ async function messageEditDone(div) {
         reasoningEditDone.trigger('click');
     }
 
-    await finalizeMessageContent(this_edit_mes_id, event_types.MESSAGE_UPDATED);
-    this_edit_mes_id = undefined;
-    syncChatSurfaceProjectionHold();
+    await finalizeMessageContent(messageId, event_types.MESSAGE_UPDATED);
     try {
         await saveChatConditional();
     } finally {
