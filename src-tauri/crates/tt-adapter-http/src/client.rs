@@ -1,4 +1,10 @@
+//! No outbound request reuses an idle connection.
+
+use std::sync::Arc;
+
 use reqwest::{Client, ClientBuilder, Error};
+
+use crate::dns::Ipv4First;
 
 #[cfg(target_os = "android")]
 fn android_tls_config() -> rustls::ClientConfig {
@@ -24,7 +30,10 @@ pub(crate) fn build_http_client(
     builder: ClientBuilder,
     product_user_agent: &str,
 ) -> Result<Client, Error> {
-    let builder = builder.user_agent(product_user_agent);
+    let builder = builder
+        .user_agent(product_user_agent)
+        .pool_max_idle_per_host(0)
+        .dns_resolver(Arc::new(Ipv4First));
     #[cfg(target_os = "android")]
     let builder = apply_android_tls(builder);
     builder.build()
@@ -34,7 +43,10 @@ pub(crate) fn configure_blocking_http_client(
     builder: reqwest::blocking::ClientBuilder,
     product_user_agent: &str,
 ) -> reqwest::blocking::ClientBuilder {
-    let builder = builder.user_agent(product_user_agent);
+    let builder = builder
+        .user_agent(product_user_agent)
+        .pool_max_idle_per_host(0)
+        .dns_resolver(Arc::new(Ipv4First));
     #[cfg(target_os = "android")]
     let builder = builder.use_preconfigured_tls(android_tls_config());
     builder

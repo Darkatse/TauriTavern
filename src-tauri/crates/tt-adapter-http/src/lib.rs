@@ -1,4 +1,5 @@
 mod client;
+mod dns;
 pub mod github;
 mod pool;
 mod restricted_endpoint;
