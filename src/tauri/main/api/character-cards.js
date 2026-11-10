@@ -1,15 +1,7 @@
 // @ts-check
 
-import { createFileStagingService } from '../services/files/file-staging-service.js';
-import { streamResponse } from '../http-utils.js';
+import { StagedFile } from '../services/files/staged-file.js';
 import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
-
-const CHARACTER_CARD_EXTENSIONS = ['json', 'png'];
-const CHARACTER_CARD_EXTENSION_SET = new Set(CHARACTER_CARD_EXTENSIONS);
-const CHARACTER_CARD_MIME_BY_EXTENSION = new Map([
-    ['json', 'application/json'],
-    ['png', 'image/png'],
-]);
 
 export class LorebookAdoptionConflictError extends Error {
     /** @param {string} message */
@@ -19,36 +11,20 @@ export class LorebookAdoptionConflictError extends Error {
     }
 }
 
-/** @param {unknown} value @param {string} label */
-function requireNonEmptyString(value, label) {
-    const normalized = String(value ?? '').trim();
-    if (!normalized) {
-        throw new Error(`${label} is required`);
-    }
-    return normalized;
-}
-
-/** @param {string} fileName */
-function characterCardExtension(fileName) {
-    const match = String(fileName || '').match(/\.([^.]+)$/);
-    const extension = match?.[1]?.toLowerCase() || '';
-    if (!CHARACTER_CARD_EXTENSION_SET.has(extension)) {
-        throw new Error(`Unsupported character card file type: ${fileName}`);
-    }
-    return extension;
+/** @param {{ path: string; name: string }} staged */
+function stagedFile({ path, name }) {
+    return new StagedFile(path, name);
 }
 
 /**
  * @param {{
  *   safeInvoke: (command: string, args?: any) => Promise<any>;
  *   invalidateCharacterCache: () => void;
- *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
  * }} deps
  */
 function createCharacterCardsApi({
     safeInvoke,
     invalidateCharacterCache,
-    createReadableFileStream,
 }) {
     if (typeof safeInvoke !== 'function') {
         throw new Error('Tauri main context safeInvoke is missing');
@@ -56,31 +32,21 @@ function createCharacterCardsApi({
     if (typeof invalidateCharacterCache !== 'function') {
         throw new Error('Tauri main context invalidateCharacterCache is missing');
     }
-    if (typeof createReadableFileStream !== 'function') {
-        throw new Error('Tauri readable file stream service is missing');
-    }
 
-    const staging = createFileStagingService({ safeInvoke });
-
-    /** @param {string} filePath @param {string} preferredName */
-    async function fileFromPath(filePath, preferredName) {
-        const fileName = requireNonEmptyString(preferredName, 'character card file name');
-        const extension = characterCardExtension(fileName);
-        const type = CHARACTER_CARD_MIME_BY_EXTENSION.get(extension) || 'application/octet-stream';
-        const stream = await createReadableFileStream(filePath);
-        return new File([await streamResponse(stream).blob()], fileName, { type });
-    }
-
+    /** @param {{ multiple?: boolean }} [options] */
     async function pickFiles({ multiple = false } = {}) {
         const selected = await safeInvoke('pick_import_files', { kind: 'character-card', multiple });
-        if (selected === null) return null;
-        try {
-            const files = [];
-            for (const { path, name } of selected) files.push(await fileFromPath(path, name));
-            return files;
-        } finally {
-            for (const { path } of selected) await staging.discardFile(path);
-        }
+        return selected === null ? null : selected.map(stagedFile);
+    }
+
+    /** @param {string} url */
+    async function stageFromUrl(url) {
+        return stagedFile(await safeInvoke('stage_character_card_from_url', { url }));
+    }
+
+    /** @param {string} uri @param {string} name */
+    async function stageSharedFile(uri, name) {
+        return stagedFile(await safeInvoke('stage_shared_file', { uri, name }));
     }
 
     /** @param {string} avatar */
@@ -111,8 +77,9 @@ function createCharacterCardsApi({
     }
 
     return {
-        isNativePickerAvailable: () => true,
         pickFiles,
+        stageFromUrl,
+        stageSharedFile,
         adoptLorebook,
         resolveLorebookAdoption,
     };
@@ -135,6 +102,5 @@ export function installCharacterCardsApi(context) {
     hostAbi.api.characterCards = createCharacterCardsApi({
         safeInvoke: context?.safeInvoke,
         invalidateCharacterCache: context?.invalidateCharacterCache,
-        createReadableFileStream: context?.createReadableFileStream,
     });
 }

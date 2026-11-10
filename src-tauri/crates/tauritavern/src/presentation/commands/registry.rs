@@ -199,7 +199,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,
-        super::content_commands::download_external_import_url,
         // Asset library commands
         super::asset_commands::get_assets_library,
         super::asset_commands::download_asset,
@@ -258,10 +257,13 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tt_sync_commands::tt_sync_push,
         // Upload staging commands
         super::file_transfer_commands::pick_import_files,
+        #[cfg(target_os = "android")]
+        super::file_transfer_commands::stage_shared_file,
         super::file_transfer_commands::deliver_staged_file,
         super::file_staging_commands::stage_file_begin,
         super::file_staging_commands::stage_file_chunk,
         super::file_staging_commands::stage_file_finish,
+        super::file_staging_commands::stage_character_card_from_url,
         super::file_staging_commands::stage_file_from_url,
         super::file_staging_commands::stage_file_discard,
         // Chat payload commit commands

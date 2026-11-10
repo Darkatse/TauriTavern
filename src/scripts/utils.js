@@ -2989,23 +2989,35 @@ export function setupScrollToTop({ scrollContainerId, buttonId, drawerId, visibi
  * @returns {Promise<void>} A promise that resolves when the import is complete.
  */
 export async function importFromExternalUrl(url, { preserveFileName = null, replacement = false } = {}) {
-    let request;
-
     if (isValidUrl(url)) {
         console.debug('Custom content import started for URL: ', url);
-        request = await fetch('/api/content/importURL', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ url }),
-        });
-    } else {
-        console.debug('Custom content import started for Char UUID: ', url);
-        request = await fetch('/api/content/importUUID', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ url }),
-        });
+        let file;
+        try {
+            file = await window.__TAURITAVERN__.api.characterCards.stageFromUrl(url);
+        } catch (error) {
+            if (replacement) {
+                throw error;
+            }
+
+            toastr.info(error.message, 'Custom content import failed');
+            console.error('Custom content import failed', error);
+            return;
+        }
+
+        const extraData = new Map();
+        if (preserveFileName) {
+            extraData.set(file, preserveFileName);
+        }
+        await processDroppedFiles([file], extraData, { replacement });
+        return;
     }
+
+    console.debug('Custom content import started for Char UUID: ', url);
+    const request = await fetch('/api/content/importUUID', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ url }),
+    });
 
     if (!request.ok) {
         const error = new Error(`Custom content import failed: ${request.statusText || `HTTP ${request.status}`}`);

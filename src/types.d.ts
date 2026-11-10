@@ -1318,9 +1318,15 @@ type TauriTavernCharacterImportResult = {
     lorebook: TauriTavernCharacterLorebookAdoption | { status: 'failed' };
 };
 
+type TauriTavernStagedFile = import('./tauri/main/services/files/staged-file.js').StagedFile;
+
 type TauriTavernCharacterCardsApi = {
-    isNativePickerAvailable: () => boolean;
-    pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<File[] | null>;
+    /** Project: `null` when cancelled. */
+    pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<TauriTavernStagedFile[] | null>;
+    /** Project. */
+    stageFromUrl: (url: string) => Promise<TauriTavernStagedFile>;
+    /** Project, Android only. */
+    stageSharedFile: (uri: string, name: string) => Promise<TauriTavernStagedFile>;
     /** Project: adopt the stored card's embedded lorebook using its current binding. */
     adoptLorebook: (avatar: string) => Promise<TauriTavernCharacterLorebookAdoption>;
     /** Project: apply a decision returned by import or adoptLorebook. */

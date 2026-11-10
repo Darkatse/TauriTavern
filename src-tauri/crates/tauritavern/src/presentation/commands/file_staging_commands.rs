@@ -11,7 +11,10 @@ use crate::app::AppState;
 use crate::infrastructure::staging::{create_staged_file, discard_file, validate_staged_path};
 use crate::platform::ipc::{SMALL_ASSET_UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_BYTES};
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
-use crate::presentation::commands::helpers::{ensure_ios_policy_allows, log_command};
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
+use crate::presentation::commands::import_source::allowed_import_url;
 use crate::presentation::errors::CommandError;
 
 const DEFAULT_KIND: &str = "generic";
@@ -35,6 +38,13 @@ pub struct StageFileBeginResult {
 pub struct StageFileFinishResult {
     pub file_path: String,
     pub size: u64,
+}
+
+/// A staged import file: its extension is its format, and importing it consumes it.
+#[derive(Debug, Serialize)]
+pub struct StagedFileResult {
+    pub path: String,
+    pub name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -207,6 +217,49 @@ pub async fn stage_file_from_url(
             Err(error.into())
         }
     }
+}
+
+#[tauri::command]
+pub async fn stage_character_card_from_url(
+    app: AppHandle,
+    url: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<StagedFileResult, CommandError> {
+    log_command("stage_character_card_from_url");
+    stage_character_card(&app, &app_state, &url)
+        .await
+        .map_err(map_command_error("Failed to stage character card"))
+}
+
+async fn stage_character_card(
+    app: &AppHandle,
+    app_state: &AppState,
+    url: &str,
+) -> Result<StagedFileResult, CommandError> {
+    let url = allowed_import_url(app_state, url)?;
+    let download = create_staged_file(app, "character-card", "bin").await?;
+    let result = async {
+        let card = app_state
+            .services
+            .content_service
+            .download_character_card(url, &download)
+            .await?;
+        let path = download.with_extension(card.extension);
+        fs::rename(&download, &path).await.map_err(|error| {
+            CommandError::InternalServerError(format!("Failed to stage character card: {error}"))
+        })?;
+        Ok::<_, CommandError>(StagedFileResult {
+            path: path.to_string_lossy().into_owned(),
+            name: card.name,
+        })
+    }
+    .await;
+    if result.is_err()
+        && let Err(cleanup_error) = discard_file(&download).await
+    {
+        tracing::warn!(%cleanup_error, "Failed to discard incomplete character card download");
+    }
+    result
 }
 
 #[tauri::command]

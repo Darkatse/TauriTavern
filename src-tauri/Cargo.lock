@@ -9513,7 +9513,6 @@ dependencies = [
  "chrono",
  "headers",
  "http",
- "mime_guess",
  "percent-encoding",
  "rand 0.10.3",
  "serde",

@@ -1,3 +1,5 @@
+import { isHttpSource, isRemoteSource, isSameOrigin } from './kernel/remote-source.js';
+
 const IMAGE_EXTENSIONS = { jpeg: 'jpg', 'svg+xml': 'svg' };
 
 export function createDownloadBridge({
@@ -113,22 +115,6 @@ export function createDownloadBridge({
         }
     }
 
-    function isSameOrigin(targetWindow, url) {
-        // srcdoc/about:blank have location.origin === 'null' but inherit their window origin.
-        return url.origin === targetWindow.origin;
-    }
-
-    function isHttpSource(src) {
-        // DOM image sources have normalized schemes; avoid parsing large data URL payloads.
-        return src.startsWith('http:') || src.startsWith('https:');
-    }
-
-    function isRemoteImageSource(targetWindow, src) {
-        // Like a browser's "Save image", the host fetches remote images outside the page's CORS rules.
-        // Same-origin URLs are served inside the WebView, so only the page can read them.
-        return isHttpSource(src) && !isSameOrigin(targetWindow, new targetWindow.URL(src));
-    }
-
     function createDownloadRequest(targetWindow, anchorElement) {
         if (!anchorElement.hasAttribute('download')) {
             return null;
@@ -227,7 +213,7 @@ export function createDownloadBridge({
     }
 
     async function saveImage(targetWindow, src) {
-        if (isRemoteImageSource(targetWindow, src)) {
+        if (isRemoteSource(targetWindow, src)) {
             return deliverRemoteFile(src, (mimeType) => getImageDownloadFileName(src, mimeType));
         }
 

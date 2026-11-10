@@ -1,4 +1,4 @@
-import { normalizeBinaryPayload } from '../binary-utils.js';
+import { stagedCardBytes } from './character-route-utils.js';
 
 export function registerAssetsRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/assets/get', async () => {
@@ -7,24 +7,18 @@ export function registerAssetsRoutes(router, context, { jsonResponse, textRespon
     });
 
     router.post('/api/assets/download', async ({ body }) => {
+        const url = String(body?.url || '');
         const category = String(body?.category || '');
-        const result = await context.safeInvoke('download_asset', {
-            url: String(body?.url || ''),
+        if (category === 'character') {
+            const card = await stagedCardBytes(context, url);
+            return new Response(card.bytes, { status: 200, headers: { 'Content-Type': card.type } });
+        }
+
+        await context.safeInvoke('download_asset', {
+            url,
             category,
             filename: String(body?.filename || ''),
         });
-
-        if (category === 'character') {
-            const bytes = normalizeBinaryPayload(result?.data);
-            const mimeType = String(result?.mimeType || 'application/octet-stream');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': mimeType,
-                },
-            });
-        }
-
         return textResponse('OK');
     });
 

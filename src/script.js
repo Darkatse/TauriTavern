@@ -92,10 +92,8 @@ import {
     pauseImportedCharacterAgentAssetQueue,
     resumeImportedCharacterAgentAssetQueue,
 } from './scripts/tauri/agent-import-postprocess.js';
-import {
-    isNativeCharacterCardPickerAvailable,
-    pickNativeCharacterCardFiles,
-} from './scripts/tauri/character-card-picker.js';
+import { StagedFile } from './tauri/main/services/files/staged-file.js';
+import { isRemoteSource } from './tauri/main/kernel/remote-source.js';
 import {
     captureSettingsSaveState,
     isSettingsConflictError,
@@ -12291,8 +12289,8 @@ export async function swipe_right(event = null, { source, repeated, message } = 
 
 /**
  * Imports character files and completes their lorebook adoption and post-import steps.
- * @param {File[]} files Array of files to process
- * @param {Map<File, string>} [data] Extra data to pass to the import function
+ * @param {(File|StagedFile)[]} files Array of files to process
+ * @param {Map<File|StagedFile, string>} [data] Extra data to pass to the import function
  * @param {{ replacement?: boolean }} [options] Internal import intent
  * @returns {Promise<void>}
  */
@@ -12375,14 +12373,14 @@ function selectImportedChar(charId) {
 
 /**
  * Imports a character from a file.
- * @param {File} file File to import
+ * @param {File|StagedFile} file File to import
  * @param {object} [options] - Options
  * @param {string} [options.preserveFileName] Whether to preserve original file name
  * @param {Boolean} [options.replacement=false] Whether this import was explicitly requested as a replacement
  * @returns {Promise<TauriTavernCharacterImportResult|undefined>}
  */
 async function importCharacter(file, { preserveFileName = '', replacement = false } = {}) {
-    const ext = file.name.match(/\.(\w+)$/);
+    const ext = (file instanceof StagedFile ? file.path : file.name).match(/\.(\w+)$/);
     if (!ext || !(['json', 'png', 'yaml', 'yml', 'charx', 'byaf'].includes(ext[1].toLowerCase()))) {
         if (replacement) {
             throw new Error(t`Unsupported file type: ` + file.name);
@@ -12394,7 +12392,11 @@ async function importCharacter(file, { preserveFileName = '', replacement = fals
     const format = ext[1].toLowerCase();
     $('#character_import_file_type').val(format);
     const formData = new FormData();
-    formData.append('avatar', file);
+    if (file instanceof StagedFile) {
+        formData.append('staged_path', file.path);
+    } else {
+        formData.append('avatar', file);
+    }
     formData.append('file_type', format);
     formData.append('user_name', name1);
     if (preserveFileName) formData.append('preserved_name', preserveFileName);
@@ -12480,6 +12482,10 @@ async function importFromURL(items, files) {
             const uris = uriList.split('\n').filter(uri => uri.trim() !== '');
             try {
                 for (const uri of uris) {
+                    if (isRemoteSource(window, uri)) {
+                        files.push(await window.__TAURITAVERN__.api.characterCards.stageFromUrl(uri));
+                        continue;
+                    }
                     const request = await fetch(uri);
                     const data = await request.blob();
                     const fileName = request.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || uri.split('/').pop() || 'file.png';
@@ -14225,42 +14231,19 @@ jQuery(async function () {
 
                 switch (result) {
                     case POPUP_RESULT_FILE: {
-                        async function replaceCharacterFromFile(file) {
-                            if (!file) {
-                                return;
+                        try {
+                            const files = await window.__TAURITAVERN__.api.characterCards.pickFiles({ multiple: false });
+                            const file = files?.[0];
+                            if (file) {
+                                await replaceAndReopenChat(() => processDroppedFiles(
+                                    [file],
+                                    new Map([[file, replacementAvatar]]),
+                                    { replacement: true },
+                                ));
                             }
-
-                            const data = new Map();
-                            data.set(file, replacementAvatar);
-                            await replaceAndReopenChat(() => processDroppedFiles(
-                                [file],
-                                data,
-                                { replacement: true },
-                            ));
+                        } catch (error) {
+                            await showReplacementError(error);
                         }
-
-                        if (isNativeCharacterCardPickerAvailable()) {
-                            try {
-                                const files = await pickNativeCharacterCardFiles({
-                                    multiple: false,
-                                });
-                                await replaceCharacterFromFile(files?.[0]);
-                            } catch (error) {
-                                await showReplacementError(error);
-                            }
-                            break;
-                        }
-
-                        async function uploadReplacementCard(e) {
-                            try {
-                                await replaceCharacterFromFile(e.target.files[0]);
-                            } catch (error) {
-                                await showReplacementError(error);
-                            } finally {
-                                e.target.value = '';
-                            }
-                        }
-                        $('#character_replace_file').off('change').on('change', uploadReplacementCard).trigger('click');
                         break;
                     }
                     case POPUP_RESULT_URL: {

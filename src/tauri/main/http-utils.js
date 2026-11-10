@@ -162,13 +162,16 @@ export function jsonResponse(data, status = 200, statusText) {
  * A response whose body reads fail with the stream's own error, or with the abort reason once `signal` aborts;
  * Chromium would report either as TypeError('Failed to fetch'). A used or locked body still rejects at once, since
  * that read never reaches the stream. Piping keeps `signal` attached while a reader holds the body.
+ *
+ * `blob()` never lets the browser build a Blob from the stream: Chromium writes one to disk past 5 MB and reports
+ * a failed write only as TypeError('Failed to fetch').
  */
 export function streamResponse(stream, init, signal) {
     const { readable, writable } = new TransformStream();
     const failure = stream.pipeTo(writable, { signal }).then(() => null, error => error);
     const response = new Response(readable, init);
     for (const method of ['arrayBuffer', 'blob', 'bytes', 'formData', 'json', 'text']) {
-        const read = response[method];
+        const read = method === 'blob' ? blobFromChunks : response[method];
         if (typeof read !== 'function') continue;
         Object.defineProperty(response, method, {
             configurable: true,
@@ -178,6 +181,18 @@ export function streamResponse(stream, init, signal) {
         });
     }
     return response;
+}
+
+/** @this {Response} */
+async function blobFromChunks() {
+    // A partly read, released body is used but unlocked; reject as the native method does.
+    if (this.bodyUsed) return Response.prototype.blob.call(this);
+    const reader = this.body.getReader();
+    const chunks = [];
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        chunks.push(chunk.value);
+    }
+    return new Blob(chunks, { type: this.headers.get('Content-Type') ?? '' });
 }
 
 /**

@@ -94,6 +94,7 @@ export function createTauriMainContext({ invoke }) {
         editCharacterAvatarFromForm: characterFormService.editCharacterAvatarFromForm,
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
         materializeUploadFile: uploadService.materializeUploadFile,
+        adoptStagedFile: uploadService.adoptStagedFile,
         createChatBackupDownloadStream: readableFileStreamService.createChatBackupDownloadStream,
         createReadableFileStream: readableFileStreamService.createReadableFileStream,
     };

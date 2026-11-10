@@ -192,17 +192,16 @@ impl SkillService {
         url: &str,
     ) -> Result<SkillImportInput, ApplicationError> {
         let parsed_url = normalize_skill_import_url(url)?;
-        let downloaded = self
+        let bytes = self
             .external_import_downloader
             .fetch_bytes(
                 parsed_url.clone(),
-                Some(DownloadByteLimit {
+                DownloadByteLimit {
                     label: "Remote SKILL.md",
                     max_bytes: MAX_REMOTE_SKILL_MD_BYTES,
-                }),
+                },
             )
             .await?;
-        let bytes = downloaded.bytes;
         let content = String::from_utf8(bytes.clone()).map_err(|_| {
             ApplicationError::ValidationError("Remote SKILL.md must be valid UTF-8".to_string())
         })?;
@@ -290,8 +289,8 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
     async fn fetch_bytes(
         &self,
         _url: Url,
-        _limit: Option<DownloadByteLimit>,
-    ) -> Result<crate::services::external_import_service::DownloadedBytes, DomainError> {
+        _limit: DownloadByteLimit,
+    ) -> Result<Vec<u8>, DomainError> {
         Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
         ))
@@ -318,7 +317,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::services::external_import_service::{DownloadedBytes, DownloadedFile};
+    use crate::services::external_import_service::DownloadedFile;
     use tt_domain::errors::DomainError;
     use tt_domain::models::agent::profile::AgentSkillPolicy;
     use tt_domain::models::skill::{
@@ -526,14 +525,10 @@ mod tests {
         async fn fetch_bytes(
             &self,
             _url: Url,
-            limit: Option<DownloadByteLimit>,
-        ) -> Result<DownloadedBytes, DomainError> {
-            *self.limit.lock().unwrap() = limit;
-            Ok(DownloadedBytes {
-                bytes: self.bytes.clone(),
-                content_type: Some("text/markdown".to_string()),
-                content_disposition: None,
-            })
+            limit: DownloadByteLimit,
+        ) -> Result<Vec<u8>, DomainError> {
+            *self.limit.lock().unwrap() = Some(limit);
+            Ok(self.bytes.clone())
         }
 
         async fn fetch_to_file(

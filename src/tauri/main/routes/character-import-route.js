@@ -20,8 +20,9 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
         }
 
+        const stagedPath = body.get('staged_path');
         const file = body.get('avatar');
-        if (!(file instanceof Blob)) {
+        if (stagedPath === null && !(file instanceof Blob)) {
             return jsonResponse({ error: 'No character file provided' }, 400);
         }
 
@@ -38,14 +39,19 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             replacementName = preserveFileName.slice(0, -'.png'.length);
         }
 
-        const fileType = String(body.get('file_type') || '').trim().toLowerCase();
-        const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
-        const preferredName = file instanceof File && file.name ? file.name : fallbackName;
-        const fileInfo = await context.materializeUploadFile(file, {
-            kind: 'character-import',
-            preferredName,
-            preferredExtension: fileType,
-        });
+        let fileInfo;
+        if (stagedPath !== null) {
+            fileInfo = context.adoptStagedFile(String(stagedPath));
+        } else {
+            const fileType = String(body.get('file_type') || '').trim().toLowerCase();
+            const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
+            const preferredName = file instanceof File && file.name ? file.name : fallbackName;
+            fileInfo = await context.materializeUploadFile(file, {
+                kind: 'character-import',
+                preferredName,
+                preferredExtension: fileType,
+            });
+        }
 
         let imported;
         let replaced = false;

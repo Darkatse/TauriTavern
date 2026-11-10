@@ -352,6 +352,14 @@ async function installAsset(url, assetType, filename) {
             return result === true;
         }
 
+        if (category === 'character') {
+            console.debug(DEBUG_PREFIX, 'Importing character ', filename);
+            const file = await window.__TAURITAVERN__.api.characterCards.stageFromUrl(url);
+            await processDroppedFiles([file], new Map([[file, filename]]));
+            console.debug(DEBUG_PREFIX, 'Character downloaded.');
+            return true;
+        }
+
         const body = { url, category, filename };
         const result = await fetch('/api/assets/download', {
             method: 'POST',
@@ -361,14 +369,6 @@ async function installAsset(url, assetType, filename) {
         });
         if (result.ok) {
             console.debug(DEBUG_PREFIX, 'Download success.');
-            if (category === 'character') {
-                console.debug(DEBUG_PREFIX, 'Importing character ', filename);
-                const blob = await result.blob();
-                const file = new File([blob], filename, { type: blob.type });
-                const fileNameMap = new Map([[file, filename]]);
-                await processDroppedFiles([file], fileNameMap);
-                console.debug(DEBUG_PREFIX, 'Character downloaded.');
-            }
             return true;
         }
         return false;

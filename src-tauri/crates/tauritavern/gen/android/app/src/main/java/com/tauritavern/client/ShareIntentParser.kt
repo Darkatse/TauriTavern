@@ -6,14 +6,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Parcelable
 import android.provider.OpenableColumns
-import android.util.Log
 import org.json.JSONObject
-import java.io.File
 import java.util.Locale
 
 class ShareIntentParser(
   private val contentResolver: ContentResolver,
-  private val cacheDir: File,
 ) {
   fun canHandle(intent: Intent?): Boolean {
     val action = intent?.action ?: return false
@@ -92,13 +89,8 @@ class ShareIntentParser(
       return null
     }
 
-    val copiedFile = copySharedUriToCache(uri, displayName) ?: return null
-    return NativeSharePayload(
-      kind = "png",
-      path = copiedFile.absolutePath,
-      fileName = copiedFile.name,
-      mimeType = "image/png",
-    )
+    // The host must stage the URI while this activity still holds its read grant.
+    return NativeSharePayload(kind = "png", uri = uri.toString(), name = displayName)
   }
 
   private fun isPngMimeType(mimeType: String?): Boolean {
@@ -122,52 +114,6 @@ class ShareIntentParser(
     }
   }
 
-  private fun copySharedUriToCache(uri: Uri, originalName: String): File? {
-    return try {
-      val shareDir = File(cacheDir, "share-target-imports").apply { mkdirs() }
-      val safeName = sanitizeFileName(originalName)
-      val targetFile = createUniqueFile(shareDir, safeName)
-
-      contentResolver.openInputStream(uri)?.use { input ->
-        targetFile.outputStream().use { output -> input.copyTo(output) }
-      } ?: return null
-
-      targetFile
-    } catch (error: Exception) {
-      Log.e(TAG, "Failed to persist shared PNG", error)
-      null
-    }
-  }
-
-  private fun sanitizeFileName(fileName: String): String {
-    val sanitized =
-      fileName
-        .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_")
-        .trim()
-        .trimEnd('.', ' ')
-        .ifBlank { "shared-character.png" }
-
-    return if (sanitized.lowercase(Locale.US).endsWith(".png")) sanitized else "$sanitized.png"
-  }
-
-  private fun createUniqueFile(directory: File, fileName: String): File {
-    var candidate = File(directory, fileName)
-    if (!candidate.exists()) {
-      return candidate
-    }
-
-    val stem = candidate.nameWithoutExtension.ifBlank { "shared-character" }
-    val extension = candidate.extension.ifBlank { "png" }
-    var index = 1
-
-    while (candidate.exists()) {
-      candidate = File(directory, "$stem-$index.$extension")
-      index += 1
-    }
-
-    return candidate
-  }
-
   private inline fun <reified T : Parcelable> Intent.getParcelableExtraCompat(name: String): T? {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       getParcelableExtra(name, T::class.java)
@@ -189,7 +135,6 @@ class ShareIntentParser(
   }
 
   companion object {
-    private const val TAG = "ShareIntentParser"
     private val HTTP_URL_REGEX = Regex("""https?://[^\s]+""", RegexOption.IGNORE_CASE)
   }
 }
@@ -197,17 +142,15 @@ class ShareIntentParser(
 data class NativeSharePayload(
   val kind: String,
   val url: String? = null,
-  val path: String? = null,
-  val fileName: String? = null,
-  val mimeType: String? = null,
+  val uri: String? = null,
+  val name: String? = null,
 ) {
   fun toJsonObject(): JSONObject {
     return JSONObject().apply {
       put("kind", kind)
       url?.let { put("url", it) }
-      path?.let { put("path", it) }
-      fileName?.let { put("fileName", it) }
-      mimeType?.let { put("mimeType", it) }
+      uri?.let { put("uri", it) }
+      name?.let { put("name", it) }
     }
   }
 }

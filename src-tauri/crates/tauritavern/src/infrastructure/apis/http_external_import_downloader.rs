@@ -9,9 +9,7 @@ use url::Url;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
-use tt_ports::external_import::{
-    DownloadByteLimit, DownloadedBytes, DownloadedFile, ExternalImportDownloader,
-};
+use tt_ports::external_import::{DownloadByteLimit, DownloadedFile, ExternalImportDownloader};
 
 pub struct HttpExternalImportDownloader {
     http_clients: Arc<HttpClientPool>,
@@ -28,8 +26,8 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
     async fn fetch_bytes(
         &self,
         url: Url,
-        limit: Option<DownloadByteLimit>,
-    ) -> Result<DownloadedBytes, DomainError> {
+        limit: DownloadByteLimit,
+    ) -> Result<Vec<u8>, DomainError> {
         let client = self.http_clients.client(HttpClientProfile::Download)?;
         let response = client
             .get(url)
@@ -44,25 +42,14 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
             )));
         }
 
-        if let Some(limit) = limit
-            && response
-                .content_length()
-                .is_some_and(|length| length > limit.max_bytes as u64)
+        if response
+            .content_length()
+            .is_some_and(|length| length > limit.max_bytes as u64)
         {
             return Err(limit_error(limit));
         }
 
-        let headers = response.headers().clone();
-        let bytes = match limit {
-            Some(limit) => read_limited_response(response, limit).await?,
-            None => upstream::read_body(response).await?.to_vec(),
-        };
-
-        Ok(DownloadedBytes {
-            bytes,
-            content_type: header_string(&headers, CONTENT_TYPE),
-            content_disposition: header_string(&headers, CONTENT_DISPOSITION),
-        })
+        read_limited_response(response, limit).await
     }
 
     async fn fetch_to_file(&self, url: Url, path: &Path) -> Result<DownloadedFile, DomainError> {
@@ -81,6 +68,7 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
         }
 
         let content_type = header_string(response.headers(), CONTENT_TYPE);
+        let content_disposition = header_string(response.headers(), CONTENT_DISPOSITION);
         let file = tokio::fs::File::create(path)
             .await
             .map_err(internal_error)?;
@@ -95,7 +83,10 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
             writer.write_all(&chunk).await.map_err(internal_error)?;
         }
         writer.flush().await.map_err(internal_error)?;
-        Ok(DownloadedFile { content_type })
+        Ok(DownloadedFile {
+            content_type,
+            content_disposition,
+        })
     }
 }
 
