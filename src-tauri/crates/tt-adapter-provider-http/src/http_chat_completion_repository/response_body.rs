@@ -5,6 +5,7 @@ use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;
 
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 
 use super::context_overflow::context_overflow_or;
@@ -71,23 +72,10 @@ pub(super) async fn read_upstream_json_body(
         .to_string();
     let endpoint = response.url().clone();
 
-    let body = response.bytes().await.map_err(|error| {
-        let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-        tracing::warn!(
-            provider = provider_name,
-            operation = operation,
-            status = status.as_u16(),
-            code = %failure.code,
-            category = %failure.category,
-            endpoint = failure.endpoint.as_deref().unwrap_or(""),
-            timeout = error.is_timeout(),
-            connect = error.is_connect(),
-            body = error.is_body(),
-            request = error.is_request(),
-            "upstream response body read failed",
-        );
-        DomainError::upstream_failure(failure)
-    })?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| upstream::body_failure(error, &endpoint))?;
 
     parse_upstream_json_body(
         provider_name,

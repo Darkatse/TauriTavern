@@ -6,7 +6,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 
 use super::HttpChatCompletionRepository;
@@ -160,12 +160,7 @@ async fn request_access_token(
         ])
         .send()
         .await
-        .map_err(|error| {
-            HttpChatCompletionRepository::map_transport_error(
-                "Vertex AI service account access token request failed",
-                error,
-            )
-        })?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(HttpChatCompletionRepository::map_error_response(

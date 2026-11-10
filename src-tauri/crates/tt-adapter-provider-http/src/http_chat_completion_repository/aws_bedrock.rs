@@ -18,6 +18,7 @@ use reqwest::RequestBuilder;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, extract_provider};
 use tt_ports::repositories::chat_completion_repository::{
@@ -501,22 +502,11 @@ where
     let mut buffer = Vec::<u8>::new();
     let endpoint = response.url().clone();
 
-    while let Some(chunk) = response.chunk().await.map_err(|error| {
-        let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-        tracing::warn!(
-            provider = BEDROCK_PROVIDER_NAME,
-            operation = "eventstream",
-            code = %failure.code,
-            category = %failure.category,
-            endpoint = failure.endpoint.as_deref().unwrap_or(""),
-            timeout = error.is_timeout(),
-            connect = error.is_connect(),
-            body = error.is_body(),
-            request = error.is_request(),
-            "upstream event stream read failed",
-        );
-        DomainError::upstream_failure(failure)
-    })? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| upstream::body_failure(error, &endpoint))?
+    {
         buffer.extend_from_slice(&chunk);
         drain_eventstream_messages(&mut buffer, mode, &mut on_event)?;
     }

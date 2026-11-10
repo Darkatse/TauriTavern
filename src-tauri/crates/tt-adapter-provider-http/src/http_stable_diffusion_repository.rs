@@ -14,7 +14,7 @@ use url::Url;
 
 use crate::workers_ai_endpoint::workers_ai_run_url;
 use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_domain::models::filename::sanitize_filename;
@@ -153,6 +153,12 @@ fn optional_string(body: &Value, key: &str) -> String {
         .to_string()
 }
 
+fn invalid_json(error: serde_json::Error) -> DomainError {
+    DomainError::InternalError(format!(
+        "Image generation response is not valid JSON: {error}"
+    ))
+}
+
 fn basic_auth_header(auth: &str) -> String {
     let encoded = base64::engine::general_purpose::STANDARD.encode(auth);
     format!("Basic {encoded}")
@@ -245,7 +251,7 @@ async fn webui_ping(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -277,8 +283,8 @@ async fn webui_upscalers(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send();
 
-    let (upscalers_res, latent_res) = tokio::try_join!(upscalers_fut, latent_fut)
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let (upscalers_res, latent_res) =
+        tokio::try_join!(upscalers_fut, latent_fut).map_err(upstream::request_failure)?;
 
     if !upscalers_res.status().is_success() || !latent_res.status().is_success() {
         return Err(DomainError::InternalError(
@@ -286,18 +292,15 @@ async fn webui_upscalers(
         ));
     }
 
-    let upscalers = upscalers_res
-        .json::<Vec<NamedItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
-        .into_iter()
-        .map(|item| item.name)
-        .collect::<Vec<_>>();
+    let upscalers =
+        serde_json::from_slice::<Vec<NamedItem>>(&upstream::read_body(upscalers_res).await?)
+            .map_err(invalid_json)?
+            .into_iter()
+            .map(|item| item.name)
+            .collect::<Vec<_>>();
 
-    let latent = latent_res
-        .json::<Vec<NamedItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    let latent = serde_json::from_slice::<Vec<NamedItem>>(&upstream::read_body(latent_res).await?)
+        .map_err(invalid_json)?
         .into_iter()
         .map(|item| item.name)
         .collect::<Vec<_>>();
@@ -324,7 +327,7 @@ async fn webui_sdnext_upscalers(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -332,10 +335,8 @@ async fn webui_sdnext_upscalers(
         ));
     }
 
-    let mut names = response
-        .json::<Vec<NamedItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    let mut names = serde_json::from_slice::<Vec<NamedItem>>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?
         .into_iter()
         .map(|item| item.name)
         .collect::<Vec<_>>();
@@ -385,10 +386,8 @@ async fn webui_vaes(
             _ => continue,
         };
 
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+            .map_err(invalid_json)?;
 
         let Some(array) = value.as_array() else {
             continue;
@@ -423,7 +422,7 @@ async fn webui_samplers(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -431,10 +430,8 @@ async fn webui_samplers(
         ));
     }
 
-    let names = response
-        .json::<Vec<NamedItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    let names = serde_json::from_slice::<Vec<NamedItem>>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?
         .into_iter()
         .map(|item| item.name)
         .collect::<Vec<_>>();
@@ -457,7 +454,7 @@ async fn webui_schedulers(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -465,10 +462,8 @@ async fn webui_schedulers(
         ));
     }
 
-    let names = response
-        .json::<Vec<NamedItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    let names = serde_json::from_slice::<Vec<NamedItem>>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?
         .into_iter()
         .map(|item| item.name)
         .collect::<Vec<_>>();
@@ -491,7 +486,7 @@ async fn webui_models(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -499,10 +494,8 @@ async fn webui_models(
         ));
     }
 
-    let models = response
-        .json::<Vec<TitleItem>>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    let models = serde_json::from_slice::<Vec<TitleItem>>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?
         .into_iter()
         .map(|item| {
             let title = item.title;
@@ -528,12 +521,10 @@ async fn webui_get_model(
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     let name = value
         .get("sd_model_checkpoint")
@@ -563,7 +554,7 @@ async fn webui_set_model(
         .json(&json!({ "sd_model_checkpoint": model }))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -587,17 +578,16 @@ async fn webui_set_model(
             .send();
 
         let response = tokio::select! {
-            res = progress_fut => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+            res = progress_fut => res.map_err(upstream::request_failure)?,
             changed = cancel.changed() => {
                 let _ = changed;
                 return Err(DomainError::generation_cancelled_by_user());
             }
         };
 
-        let progress = response
-            .json::<ProgressState>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        let progress =
+            serde_json::from_slice::<ProgressState>(&upstream::read_body(response).await?)
+                .map_err(invalid_json)?;
 
         if progress.progress == 0.0 && progress.state.job_count == 0 {
             break;
@@ -653,7 +643,7 @@ async fn webui_generate(
         .send();
 
     let response = tokio::select! {
-        res = request_fut => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = request_fut => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
 
@@ -682,10 +672,8 @@ async fn webui_generate(
         )));
     }
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     Ok(json_response(200, value))
 }
@@ -702,7 +690,7 @@ async fn comfy_ping(
         .get(target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -725,7 +713,7 @@ async fn comfy_object_info(
         .get(target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -733,10 +721,7 @@ async fn comfy_object_info(
         ));
     }
 
-    response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))
+    serde_json::from_slice::<Value>(&upstream::read_body(response).await?).map_err(invalid_json)
 }
 
 fn json_pointer<'a>(value: &'a Value, pointer: &str) -> Result<&'a Value, DomainError> {
@@ -875,7 +860,7 @@ async fn comfy_generate(
         .body(prompt);
 
     let prompt_response = tokio::select! {
-        res = prompt_request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = prompt_request.send() => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
             let _ = client.post(interrupt_url).send().await;
@@ -894,10 +879,9 @@ async fn comfy_generate(
         )));
     }
 
-    let prompt_json = prompt_response
-        .json::<ComfyPromptResponse>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let prompt_json =
+        serde_json::from_slice::<ComfyPromptResponse>(&upstream::read_body(prompt_response).await?)
+            .map_err(invalid_json)?;
     let id = prompt_json.prompt_id;
     let history_url = append_endpoint_path(&url, &format!("history/{id}"))?;
 
@@ -909,7 +893,7 @@ async fn comfy_generate(
 
         let history_request = client.get(history_url.clone());
         let history_response = tokio::select! {
-            res = history_request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+            res = history_request.send() => res.map_err(upstream::request_failure)?,
             changed = cancel.changed() => {
                 let _ = changed;
                 let _ = client.post(interrupt_url.clone()).send().await;
@@ -923,10 +907,9 @@ async fn comfy_generate(
             ));
         }
 
-        let history = history_response
-            .json::<Value>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        let history =
+            serde_json::from_slice::<Value>(&upstream::read_body(history_response).await?)
+                .map_err(invalid_json)?;
 
         let Some(entry) = history.get(&id) else {
             tokio::select! {
@@ -1054,7 +1037,7 @@ async fn comfy_generate(
 
     let view_request = client.get(view_url);
     let view_response = tokio::select! {
-        res = view_request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = view_request.send() => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
             return Err(DomainError::generation_cancelled_by_user());
@@ -1067,10 +1050,7 @@ async fn comfy_generate(
         ));
     }
 
-    let bytes = view_response
-        .bytes()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let bytes = upstream::read_body(view_response).await?;
     let format = Path::new(filename)
         .extension()
         .and_then(OsStr::to_str)
@@ -1235,7 +1215,7 @@ async fn sdcpp_ping(
         .request(reqwest::Method::OPTIONS, target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -1258,7 +1238,7 @@ async fn sdcpp_models(
         .get(target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -1266,10 +1246,8 @@ async fn sdcpp_models(
         ));
     }
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     Ok(json_response(200, value))
 }
@@ -1327,7 +1305,7 @@ async fn sdcpp_generate(
         .json(&Value::Object(payload));
 
     let response = tokio::select! {
-        res = request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = request.send() => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
             return Err(DomainError::generation_cancelled_by_user());
@@ -1345,10 +1323,8 @@ async fn sdcpp_generate(
         )));
     }
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     Ok(json_response(200, value))
 }
@@ -1563,7 +1539,7 @@ async fn workers_ai_generate(
     }
 
     let response = tokio::select! {
-        res = builder.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = builder.send() => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
             return Err(DomainError::generation_cancelled_by_user());
@@ -1587,10 +1563,8 @@ async fn workers_ai_generate(
         .to_string();
 
     if content_type.contains("application/json") {
-        let data = response
-            .json::<Value>()
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        let data = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+            .map_err(invalid_json)?;
         let image = data
             .pointer("/result/image")
             .or_else(|| data.get("image"))
@@ -1607,10 +1581,7 @@ async fn workers_ai_generate(
         ));
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let bytes = upstream::read_body(response).await?;
     let image = base64::engine::general_purpose::STANDARD.encode(bytes);
 
     Ok(json_response(
@@ -1631,7 +1602,7 @@ async fn drawthings_ping(
         .head(target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(DomainError::InternalError(
@@ -1655,12 +1626,10 @@ async fn drawthings_get_field(
         .get(target)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+        .map_err(upstream::request_failure)?;
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     let field_value = value
         .get(field)
@@ -1694,7 +1663,7 @@ async fn drawthings_generate(
         .json(&cloned);
 
     let response = tokio::select! {
-        res = request.send() => res.map_err(|error| DomainError::InternalError(error.to_string()))?,
+        res = request.send() => res.map_err(upstream::request_failure)?,
         changed = cancel.changed() => {
             let _ = changed;
             return Err(DomainError::generation_cancelled_by_user());
@@ -1712,10 +1681,8 @@ async fn drawthings_generate(
         )));
     }
 
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
+    let value = serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+        .map_err(invalid_json)?;
 
     Ok(json_response(200, value))
 }

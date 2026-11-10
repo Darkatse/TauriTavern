@@ -5,7 +5,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde_json::{Map, Value, json};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::vector_repository::{
     RemoteEmbeddingBatch, RemoteEmbeddingProtocol, RemoteEmbeddingRepository,
@@ -35,26 +35,17 @@ impl HttpEmbeddingRepository {
         request: RequestBuilder,
         provider: &str,
     ) -> Result<Value, DomainError> {
-        let response = request.send().await.map_err(|error| {
-            DomainError::upstream_failure(crate::http_error::reqwest_transport_failure(&error))
-        })?;
+        let response = request.send().await.map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             return Err(map_error_response(provider, response).await);
         }
 
-        let endpoint = response.url().clone();
-        response.json().await.map_err(|error| {
-            if error.is_decode() {
-                DomainError::InternalError(format!(
-                    "{provider} embedding response is not valid JSON: {error}"
-                ))
-            } else {
-                DomainError::upstream_failure(crate::http_error::reqwest_body_failure(
-                    &error,
-                    Some(&endpoint),
-                ))
-            }
+        let body = upstream::read_body(response).await?;
+        serde_json::from_slice(&body).map_err(|error| {
+            DomainError::InternalError(format!(
+                "{provider} embedding response is not valid JSON: {error}"
+            ))
         })
     }
 

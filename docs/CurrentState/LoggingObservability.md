@@ -13,6 +13,8 @@ Rust 普通日志统一使用 `tracing::{debug, info, warn, error}` 宏，不再
 
 `infrastructure::logging::logger.rs` 已删除。不要重新引入跨层 logger facade，也不要给 application service 注入 Logger trait；普通 instrumentation 直接用 `tracing`。
 
+出站 HTTP 请求的传输失败统一由 `tt-adapter-http` 的 `upstream` 分类为 `UpstreamFailure`，并在分类时记录一次 warn。调用方只判断状态码与响应格式，不另行记录。
+
 ## 2. 用户可见错误
 
 backend error toast 不是普通 error 日志的副作用，而是显式产品事件：
@@ -20,7 +22,8 @@ backend error toast 不是普通 error 日志的副作用，而是显式产品�
 - command boundary 失败通过 `presentation/commands/helpers.rs::map_command_error()` 统一记录；
 - `Cancelled` / `TooManyRequests` 等预期失败只记录 command warn，不触发 toast；
 - 无法通过 `Result` 自然返回、但用户应立即感知的重要后台/宿主失败，显式使用 user-visible error target；host crate 使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`，adapter crate 使用 `target: tt_contracts::observability::USER_VISIBLE_ERROR`；
-- 普通诊断 `tracing::error!` 只进入 stdout/file/backend log，不自动弹窗。
+- 普通诊断 `tracing::error!` 只进入 stdout/file/backend log，不自动弹窗；
+- `UpstreamFailure` 的提示文本由前端 `kernel/upstream-failure.js` 的 `upstreamFailureMessage` 按 message key 本地化，invoke 错误消息与聊天错误楼层使用同一文本。
 
 应用遵循全局 `EnvFilter`。如果用户过滤掉 `tauritavern::user_error` target，对应 backend error toast 也会被过滤；这是用户对观测输出的合理控制。
 

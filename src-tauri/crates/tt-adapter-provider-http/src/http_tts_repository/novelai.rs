@@ -12,7 +12,7 @@ pub(super) async fn generate(
     text: String,
     voice: String,
 ) -> Result<TtsRouteResponse, DomainError> {
-    let response = send_with_retry("NovelAI TTS request", || {
+    let response = send_with_retry(|| {
         client
             .get(NOVELAI_TTS_URL)
             .bearer_auth(&api_key)

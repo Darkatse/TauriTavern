@@ -1,7 +1,9 @@
+//! Transport failures of outbound requests, classified and logged once for every caller.
+
 use std::error::Error;
 
-use reqwest::Url;
-
+use bytes::Bytes;
+use reqwest::{Response, Url};
 use tt_domain::models::upstream_failure::{
     UPSTREAM_NETWORK_BODY_INTERRUPTED, UPSTREAM_NETWORK_CONNECT_FAILED,
     UPSTREAM_NETWORK_DNS_FAILED, UPSTREAM_NETWORK_PROXY_FAILED, UPSTREAM_NETWORK_REDIRECT_REJECTED,
@@ -9,23 +11,25 @@ use tt_domain::models::upstream_failure::{
     UpstreamFailure,
 };
 
-pub(crate) fn reqwest_transport_failure(error: &reqwest::Error) -> UpstreamFailure {
+pub fn request_failure(error: reqwest::Error) -> UpstreamFailure {
     let endpoint = error.url().map(sanitize_endpoint);
-    classify_reqwest_error(error, endpoint, None)
+    classify(&error, endpoint, None)
 }
 
-pub(crate) fn reqwest_body_failure(
-    error: &reqwest::Error,
-    fallback_endpoint: Option<&Url>,
-) -> UpstreamFailure {
-    let endpoint = error
-        .url()
-        .map(sanitize_endpoint)
-        .or_else(|| fallback_endpoint.map(sanitize_endpoint));
-    classify_reqwest_error(error, endpoint, Some(UPSTREAM_NETWORK_BODY_INTERRUPTED))
+pub fn body_failure(error: reqwest::Error, endpoint: &Url) -> UpstreamFailure {
+    let endpoint = Some(sanitize_endpoint(error.url().unwrap_or(endpoint)));
+    classify(&error, endpoint, Some(UPSTREAM_NETWORK_BODY_INTERRUPTED))
 }
 
-pub(crate) fn sanitize_endpoint(url: &Url) -> String {
+pub async fn read_body(response: Response) -> Result<Bytes, UpstreamFailure> {
+    let endpoint = response.url().clone();
+    response
+        .bytes()
+        .await
+        .map_err(|error| body_failure(error, &endpoint))
+}
+
+pub fn sanitize_endpoint(url: &Url) -> String {
     let mut sanitized = url.clone();
     let _ = sanitized.set_username("");
     let _ = sanitized.set_password(None);
@@ -34,19 +38,20 @@ pub(crate) fn sanitize_endpoint(url: &Url) -> String {
     sanitized.to_string()
 }
 
-fn classify_reqwest_error(
+fn classify(
     error: &reqwest::Error,
     endpoint: Option<String>,
     preferred_code: Option<&str>,
 ) -> UpstreamFailure {
-    let cause_chain = source_chain_text(error);
+    let cause = source_chain_text(error);
+    let signals = cause.to_ascii_lowercase();
     let code = if error.is_timeout() {
         UPSTREAM_NETWORK_TIMEOUT
-    } else if error.is_connect() && contains_proxy_signal(&cause_chain) {
+    } else if error.is_connect() && contains_proxy_signal(&signals) {
         UPSTREAM_NETWORK_PROXY_FAILED
-    } else if error.is_connect() && contains_dns_signal(&cause_chain) {
+    } else if error.is_connect() && contains_dns_signal(&signals) {
         UPSTREAM_NETWORK_DNS_FAILED
-    } else if error.is_connect() && contains_tls_signal(&cause_chain) {
+    } else if error.is_connect() && contains_tls_signal(&signals) {
         UPSTREAM_NETWORK_TLS_FAILED
     } else if error.is_connect() {
         UPSTREAM_NETWORK_CONNECT_FAILED
@@ -60,6 +65,12 @@ fn classify_reqwest_error(
         UPSTREAM_NETWORK_REQUEST_FAILED
     };
 
+    tracing::warn!(
+        code,
+        endpoint = endpoint.as_deref().unwrap_or(""),
+        cause = %cause,
+        "upstream transport failed",
+    );
     UpstreamFailure::network(code, endpoint, message_key_for_code(code))
 }
 
@@ -76,6 +87,7 @@ fn message_key_for_code(code: &str) -> &'static str {
     }
 }
 
+// Skips the top-level reqwest message, which carries the full URL with its query.
 fn source_chain_text(error: &(dyn Error + 'static)) -> String {
     let mut parts = Vec::new();
     let mut current = error.source();
@@ -83,7 +95,7 @@ fn source_chain_text(error: &(dyn Error + 'static)) -> String {
         parts.push(source.to_string());
         current = source.source();
     }
-    parts.join("\n").to_ascii_lowercase()
+    parts.join(": ")
 }
 
 fn contains_proxy_signal(text: &str) -> bool {

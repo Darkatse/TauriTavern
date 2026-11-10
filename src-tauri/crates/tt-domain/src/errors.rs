@@ -40,8 +40,8 @@ pub enum DomainError {
     #[error("{0}")]
     Transient(String),
 
-    #[error("{0}")]
-    UpstreamFailure(UpstreamFailure),
+    #[error(transparent)]
+    UpstreamFailure(#[from] UpstreamFailure),
 
     #[error("Workspace path is a directory: {path}")]
     WorkspacePathIsDirectory { path: String },
@@ -134,10 +134,6 @@ impl DomainError {
 
     pub fn transient(message: impl Into<String>) -> Self {
         Self::Transient(message.into())
-    }
-
-    pub fn upstream_failure(failure: UpstreamFailure) -> Self {
-        Self::UpstreamFailure(failure)
     }
 
     pub fn workspace_path_is_directory(path: impl Into<String>) -> Self {

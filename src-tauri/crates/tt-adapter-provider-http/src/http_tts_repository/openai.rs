@@ -2,6 +2,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Map, Value, json};
 
 use super::{bytes_response, send_with_retry, upstream_error_response};
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{
     ElectronHubTtsRequest, OpenAiTtsRequest, TtsRouteResponse,
@@ -41,7 +42,7 @@ pub(super) async fn handle_openai(
                 "speed": speed,
                 "model": model,
             });
-            let response = send_with_retry("OpenAI-compatible TTS request", || {
+            let response = send_with_retry(|| {
                 client
                     .post(endpoint.clone())
                     .bearer_auth(api_key.as_deref().unwrap_or_default())
@@ -81,7 +82,7 @@ async fn generate_openai(
         payload["instructions"] = Value::String(instructions);
     }
 
-    let response = send_with_retry("OpenAI TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(OPENAI_TTS_URL)
             .bearer_auth(&api_key)
@@ -99,7 +100,7 @@ pub(super) async fn handle_electronhub(
 ) -> Result<TtsRouteResponse, DomainError> {
     match request {
         ElectronHubTtsRequest::Models { api_key } => {
-            let response = send_with_retry("ElectronHub model list request", || {
+            let response = send_with_retry(|| {
                 client
                     .get(ELECTRONHUB_MODELS_URL)
                     .bearer_auth(&api_key)
@@ -110,11 +111,12 @@ pub(super) async fn handle_electronhub(
                 return upstream_error_response(response, "ElectronHub model list request failed")
                     .await;
             }
-            let payload: Value = response.json().await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "ElectronHub model list response read failed: {error}"
-                ))
-            })?;
+            let payload: Value = serde_json::from_slice(&upstream::read_body(response).await?)
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "ElectronHub model list response is not valid JSON: {error}"
+                    ))
+                })?;
             let models = payload
                 .get("data")
                 .and_then(Value::as_array)
@@ -140,7 +142,7 @@ pub(super) async fn handle_electronhub(
                 ));
             };
             normalize_electronhub_payload(payload);
-            let response = send_with_retry("ElectronHub TTS request", || {
+            let response = send_with_retry(|| {
                 client
                     .post(ELECTRONHUB_TTS_URL)
                     .bearer_auth(&api_key)
@@ -180,7 +182,7 @@ pub(super) async fn generate_chutes(
         "voice": voice,
         "speed": speed,
     });
-    let response = send_with_retry("Chutes TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(CHUTES_TTS_URL)
             .bearer_auth(&api_key)

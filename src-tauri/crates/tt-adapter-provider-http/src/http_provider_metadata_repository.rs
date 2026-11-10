@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use url::Url;
 
 use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
@@ -44,16 +44,13 @@ impl HttpProviderMetadataRepository {
         provider_name: &str,
         action: &str,
     ) -> Result<Value, DomainError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|error| DomainError::transient(format!("{action} request failed: {error}")))?;
+        let response = request.send().await.map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             return Err(Self::map_error_response(provider_name, response, action).await);
         }
 
-        response.json::<Value>().await.map_err(|error| {
+        serde_json::from_slice::<Value>(&upstream::read_body(response).await?).map_err(|error| {
             DomainError::InternalError(format!("{action} JSON is invalid: {error}"))
         })
     }
@@ -63,10 +60,7 @@ impl HttpProviderMetadataRepository {
         provider_name: &str,
         action: &str,
     ) -> Result<Option<Value>, DomainError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|error| DomainError::transient(format!("{action} request failed: {error}")))?;
+        let response = request.send().await.map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -79,9 +73,11 @@ impl HttpProviderMetadataRepository {
             return Ok(None);
         }
 
-        response.json::<Value>().await.map(Some).map_err(|error| {
-            DomainError::InternalError(format!("{action} JSON is invalid: {error}"))
-        })
+        serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
+            .map(Some)
+            .map_err(|error| {
+                DomainError::InternalError(format!("{action} JSON is invalid: {error}"))
+            })
     }
 
     async fn map_error_response(

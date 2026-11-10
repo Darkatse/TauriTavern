@@ -3,6 +3,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::Value;
 
 use crate::workers_ai_endpoint::workers_ai_models_search_url;
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 
 pub(crate) async fn fetch_workers_ai_models(
@@ -23,21 +24,19 @@ pub(crate) async fn fetch_workers_ai_models(
         .header(AUTHORIZATION, format!("Bearer {api_key}"))
         .send()
         .await
-        .map_err(|error| {
-            DomainError::transient(format!(
-                "Cloudflare Workers AI models request failed: {error}"
-            ))
-        })?;
+        .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
         return Err(map_workers_ai_models_error(response).await);
     }
 
-    let body = response.json::<Value>().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Cloudflare Workers AI models JSON is invalid: {error}"
-        ))
-    })?;
+    let body = serde_json::from_slice::<Value>(&upstream::read_body(response).await?).map_err(
+        |error| {
+            DomainError::InternalError(format!(
+                "Cloudflare Workers AI models JSON is invalid: {error}"
+            ))
+        },
+    )?;
 
     parse_workers_ai_models(&body)
 }

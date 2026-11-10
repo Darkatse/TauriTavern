@@ -11,7 +11,7 @@ use miktik::{CumulativeEstimateOptions, TokenizerError, TokenizerRegistry};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
@@ -299,12 +299,7 @@ impl MiktikTokenizerRepository {
             .get(url)
             .send()
             .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to download tokenizer resource '{}': {:?}",
-                    url, error
-                ))
-            })?
+            .map_err(upstream::request_failure)?
             .error_for_status()
             .map_err(|error| {
                 DomainError::InternalError(format!(
@@ -313,12 +308,7 @@ impl MiktikTokenizerRepository {
                 ))
             })?;
 
-        let payload = response.bytes().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read downloaded tokenizer bytes from '{}': {}",
-                url, error
-            ))
-        })?;
+        let payload = upstream::read_body(response).await?;
 
         Ok(payload.to_vec())
     }

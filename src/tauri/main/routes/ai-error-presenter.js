@@ -3,7 +3,7 @@ import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import {
     asUpstreamFailureDetails,
     findUpstreamFailureDetails,
-    UPSTREAM_FAILURE_FALLBACKS,
+    upstreamFailureMessage,
 } from '../kernel/upstream-failure.js';
 
 export { asUpstreamFailureDetails };
@@ -34,9 +34,7 @@ export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat complet
         return stripCommandErrorPrefixes(getErrorMessage(error)) || fallbackMessage;
     }
 
-    const fallback = UPSTREAM_FAILURE_FALLBACKS[details.code] || 'Upstream request failed.';
-    const message = translateSillyTavern(details.messageKey, fallback);
-    const lines = [message];
+    const lines = [upstreamFailureMessage(details, translateSillyTavern)];
 
     if (details.category === 'network') {
         lines.push(

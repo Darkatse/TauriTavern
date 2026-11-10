@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::searxng_search_repository::{
     SearxngSearchRepository, SearxngSearchRequest,
@@ -34,9 +34,7 @@ impl SearxngSearchRepository for HttpSearxngSearchRepository {
             .header(ACCEPT_LANGUAGE, "en-US,en;q=0.5")
             .send()
             .await
-            .map_err(|error| {
-                DomainError::upstream_failure(crate::http_error::reqwest_transport_failure(&error))
-            })?;
+            .map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             return Err(DomainError::InternalError(format!(
@@ -47,12 +45,11 @@ impl SearxngSearchRepository for HttpSearxngSearchRepository {
 
         let endpoint = response.url().clone();
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error| {
-            DomainError::upstream_failure(crate::http_error::reqwest_body_failure(
-                &error,
-                Some(&endpoint),
-            ))
-        })? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| upstream::body_failure(error, &endpoint))?
+        {
             append_body_chunk(&mut body, &chunk)?;
         }
 

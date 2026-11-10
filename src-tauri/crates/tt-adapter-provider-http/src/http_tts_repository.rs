@@ -7,7 +7,7 @@ use reqwest::{RequestBuilder, Response, StatusCode};
 use serde_json::Value;
 use tokio::time::sleep;
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{TtsRepository, TtsRequest, TtsRouteResponse};
 
@@ -85,38 +85,24 @@ impl TtsRepository for HttpTtsRepository {
     }
 }
 
-async fn send_with_retry<F>(label: &str, build: F) -> Result<Response, DomainError>
+async fn send_with_retry<F>(build: F) -> Result<Response, DomainError>
 where
     F: Fn() -> RequestBuilder,
 {
-    let mut last_error = None;
-
-    for attempt in 0..=RETRIES {
+    let mut attempt = 0;
+    loop {
+        let last = attempt == RETRIES;
         match build().send().await {
-            Ok(response) => {
-                if !is_retryable_status(response.status()) || attempt == RETRIES {
-                    return Ok(response);
-                }
+            Ok(response) if last || !is_retryable_status(response.status()) => {
+                return Ok(response);
             }
-            Err(error) => {
-                if attempt == RETRIES {
-                    return Err(DomainError::InternalError(format!(
-                        "{label} failed: {error}"
-                    )));
-                }
-                last_error = Some(error);
-            }
+            Err(error) if last => return Err(upstream::request_failure(error).into()),
+            _ => {}
         }
 
-        sleep(Duration::from_millis(RETRY_DELAY_MS * (attempt as u64 + 1))).await;
+        attempt += 1;
+        sleep(Duration::from_millis(RETRY_DELAY_MS * attempt as u64)).await;
     }
-
-    Err(DomainError::InternalError(format!(
-        "{label} failed: {}",
-        last_error
-            .map(|error| error.to_string())
-            .unwrap_or_else(|| "request failed".to_string())
-    )))
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {
@@ -128,9 +114,7 @@ async fn upstream_error_response(
     fallback: &str,
 ) -> Result<TtsRouteResponse, DomainError> {
     let status = response.status().as_u16();
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("Upstream error response read failed: {error}"))
-    })?;
+    let bytes = upstream::read_body(response).await?;
     Ok(TtsRouteResponse::text(
         status,
         parse_upstream_error_message(&bytes, fallback),
@@ -154,9 +138,7 @@ async fn bytes_response(
     } else {
         fallback_content_type.to_string()
     };
-    let body = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("{label} response read failed: {error}"))
-    })?;
+    let body = upstream::read_body(response).await?;
     Ok(TtsRouteResponse::bytes(200, content_type, body.to_vec()))
 }
 

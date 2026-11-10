@@ -25,7 +25,7 @@ async fn list(
     region: String,
 ) -> Result<TtsRouteResponse, DomainError> {
     let url = format!("https://{region}.tts.speech.microsoft.com/cognitiveservices/voices/list");
-    let response = send_with_retry("Azure TTS voice list request", || {
+    let response = send_with_retry(|| {
         client
             .get(&url)
             .header("Ocp-Apim-Subscription-Key", &api_key)
@@ -58,7 +58,7 @@ async fn generate(
         escape_xml(&voice),
         escape_xml(&text),
     );
-    let response = send_with_retry("Azure TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(&url)
             .header("Ocp-Apim-Subscription-Key", &api_key)

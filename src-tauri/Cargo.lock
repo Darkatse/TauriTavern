@@ -9280,12 +9280,14 @@ dependencies = [
 name = "tt-adapter-http"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "rcgen 0.14.10",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "tt-domain",
  "tt-ports",
  "webpki-roots",

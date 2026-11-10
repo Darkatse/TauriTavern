@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
@@ -655,12 +656,10 @@ async fn connect_responses_ws(
 ) -> Result<ResponsesWsStream, DomainError> {
     let key = generate_key();
     let request = build_ws_upgrade_request(&client, config, endpoint_path, &key)?;
-    let response = client.execute(request).await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error(
-            "OpenAI Responses WebSocket upgrade request failed",
-            error,
-        )
-    })?;
+    let response = client
+        .execute(request)
+        .await
+        .map_err(upstream::request_failure)?;
 
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
         return Err(HttpChatCompletionRepository::map_error_response(

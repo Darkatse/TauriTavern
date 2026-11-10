@@ -7,7 +7,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde_json::Value;
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_ports::repositories::chat_completion_repository::{
@@ -248,10 +248,7 @@ impl HttpChatCompletionRepository {
         provider_name: &str,
         error_context: &str,
     ) -> Result<reqwest::Response, DomainError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|error| Self::map_transport_error(error_context, error))?;
+        let response = request.send().await.map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             return Err(Self::map_error_response(provider_name, response, error_context).await);
@@ -324,22 +321,6 @@ impl HttpChatCompletionRepository {
             }
             _ => status_error(message),
         }
-    }
-
-    fn map_transport_error(label: &str, error: reqwest::Error) -> DomainError {
-        let failure = crate::http_error::reqwest_transport_failure(&error);
-        tracing::warn!(
-            operation = label,
-            code = %failure.code,
-            category = %failure.category,
-            endpoint = failure.endpoint.as_deref().unwrap_or(""),
-            timeout = error.is_timeout(),
-            connect = error.is_connect(),
-            body = error.is_body(),
-            request = error.is_request(),
-            "upstream transport request failed",
-        );
-        DomainError::upstream_failure(failure)
     }
 
     async fn stream_sse_response(
@@ -433,22 +414,10 @@ impl HttpChatCompletionRepository {
         let endpoint = response.url().clone();
 
         loop {
-            let chunk = response.chunk().await.map_err(|error| {
-                let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-                tracing::warn!(
-                    provider = provider_name,
-                    operation = "stream",
-                    code = %failure.code,
-                    category = %failure.category,
-                    endpoint = failure.endpoint.as_deref().unwrap_or(""),
-                    timeout = error.is_timeout(),
-                    connect = error.is_connect(),
-                    body = error.is_body(),
-                    request = error.is_request(),
-                    "upstream stream read failed",
-                );
-                DomainError::upstream_failure(failure)
-            })?;
+            let chunk = response
+                .chunk()
+                .await
+                .map_err(|error| upstream::body_failure(error, &endpoint))?;
 
             let Some(chunk) = chunk else {
                 break;
@@ -464,7 +433,7 @@ impl HttpChatCompletionRepository {
             tracing::warn!(
                 provider = provider_name,
                 operation = "stream",
-                endpoint = crate::http_error::sanitize_endpoint(&endpoint),
+                endpoint = upstream::sanitize_endpoint(&endpoint),
                 discarded_bytes,
                 "upstream stream ended mid-event",
             );

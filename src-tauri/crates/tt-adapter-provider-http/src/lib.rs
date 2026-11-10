@@ -1,7 +1,6 @@
 mod endpoint_url;
 mod http_chat_completion_repository;
 mod http_embedding_repository;
-mod http_error;
 mod http_provider_metadata_repository;
 mod http_searxng_search_repository;
 mod http_stable_diffusion_repository;

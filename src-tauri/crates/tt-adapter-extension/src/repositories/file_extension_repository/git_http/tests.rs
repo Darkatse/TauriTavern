@@ -8,8 +8,12 @@ use gix_transport::client::blocking_io::http::{Http, PostBodyDataKind};
 use tt_adapter_http::HttpClientPool;
 use uuid::Uuid;
 
-use super::{GitHttp, shares_authority_or_upgrades_scheme};
-use crate::repositories::file_extension_repository::git_remote::fetch_exact;
+use super::{GitHttp, carried_upstream_failure, shares_authority_or_upgrades_scheme};
+use crate::repositories::file_extension_repository::git_remote::{advertise_refs, fetch_exact};
+use tt_domain::errors::DomainError;
+use tt_domain::models::upstream_failure::{
+    UPSTREAM_NETWORK_BODY_INTERRUPTED, UPSTREAM_NETWORK_CONNECT_FAILED, UPSTREAM_NETWORK_TIMEOUT,
+};
 
 const TEST_USER_AGENT: &str = "TauriTavern/test";
 
@@ -432,7 +436,11 @@ fn status_and_timeout_errors_are_typed_and_redacted() {
         .fill_buf()
         .expect_err("request must time out");
     assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-    assert_eq!(error.to_string(), "Git HTTP request timed out");
+    assert!(!error.to_string().contains("TIMEOUT_SECRET"));
+    assert_eq!(
+        carried_upstream_failure(&error).map(|failure| failure.code.as_str()),
+        Some(UPSTREAM_NETWORK_TIMEOUT)
+    );
     server.finish();
 }
 
@@ -489,30 +497,37 @@ fn response_body_is_streamed_before_server_finishes() {
 }
 
 #[test]
-fn truncated_response_body_returns_a_safe_read_error() {
-    let server = spawn_server(1, |_index, _request, stream| {
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc")?;
-        stream.flush()
+fn interrupted_reference_listing_reports_the_classified_transport_failure() {
+    let advertisement = packet_lines(&[b"version 2\n", b"ls-refs\n"]);
+    let server = spawn_server(2, move |index, _request, stream| match index {
+        0 => respond(
+            stream,
+            "200 OK",
+            &[(
+                "Content-Type",
+                "application/x-git-upload-pack-advertisement",
+            )],
+            &advertisement,
+        ),
+        _ => {
+            stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-git-upload-pack-result\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0032111111",
+            )?;
+            stream.flush()
+        }
     });
-    let base = format!("{}/repo", server.base_url);
-    let mut http = git_http();
-    let mut response = http
-        .get(
-            &format!("{base}/info/refs?service=git-upload-pack"),
-            &base,
-            std::iter::empty::<&str>(),
-        )
-        .expect("prepare truncated GET");
-    response
-        .headers
-        .read_to_end(&mut Vec::new())
-        .expect("read response headers");
-    let error = response
-        .body
-        .read_to_end(&mut Vec::new())
-        .expect_err("truncated body must fail");
-    assert_eq!(error.to_string(), "Git HTTP response body read failed");
+
+    let error = advertise_refs(
+        git_http(),
+        &format!("{}/repo", server.base_url),
+        &["refs/heads/main".to_string()],
+    )
+    .expect_err("the reference listing ends before its declared length");
+
+    let DomainError::UpstreamFailure(failure) = error else {
+        panic!("expected a classified transport failure, got {error}");
+    };
+    assert_eq!(failure.code, UPSTREAM_NETWORK_BODY_INTERRUPTED);
     server.finish();
 }
 
@@ -592,4 +607,24 @@ fn packet_lines(lines: &[&[u8]]) -> Vec<u8> {
     }
     output.extend_from_slice(b"0000");
     output
+}
+
+#[test]
+fn unreachable_remote_reports_the_classified_transport_failure() {
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .expect("reserve a port")
+        .local_addr()
+        .expect("reserved address");
+
+    let error = advertise_refs(
+        git_http(),
+        &format!("http://{closed}/repo.git"),
+        &["refs/heads/main".to_string()],
+    )
+    .expect_err("nothing listens on a released port");
+
+    let DomainError::UpstreamFailure(failure) = error else {
+        panic!("expected a classified transport failure, got {error}");
+    };
+    assert_eq!(failure.code, UPSTREAM_NETWORK_CONNECT_FAILED);
 }

@@ -5,7 +5,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use url::Url;
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::translate_repository::{TranslateRepository, TranslateRequest};
 
@@ -77,9 +77,7 @@ async fn translate_google(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("Google Translate request failed: {error}"))
-        })?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -89,11 +87,12 @@ async fn translate_google(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Google Translate response is not valid JSON: {error}"
-        ))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Google Translate response is not valid JSON: {error}"
+            ))
+        })?;
 
     parse_google_translation(json)
 }
@@ -157,9 +156,7 @@ async fn translate_libre(
         .json(&payload)
         .send()
         .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("LibreTranslate request failed: {error}"))
-        })?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -169,11 +166,12 @@ async fn translate_libre(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "LibreTranslate response is not valid JSON: {error}"
-        ))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!(
+                "LibreTranslate response is not valid JSON: {error}"
+            ))
+        })?;
 
     let translated = json
         .get("translatedText")
@@ -211,7 +209,7 @@ async fn translate_lingva(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(format!("Lingva request failed: {error}")))?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -221,9 +219,10 @@ async fn translate_lingva(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!("Lingva response is not valid JSON: {error}"))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!("Lingva response is not valid JSON: {error}"))
+        })?;
 
     let translated = json
         .get("translation")
@@ -260,7 +259,7 @@ async fn translate_deepl(
         .body(body)
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(format!("DeepL request failed: {error}")))?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -270,9 +269,10 @@ async fn translate_deepl(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!("DeepL response is not valid JSON: {error}"))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!("DeepL response is not valid JSON: {error}"))
+        })?;
 
     let translated = json
         .get("translations")
@@ -309,7 +309,7 @@ async fn translate_deeplx(
         }))
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(format!("DeepLX request failed: {error}")))?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -319,9 +319,10 @@ async fn translate_deeplx(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!("DeepLX response is not valid JSON: {error}"))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!("DeepLX response is not valid JSON: {error}"))
+        })?;
 
     let translated = json
         .get("data")
@@ -355,7 +356,7 @@ async fn translate_onering(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| DomainError::InternalError(format!("OneRing request failed: {error}")))?;
+        .map_err(upstream::request_failure)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -365,9 +366,10 @@ async fn translate_onering(
         )));
     }
 
-    let json: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!("OneRing response is not valid JSON: {error}"))
-    })?;
+    let json: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!("OneRing response is not valid JSON: {error}"))
+        })?;
 
     let translated = json
         .get("result")
