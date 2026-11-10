@@ -1,133 +1,67 @@
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
-use tt_ports::repositories::user_endpoint_grant_repository::UserEndpointGrantRepository;
+use async_trait::async_trait;
+use tt_ports::repositories::grant_repository::GrantRepository;
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
+use crate::services::user_grants::{GrantList, UserGrants};
+
 pub struct UserEndpointAccessService {
-    repository: Arc<dyn UserEndpointGrantRepository>,
+    grants: GrantList,
     runtime: Arc<dyn UserEndpointGrantRuntime>,
-    grants: Mutex<Vec<String>>,
 }
 
 impl UserEndpointAccessService {
     pub async fn initialize(
-        repository: Arc<dyn UserEndpointGrantRepository>,
+        repository: Arc<dyn GrantRepository>,
         runtime: Arc<dyn UserEndpointGrantRuntime>,
     ) -> Self {
-        let grants = match repository.load().await {
-            Ok(endpoints) => endpoints,
-            Err(error) => {
-                tracing::warn!(%error, "User endpoint grants could not be loaded; starting with none");
-                Vec::new()
-            }
-        };
-        runtime.replace_user_endpoint_grants(&grants);
+        let grants = GrantList::load("user endpoint", repository).await;
+        runtime.allow_user_endpoints(&grants.all().await);
+        Self { grants, runtime }
+    }
+}
 
-        Self {
-            repository,
-            runtime,
-            grants: Mutex::new(grants),
-        }
+#[async_trait]
+impl UserGrants for UserEndpointAccessService {
+    async fn is_allowed(&self, endpoint: &str) -> bool {
+        self.grants.contains(endpoint).await
     }
 
-    pub async fn is_granted(&self, endpoint: &str) -> bool {
-        let grants = self.grants.lock().await;
-        grants.iter().any(|grant| grant == endpoint)
-    }
-
-    pub async fn grant(&self, endpoint: String) {
-        let mut grants = self.grants.lock().await;
-        if grants.contains(&endpoint) {
-            return;
-        }
-        grants.push(endpoint.clone());
-
-        self.runtime.replace_user_endpoint_grants(&grants);
-
-        if let Err(error) = self.repository.replace(&grants).await {
-            tracing::warn!(
-                %error,
-                %endpoint,
-                "User endpoint grant is active for this session but could not be persisted"
-            );
-        }
+    /// The HTTP pool learns of the grant first, so whoever sees it granted can already use it.
+    async fn grant(&self, endpoint: &str) {
+        self.runtime.allow_user_endpoints(&[endpoint.to_string()]);
+        self.grants.grant(endpoint).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex as StdMutex;
-
-    use async_trait::async_trait;
-    use tt_domain::errors::DomainError;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
 
     use super::*;
+    use crate::services::user_grants::tests::MemoryGrantRepository;
 
     #[derive(Default)]
-    struct MemoryRepository(StdMutex<Vec<String>>);
-
-    #[async_trait]
-    impl UserEndpointGrantRepository for MemoryRepository {
-        async fn load(&self) -> Result<Vec<String>, DomainError> {
-            Ok(self.0.lock().unwrap().clone())
-        }
-
-        async fn replace(&self, endpoints: &[String]) -> Result<(), DomainError> {
-            *self.0.lock().unwrap() = endpoints.to_vec();
-            Ok(())
-        }
-    }
-
-    struct FailingRepository;
-
-    #[async_trait]
-    impl UserEndpointGrantRepository for FailingRepository {
-        async fn load(&self) -> Result<Vec<String>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn replace(&self, _endpoints: &[String]) -> Result<(), DomainError> {
-            Err(DomainError::InternalError("write failed".to_string()))
-        }
-    }
-
-    #[derive(Default)]
-    struct RecordingRuntime(StdMutex<Vec<String>>);
+    struct RecordingRuntime(Mutex<HashSet<String>>);
 
     impl UserEndpointGrantRuntime for RecordingRuntime {
-        fn replace_user_endpoint_grants(&self, endpoints: &[String]) {
-            *self.0.lock().unwrap() = endpoints.to_vec();
+        fn allow_user_endpoints(&self, endpoints: &[String]) {
+            self.0.lock().unwrap().extend(endpoints.iter().cloned());
         }
     }
 
     #[tokio::test]
-    async fn grant_is_persisted_once_and_immediately_applied() {
-        let endpoint = "https://api.example.com/v1".to_string();
-        let repository = Arc::new(MemoryRepository::default());
+    async fn saved_and_new_grants_reach_the_runtime() {
+        let saved = "https://saved.example/v1".to_string();
+        let repository = Arc::new(MemoryGrantRepository(Mutex::new(vec![saved.clone()])));
         let runtime = Arc::new(RecordingRuntime::default());
-        let service =
-            UserEndpointAccessService::initialize(repository.clone(), runtime.clone()).await;
+        let service = UserEndpointAccessService::initialize(repository, runtime.clone()).await;
 
-        assert!(!service.is_granted(&endpoint).await);
-        service.grant(endpoint.clone()).await;
+        let new = "https://new.example/v1".to_string();
+        service.grant(&new).await;
 
-        assert!(service.is_granted(&endpoint).await);
-        assert_eq!(*repository.0.lock().unwrap(), vec![endpoint.clone()]);
-        assert_eq!(*runtime.0.lock().unwrap(), vec![endpoint]);
-    }
-
-    #[tokio::test]
-    async fn failed_persistence_keeps_session_access() {
-        let endpoint = "https://api.example.com/v1".to_string();
-        let runtime = Arc::new(RecordingRuntime::default());
-        let service =
-            UserEndpointAccessService::initialize(Arc::new(FailingRepository), runtime.clone())
-                .await;
-
-        service.grant(endpoint.clone()).await;
-
-        assert!(service.is_granted(&endpoint).await);
-        assert_eq!(*runtime.0.lock().unwrap(), vec![endpoint]);
+        assert_eq!(*runtime.0.lock().unwrap(), HashSet::from([saved, new]));
     }
 }

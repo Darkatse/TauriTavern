@@ -129,7 +129,7 @@ mod tests {
         };
         let repository = HttpSearxngSearchRepository::new(pool.clone());
 
-        pool.replace_user_endpoint_grants(&[request.base_url.to_string()]);
+        pool.allow_user_endpoints(&[request.base_url.to_string()]);
 
         assert_eq!(
             repository.search(request).await.unwrap(),

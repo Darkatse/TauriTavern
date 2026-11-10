@@ -5,7 +5,9 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::errors::ApplicationError;
-use crate::services::external_import_service::{DownloadByteLimit, ExternalImportDownloader};
+use crate::services::external_import_service::{
+    DownloadByteLimit, DownloadSources, ExternalImportDownloader,
+};
 use crate::services::hashing::hex_lower;
 #[cfg(any(test, feature = "test-support"))]
 use tt_domain::errors::DomainError;
@@ -190,6 +192,7 @@ impl SkillService {
     pub async fn download_import_url(
         &self,
         url: &str,
+        sources: &dyn DownloadSources,
     ) -> Result<SkillImportInput, ApplicationError> {
         let parsed_url = normalize_skill_import_url(url)?;
         let bytes = self
@@ -200,6 +203,7 @@ impl SkillService {
                     label: "Remote SKILL.md",
                     max_bytes: MAX_REMOTE_SKILL_MD_BYTES,
                 },
+                sources,
             )
             .await?;
         let content = String::from_utf8(bytes.clone()).map_err(|_| {
@@ -290,6 +294,7 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
         &self,
         _url: Url,
         _limit: DownloadByteLimit,
+        _sources: &dyn DownloadSources,
     ) -> Result<Vec<u8>, DomainError> {
         Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
@@ -300,6 +305,7 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
         &self,
         _url: Url,
         _path: &std::path::Path,
+        _sources: &dyn DownloadSources,
     ) -> Result<crate::services::external_import_service::DownloadedFile, DomainError> {
         Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
@@ -317,7 +323,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::services::external_import_service::DownloadedFile;
+    use crate::services::external_import_service::{AnySource, DownloadedFile};
     use tt_domain::errors::DomainError;
     use tt_domain::models::agent::profile::AgentSkillPolicy;
     use tt_domain::models::skill::{
@@ -492,7 +498,10 @@ mod tests {
         );
 
         let input = service
-            .download_import_url("https://user:secret@example.com/path/SKILL.md?token=1#frag")
+            .download_import_url(
+                "https://user:secret@example.com/path/SKILL.md?token=1#frag",
+                &AnySource,
+            )
             .await
             .expect("download skill");
 
@@ -526,6 +535,7 @@ mod tests {
             &self,
             _url: Url,
             limit: DownloadByteLimit,
+            _sources: &dyn DownloadSources,
         ) -> Result<Vec<u8>, DomainError> {
             *self.limit.lock().unwrap() = Some(limit);
             Ok(self.bytes.clone())
@@ -535,6 +545,7 @@ mod tests {
             &self,
             _url: Url,
             _path: &Path,
+            _sources: &dyn DownloadSources,
         ) -> Result<DownloadedFile, DomainError> {
             unimplemented!("not used by these tests")
         }

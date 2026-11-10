@@ -58,7 +58,7 @@ fn repository(base_url: String) -> (HttpChatCompletionRepository, ChatCompletion
     let grant = tt_domain::models::endpoint_url::parse_user_http_endpoint(&base_url)
         .unwrap()
         .to_string();
-    pool.replace_user_endpoint_grants(&[grant]);
+    pool.allow_user_endpoints(&[grant]);
     let config = ChatCompletionApiConfig {
         base_url,
         user_configured_endpoint: true,

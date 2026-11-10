@@ -1,4 +1,5 @@
 // Tauri commands
+mod access_consent;
 pub mod agent_commands;
 pub mod agent_extension_tool_commands;
 mod agent_live_projection;

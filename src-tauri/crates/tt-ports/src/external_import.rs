@@ -15,10 +15,25 @@ pub struct DownloadedFile {
     pub content_disposition: Option<String>,
 }
 
+/// Asked before a download's first request and before it follows each redirect.
+#[async_trait]
+pub trait DownloadSources: Send + Sync {
+    async fn allow(&self, url: &Url) -> Result<(), DomainError>;
+}
+
 #[async_trait]
 pub trait ExternalImportDownloader: Send + Sync {
-    async fn fetch_bytes(&self, url: Url, limit: DownloadByteLimit)
-    -> Result<Vec<u8>, DomainError>;
+    async fn fetch_bytes(
+        &self,
+        url: Url,
+        limit: DownloadByteLimit,
+        sources: &dyn DownloadSources,
+    ) -> Result<Vec<u8>, DomainError>;
 
-    async fn fetch_to_file(&self, url: Url, path: &Path) -> Result<DownloadedFile, DomainError>;
+    async fn fetch_to_file(
+        &self,
+        url: Url,
+        path: &Path,
+        sources: &dyn DownloadSources,
+    ) -> Result<DownloadedFile, DomainError>;
 }

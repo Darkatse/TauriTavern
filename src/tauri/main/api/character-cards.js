@@ -1,5 +1,6 @@
 // @ts-check
 
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { StagedFile } from '../services/files/staged-file.js';
 import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
 
@@ -41,7 +42,10 @@ function createCharacterCardsApi({
 
     /** @param {string} url */
     async function stageFromUrl(url) {
-        return stagedFile(await safeInvoke('stage_character_card_from_url', { url }));
+        return stagedFile(await safeInvoke('stage_character_card_from_url', {
+            url,
+            locale: getSillyTavernLocale(),
+        }));
     }
 
     /** @param {string} uri @param {string} name */

@@ -1,3 +1,4 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { stagedCardBytes } from './character-route-utils.js';
 
 export function registerAssetsRoutes(router, context, { jsonResponse, textResponse }) {
@@ -18,6 +19,7 @@ export function registerAssetsRoutes(router, context, { jsonResponse, textRespon
             url,
             category,
             filename: String(body?.filename || ''),
+            locale: getSillyTavernLocale(),
         });
         return textResponse('OK');
     });

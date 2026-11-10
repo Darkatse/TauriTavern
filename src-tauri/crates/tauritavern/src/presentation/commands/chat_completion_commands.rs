@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::{AppHandle, State};
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -16,7 +16,7 @@ use tt_application::dto::chat_completion_dto::{
 pub async fn get_chat_completions_status(
     dto: ChatCompletionStatusRequestDto,
     locale: String,
-    app_handle: AppHandle,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Value, CommandError> {
     log_command("get_chat_completions_status");
@@ -28,7 +28,7 @@ pub async fn get_chat_completions_status(
     ensure_user_endpoint_access(
         endpoint,
         &locale,
-        &app_handle,
+        &window,
         &app_state.services.user_endpoint_access_service,
     )
     .await?;
@@ -46,7 +46,7 @@ pub async fn generate_chat_completion(
     dto: ChatCompletionGenerateRequestDto,
     request_id: String,
     locale: String,
-    app_handle: AppHandle,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Value, CommandError> {
     let request_id = request_id.trim().to_string();
@@ -60,7 +60,7 @@ pub async fn generate_chat_completion(
     ensure_user_endpoint_access(
         endpoint,
         &locale,
-        &app_handle,
+        &window,
         &app_state.services.user_endpoint_access_service,
     )
     .await?;
@@ -78,7 +78,7 @@ pub async fn start_chat_completion_stream(
     stream_id: String,
     dto: ChatCompletionGenerateRequestDto,
     locale: String,
-    app_handle: AppHandle,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     let stream_id = stream_id.trim().to_string();
@@ -92,7 +92,7 @@ pub async fn start_chat_completion_stream(
     ensure_user_endpoint_access(
         endpoint,
         &locale,
-        &app_handle,
+        &window,
         &app_state.services.user_endpoint_access_service,
     )
     .await?;

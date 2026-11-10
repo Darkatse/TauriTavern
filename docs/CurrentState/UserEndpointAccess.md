@@ -1,4 +1,4 @@
-# Custom Endpoint Access
+# Custom Endpoint and Import Source Access
 
 ## 边界
 
@@ -10,7 +10,7 @@
 
 - 复用 `parse_user_http_endpoint` 规范化 URL，并拒绝非 HTTP(S)、userinfo、query 与 fragment。
 - grant 保存规范化端点字符串，精确包含 scheme、host、port 与 base path。
-- status、非流式 generate 与流式 start 三个 Rust command 共用一个原生授权 gate；兼容路由和扩展请求无需单独预检。
+- 授权在 Rust command（chat completion 与 SearXNG 搜索）中检查，兼容路由和扩展请求无需单独预检。
 - HTTP pool 对每次用户端点请求独立检查 grant，绕过 command gate 的调用会 fail closed。
 - 显式 loopback、RFC1918、IPv6 ULA 地址及 `localhost` 强制 Direct；其他端点遵循 Request Proxy 设置。
 - DNS 结果不参与授权或传输分类。LAN hostname 和 Fake IP 因此不会被解析地址误判。
@@ -31,3 +31,11 @@ grant 是一个 JSON 字符串数组，位置为：
 旧的 `local-endpoint-grants.json` 不读取也不迁移。
 
 iOS 的系统 Local Network permission 与本 grant 相互独立。Android 升到要求 `ACCESS_LOCAL_NETWORK` 的 target SDK 时，还需单独接入平台权限。
+
+## 导入来源
+
+导入下载（URL 导入角色卡、资源库下载、Skill 的 URL 导入）使用同一种授权，单位是来源（scheme、host、port）。`https://cdn.discordapp.com`、`https://files.catbox.moe`、`https://raw.githubusercontent.com`、`https://botbooru.com` 预先批准，其余来源首次使用时询问。
+
+- 下载自己跟随重定向，首个请求与每个重定向目标按同一规则检查。
+- grant 保存在 `<app_root>/security/import-source-grants.json`，与端点 grant 分开存放，处理方式相同。
+- 保存图片（`stage_file_from_url`）不是导入，不经过此授权。

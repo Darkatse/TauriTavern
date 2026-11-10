@@ -19,10 +19,9 @@ use tt_adapter_provider_http::{
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
-    FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
+    FileGrantRepository, FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
     FilePromptCacheRepository, FileQuickReplyRepository, FileSecretRepository,
-    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserEndpointGrantRepository, FileUserRepository,
+    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository, FileUserRepository,
     chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
@@ -50,6 +49,7 @@ use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::content_repository::ContentRepository;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
+use tt_ports::repositories::grant_repository::GrantRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::group_repository::GroupRepository;
 use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
@@ -71,7 +71,6 @@ use tt_ports::repositories::translate_repository::TranslateRepository;
 use tt_ports::repositories::tts_repository::TtsRepository;
 use tt_ports::repositories::update_repository::UpdateRepository;
 use tt_ports::repositories::user_directory_repository::UserDirectoryRepository;
-use tt_ports::repositories::user_endpoint_grant_repository::UserEndpointGrantRepository;
 use tt_ports::repositories::user_repository::UserRepository;
 use tt_ports::repositories::vector_repository::{
     LocalEmbeddingRepository, RemoteEmbeddingRepository, VectorRepository,
@@ -115,8 +114,8 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) agent_workspace_lifecycle_repository:
         Arc<dyn AgentWorkspaceLifecycleRepository>,
     pub(in crate::app::composition) llm_connection_repository: Arc<dyn LlmConnectionRepository>,
-    pub(in crate::app::composition) user_endpoint_grant_repository:
-        Arc<dyn UserEndpointGrantRepository>,
+    pub(in crate::app::composition) user_endpoint_grant_repository: Arc<dyn GrantRepository>,
+    pub(in crate::app::composition) import_source_grant_repository: Arc<dyn GrantRepository>,
     pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
@@ -319,10 +318,12 @@ pub(super) async fn build(
     let llm_connection_repository: Arc<dyn LlmConnectionRepository> = Arc::new(
         FileLlmConnectionRepository::new(data_root.join("_tauritavern").join("llm-connections")),
     );
-    let user_endpoint_grant_repository: Arc<dyn UserEndpointGrantRepository> =
-        Arc::new(FileUserEndpointGrantRepository::new(
-            app_root.join("security").join("user-endpoint-grants.json"),
-        ));
+    let user_endpoint_grant_repository: Arc<dyn GrantRepository> = Arc::new(
+        FileGrantRepository::new(app_root.join("security").join("user-endpoint-grants.json")),
+    );
+    let import_source_grant_repository: Arc<dyn GrantRepository> = Arc::new(
+        FileGrantRepository::new(app_root.join("security").join("import-source-grants.json")),
+    );
     let mcp_server_repository: Arc<dyn McpServerRepository> = Arc::new(
         FileMcpServerRepository::new(data_root.join("_tauritavern").join("mcp")),
     );
@@ -419,6 +420,7 @@ pub(super) async fn build(
         agent_workspace_lifecycle_repository,
         llm_connection_repository,
         user_endpoint_grant_repository,
+        import_source_grant_repository,
         mcp_server_repository,
         workspace_repository,
         chat_completion_repository,

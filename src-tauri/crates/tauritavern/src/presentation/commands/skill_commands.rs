@@ -3,12 +3,11 @@ use std::sync::Arc;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
-use crate::presentation::commands::helpers::{
-    ensure_ios_policy_allows, log_command, map_command_error,
-};
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::import_source::ImportSources;
 use crate::presentation::errors::CommandError;
 use tt_domain::models::skill::{
     DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS, SkillFileRef, SkillImportInput, SkillImportPreview,
@@ -27,21 +26,18 @@ pub struct SkillExportPayload {
 
 #[tauri::command]
 pub async fn download_skill_import_url(
+    window: WebviewWindow,
     url: String,
+    locale: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillImportInput, CommandError> {
     log_command("download_skill_import_url");
 
-    ensure_ios_policy_allows(
-        &app_state.ios_policy,
-        app_state.ios_policy.capabilities.content.external_import,
-        "content.external_import",
-    )?;
-
+    let sources = ImportSources::new(&window, &app_state, &locale)?;
     app_state
         .services
         .skill_service
-        .download_import_url(&url)
+        .download_import_url(&url, &sources)
         .await
         .map_err(map_command_error(
             "Failed to download Agent Skill import URL",

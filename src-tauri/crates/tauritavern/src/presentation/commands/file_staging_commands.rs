@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, WebviewWindow};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -14,7 +14,7 @@ use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
-use crate::presentation::commands::import_source::allowed_import_url;
+use crate::presentation::commands::import_source::ImportSources;
 use crate::presentation::errors::CommandError;
 
 const DEFAULT_KIND: &str = "generic";
@@ -222,27 +222,31 @@ pub async fn stage_file_from_url(
 #[tauri::command]
 pub async fn stage_character_card_from_url(
     app: AppHandle,
+    window: WebviewWindow,
     url: String,
+    locale: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<StagedFileResult, CommandError> {
     log_command("stage_character_card_from_url");
-    stage_character_card(&app, &app_state, &url)
+    stage_character_card(&app, &window, &app_state, &url, &locale)
         .await
         .map_err(map_command_error("Failed to stage character card"))
 }
 
 async fn stage_character_card(
     app: &AppHandle,
+    window: &WebviewWindow,
     app_state: &AppState,
     url: &str,
+    locale: &str,
 ) -> Result<StagedFileResult, CommandError> {
-    let url = allowed_import_url(app_state, url)?;
+    let sources = ImportSources::new(window, app_state, locale)?;
     let download = create_staged_file(app, "character-card", "bin").await?;
     let result = async {
         let card = app_state
             .services
             .content_service
-            .download_character_card(url, &download)
+            .download_character_card(url, &download, &sources)
             .await?;
         let path = download.with_extension(card.extension);
         fs::rename(&download, &path).await.map_err(|error| {

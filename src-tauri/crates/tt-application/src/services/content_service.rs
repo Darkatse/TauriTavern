@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::errors::ApplicationError;
 use crate::services::external_import_service::{
-    DownloadedFile, ExternalImportDownloader, parse_external_import_url,
+    AnySource, DownloadSources, DownloadedFile, ExternalImportDownloader, parse_external_import_url,
 };
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::content_repository::ContentRepository;
@@ -59,7 +59,8 @@ impl ContentService {
         Ok(is_initialized)
     }
 
-    /// Downloads an external URL into `destination`, which the caller owns.
+    /// Downloads into `destination`, which the caller owns, from any source: saving a file is not
+    /// an import.
     pub async fn download_external_file(
         &self,
         url: &str,
@@ -68,19 +69,21 @@ impl ContentService {
         let url = parse_external_import_url(url)?;
         Ok(self
             .external_import_downloader
-            .fetch_to_file(url, destination)
+            .fetch_to_file(url, destination, &AnySource)
             .await?)
     }
 
     /// Downloads into `destination`, which the caller owns.
     pub async fn download_character_card(
         &self,
-        url: Url,
+        url: &str,
         destination: &Path,
+        sources: &dyn DownloadSources,
     ) -> Result<DownloadedCharacterCard, ApplicationError> {
+        let url = parse_external_import_url(url)?;
         let downloaded = self
             .external_import_downloader
-            .fetch_to_file(url.clone(), destination)
+            .fetch_to_file(url.clone(), destination, sources)
             .await?;
         let name = derive_file_name(&url, downloaded.content_disposition.as_deref());
         let extension = downloaded
@@ -200,7 +203,7 @@ mod tests {
             }),
         );
         let card = service
-            .download_character_card(Url::parse(url).unwrap(), Path::new("unused"))
+            .download_character_card(url, Path::new("unused"), &AnySource)
             .await?;
         Ok((card.extension, card.name))
     }
@@ -263,6 +266,7 @@ mod tests {
             &self,
             _url: Url,
             _limit: DownloadByteLimit,
+            _sources: &dyn DownloadSources,
         ) -> Result<Vec<u8>, DomainError> {
             unimplemented!("not used by these tests")
         }
@@ -271,6 +275,7 @@ mod tests {
             &self,
             _url: Url,
             _path: &Path,
+            _sources: &dyn DownloadSources,
         ) -> Result<DownloadedFile, DomainError> {
             Ok(DownloadedFile {
                 content_type: self.content_type.clone(),

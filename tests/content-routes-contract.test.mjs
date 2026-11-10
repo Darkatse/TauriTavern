@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerContentRoutes } from '../src/tauri/main/routes/content-routes.js';
@@ -40,7 +41,7 @@ test('/api/content/importURL returns the host-staged card as SillyTavern does an
     assert.equal(await response.text(), '{"spec":"chara_card_v2"}');
     assert.deepEqual(calls, [{
         command: 'stage_character_card_from_url',
-        args: { url: 'https://files.catbox.moe/0f3a.json' },
+        args: { url: 'https://files.catbox.moe/0f3a.json', locale: getSillyTavernLocale() },
     }]);
     assert.deepEqual(discarded, ['/cache/character-card/0f3a.json']);
 });

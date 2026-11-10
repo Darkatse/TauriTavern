@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use url::Url;
-
 use crate::errors::ApplicationError;
-use crate::services::external_import_service::ExternalImportDownloader;
+use crate::services::external_import_service::{
+    DownloadSources, ExternalImportDownloader, parse_external_import_url,
+};
 use tt_domain::errors::DomainError;
 use tt_domain::models::asset::{AssetCatalog, AssetCategory};
 use tt_ports::repositories::asset_repository::AssetRepository;
@@ -171,19 +171,20 @@ impl AssetService {
         Ok(category)
     }
 
-    /// The caller has already checked that `url` is an allowed import source.
     pub async fn download_asset(
         &self,
-        url: Url,
+        url: &str,
         category: &str,
         filename: &str,
+        sources: &dyn DownloadSources,
     ) -> Result<(), ApplicationError> {
+        let url = parse_external_import_url(url)?;
         let category = self.validate_download_request(category, filename)?;
         let (category, temp_path) = self.stage_asset_file(category.as_str(), filename).await?;
 
         if let Err(error) = self
             .external_import_downloader
-            .fetch_to_file(url, &temp_path)
+            .fetch_to_file(url, &temp_path, sources)
             .await
         {
             if let Err(cleanup_error) = self.discard_staged_asset_file(filename).await {

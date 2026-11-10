@@ -26,6 +26,7 @@ use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
 use tt_application::services::external_import_service::ExternalImportDownloader;
+use tt_application::services::external_import_service::ImportSourceAccessService;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
@@ -121,6 +122,10 @@ pub(super) async fn build(
             user_endpoint_runtime,
         )
         .await,
+    );
+    let import_source_access_service = Arc::new(
+        ImportSourceAccessService::initialize(repositories.import_source_grant_repository.clone())
+            .await,
     );
     let mcp_gateway = Arc::new(RmcpMcpGateway::new(http_client_pool));
     let mcp_service = Arc::new(McpService::new(
@@ -293,6 +298,7 @@ pub(super) async fn build(
         chat_completion_service,
         llm_connection_service,
         user_endpoint_access_service,
+        import_source_access_service,
         mcp_service,
         provider_metadata_service,
         searxng_search_service,

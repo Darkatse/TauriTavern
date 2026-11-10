@@ -36,7 +36,7 @@ const installed = await skill.list();
 | `isDirectoryImportAvailable()` | 当前宿主能否选择目录来源（目前仅桌面） |
 | `pickImportDirectories()` | 选择一个或多个目录来源，取消时为 `null`；不可用时抛错 |
 | `discoverImports({ input })` | 递归展开目录或归档中的 Skill；其他输入返回单个候选 |
-| `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入 |
+| `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入；来源规则见[导入来源](../CurrentState/UserEndpointAccess.md#导入来源) |
 | `discardPickedImport(input?)` | 释放指定来源的临时资源；无参数时释放整批来源 |
 
 导入输入有三种形式：

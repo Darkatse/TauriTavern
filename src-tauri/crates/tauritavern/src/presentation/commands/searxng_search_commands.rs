@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -12,7 +12,7 @@ use tt_application::dto::searxng_search_dto::SearxngSearchRequestDto;
 pub async fn search_searxng(
     dto: SearxngSearchRequestDto,
     locale: String,
-    app_handle: AppHandle,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
     log_command("search_searxng");
@@ -25,7 +25,7 @@ pub async fn search_searxng(
     ensure_user_endpoint_access(
         Some(request.base_url.to_string()),
         &locale,
-        &app_handle,
+        &window,
         &app_state.services.user_endpoint_access_service,
     )
     .await?;

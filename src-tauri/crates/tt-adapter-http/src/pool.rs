@@ -281,8 +281,12 @@ impl RequestProxyRuntime for HttpClientPool {
 }
 
 impl UserEndpointGrantRuntime for HttpClientPool {
-    fn replace_user_endpoint_grants(&self, endpoints: &[String]) {
-        self.state.write().unwrap().user_endpoint_grants = endpoints.iter().cloned().collect();
+    fn allow_user_endpoints(&self, endpoints: &[String]) {
+        self.state
+            .write()
+            .unwrap()
+            .user_endpoint_grants
+            .extend(endpoints.iter().cloned());
     }
 }
 
@@ -350,7 +354,8 @@ fn build_profile_client(
 
     builder = match profile {
         HttpClientProfile::Default => builder,
-        HttpClientProfile::Download => builder.redirect(Policy::limited(5)),
+        // Callers follow redirects themselves, so each URL can be allowed before it is requested.
+        HttpClientProfile::Download => builder.redirect(Policy::none()),
         HttpClientProfile::Tokenizer => builder
             .connect_timeout(TOKENIZER_CONNECT_TIMEOUT)
             .timeout(TOKENIZER_REQUEST_TIMEOUT),
@@ -427,7 +432,7 @@ mod tests {
         let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
             .unwrap()
             .to_string();
-        pool.replace_user_endpoint_grants(&[endpoint]);
+        pool.allow_user_endpoints(&[endpoint]);
     }
 
     struct CaptureServer {

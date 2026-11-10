@@ -10,9 +10,9 @@ pub mod sillytavern_sorting;
 
 pub use file_system::DataDirectory;
 pub use repositories::{
-    FileAssetRepository, FileChatRepository, FileExtensionStoreRepository, FileGroupRepository,
-    FileLaunchRecordRepository, FileLlmConnectionRepository, FileMcpServerRepository,
-    FilePromptCacheRepository, FileQuickReplyRepository, FileSecretRepository,
-    FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserEndpointGrantRepository, FileUserRepository, load_tauritavern_settings_blocking,
+    FileAssetRepository, FileChatRepository, FileExtensionStoreRepository, FileGrantRepository,
+    FileGroupRepository, FileLaunchRecordRepository, FileLlmConnectionRepository,
+    FileMcpServerRepository, FilePromptCacheRepository, FileQuickReplyRepository,
+    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
+    FileUserRepository, load_tauritavern_settings_blocking,
 };

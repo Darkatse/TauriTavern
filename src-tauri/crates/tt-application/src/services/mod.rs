@@ -61,6 +61,7 @@ pub mod tts_service;
 pub mod update_service;
 pub mod user_directory_service;
 pub mod user_endpoint_access_service;
+pub mod user_grants;
 pub mod user_media_service;
 pub mod user_service;
 pub mod vector_service;

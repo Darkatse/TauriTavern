@@ -32,7 +32,7 @@ Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自
 
 - WebView 字节经 `stage_file_*` 进入宿主：Android 用 base64 帧，其余平台用原始字节。
 - 前端经宿主 `safeInvoke` 调用暂存与交付命令，失败时得到可读的错误消息；只有二进制分块走原始 invoke。
-- 宿主下载使用 `Download` 配置（含用户的请求代理），不带页面的 Cookie 与 Referer。导入用的下载只接受预批准来源，检查集中在 `import_source.rs`；保存图片的 `stage_file_from_url` 只要求 http(s)。
+- 宿主下载使用 `Download` 配置（含用户的请求代理），不带页面的 Cookie 与 Referer。导入用的下载受[导入来源](UserEndpointAccess.md#导入来源)授权约束，保存图片不受。
 - 写入失败的暂存文件由写入方删除。通用暂存在宿主启动时清空，暂存后未进入交付的文件随之回收；归档暂存沿用过期清扫。
 - 归档单独暂存：Android 的数据根与 cache 不在同一个卷，大型归档要放在数据卷上，才能直接移动进任务工作区。
 

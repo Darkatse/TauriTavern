@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerAssetsRoutes } from '../src/tauri/main/routes/assets-routes.js';
@@ -65,7 +66,10 @@ test('/api/assets/download returns a character card through the host card downlo
     assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [137, 80, 78, 71]);
     assert.deepEqual(calls, [{
         command: 'stage_character_card_from_url',
-        args: { url: 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/card.png' },
+        args: {
+            url: 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/card.png',
+            locale: getSillyTavernLocale(),
+        },
     }]);
     assert.deepEqual(discarded, ['/cache/character-card/0f3a.png']);
 });
@@ -98,6 +102,7 @@ test('/api/assets/download returns upstream-style OK for stored assets', async (
             url: 'https://files.catbox.moe/theme.mp3',
             category: 'bgm',
             filename: 'theme.mp3',
+            locale: getSillyTavernLocale(),
         },
     }]);
 });

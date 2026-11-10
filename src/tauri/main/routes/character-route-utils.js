@@ -1,3 +1,4 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { streamResponse } from '../http-utils.js';
 
 const CARD_CONTENT_TYPES = { png: 'image/png', json: 'application/json' };
@@ -47,7 +48,10 @@ export async function resolveExistingRouteCharacterId(context, options) {
  * @returns {Promise<{ bytes: ArrayBuffer; type: string; name: string }>}
  */
 export async function stagedCardBytes(context, url) {
-    const { path, name } = await context.safeInvoke('stage_character_card_from_url', { url });
+    const { path, name } = await context.safeInvoke('stage_character_card_from_url', {
+        url,
+        locale: getSillyTavernLocale(),
+    });
     const staged = context.adoptStagedFile(path);
     try {
         const bytes = await streamResponse(await context.createReadableFileStream(path)).arrayBuffer();

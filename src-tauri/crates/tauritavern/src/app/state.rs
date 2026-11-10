@@ -21,6 +21,7 @@ use tt_application::services::data_archive_service::DataArchiveService;
 use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
+use tt_application::services::external_import_service::ImportSourceAccessService;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
@@ -108,6 +109,7 @@ pub(crate) struct AppServices {
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
     pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
+    pub(crate) import_source_access_service: Arc<ImportSourceAccessService>,
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
     pub(crate) searxng_search_service: Arc<SearxngSearchService>,

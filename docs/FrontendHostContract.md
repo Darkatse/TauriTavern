@@ -245,7 +245,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 `/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。请求可以用 `staged_path`（宿主暂存文件的路径）代替 `avatar`。
 
-`/api/content/importURL` 与 `/api/assets/download` 的 `character` 类别由宿主下载角色卡，响应与上游相同，名单外的来源为 404。
+`/api/content/importURL` 与 `/api/assets/download` 的 `character` 类别由宿主下载角色卡，响应与上游相同；名单外的来源先询问用户（[导入来源](CurrentState/UserEndpointAccess.md#导入来源)）。
 
 `/api/characters/delete` 只删除角色和请求删除的聊天，不删除世界书。界面删卡时如何清理世界书，见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
 
