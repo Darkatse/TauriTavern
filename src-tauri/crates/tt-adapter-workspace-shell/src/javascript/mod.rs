@@ -3,6 +3,7 @@ mod engine;
 mod files;
 mod loader;
 mod runtime;
+mod shell;
 
 #[cfg(test)]
 mod tests;
@@ -18,12 +19,16 @@ use tt_ports::workspace_shell::WorkspaceShellContext;
 
 use cli::{Command, Script};
 use files::Files;
+use shell::Nesting;
 
 type Job = JoinHandle<Result<ExecResult, DomainError>>;
 
 pub(crate) struct Javascript {
     context: Arc<WorkspaceShellContext>,
     current: Mutex<Option<Job>>,
+    /// Nested shell state of the running script, so the surrounding shell can
+    /// stop it when it stops the script's interpreter.
+    nesting: Arc<Nesting>,
 }
 
 impl Javascript {
@@ -31,7 +36,13 @@ impl Javascript {
         Self {
             context,
             current: Mutex::new(None),
+            nesting: Arc::default(),
         }
+    }
+
+    /// Stop the nested command of a running script at its next command boundary.
+    pub(crate) fn cancel(&self) {
+        self.nesting.cancel();
     }
 
     pub(crate) fn builtin(self: &Arc<Self>, name: &'static str) -> Box<dyn Builtin> {
@@ -47,6 +58,7 @@ impl Javascript {
         cwd: String,
         files: Files,
     ) -> Result<ExecResult, DomainError> {
+        let files = files.at(&cwd);
         let mut current = self.current.lock().await;
         // A shell timeout may discard the previous waiter. Join that script before
         // starting another; the shell is sequential and needs only this one slot.
@@ -55,9 +67,10 @@ impl Javascript {
             DomainError::InternalError(format!("JavaScript execution queue closed: {error}"))
         })?;
         let context = self.context.clone();
+        let nesting = self.nesting.clone();
         *current = Some(tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            engine::execute(script, cwd, files, context)
+            engine::execute(script, cwd, files, context, nesting)
         }));
         Ok(join_current(&mut current)
             .await?
@@ -106,11 +119,12 @@ impl Builtin for JavascriptBuiltin {
             .run(
                 script,
                 ctx.cwd.to_string_lossy().into_owned(),
-                Files {
-                    fs: ctx.fs.clone(),
-                    runtime: tokio::runtime::Handle::current(),
+                Files::new(
+                    ctx.fs.clone(),
+                    tokio::runtime::Handle::current(),
                     budget,
-                },
+                    self.execution.context.clone(),
+                ),
             )
             .await
             .map_err(|error| std::io::Error::other(error).into())

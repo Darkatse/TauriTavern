@@ -23,6 +23,18 @@ exists(path) checks whether a path is accessible and exists.
 listFiles() lists workspace roots. listFiles(directory) lists files recursively, with paths relative to that directory.
 File API paths start at the workspace root. Script paths use the shell working directory; relative imports use the importing file's directory. Module files need a .js or .mjs extension.
 
+Workspace commands:
+  import { shell } from '@tauritavern/runtime';
+  const { stdout, stderr, code } = shell.exec('ls -al');
+  shell.exec('cat', { stdin: text });
+  shell.exec('ls', { cwd: '/scratch', env: { LANG: 'C' } });
+
+shell.exec(command, options?) runs one workspace command and returns its stdout, stderr and exit code.
+It is synchronous from the script's perspective. Each call is a new shell, so cd and variables do not carry over;
+write shell.exec('cd /scratch && ls -al') to run several commands in one directory.
+stdin supplies input when nothing inside the command pipes or redirects into it. cwd overrides the starting
+directory and must exist. env is added on top of the base environment.
+
 Chat context:
   import { context, macros } from '@tauritavern/runtime';
 context.worldInfo.entries, context.variables.local/global and context.macro contain chat values captured when the run started. Unavailable fields throw an error.
@@ -37,7 +49,7 @@ Uncaught errors fail the command even if exitCode is 0. process.exit() is unavai
 
 Built-in libraries: @tauritavern/kit/{dayjs,es-toolkit,fast-xml-parser,marked,papaparse,slugify}.
 Aliases: node uses js syntax; deno run FILE [args...] and deno eval SOURCE [--] [args...] use the same environment.
-Node/Deno libraries, npm, TypeScript, network and child processes are unavailable.
+Node/Deno libraries, npm, TypeScript and network are unavailable. Reach commands through shell.exec.
 "#;
 
 pub(super) enum Source {
