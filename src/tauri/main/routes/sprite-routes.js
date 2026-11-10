@@ -5,17 +5,12 @@ function formText(body, name) {
 
 async function invokeWithUpload(context, file, options, command, dto) {
     const fileInfo = await context.materializeUploadFile(file, options);
-    if (!fileInfo?.filePath) {
-        const detail = fileInfo?.error ? `: ${fileInfo.error}` : '';
-        throw new Error(`Bad request: Unable to access uploaded file${detail}`);
-    }
-
     try {
         return await context.safeInvoke(command, {
             dto: { ...dto, file_path: fileInfo.filePath },
         });
     } finally {
-        await fileInfo.cleanup?.();
+        await fileInfo.cleanup();
     }
 }
 

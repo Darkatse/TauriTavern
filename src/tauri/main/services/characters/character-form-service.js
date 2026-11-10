@@ -6,14 +6,10 @@ import { assertCharacterAvatarFileName } from './character-identity.js';
 import { parseCropParam } from './character-request-utils.js';
 
 /**
- * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
- */
-
-/**
+ * @typedef {import('../../context/types.js').MaterializeUploadFileFn} MaterializeUploadFileFn
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
- * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */
 
 /**
@@ -144,11 +140,6 @@ export function createCharacterFormService({
                 preferredName,
             });
 
-            if (!fileInfo?.filePath) {
-                const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-                throw new Error(`Bad request: unable to access avatar file path${reason}`);
-            }
-
             try {
                 await safeInvoke('update_character_card_data', {
                     name: originalCharacterId,
@@ -160,7 +151,7 @@ export function createCharacterFormService({
                     },
                 });
             } finally {
-                await fileInfo.cleanup?.();
+                await fileInfo.cleanup();
             }
 
             return;
@@ -196,10 +187,6 @@ export function createCharacterFormService({
             kind: 'avatar',
             preferredName,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Bad request: unable to access uploaded avatar file${reason}`);
-        }
 
         try {
             await safeInvoke('update_avatar', {
@@ -210,7 +197,7 @@ export function createCharacterFormService({
                 },
             });
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     }
 
@@ -230,10 +217,6 @@ export function createCharacterFormService({
             kind: 'user-avatar',
             preferredName,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Bad request: unable to access avatar file path${reason}`);
-        }
 
         try {
             const uploaded = await safeInvoke('upload_avatar', {
@@ -243,7 +226,7 @@ export function createCharacterFormService({
             });
             return uploaded;
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     }
 

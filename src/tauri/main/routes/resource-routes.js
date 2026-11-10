@@ -362,10 +362,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             kind: 'background',
             preferredName: rawFilename,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Unable to access background file path${reason}`);
-        }
 
         try {
             const uploaded = await context.safeInvoke('upload_background_from_path', {
@@ -374,7 +370,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             });
             return textResponse(String(uploaded || rawFilename));
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     });
 

@@ -46,10 +46,6 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             preferredName,
             preferredExtension: fileType,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded character file path${reason}` }, 400);
-        }
 
         let imported;
         let replaced = false;
@@ -72,7 +68,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
                 });
             }
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
 
         const normalized = context.normalizeCharacter(imported.character);

@@ -137,18 +137,3 @@ test('sprite upload cleanup still runs when the native command fails', async () 
     );
     assert.equal(cleanups, 1);
 });
-
-test('sprite upload reports staging failures through the shared host error contract', async () => {
-    const router = createSpriteRouter({
-        materializeUploadFile: async () => ({ error: 'staging unavailable' }),
-    });
-    const body = new FormData();
-    body.append('name', 'Alice');
-    body.append('label', 'joy');
-    body.append('avatar', new File([new Uint8Array([1])], 'joy.png', { type: 'image/png' }));
-
-    await assert.rejects(
-        router.handle({ method: 'POST', path: '/api/sprites/upload', body }),
-        /Bad request: Unable to access uploaded file: staging unavailable/,
-    );
-});

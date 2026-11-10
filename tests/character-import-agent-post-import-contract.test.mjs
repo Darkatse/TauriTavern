@@ -27,7 +27,7 @@ test('/api/characters/import returns character data, lorebook adoption and Agent
         },
     };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png', cleanup: async () => {} }),
         safeInvoke: async () => ({ character: imported, lorebook: { status: 'none' } }),
         normalizeCharacter: character => character,
         invalidateCharacterCache: () => {},
@@ -64,7 +64,7 @@ test('/api/characters/import uses the explicit replacement command for an existi
     const calls = [];
     const imported = { name: 'Updated Alice', avatar: 'Alice.png' };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/update.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/update.png', cleanup: async () => {} }),
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             return { character: imported, lorebook: { status: 'none' } };
@@ -100,7 +100,7 @@ test('/api/characters/import preserves an exact name when there is no character 
     const calls = [];
     const imported = { name: 'Alice', avatar: 'Alice.png' };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png', cleanup: async () => {} }),
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             if (command === 'replace_character') {

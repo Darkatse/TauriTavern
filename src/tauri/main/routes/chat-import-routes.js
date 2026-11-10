@@ -56,10 +56,6 @@ export function registerChatImportRoutes(router, context, { jsonResponse }) {
             preferredName,
             preferredExtension: fileType,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded chat file path${reason}` }, 400);
-        }
 
         try {
             const fileNames = await context.safeInvoke('import_character_chats', {
@@ -79,7 +75,7 @@ export function registerChatImportRoutes(router, context, { jsonResponse }) {
         } catch {
             return jsonResponse({ error: true });
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     });
 
@@ -112,10 +108,6 @@ export function registerChatImportRoutes(router, context, { jsonResponse }) {
             preferredName,
             preferredExtension: 'jsonl',
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded group chat file path${reason}` }, 400);
-        }
 
         try {
             const chatId = await context.safeInvoke('import_group_chat_payload', {
@@ -125,7 +117,7 @@ export function registerChatImportRoutes(router, context, { jsonResponse }) {
         } catch {
             return jsonResponse({ error: true });
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     });
 }

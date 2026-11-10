@@ -182,7 +182,7 @@ test('/api/characters/create keeps text body and exposes avatar fallback warning
                 character: { avatar: 'Alice.png' },
                 warnings: [{
                     code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
-                    message: 'Unable to access avatar file path: simulated failure',
+                    message: 'Failed to stage upload: simulated failure',
                 }],
             };
         },
@@ -335,11 +335,7 @@ test('character create service uses default avatar when upload materialization f
             materializeUploadFile: async (file, options) => {
                 assert.ok(file instanceof Blob);
                 assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
-                return {
-                    filePath: '',
-                    error: 'simulated temp write failure',
-                    isTemporary: false,
-                };
+                throw new Error('Failed to stage upload: simulated temp write failure');
             },
         });
 
@@ -357,7 +353,7 @@ test('character create service uses default avatar when upload materialization f
             character: { avatar: 'Assistant.png' },
             warnings: [{
                 code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
-                message: 'Unable to access avatar file path: simulated temp write failure',
+                message: 'Failed to stage upload: simulated temp write failure',
             }],
         });
         assert.deepEqual(invokes, [
