@@ -3001,7 +3001,7 @@ export async function importFromExternalUrl(url, { preserveFileName = null, repl
             throw error;
         }
 
-        toastr.info(error.message, 'Custom content import failed');
+        toastr.info(error.message, t`Custom content import failed`);
         console.error('Custom content import failed', error);
         return;
     }
