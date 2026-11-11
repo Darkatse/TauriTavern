@@ -31,7 +31,6 @@ test('fetch interceptor rejects immediately when AbortSignal is already aborted'
 
     let routedCalls = 0;
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: dom.window.fetch.bind(dom.window),
         canHandleRequest: () => true,
         toUrl: (input, base) => new URL(String(input), base),
@@ -39,8 +38,6 @@ test('fetch interceptor rejects immediately when AbortSignal is already aborted'
             routedCalls += 1;
             return new Response('routed');
         },
-        jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
-        safeJson: async (response) => response.json(),
     });
 
     interceptors.patchFetch(dom.window);
@@ -85,7 +82,6 @@ test('fetch interceptor rejects when AbortSignal is aborted while routed request
 
     let routedCalls = 0;
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: dom.window.fetch.bind(dom.window),
         canHandleRequest: () => true,
         toUrl: (input, base) => new URL(String(input), base),
@@ -93,8 +89,6 @@ test('fetch interceptor rejects when AbortSignal is aborted while routed request
             routedCalls += 1;
             return routePromise;
         },
-        jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
-        safeJson: async (response) => response.json(),
     });
 
     interceptors.patchFetch(dom.window);
@@ -111,9 +105,38 @@ test('fetch interceptor rejects when AbortSignal is aborted while routed request
         },
     );
 
-    resolveRoute?.(new Response('routed'));
+    const cancelled = Promise.withResolvers();
+    resolveRoute?.(new Response(new ReadableStream({ cancel() { cancelled.resolve(); } })));
+    await cancelled.promise;
 
     assert.equal(delegatedCalls, 0);
     assert.equal(routedCalls, 1);
     dom.cleanup();
+});
+
+test('fetch abort remains active after headers while a consumer reads the body', async () => {
+    const { createInterceptors } = await import('../src/tauri/main/interceptors.js');
+    const dom = installFakeDom();
+    try {
+        const reading = Promise.withResolvers();
+        const cancelled = Promise.withResolvers();
+        createInterceptors({
+            originalFetch: dom.window.fetch.bind(dom.window),
+            canHandleRequest: () => true,
+            toUrl: (input, base) => new URL(String(input), base),
+            routeRequest: async () => new Response(new ReadableStream({
+                pull() { reading.resolve(); },
+                cancel() { cancelled.resolve(); },
+            })),
+        }).patchFetch(dom.window);
+        const controller = new AbortController();
+        const response = await dom.window.fetch('/api/chats/get', { signal: controller.signal });
+        const body = response.json();
+        await reading.promise;
+        controller.abort();
+        await assert.rejects(body, { name: 'AbortError' });
+        await cancelled.promise;
+    } finally {
+        dom.cleanup();
+    }
 });

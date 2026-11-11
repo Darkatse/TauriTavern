@@ -14,7 +14,9 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
-use tt_ports::skill_script::SkillScriptEngine;
+use tt_application::services::tokenization_service::TokenizationService;
+use tt_ports::extension_tools::ExtensionTools;
+use tt_ports::workspace_shell::WorkspaceShell;
 
 use super::super::repositories::AppRepositories;
 
@@ -28,18 +30,36 @@ pub(super) struct AgentServices {
     pub(super) agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
+pub(super) struct AgentDependencies {
+    pub(super) skill_service: Arc<SkillService>,
+    pub(super) chat_completion_service: Arc<ChatCompletionService>,
+    pub(super) llm_connection_service: Arc<LlmConnectionService>,
+    pub(super) mcp_service: Arc<McpService>,
+    pub(super) tokenization_service: Arc<TokenizationService>,
+    pub(super) workspace_shell: Arc<dyn WorkspaceShell>,
+    pub(super) extension_tools: Arc<dyn ExtensionTools>,
+    pub(super) tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
+}
+
 pub(super) fn build(
     repositories: &AppRepositories,
-    skill_service: Arc<SkillService>,
-    chat_completion_service: Arc<ChatCompletionService>,
-    llm_connection_service: Arc<LlmConnectionService>,
-    mcp_service: Arc<McpService>,
-    skill_script_engine: Arc<dyn SkillScriptEngine>,
+    dependencies: AgentDependencies,
 ) -> AgentServices {
+    let AgentDependencies {
+        skill_service,
+        chat_completion_service,
+        llm_connection_service,
+        mcp_service,
+        tokenization_service,
+        workspace_shell,
+        extension_tools,
+        tool_image_normalizer,
+    } = dependencies;
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
         repositories.agent_profile_storage_health_repository.clone(),
         repositories.preset_repository.clone(),
+        repositories.agent_session_repository.clone(),
     ));
     let agent_profile_diagnostic_service = Arc::new(AgentProfileDiagnosticService::new(
         agent_profile_service.clone(),
@@ -53,6 +73,7 @@ pub(super) fn build(
     ));
     let agent_runtime_service = Arc::new(AgentRuntimeService::new(
         repositories.agent_run_repository.clone(),
+        repositories.agent_session_repository.clone(),
         repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),
         repositories.chat_repository.clone(),
@@ -65,7 +86,10 @@ pub(super) fn build(
         llm_connection_service,
         prompt_assembly_service.clone(),
         mcp_service,
-        skill_script_engine,
+        workspace_shell,
+        extension_tools,
+        tokenization_service,
+        tool_image_normalizer,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

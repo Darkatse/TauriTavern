@@ -1,0 +1,12 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "TauriTavern",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "@ohos-rs/ability": "file:../vendor/ability.har",
+    "libtauritavern_lib.so": "file:./src/main/cpp/types/tauri-plugins-native"
+  }
+}

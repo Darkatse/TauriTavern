@@ -1,0 +1,34 @@
+name: App Use release
+
+on:
+  push:
+    tags:
+      - 'app-use-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          install: false
+
+      - name: Check the release version
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import assert from "node:assert/strict";
+            const { version } = JSON.parse(readFileSync("packages/app-use/package.json", "utf8"));
+            assert.equal(process.env.GITHUB_REF_NAME, `app-use-v${version}`);
+          '
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec rstest packages/app-use
+      - run: pnpm --filter @tauritavern/app-use publish --access public --no-git-checks

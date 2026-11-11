@@ -1,0 +1,104 @@
+name: Dependency advisories
+
+on:
+  schedule:
+    # Thursdays 03:37 UTC (11:37 in China), away from the other scheduled
+    # workflows and the top of the hour, when GitHub delays scheduled runs most.
+    - cron: "37 3 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-advisories
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: audit-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: chore/dependency-advisories
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          install: false
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit and apply compatible Rust updates
+        id: audit
+        run: |
+          report="$RUNNER_TEMP/dependency-advisories.md"
+          set +e
+          node scripts/check-dependency-advisories.mjs --fix-rust --report "$report"
+          status=$?
+          set -e
+          # The report exists only after both audits completed, so a missing report is a failed run.
+          test -f "$report"
+          if [[ $status -ne 0 ]] || ! git diff --quiet; then
+            remind=true
+          else
+            remind=false
+          fi
+          {
+            echo "remind=$remind"
+            echo "report=$report"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh the reminder PR
+        if: steps.audit.outputs.remind == 'true'
+        env:
+          REPORT: ${{ steps.audit.outputs.report }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git add src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            # Nothing to apply automatically; the PR only carries the report.
+            git commit --allow-empty -m "chore(deps): report dependency advisories"
+          else
+            git commit -m "fix(deps): apply RustSec-compatible updates"
+          fi
+          git push --force origin "$BRANCH"
+
+          {
+            cat "$REPORT"
+            echo
+            echo '---'
+            echo 'Opened by the weekly dependency audit. Pull requests created by GitHub Actions do not trigger other workflows: close and reopen this PR to run the PR quality gate.'
+          } > "$RUNNER_TEMP/body.md"
+
+          pr=$(gh pr list --head "$BRANCH" --base dev --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr edit "$pr" --body-file "$RUNNER_TEMP/body.md"
+            gh pr comment "$pr" --body "Refreshed by the weekly dependency audit on $(date -u +%F)."
+          else
+            gh pr create --base dev --head "$BRANCH" --title "chore(deps): weekly dependency advisories" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Close the reminder PR once dev is clean
+        if: steps.audit.outputs.remind == 'false'
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --base dev --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr close "$pr" --delete-branch --comment "The weekly dependency audit found no known advisories on dev."
+          fi

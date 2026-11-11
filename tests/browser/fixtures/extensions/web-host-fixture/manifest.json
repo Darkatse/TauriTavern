@@ -1,0 +1,6 @@
+{
+    "display_name": "Web Host fixture",
+    "loading_order": 100,
+    "requires": [],
+    "js": "index.js"
+}

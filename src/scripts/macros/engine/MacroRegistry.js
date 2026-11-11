@@ -355,6 +355,39 @@ class MacroRegistry {
     }
 
     /**
+     * Select the per-call definition before argument evaluation and execution.
+     * @param {string} name
+     * @param {MacroEnv} [env]
+     * @returns {MacroDefinition|undefined}
+     */
+    getEffectiveMacro(name, env) {
+        const key = name.toLowerCase();
+        if (env && Object.hasOwn(env.dynamicMacros, key)) {
+            const value = env.dynamicMacros[key];
+            if (value && typeof value === 'object' && typeof value.handler === 'function') {
+                try {
+                    return this.buildMacroDefFromOptions(name, value);
+                } catch (error) {
+                    logMacroRuntimeWarning({ message: `Dynamic macro "${name}" has invalid options: ${error.message}`, macroName: name });
+                }
+            } else if (['string', 'number', 'boolean', 'function'].includes(typeof value)) {
+                if (['number', 'boolean'].includes(typeof value)) {
+                    logMacroRuntimeWarning({ message: `Dynamic macro "${name}" uses unsupported number/boolean format.`, macroName: name });
+                }
+                return this.buildMacroDefFromOptions(name, {
+                    handler: typeof value === 'function' ? value : () => String(value ?? ''),
+                    category: 'dynamic',
+                    description: 'Dynamic macro',
+                    returnType: MacroValueType.STRING,
+                });
+            } else {
+                logMacroRuntimeWarning({ message: `Dynamic macro "${name}" is not defined correctly (must be string, a handler function, or a macro def options object with handler property).`, macroName: name });
+            }
+        }
+        return this.getMacro(name);
+    }
+
+    /**
      * Returns the primary (non-alias) definition for a macro.
      * If given an alias name, returns the primary definition it points to.
      *

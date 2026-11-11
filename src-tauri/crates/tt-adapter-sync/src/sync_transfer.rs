@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tt_contracts::host::HostKind;
 use ttsync_contract::path::SyncPath;
 
-pub(crate) fn default_transfer_concurrency() -> usize {
-    if cfg!(any(target_os = "android", target_os = "ios")) {
-        2
-    } else {
-        4
+pub(crate) fn default_transfer_concurrency(kind: HostKind) -> usize {
+    match kind {
+        HostKind::Mobile => 2,
+        HostKind::Desktop => 4,
     }
 }
 

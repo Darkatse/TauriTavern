@@ -14,7 +14,7 @@ const installed = await skill.list();
 
 | 方法 | 行为 |
 | --- | --- |
-| `list({ scope? }?)` | 返回安装索引列表，可按作用域筛选 |
+| `list({ scope? }?)` | 返回 Skill 列表；`all` 表示所有用户安装的 Skill，内置包须用 `builtin` 筛选 |
 | `listFiles({ scope?, name })` | 列出包内文件 |
 | `readFile({ scope?, name, path, startLine?, lineCount? })` | 读取 UTF-8 文件，支持 1-based 行范围 |
 | `writeFile({ scope?, name, path, content, expectedSha256? })` | 写入文件，可按读取到的 SHA 检查并发修改 |
@@ -22,17 +22,19 @@ const installed = await skill.list();
 | `export({ scope?, name })` | 返回 `{ fileName, contentBase64, sha256 }`，内容为 ZIP |
 | `delete({ scope?, name })` | 删除安装索引与包目录 |
 
-作用域有 `global`、`preset`、`profile`、`character`，省略时按全局处理。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
+作用域有 `global`、`preset`、`profile`、`character` 和 `builtin`，省略作用域时按全局处理。`builtin` 随应用分发，只提供列表与读取，不支持安装、写入、移动、改作用域、删除或导出；通过 `list({ scope: { kind: 'builtin' } })` 单独列出。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
 
-文件路径相对于 Skill 包。`readFile` 省略范围时读取全文，较长内容返回行预览和 `nextStartLine`，供调用方续读。`writeFile` 的 SHA 不匹配时返回错误。
+文件路径相对于 Skill 包。`readFile` 返回原文与原始 SHA，不展开宏；省略范围时读取全文，较长内容返回行预览和 `nextStartLine`。`writeFile` 的 SHA 不匹配时返回错误。
 
 ## 选择导入来源
 
 | 方法 | 返回内容 |
 | --- | --- |
+| `acquireImport()` | 同步取得本页导入准入，返回 `release(): Promise<void>`；占用时抛出 `skill.import_busy` |
 | `pickImportArchive()` | 单个归档输入，取消时为 `null` |
 | `pickImportArchives()` | 选择一个或多个归档来源，取消时为 `null` |
-| `pickImportDirectories()` | 桌面端选择一个或多个目录来源，取消时为 `null` |
+| `isDirectoryImportAvailable()` | 当前宿主能否选择目录来源（目前仅桌面） |
+| `pickImportDirectories()` | 选择一个或多个目录来源，取消时为 `null`；不可用时抛错 |
 | `discoverImports({ input })` | 递归展开目录或归档中的 Skill；其他输入返回单个候选 |
 | `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入 |
 | `discardPickedImport(input?)` | 释放指定来源的临时资源；无参数时释放整批来源 |
@@ -71,6 +73,6 @@ type SkillImportInput =
 
 安装结果的 `action` 为 `installed`、`replaced`、`already_installed` 或 `skipped`。多个来源逐项预览和安装，每项单独提交并返回结果；已完成的安装会保留。
 
-同一宿主一次处理一批导入。单项安装不会释放来源；整批结束或取消后，调用方须等待进行中的请求完成，再调用 `discardPickedImport()`，成功或失败均需清理。
+助手与 Skill Manager 在选取或下载来源前取得导入准入，并持有至预览、安装结束。整批完成或取消后，须等待在途请求结束，再 await `release()`；它清理临时来源后释放准入，可重复调用。单项安装不会释放来源。
 
-模型在 Run 中通过 `skill.list`、`skill.read`、`skill.search` 和 `skill.run_script` 使用已安装内容，运行过程见 [Agent 工具](../Agent/ToolSystem.md)。
+Agent 通过只读 `skills/<name>/` 视图和 `workspace.shell` 使用安装包，见 [Skill](../Agent/Skill.md)。

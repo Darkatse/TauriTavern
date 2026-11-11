@@ -143,15 +143,6 @@ pub struct ImportChatDto {
     pub format: String,
 }
 
-/// DTO for exporting a chat
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExportChatDto {
-    pub character_name: String,
-    pub file_name: String,
-    pub target_path: String,
-    pub format: String,
-}
-
 /// DTO for deleting a group chat payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteGroupChatDto {

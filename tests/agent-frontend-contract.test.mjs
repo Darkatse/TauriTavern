@@ -260,64 +260,6 @@ test('Agent generation router rejects non-direct callable profiles before direct
     );
 });
 
-
-test('Agent context policy windows latest-first prompt history without mutating frozen input', async () => {
-    const contextPolicy = await importFresh('src/scripts/tauritavern/agent/agent-context-policy.js');
-    const chat = [
-        { role: 'user', content: 'latest' },
-        { role: 'assistant', content: 'middle' },
-        { role: 'user', content: 'oldest' },
-    ];
-
-    assert.deepEqual(contextPolicy.normalizeAgentContextPolicy({
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    }), {
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    });
-    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    }), []);
-    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: 2,
-        includeActivatedWorldInfo: true,
-    }), chat.slice(0, 2));
-    assert.equal(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: -1,
-        includeActivatedWorldInfo: true,
-    }), chat);
-
-    const materialized = contextPolicy.materializeInitialChatHistoryMessages(chat, {
-        initialChatHistoryMessages: -1,
-        includeActivatedWorldInfo: true,
-    });
-    assert.deepEqual(materialized, chat);
-    assert.notEqual(materialized, chat);
-    assert.notEqual(materialized[0], chat[0]);
-
-    materialized[0].content = 'mutated';
-    assert.equal(chat[0].content, 'latest');
-
-    assert.throws(
-        () => contextPolicy.applyInitialChatHistoryPolicy(null, {
-            initialChatHistoryMessages: -1,
-            includeActivatedWorldInfo: true,
-        }),
-        /agent\.context_history_messages_invalid/,
-    );
-});
-
-
-
-
-
-
-
-
-
-
 test('Agent run controller tracks active runs until terminal events', async () => {
     let listener = null;
     let stopped = false;
@@ -558,33 +500,6 @@ test('Agent retry resolves typed generation intent instead of clicking regenerat
         }),
         /agent\.retry_agent_mode_disabled/,
     );
-});
-
-test('Agent resume asks for additional rounds only when the frozen round limit is exhausted', async () => {
-    const { resumeAgentRun } = await importFresh('src/scripts/tauritavern/agent/agent-run-retry.js');
-    const resumed = [];
-    const confirmations = [];
-    let round = 6;
-    let accept = 1;
-    installWindow({ agent: { readCheckpoint: async () => ({
-        run: { generationType: 'swipe' }, round, maxRounds: 5, nextStep: 'model', blockedReason: null,
-    }) } });
-    const runtime = {
-        Popup: { show: { confirm: async (...args) => { confirmations.push(args); return accept; } } },
-        resumeAgentRunInChat: async input => { resumed.push(input); },
-    };
-    await resumeAgentRun('run-stop', runtime);
-    assert.equal(resumed[0].runId, 'run-stop');
-    assert.equal(resumed[0].additionalRounds, 5);
-    assert.equal(resumed[0].checkpoint.round, 6);
-    assert.equal(confirmations.length, 1);
-    accept = 0;
-    await resumeAgentRun('run-stop', runtime);
-    assert.equal(resumed.length, 1);
-    round = 4;
-    await resumeAgentRun('run-stop', runtime);
-    assert.equal(confirmations.length, 2);
-    assert.equal(resumed[1].additionalRounds, 0);
 });
 
 test('Agent resumed controller uses the new cursor and waits for presentation saving', async () => {

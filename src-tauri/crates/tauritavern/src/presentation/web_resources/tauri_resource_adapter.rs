@@ -1,6 +1,8 @@
+use crate::platform::identity::HOST_IDENTITY;
 use std::borrow::Cow;
 #[cfg(any(dev, debug_assertions, test))]
 use std::sync::Arc;
+use tt_contracts::host::{HostKind, HostPlatform};
 
 #[cfg(any(dev, debug_assertions))]
 use tauri::Manager;
@@ -15,13 +17,24 @@ use tt_application::services::host_resource_service::{
     HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceService,
 };
 
-const WRY_DELIVERY: HostResourceDeliveryCapabilities = HostResourceDeliveryCapabilities::new(
-    !cfg!(target_os = "android"),
-    cfg!(target_os = "android"),
-);
+const WRY_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(false);
 #[cfg(any(dev, debug_assertions))]
-const DEV_IPC_DELIVERY: HostResourceDeliveryCapabilities =
-    HostResourceDeliveryCapabilities::new(!cfg!(target_os = "android"), false);
+const DEV_IPC_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(true);
+
+const fn resource_delivery(over_ipc: bool) -> HostResourceDeliveryCapabilities {
+    let delivery = match HOST_IDENTITY.platform {
+        HostPlatform::Android => HostResourceDeliveryCapabilities::new(false, !over_ipc),
+        HostPlatform::Windows
+        | HostPlatform::Macos
+        | HostPlatform::Linux
+        | HostPlatform::Ios
+        | HostPlatform::Ohos => HostResourceDeliveryCapabilities::new(true, false),
+    };
+    match HOST_IDENTITY.kind {
+        HostKind::Mobile => delivery.with_max_third_party_asset_bytes(32 * 1024 * 1024),
+        HostKind::Desktop => delivery,
+    }
+}
 
 pub(crate) fn handle_tauri_web_resource_request(
     host_resources: &HostResourceService,
@@ -159,25 +172,6 @@ mod tests {
         ] {
             assert!(!is_tauri_app_uri(&rejected.parse().expect("rejected URI")));
         }
-    }
-
-    #[test]
-    fn dev_protocol_uses_the_same_wry_delivery_as_production() {
-        assert_eq!(
-            WRY_DELIVERY,
-            HostResourceDeliveryCapabilities::new(
-                !cfg!(target_os = "android"),
-                cfg!(target_os = "android")
-            )
-        );
-    }
-
-    #[test]
-    fn dev_ipc_matches_platform_304_support_without_wry_range_workaround() {
-        assert_eq!(
-            DEV_IPC_DELIVERY,
-            HostResourceDeliveryCapabilities::new(!cfg!(target_os = "android"), false)
-        );
     }
 
     #[test]

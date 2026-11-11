@@ -1,14 +1,13 @@
-import { characters, eventSource, event_types, getCurrentChatId, messageFormatting, saveSettingsDebounced, this_chid } from '../../../script.js';
+import { characters, eventSource, event_types, getCurrentChatId, messageFormatting, refreshChatContent, saveSettingsDebounced, this_chid } from '../../../script.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { selected_group } from '../../group-chats.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from '../../popup.js';
-import { getRegexRefreshCoordinator } from '../../tauri/perf/regex-refresh-coordinator.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders, enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
-import { download, equalsIgnoreCaseAndAccents, escapeHtml, getFileText, getSortableDelay, isFalseBoolean, isTrueBoolean, regexFromString, setInfoBlock, uuidv4 } from '../../utils.js';
+import { cancelDebounce, debounce, download, equalsIgnoreCaseAndAccents, escapeHtml, getFileText, getSortableDelay, isFalseBoolean, isTrueBoolean, regexFromString, setInfoBlock, uuidv4 } from '../../utils.js';
 import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallowScopedScripts, getCurrentPresetAPI, getCurrentPresetName, getRegexScripts, getScriptsByType, isPresetScriptsAllowed, isScopedScriptsAllowed, regex_placement, RegexProvider, runRegexScript, saveScriptsByType, SCRIPT_TYPE_UNKNOWN, SCRIPT_TYPES, substitute_find_regex } from './engine.js';
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
@@ -21,7 +20,12 @@ export { getRegexScripts };
 
 const sanitizeFileName = name => name.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
 const REGEX_CHAT_REFRESH_DEBOUNCE_MS = 500;
-const regexRefreshCoordinator = getRegexRefreshCoordinator();
+const refreshRegexChatDebounced = debounce(() => {
+    void refreshRegexChat().catch(error => {
+        console.error('Failed to refresh regex display:', error);
+        toastr.error(t`Could not refresh message contents. Reopen the chat to try again.`);
+    });
+}, REGEX_CHAT_REFRESH_DEBOUNCE_MS);
 const REGEX_EDITOR_MAXIMIZE_FIELDS = Object.freeze([
     {
         controlSelector: '.regex_replace_string',
@@ -38,17 +42,27 @@ const REGEX_EDITOR_MAXIMIZE_FIELDS = Object.freeze([
 ]);
 
 function requestRegexChatRefresh() {
-    if (!getCurrentChatId()) {
-        return;
-    }
-    regexRefreshCoordinator.requestFlush({ debounceMs: REGEX_CHAT_REFRESH_DEBOUNCE_MS });
+    refreshRegexChatDebounced();
 }
 
 async function flushRegexChatNow() {
-    if (!getCurrentChatId()) {
-        return;
+    cancelDebounce(refreshRegexChatDebounced);
+    await refreshRegexChat();
+}
+
+async function refreshRegexChat() {
+    if (!getCurrentChatId()) return;
+    await refreshChatContent();
+
+    // Preserve the regex extension's legacy rescan notification at its own boundary.
+    const chatId = getCurrentChatId();
+    if (!chatId) return;
+    await eventSource.emit(event_types.CHAT_CHANGED, chatId);
+    if (this_chid !== undefined) {
+        await eventSource.emit(event_types.CHAT_LOADED, {
+            detail: { id: this_chid, character: characters[Number(this_chid)] },
+        });
     }
-    await regexRefreshCoordinator.flushNow();
 }
 
 /**

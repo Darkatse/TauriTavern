@@ -1,15 +1,15 @@
 <div class="wide100p">
     <div class="flex-container alignItemsBaseline">
         <h3 class="margin0">
-            <span data-i18n="Connection Profile">Connection Profile</span>
-            <a href="https://docs.sillytavern.app/usage/core-concepts/connection-profiles" target="_blank" class="notes-link">
+            <span id="connection_profiles_label" data-i18n="Connection Profile">Connection Profile</span>
+            <a href="https://docs.sillytavern.app/usage/core-concepts/connection-profiles" target="_blank" class="notes-link" id="connection_profiles_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="connection_profiles_docs connection_profiles_label">
                 <span class="fa-solid fa-circle-question note-link-span"></span>
             </a>
         </h3>
         <i id="connection_profile_spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
     </div>
     <div class="flex-container">
-        <select class="text_pole flex1" id="connection_profiles"></select>
+        <select class="text_pole flex1" id="connection_profiles" aria-labelledby="connection_profiles_label"></select>
         <i id="view_connection_profile" class="menu_button fa-solid fa-info-circle" title="View connection profile details" data-i18n="[title]View connection profile details"></i>
         <i id="create_connection_profile" class="menu_button fa-solid fa-file-circle-plus" title="Create a new connection profile" data-i18n="[title]Create a new connection profile"></i>
         <i id="update_connection_profile" class="menu_button fa-solid fa-save" title="Update a connection profile" data-i18n="[title]Update a connection profile"></i>

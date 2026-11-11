@@ -1,19 +1,7 @@
 // @ts-check
 
+import { getBarcodeScanner } from '../../../../tauri-bridge.js';
 import { pushBackNavigationHandler } from '../back-navigation/back-handler-stack.js';
-
-function getBarcodeScanner() {
-    const barcodeScanner = window.__TAURI__?.barcodeScanner;
-    if (!barcodeScanner?.requestPermissions || !barcodeScanner?.scan || !barcodeScanner?.cancel) {
-        throw new Error('Tauri barcode scanner is unavailable');
-    }
-
-    if (!barcodeScanner?.Format?.QRCode) {
-        throw new Error('Tauri barcode scanner QR format is unavailable');
-    }
-
-    return barcodeScanner;
-}
 
 /**
  * @param {unknown} error
@@ -26,13 +14,25 @@ function isBarcodeScannerCancellationError(error) {
     return message.trim().toLowerCase() === 'cancelled';
 }
 
+export function canScanQrCode() {
+    const scanner = getBarcodeScanner();
+    return typeof scanner?.requestPermissions === 'function'
+        && typeof scanner?.scan === 'function'
+        && typeof scanner?.cancel === 'function'
+        && Boolean(scanner?.Format?.QRCode);
+}
+
 /**
  * Starts a QR-code scan session that can be cancelled by the host back bridge.
  *
  * @returns {Promise<string | null>}
  */
 export async function scanQrCodeWithBackCancellation() {
+    if (!canScanQrCode()) {
+        throw new Error('Tauri barcode scanner is unavailable');
+    }
     const barcodeScanner = getBarcodeScanner();
+
     const granted = await barcodeScanner.requestPermissions();
     if (!granted) {
         throw new Error('Camera permission is required to scan QR codes');

@@ -1,4 +1,4 @@
-import { clone, prettyJson } from './host-api';
+import { clone, errorText, prettyJson } from './host-api';
 import {
     defaultProfile,
     normalizeProfileForSave,
@@ -76,15 +76,11 @@ export type AgentSystemDraftEditor = {
         value: AgentProfileDraftNumber,
     ) => void;
     setPlanMode: (mode: string) => void;
-    setToolsLimitField: (
-        field: 'maxRounds' | 'maxCallsPerRun' | 'mcpResultInlineCharLimit',
-        value: AgentProfileDraftNumber,
-    ) => void;
+    setExternalResultInlineCharLimit: (value: AgentProfileDraftNumber) => void;
     setModelRetryField: (field: 'maxRetries' | 'intervalMs', value: AgentProfileDraftNumber) => void;
     setContextHistoryMessages: (value: AgentProfileDraftNumber) => void;
     setContextIncludeWorldInfo: (checked: boolean) => void;
     setSkillsCsvField: (field: 'visibleCsv' | 'denyCsv', value: string) => void;
-    setSkillsLimitField: (field: 'maxReadCharsPerCall' | 'maxReadCharsPerRun', value: AgentProfileDraftNumber) => void;
     setWorkspaceRootVisible: (root: string, visible: boolean) => void;
     setWorkspaceRootWritable: (root: string, writable: boolean) => void;
     setOutputArtifactField: (field: 'path' | 'kind', value: string) => void;
@@ -261,9 +257,9 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 draft.plan.mode = mode;
             });
         },
-        setToolsLimitField(field, value) {
+        setExternalResultInlineCharLimit(value) {
             editDraft((draft) => {
-                draft.tools[field] = value;
+                draft.tools.externalResultInlineCharLimit = value;
             });
         },
         setModelRetryField(field, value) {
@@ -282,11 +278,6 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             });
         },
         setSkillsCsvField(field, value) {
-            editDraft((draft) => {
-                draft.skills[field] = value;
-            });
-        },
-        setSkillsLimitField(field, value) {
             editDraft((draft) => {
                 draft.skills[field] = value;
             });
@@ -314,6 +305,21 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             context.commit({ selectedToolId: toolId });
         },
         async toggleToolAllowed(toolId, enabled) {
+            const snapshot = context.getSnapshot();
+            if (enabled && toolId.startsWith('extension/') && !snapshot.draft.tools.allow.includes(toolId)) {
+                try {
+                    const catalog = await deps.listTools();
+                    if (context.isDisposed() || context.getSnapshot().editingProfileId !== snapshot.editingProfileId) return;
+                    if (!catalog.tools.some(tool => tool.id === toolId)) {
+                        throw new Error(deps.tr('extensionToolUnavailable', { tool: toolId }));
+                    }
+                } catch (error) {
+                    if (context.isDisposed()) return;
+                    context.commit({ error: errorText(error) });
+                    deps.notifyError(error);
+                    return;
+                }
+            }
             if (!enabled && toolHasDescriptionOverride(context.getSnapshot().draft, toolId)) {
                 // The checkbox is controlled: declining the confirmation
                 // simply skips the commit, leaving it checked.
@@ -328,7 +334,7 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 if (!enabled) {
                     applyResetToolDescriptionOverride(draft, toolId);
                 }
-                applyToolAllowed(draft, toolId, enabled, new Set(context.catalogToolIds()), context.getSnapshot().toolIds);
+                applyToolAllowed(draft, toolId, enabled, context.getSnapshot().toolIds);
             });
         },
         setToolDescriptionOverride(toolId, value) {

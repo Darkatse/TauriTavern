@@ -41,7 +41,7 @@ jobs:
           test -n "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
@@ -88,45 +88,34 @@ jobs:
           - platform: windows-latest
             target_args: ""
             artifact_prefix: ""
-            portable: true
-            portable_name: windows-x64
           - platform: windows-latest
             target_args: --debug --bundles nsis --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
             artifact_prefix: ""
-            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin
             artifact_prefix: ""
-            portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-arm64
 
     runs-on: ${{ matrix.platform }}
     env:
       TAURITAVERN_BUILD_BRANCH: main
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -142,10 +131,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
 
       - uses: pnpm/setup@v2
         with:
@@ -177,22 +162,86 @@ jobs:
           tauriScript: node ../../../scripts/tauri-app.mjs
           args: >-
             ${{ matrix.target_args }}
-            ${{ matrix.artifact_prefix == 'debug-' && format('--config "{0}/src-tauri/crates/tauritavern/tauri.pilot.conf.json"', github.workspace) || '' }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]'
 
+  portable:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            name: windows-x64
+          - platform: ubuntu-22.04
+            name: linux-x64
+          - platform: ubuntu-22.04-arm
+            name: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+
       - name: Build portable binary
-        if: matrix.portable
-        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+        run: node scripts/build-portable.mjs --output-dir portable
 
       - name: Upload portable binary
-        if: matrix.portable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.portable_name }}-portable
+          name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.name }}-portable
           path: portable/*
+          if-no-files-found: error
+
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm web:build
+
+      - name: Archive web frontend
+        working-directory: src
+        run: zip -qr ../web.zip .
+
+      - name: Upload web frontend
+        uses: actions/upload-artifact@v7
+        with:
+          name: TauriTavern-${{ needs.prepare.outputs.version }}-web
+          path: web.zip
           if-no-files-found: error
 
   flatpak:
@@ -204,7 +253,7 @@ jobs:
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
       TAURITAVERN_FLATPAK_USER: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -219,7 +268,7 @@ jobs:
             https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Cache Flatpak SDK and build inputs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.local/share/flatpak
@@ -236,7 +285,7 @@ jobs:
         run: tar --zstd --create --file flatpak-build.tar.zst .flatpak-build
 
       - name: Upload Flatpak build tree
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
           path: flatpak-build.tar.zst
@@ -264,7 +313,7 @@ jobs:
       TAURITAVERN_BUILD_BRANCH: main
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -320,10 +369,6 @@ jobs:
             echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
             echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
 
       - uses: pnpm/setup@v2
         with:
@@ -419,8 +464,19 @@ jobs:
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-TestFlight-[bundle]'
 
+  ohos:
+    needs: prepare
+    uses: ./.github/workflows/ohos.yml
+    with:
+      architectures: '["aarch64"]'
+      package_version: ${{ needs.prepare.outputs.version }}
+      release_id: ${{ needs.prepare.outputs.version }}
+      build_branch: main
+      commit: ${{ needs.prepare.outputs.commit }}
+
   testflight:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     permissions:
       actions: read
       contents: write
@@ -446,7 +502,9 @@ jobs:
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   publish-release:
-    needs: [prepare, desktop, mobile]
+    needs: [prepare, desktop, portable, web, mobile, ohos]
+    # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.portable.result == 'success' && needs.web.result == 'success' && needs.mobile.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -456,16 +514,16 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           path: source
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
           path: dist
@@ -484,6 +542,7 @@ jobs:
 
   publish-winget:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/winget-release.yml
@@ -494,6 +553,7 @@ jobs:
 
   publish-package-repositories:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
@@ -513,11 +573,11 @@ jobs:
       LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
       RELEASE_ASSETS_DIR: dist
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
           path: dist
@@ -567,6 +627,7 @@ jobs:
 
   publish-flatpak-repository:
     needs: [prepare, flatpak, publish-release]
+    if: ${{ !cancelled() && needs.flatpak.result == 'success' && needs.publish-release.result == 'success' }}
     continue-on-error: true
     concurrency:
       group: tauritavern-stable-flatpak-repository
@@ -591,11 +652,11 @@ jobs:
       LINUX_REPOSITORY_KEY_FPR: C75284E78972F19A0DDD88C487F5B8530682A857
       LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
           path: flatpak-artifact
@@ -690,6 +751,7 @@ jobs:
 
   publish-nix-cache:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -712,7 +774,7 @@ jobs:
       NIX_CACHE_URL: https://nix-cache.tauritavern.com
       NIX_CACHE_PUBLIC_KEY: nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GPqk1qw5iknbayZLRn92U=
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 

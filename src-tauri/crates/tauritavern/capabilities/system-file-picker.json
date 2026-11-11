@@ -1,15 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "system-file-picker",
-  "description": "System file picker for the main window. iOS is excluded because it picks through the ios_pick_* commands.",
+  "description": "Desktop directory selection for the main window.",
   "windows": [
     "main"
   ],
   "platforms": [
     "macOS",
     "windows",
-    "linux",
-    "android"
+    "linux"
   ],
   "permissions": [
     "dialog:allow-open"

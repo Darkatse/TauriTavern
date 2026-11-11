@@ -1,0 +1,241 @@
+import { parseTarget } from './target.ts';
+import { isCheckableInput, isDisabled } from './semantics.ts';
+import type { Semantics } from './semantics.ts';
+import type { Observation } from './snapshot.ts';
+import type { ElementTarget } from './target.ts';
+import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document.ts';
+import type { DocumentScope } from './document.ts';
+import { inspectInputSurface } from './geometry.ts';
+import type { InteractionPoint } from './geometry.ts';
+import type { ToolArguments } from './types.ts';
+import { appToolAliases } from './names.ts';
+export type { InteractionPoint } from './geometry.ts';
+
+const { snapshot: SNAPSHOT, interact: INTERACT, evaluate: EVALUATE } = appToolAliases;
+
+type Interaction = { target: ElementTarget } & (
+    | { action: 'click' }
+    | { action: 'fill'; value: string }
+    | { action: 'select'; value: string }
+    | { action: 'set_checked'; checked: boolean }
+    | { action: 'scroll'; direction: 'up' | 'down' }
+);
+type InteractionFeedback = (point: InteractionPoint) => void;
+export type InteractionOptions = {
+    feedback?: InteractionFeedback;
+    surfaceCandidates?: (element: HTMLElement) => HTMLElement[];
+    scrollTo?: (element: HTMLElement, options: ScrollToOptions) => void;
+};
+
+const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
+    click: [],
+    fill: ['value'],
+    select: ['value'],
+    set_checked: ['checked'],
+    scroll: ['direction'],
+};
+const FILLABLE_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'number']);
+
+export function interact(args: ToolArguments, observation: Observation, options: InteractionOptions = {}) {
+    const request = parseInteraction(args);
+    const target = observation.resolve(request.target);
+    const { scope } = target;
+    const element = requireInteractiveElement(target.element, scope);
+    const semantics = observation.createSemantics();
+    const apply = prepareAction(request, element, scope, semantics, options);
+    observation.clearCursor();
+
+    // Preparation only checks the target and signals visual feedback. apply changes application state.
+    try {
+        const dispatched = apply();
+        const observed = isInScope(element, scope)
+            ? { connected: true, ...observation.createSemantics().describeElement(element) }
+            : { connected: false };
+        return { action: request.action, dispatched, observed };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`The action was attempted, but its result could not be confirmed. Changes may already have taken effect. Check the current state with ${SNAPSHOT} or a known API before retrying. Details: ${message}`);
+    }
+}
+
+function parseInteraction(args: ToolArguments): Interaction {
+    if (typeof args.action !== 'string' || !Object.hasOwn(ACTION_FIELDS, args.action)) {
+        throw new Error('Choose click, fill, select, set_checked or scroll.');
+    }
+
+    const action = args.action as Interaction['action'];
+    const target = parseTarget(args);
+    const allowedFields = ['action', 'ref', 'selector', 'root', ...ACTION_FIELDS[action]];
+    const unexpectedFields = Object.keys(args).filter(key => !allowedFields.includes(key));
+    if (unexpectedFields.length > 0) {
+        throw new Error(`${action} does not accept ${unexpectedFields.join(', ')}. Pass only ${allowedFields.join(', ')}.`);
+    }
+
+    switch (action) {
+        case 'click':
+            return { action, target };
+        case 'fill':
+        case 'select':
+            if (typeof args.value !== 'string') {
+                throw new Error(`${action} requires a string value.`);
+            }
+            return { action, target, value: args.value };
+        case 'set_checked':
+            if (typeof args.checked !== 'boolean') {
+                throw new Error('set_checked requires a boolean checked value.');
+            }
+            return { action, target, checked: args.checked };
+        case 'scroll':
+            if (args.direction !== 'up' && args.direction !== 'down') {
+                throw new Error('scroll direction must be up or down.');
+            }
+            return { action, target, direction: args.direction };
+    }
+}
+
+function requireInteractiveElement(element: Element, scope: DocumentScope): HTMLElement {
+    if (!isHTMLElement(element)) {
+        throw new Error(`${INTERACT} does not support this element. Choose its enclosing control from ${SNAPSHOT}, or use ${EVALUATE} with a known API.`);
+    }
+    for (const target of [...scope.frames, element]) {
+        if (isDisabled(target)) {
+            throw new Error('The target or its containing page is disabled. Check which condition enables it before trying again.');
+        }
+        if (target.closest('[inert]')) {
+            throw new Error(`This region is currently inactive and cannot receive input. Call ${SNAPSHOT} with {} to inspect the active panel or dialog.`);
+        }
+        const doc = target.ownerDocument;
+        const hasModal = documentWindow(doc).CSS.supports('selector(:modal)') && doc.querySelector(':modal') !== null;
+        if (hasModal && !target.closest(':modal')) {
+            throw new Error(`An open modal dialog blocks this target. Observe the dialog and operate or close it first. For a dialog outside this embedded page, call ${SNAPSHOT} with {} to inspect the main page.`);
+        }
+    }
+    return element;
+}
+
+/** Validate an action and capture its typed target. Only the returned function changes the control. */
+function prepareAction(
+    request: Interaction,
+    element: HTMLElement,
+    scope: DocumentScope,
+    semantics: Semantics,
+    options: InteractionOptions,
+): () => boolean {
+    const requireSurface = (candidates: HTMLElement[]) => requireInputSurface(candidates, scope, semantics, options.feedback);
+    switch (request.action) {
+        case 'click': {
+            requireSurface(surfaceCandidates(element, options));
+            return () => {
+                element.click();
+                return true;
+            };
+        }
+        case 'fill': {
+            const supportedInput = isHtmlTag(element, 'input') && FILLABLE_INPUT_TYPES.has(element.type);
+            if (!(isHtmlTag(element, 'textarea') || supportedInput) || element.closest('.cm-editor')) {
+                throw new Error(`fill supports ordinary text/number inputs and textareas. For a complex editor, use ${EVALUATE} with its editing API. Password and file inputs are not supported.`);
+            }
+            if (element.readOnly || element.getAttribute('aria-readonly') === 'true') {
+                throw new Error('The target is read-only. Find an editable control or inspect what makes this field read-only before trying again.');
+            }
+            requireSurface([element]);
+
+            return () => {
+                element.focus({ preventScroll: true });
+                setNativeInputValue(element, request.value);
+                notifyValueChange(element);
+                return true;
+            };
+        }
+        case 'select': {
+            if (!isHtmlTag(element, 'select') || element.multiple) {
+                throw new Error(`select supports standard single-select controls. For a custom dropdown, click to open it and use ${SNAPSHOT} to inspect its options; for multi-select, use a known API.`);
+            }
+            const option = Array.from(element.options).find(candidate => candidate.value === request.value);
+            if (!option || option.disabled || option.parentElement?.matches('optgroup:disabled')) {
+                throw new Error(`This option is missing or disabled. Call ${SNAPSHOT} with this control as root, then use an enabled option's exact value and the control's new ref.`);
+            }
+            requireSurface([element]);
+
+            return () => {
+                element.value = request.value;
+                notifyValueChange(element);
+                return true;
+            };
+        }
+        case 'set_checked': {
+            if (!isCheckableInput(element)) {
+                throw new Error('set_checked supports standard checkbox and radio inputs. For a custom toggle, use click and verify the resulting state.');
+            }
+            if (element.type === 'radio' && !request.checked) {
+                throw new Error('A radio cannot be unchecked directly. Select another radio in the group with checked=true.');
+            }
+            requireSurface(surfaceCandidates(element, options));
+
+            return () => {
+                if (element.checked === request.checked) {
+                    return false;
+                }
+                element.click();
+                return true;
+            };
+        }
+        case 'scroll': {
+            if (!semantics.isScrollable(element)) {
+                throw new Error(`This target cannot scroll vertically. Use ${SNAPSHOT} to find a region marked scrollable=true, then scroll that region.`);
+            }
+            requireSurface([element]);
+
+            return () => {
+                const direction = request.direction === 'down' ? 1 : -1;
+                const top = element.scrollTop + direction * element.clientHeight;
+                if (options.scrollTo) {
+                    options.scrollTo(element, { top, behavior: 'instant' });
+                } else {
+                    element.scrollTo({ top, behavior: 'instant' });
+                }
+                return true;
+            };
+        }
+    }
+}
+
+function setNativeInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
+    const view = documentWindow(element.ownerDocument);
+    const prototype = isHtmlTag(element, 'textarea') ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+    if (!descriptor?.set) {
+        throw new Error('The native input value setter is unavailable.');
+    }
+
+    // Bypass React's instance setter so its input handler observes the change and updates state.
+    descriptor.set.call(element, value);
+}
+
+function notifyValueChange(element: HTMLElement) {
+    const { Event } = documentWindow(element.ownerDocument);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function surfaceCandidates(element: HTMLElement, options: InteractionOptions): HTMLElement[] {
+    const candidates = [element];
+    if (isCheckableInput(element)) {
+        candidates.push(...Array.from(element.labels ?? []));
+    }
+    candidates.push(...options.surfaceCandidates?.(element) ?? []);
+    return [...new Set(candidates)];
+}
+
+function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, semantics: Semantics, feedback?: InteractionFeedback): void {
+    const reasons: string[] = [];
+    for (const candidate of candidates) {
+        const surface = inspectInputSurface(candidate, scope, semantics);
+        if ('point' in surface) {
+            feedback?.(surface.point);
+            return;
+        }
+        reasons.push(surface.reason);
+    }
+    throw new Error(`No action was performed. ${reasons.join(' ')} For a panel outside an embedded page, call ${SNAPSHOT} with {} to inspect the main page.`);
+}

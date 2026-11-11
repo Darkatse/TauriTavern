@@ -51,7 +51,12 @@ impl ChatCompletionProviderFormat {
 
         Ok(match source {
             ChatCompletionSource::OpenAi
-                if payload.get("model").and_then(Value::as_str) == Some("gpt-6-astra") =>
+                if payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_some_and(|model| {
+                        model.starts_with("gpt-6-") || model.starts_with("gpt-6.")
+                    }) =>
             {
                 Self::OpenAiResponses
             }

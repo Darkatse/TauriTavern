@@ -14,7 +14,7 @@
 
 - **Shell 先到**：`#preloader` 在 `firstLoadInit()` 的 Shell 阶段就移除，主页可以尽早可见可点。
 - **Host Ready 显式等待**：在首次 `/api/*` 访问前等待 `__TAURITAVERN_MAIN_READY__`，确保拦截器/路由已安装，且 Tauri 后端已进入可接收 `AppState` 命令的 readiness 状态。
-- **bootstrap 快照**：用一次 `/api/bootstrap` 拉齐启动关键数据，并在前端以“prime snapshot”方式避免重复请求（settings/characters/groups/avatars/secret_state）。
+- **启动并发读取**：设置与启动元数据并行读取、按顺序应用，并复用本次结果。
 - **扩展启动分层**：扩展发现可提前后台启动；系统扩展仍在 Full 阶段完成，local/global third-party 扩展延后到 `APP_READY` 后串行激活，从启动关键路径移出。
 - **lib.bundle 拆分为 core/optional**：`highlight.js` 通过 `lib.js` 的 async helper 按需加载；上游同步 `/lib.js` ABI 保留在 core bundle。
 - **重任务后移**：`initTokenizers()`、`initScrapers()` 在 `APP_READY` 后、两次 paint 之后后台启动。
@@ -34,6 +34,7 @@
 
 - `src/init.js`
   - 设置：`window.__TAURI_RUNNING__ = true`，并计算 `globalThis.__TAURITAVERN_PERF_ENABLED__`
+  - 等待[可选的开发资源桥就绪信号](../FrontendHostContract.md#22-就绪信号publicproject)
   - 通过 `importWithRetry()` 依次加载：
     1) `./lib.js`（静态依赖 `src/dist/lib.core.bundle.js`）
     2) `./tauri-main.js`（安装 Host Kernel：路由/拦截器/ABI）
@@ -50,26 +51,22 @@
     - same-origin iframe/window 的补丁（保证扩展/脚本在 iframe 内也能命中路由/下载桥）
   - 设置 readiness：
     - `window.__TAURITAVERN_MAIN_READY__ = readyPromise`
-    - 前端用 `waitForTauriMainReady()` 等它，确保首次 `/api/*` 调用前 Host 已就绪，且 Rust `BackendReadiness` 已完成。
   - Host Ready 后只加载不会传递导入主应用的模块。设置入口先注册同步/配对监听，事件呈现与设置 UI 共用一个 `APP_READY` Promise；请求参数面板本身依赖主应用，直接在 `APP_READY` 后导入。
 
 ### 2.4 前端启动编排：Shell → Core → Full（保持 APP_READY 语义）
 
 - `src/script.js:firstLoadInit()`
   - **Shell 阶段**
+    - `initLocales()` 先于任何可见界面：语言数据是静态资源，不依赖 Host 就绪；首帧界面与启动状态文案都已是用户语言
     - `removePreloader()`（`src/scripts/loader.js`）：移除 `#preloader`
     - 初始化纯前端 UI/DOM handler、基础 patch（不会做 `/api/*`）
   - **Core 阶段**
-    - `await waitForTauriMainReady({ failFast: true })`：保证 Host 拦截器与 Rust backend readiness 就绪
-    - `/csrf-token` + 并发启动 `fetch('/api/bootstrap')`
+    - `await window.__TAURITAVERN_MAIN_READY__`：保证 Host 拦截器与 Rust backend readiness 就绪，失败直接传播
+    - `/csrf-token` + 并发启动 `/api/bootstrap` 与 `/api/settings/get`
     - `initSecrets()` + `primeSecretStateSnapshot(...)` + `readSecretState()`
-    - `initLocales()`、默认 slash commands、模型/设置等核心模块初始化
+    - 默认 slash commands、模型/设置等核心模块初始化
   - **Full 阶段**
-    - 应用 settings/角色/群组/头像快照：
-      - `applySettingsSnapshot(bootstrap.settings)`
-      - `applyCharactersSnapshot(bootstrap.characters)`
-      - `applyGroupsSnapshot(bootstrap.groups)`
-      - `primeUserAvatarsSnapshot(bootstrap.avatars)` + `getUserAvatars(...)`
+    - 按设置、角色、群组、头像的顺序应用读取结果。
     - 扩展（如果启用）：
       - 后台：`startOfflineExtensionsDiscovery()`（可在 Core 阶段提前启动）
       - Full：`activateStartupSystemExtensions({ parallelism })` 只激活系统扩展，并在需要时提前完成 Extras auto-connect
@@ -97,36 +94,20 @@
 ### 3.2 Host 就绪（拦截器、路由与 BackendReadiness）
 
 - `window.__TAURITAVERN_MAIN_READY__`：在 `src/tauri/main/bootstrap.js` 设置
-- `waitForTauriMainReady()`：前端轮询等待该 promise 注册并 resolve（`src/scripts/extensions/runtime/tauri-ready.js`）
-- Tauri runtime 下，Host 初始化链会在任何需要 `AppState` 的首批工作前调用 `wait_for_backend_ready`，避免依赖 Tauri 的 “state not managed” 错误文本重试。
+- 主应用在 Core 阶段等待它一次，扩展发现与激活都在之后；第一方扩展通过 `window.__TAURITAVERN__.ready` 等待同一个 Promise。失败直接传播，见[就绪契约](../FrontendHostContract.md#22-就绪信号publicproject)。
+- Host 初始化链会在任何需要 `AppState` 的首批工作前调用 `wait_for_backend_ready`，避免依赖 Tauri 的 “state not managed” 错误文本重试。
 
 ---
 
-## 4. bootstrap 快照（/api/bootstrap）现状
+## 4. 设置与 bootstrap 元数据读取
 
-### 4.1 前端消费
+`/api/settings/get` 独立读取设置；`/api/bootstrap` 提供角色、群组、头像和密钥状态等启动元数据。前端并发获取，再按既有顺序应用；本次启动复用读取结果，避免重复请求。
 
-- `src/script.js`：`fetch('/api/bootstrap', { method: 'POST' })`
-- 负载（当前使用字段）：
-  - `settings`：直接喂给 `applySettingsSnapshot(...)`
-  - `characters`：直接喂给 `applyCharactersSnapshot(...)`
-  - `groups`：直接喂给 `applyGroupsSnapshot(...)`
-  - `avatars`：喂给 `primeUserAvatarsSnapshot(...)`
-  - `secret_state`：喂给 `primeSecretStateSnapshot(...)`
+设置与角色是启动必需数据，失败会阻止启动；群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
 
-### 4.2 Tauri 主进程路由
+启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制或重新加载），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
 
-- `src/tauri/main/routes/bootstrap-routes.js`
-  - `router.post('/api/bootstrap', ...)`
-  - `context.safeInvoke('get_bootstrap_snapshot')`
-  - 角色做一次 `context.normalizeCharacter(...)` 后返回 JSON
-
-### 4.3 Rust 命令（并发采样）
-
-- `src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
-  - 使用 `tokio::join!` 并发获取：settings / characters / groups / avatars / secret_state
-  - settings 与 characters 是启动关键数据；groups、avatars、secret_state 失败时保留用户可见错误并仅禁用对应局部能力，不阻止 `APP_READY`
-  - 目的：减少启动关键路径的串行 I/O 等待。
+后端采样入口见 [bootstrap_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs)。
 
 ---
 
@@ -183,8 +164,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
     - 目的：避免 SPresets 等脚本在抽屉关闭时找不到 `#saved_regex_scripts` 触发 `MutationObserver.observe(target not Node)`。
 - `src/tauri/main/adapters/panel-runtime/top-settings-panel-parking.js`
   - 左栏 pinned 锚点分两类，判据不同：
-    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：**永远在线的代码会读写的 DOM 不允许被 park**。当前是 `#range_block_openai` —— `onModelChange` 位于从不 park 的 `#rm_api_block`，却把 `#openai_max_context` 的 `max` 当暂存读回，被 park 即得到 `NaN`。
+    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
     - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
+  - 世界书抽屉：`compat` 只 park 条目列表 `#world_popup_entries_list`（世界书 DOM 的主体），世界书下拉框、分页和编辑按钮保持在线；`aggressive` 仍 park 整个 `#wi-holder`。世界书模块持有列表节点，正常渲染与停放期间的更新使用同一个目标；重新打开只挂回原节点，不额外刷新。离屏更新仍有渲染计算，但停放期间的重型条目不连接 document，保留 DOM 裁剪收益；列表的分页后测量与条目定位跳过离屏节点。
 
 ---
 
@@ -196,8 +178,8 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/tauri/main/bootstrap.js`：`tt:tauri:*`
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
-  - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）
-- `pnpm run check:startup` 构建 vendor bundle 并运行 `tests/browser/startup-order.mjs`，验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该检查包含在默认 `pnpm run check` 中。
+  - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）与启动失败对话框（见 §4）
+- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
 
 ---
 

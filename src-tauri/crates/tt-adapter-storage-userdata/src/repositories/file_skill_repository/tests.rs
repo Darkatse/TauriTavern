@@ -15,12 +15,17 @@ use tt_domain::models::skill::{
     SkillScopeRetargetRequest, SkillWriteRequest,
 };
 use tt_ports::repositories::skill_repository::SkillRepository;
+use tt_ports::workspace_fs::WorkspaceEntryKind;
 
 fn temp_root(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "tauritavern-skill-{label}-{}",
         Uuid::new_v4().simple()
     ))
+}
+
+fn test_repository(root: PathBuf) -> FileSkillRepository {
+    FileSkillRepository::new(root.clone(), root.join("builtin"))
 }
 
 #[cfg(unix)]
@@ -118,7 +123,7 @@ fn inline_skill_with_source(
 #[tokio::test]
 async fn installs_inline_skill_and_reads_file() {
     let root = temp_root("install");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let result = repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -150,7 +155,6 @@ async fn installs_inline_skill_and_reads_file() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -168,6 +172,133 @@ async fn installs_inline_skill_and_reads_file() {
     assert_eq!(read.resource_ref, "skills/test-skill/references/a.md");
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn raw_files_preserve_bytes_directories_and_current_installed_content() {
+    let root = temp_root("raw-files");
+    let repository = test_repository(root.clone());
+    let mut input = inline_skill("test-skill", vec![("references/a.md", "{{char}}")]);
+    let SkillImportInput::InlineFiles { files, .. } = &mut input else {
+        unreachable!()
+    };
+    files.push(SkillInlineFile {
+        path: "binary.bin".into(),
+        encoding: "base64".into(),
+        content: "/wA=".into(),
+        media_type: None,
+        size_bytes: None,
+        sha256: None,
+    });
+    repository
+        .install_import(SkillInstallRequest {
+            target_scope: global_scope(),
+            input,
+            conflict_strategy: None,
+        })
+        .await
+        .unwrap();
+    let installed = repository
+        .installed_skill_root(&global_scope(), "test-skill")
+        .await
+        .unwrap();
+    tokio_fs::create_dir(installed.join("empty")).await.unwrap();
+
+    let entries = repository
+        .read_skill_dir(&global_scope(), "test-skill", None, 4)
+        .await
+        .unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.metadata.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            ("SKILL.md", WorkspaceEntryKind::File),
+            ("binary.bin", WorkspaceEntryKind::File),
+            ("empty", WorkspaceEntryKind::Directory),
+            ("references", WorkspaceEntryKind::Directory),
+        ],
+    );
+    assert!(
+        repository
+            .read_skill_dir(&global_scope(), "test-skill", None, 3)
+            .await
+            .is_err()
+    );
+    let binary = WorkspacePath::parse("binary.bin").unwrap();
+    assert_eq!(
+        repository
+            .read_skill_bytes(&global_scope(), "test-skill", &binary, 2)
+            .await
+            .unwrap(),
+        [255, 0],
+    );
+    assert!(
+        repository
+            .read_skill_bytes(&global_scope(), "test-skill", &binary, 1)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        repository
+            .skill_metadata(&global_scope(), "test-skill", Some(&binary))
+            .await
+            .unwrap()
+            .bytes,
+        2,
+    );
+    let empty = WorkspacePath::parse("empty").unwrap();
+    assert!(
+        repository
+            .read_skill_dir(&global_scope(), "test-skill", Some(&empty), 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let text = WorkspacePath::parse("references/a.md").unwrap();
+    assert_eq!(
+        repository
+            .read_skill_bytes(&global_scope(), "test-skill", &text, 8)
+            .await
+            .unwrap(),
+        b"{{char}}",
+    );
+    repository
+        .write_skill_file(SkillWriteRequest {
+            scope: global_scope(),
+            name: "test-skill".into(),
+            path: text.as_str().into(),
+            content: "updated".into(),
+            expected_sha256: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .read_skill_bytes(&global_scope(), "test-skill", &text, 8)
+            .await
+            .unwrap(),
+        b"updated",
+    );
+    repository
+        .delete_skill(global_scope(), "test-skill")
+        .await
+        .unwrap();
+    // A leftover directory is not an installed package without its index entry.
+    tokio_fs::create_dir_all(installed.join("references"))
+        .await
+        .unwrap();
+    tokio_fs::write(installed.join(text.as_str()), "orphan")
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository
+            .read_skill_bytes(&global_scope(), "test-skill", &text, 8)
+            .await,
+        Err(DomainError::NotFound(_))
+    ));
+    tokio_fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -195,7 +326,7 @@ async fn discovers_nested_skill_collections_in_directories_and_archives() {
     }
 
     let repository_root = temp_root("discover-repository");
-    let repository = FileSkillRepository::new(repository_root.clone());
+    let repository = test_repository(repository_root.clone());
     let directory_inputs = repository
         .discover_imports(SkillImportInput::Directory {
             path: source_root.to_string_lossy().into_owned(),
@@ -273,7 +404,7 @@ async fn discovers_nested_skill_collections_in_directories_and_archives() {
 #[tokio::test]
 async fn large_skill_reads_return_a_line_preview() {
     let root = temp_root("read-budget");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let long_content = "a".repeat(120_000);
     repository
         .install_import(SkillInstallRequest {
@@ -286,7 +417,6 @@ async fn large_skill_reads_return_a_line_preview() {
 
     let default_read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/long.md".to_string(),
@@ -304,7 +434,6 @@ async fn large_skill_reads_return_a_line_preview() {
 
     let profile_sized_read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/long.md".to_string(),
@@ -324,7 +453,7 @@ async fn large_skill_reads_return_a_line_preview() {
 #[tokio::test]
 async fn write_skill_file_rejects_stale_expected_hash() {
     let root = temp_root("write-stale");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -348,7 +477,6 @@ async fn write_skill_file_rejects_stale_expected_hash() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -366,7 +494,7 @@ async fn write_skill_file_rejects_stale_expected_hash() {
 #[tokio::test]
 async fn write_skill_file_rejects_skill_rename() {
     let root = temp_root("write-rename");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -390,7 +518,6 @@ async fn write_skill_file_rejects_skill_rename() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "SKILL.md".to_string(),
@@ -408,7 +535,7 @@ async fn write_skill_file_rejects_skill_rename() {
 #[tokio::test]
 async fn requires_explicit_replace_on_conflict() {
     let root = temp_root("conflict");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -444,7 +571,7 @@ async fn requires_explicit_replace_on_conflict() {
 #[tokio::test]
 async fn allows_same_skill_name_in_different_scopes() {
     let root = temp_root("scoped-same-name");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -464,7 +591,6 @@ async fn allows_same_skill_name_in_different_scopes() {
 
     let global = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -476,7 +602,6 @@ async fn allows_same_skill_name_in_different_scopes() {
         .expect("read global skill");
     let profile = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -520,7 +645,7 @@ async fn allows_same_skill_name_in_different_scopes() {
 #[tokio::test]
 async fn moves_skill_between_scopes() {
     let root = temp_root("move-scope");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -558,7 +683,6 @@ async fn moves_skill_between_scopes() {
     );
     let read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -576,7 +700,7 @@ async fn moves_skill_between_scopes() {
 #[tokio::test]
 async fn move_skill_recovers_matching_orphan_target() {
     let root = temp_root("move-recover-matching-orphan");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     for scope in [preset_scope("openai", "Writer"), global_scope()] {
         repository
             .install_import(SkillInstallRequest {
@@ -624,7 +748,7 @@ async fn move_skill_recovers_matching_orphan_target() {
 #[tokio::test]
 async fn move_skill_recovers_different_orphan_as_explicit_conflict() {
     let root = temp_root("move-recover-different-orphan");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Writer"),
@@ -682,7 +806,7 @@ async fn move_skill_recovers_different_orphan_as_explicit_conflict() {
 #[tokio::test]
 async fn move_skill_succeeds_when_source_cleanup_fails_after_commit() {
     let root = temp_root("move-cleanup-fail");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -732,7 +856,7 @@ async fn move_skill_succeeds_when_source_cleanup_fails_after_commit() {
 #[tokio::test]
 async fn install_rolls_back_target_when_index_save_fails() {
     let root = temp_root("install-save-fail");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .list_skills(global_filter())
         .await
@@ -776,7 +900,7 @@ async fn install_rolls_back_target_when_index_save_fails() {
 #[tokio::test]
 async fn move_replace_rolls_back_target_when_index_save_fails() {
     let root = temp_root("move-replace-save-fail");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -813,7 +937,6 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
     );
     let source = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -825,7 +948,6 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
         .expect("read source");
     let target = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -844,7 +966,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
 #[tokio::test]
 async fn retargets_preset_scope_and_source_refs() {
     let root = temp_root("retarget-preset");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -912,7 +1034,6 @@ async fn retargets_preset_scope_and_source_refs() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: preset_scope("openai", "New"),
             name: "preset-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -930,7 +1051,7 @@ async fn retargets_preset_scope_and_source_refs() {
 #[tokio::test]
 async fn retarget_recovers_matching_orphan_target() {
     let root = temp_root("retarget-recover-matching-orphan");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     for scope in [preset_scope("openai", "Old"), preset_scope("openai", "New")] {
         repository
             .install_import(SkillInstallRequest {
@@ -979,7 +1100,7 @@ async fn retarget_recovers_matching_orphan_target() {
 #[tokio::test]
 async fn retarget_rejects_different_target_content() {
     let root = temp_root("retarget-conflict");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1033,7 +1154,7 @@ async fn retarget_rejects_different_target_content() {
 #[tokio::test]
 async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
     let root = temp_root("retarget-save-fail");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1095,7 +1216,7 @@ async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
 #[tokio::test]
 async fn retarget_succeeds_when_source_cleanup_fails_after_index_commit() {
     let root = temp_root("retarget-cleanup-fail");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1145,7 +1266,7 @@ async fn retarget_succeeds_when_source_cleanup_fails_after_index_commit() {
 #[tokio::test]
 async fn retargets_character_scope() {
     let root = temp_root("retarget-character");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: character_scope("Aurelia"),
@@ -1190,7 +1311,7 @@ async fn retargets_character_scope() {
 #[tokio::test]
 async fn deletes_skill_when_last_linked_source_is_deleted() {
     let root = temp_root("delete-source-last");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1230,7 +1351,7 @@ async fn deletes_skill_when_last_linked_source_is_deleted() {
 #[tokio::test]
 async fn keeps_skill_until_all_linked_sources_are_deleted() {
     let root = temp_root("delete-source-shared");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1285,7 +1406,7 @@ async fn keeps_skill_until_all_linked_sources_are_deleted() {
 #[tokio::test]
 async fn replacing_skill_drops_previous_source_links() {
     let root = temp_root("replace-source-links");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1327,7 +1448,7 @@ async fn replacing_skill_drops_previous_source_links() {
 #[tokio::test]
 async fn rejects_invalid_sidecar_schema() {
     let root = temp_root("sidecar");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let error = repository
         .preview_import(
             inline_skill(
@@ -1353,7 +1474,7 @@ async fn rejects_invalid_sidecar_schema() {
 #[tokio::test]
 async fn exported_skill_archive_can_be_reimported() {
     let root = temp_root("export");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1374,7 +1495,7 @@ async fn exported_skill_archive_can_be_reimported() {
         .expect("write archive");
 
     let second_root = temp_root("reimport");
-    let second_repository = FileSkillRepository::new(second_root.clone());
+    let second_repository = test_repository(second_root.clone());
     let preview = second_repository
         .preview_import(
             SkillImportInput::ArchiveFile {
@@ -1432,7 +1553,7 @@ async fn migrates_v1_unscoped_index_to_global_scope() {
     .await
     .expect("write v1 index");
 
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let listed = repository
         .list_skills(global_filter())
         .await
@@ -1501,7 +1622,7 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
     .await
     .expect("write v1 index");
 
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let error = repository
         .list_skills(global_filter())
         .await
@@ -1524,46 +1645,6 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
         .await
         .expect("read index");
     assert!(index_text.contains("\"version\": 1"));
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-async fn install_skill_with_scripts(repository: &FileSkillRepository) {
-    use tt_domain::models::skill::SkillInstallAction;
-
-    let result = repository
-        .install_import(SkillInstallRequest {
-            target_scope: global_scope(),
-            input: inline_skill(
-                "scripted-skill",
-                vec![("scripts/helper.js", "export const answer = 42;")],
-            ),
-            conflict_strategy: None,
-        })
-        .await
-        .expect("install skill");
-    assert_eq!(result.action, SkillInstallAction::Installed);
-}
-
-#[tokio::test]
-async fn read_skill_script_rejects_paths_outside_scripts_dir() {
-    let root = temp_root("read-skill-script-escape");
-    let repository = FileSkillRepository::new(root.clone());
-    install_skill_with_scripts(&repository).await;
-
-    for bad_path in ["SKILL.md", "../outside.js", "scripts/../../escape.js"] {
-        let error = repository
-            .read_skill_script(global_scope(), "scripted-skill", bad_path)
-            .await
-            .expect_err("path outside scripts/ must be rejected");
-        assert!(
-            matches!(
-                error,
-                DomainError::InvalidData(_) | DomainError::NotFound(_)
-            ),
-            "unexpected error for {bad_path}: {error:?}"
-        );
-    }
 
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1605,7 +1686,7 @@ async fn migrate_v1_accepts_previously_moved_global_dir() {
     .await
     .expect("write v1 index");
 
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let listed = repository
         .list_skills(global_filter())
         .await
@@ -1665,7 +1746,7 @@ async fn migrate_v1_rejects_target_inside_legacy_source() {
     .await
     .expect("write v1 index");
 
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     let error = repository
         .list_skills(global_filter())
         .await
@@ -1693,7 +1774,7 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
     use std::os::unix::fs::symlink;
 
     let root = temp_root("symlink-escape");
-    let repository = FileSkillRepository::new(root.clone());
+    let repository = test_repository(root.clone());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1718,7 +1799,6 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
 
     let error = repository
         .read_skill_file(SkillReadRequest {
-            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -1730,5 +1810,117 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
         .expect_err("symlink escape should fail");
     assert!(error.to_string().contains("escapes installed directory"));
 
+    let escaped = WorkspacePath::parse("references/a.md").unwrap();
+    assert!(
+        repository
+            .skill_metadata(&global_scope(), "test-skill", Some(&escaped))
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .read_skill_dir(
+                &global_scope(),
+                "test-skill",
+                Some(&WorkspacePath::parse("references").unwrap()),
+                10,
+            )
+            .await
+            .is_err()
+    );
+
     tokio_fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn bundled_skills_are_valid_packages() {
+    let root = temp_root("builtin-packages");
+    let builtin_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../default/skills");
+    let directory_count = std::fs::read_dir(&builtin_root)
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().file_type().unwrap().is_dir())
+        .count();
+    let repository = FileSkillRepository::new(root.clone(), builtin_root);
+    let skills = repository
+        .list_skills(SkillScopeFilter::Builtin)
+        .await
+        .unwrap();
+    assert_eq!(skills.len(), directory_count);
+    assert!(skills.iter().any(|skill| skill.name == "tt-docs"));
+    assert!(
+        skills
+            .iter()
+            .all(|skill| skill.scope == SkillScope::Builtin)
+    );
+    assert!(
+        repository
+            .list_skills(SkillScopeFilter::All)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    tokio_fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn builtin_skills_reject_mutations_without_changing_files() {
+    let root = temp_root("builtin-read-only");
+    let builtin_root = root.join("builtin");
+    let skill_root = builtin_root.join("test-skill");
+    tokio_fs::create_dir_all(&skill_root).await.unwrap();
+    let content =
+        "---\nname: test-skill\ndescription: Test built-in read-only behavior.\n---\n\n{{char}}\n";
+    tokio_fs::write(skill_root.join("SKILL.md"), content)
+        .await
+        .unwrap();
+    let repository = FileSkillRepository::new(root.join("user"), builtin_root);
+    let before = repository
+        .list_skills(SkillScopeFilter::Builtin)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .write_skill_file(SkillWriteRequest {
+                scope: SkillScope::Builtin,
+                name: "test-skill".into(),
+                path: "SKILL.md".into(),
+                content: "changed".into(),
+                expected_sha256: None,
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .delete_skill(SkillScope::Builtin, "test-skill")
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .install_import(SkillInstallRequest {
+                target_scope: SkillScope::Builtin,
+                input: inline_skill("test-skill", vec![]),
+                conflict_strategy: Some(SkillInstallConflictStrategy::Replace),
+            })
+            .await
+            .is_err()
+    );
+    let after = package::validate_skill_root(&skill_root, Value::Null)
+        .unwrap()
+        .entry;
+    assert_eq!(before[0].installed_hash, after.installed_hash);
+    let read = repository
+        .read_skill_file(SkillReadRequest {
+            scope: SkillScope::Builtin,
+            name: "test-skill".into(),
+            path: "SKILL.md".into(),
+            start_line: None,
+            line_count: None,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
+        })
+        .await
+        .unwrap();
+    assert_eq!(read.content, content);
+    tokio_fs::remove_dir_all(root).await.unwrap();
 }

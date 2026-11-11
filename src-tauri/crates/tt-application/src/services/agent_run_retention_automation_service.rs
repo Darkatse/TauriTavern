@@ -184,17 +184,21 @@ mod tests {
         AgentRun {
             id: id.to_string(),
             workspace_id: "chat_auto_prune".to_string(),
-            stable_chat_id: "stable_auto_prune".to_string(),
-            chat_ref: AgentChatRef::Character {
-                character_id: "Seraphina".to_string(),
-                file_name: "Seraphina.png".to_string(),
-            },
-            generation_type: "normal".to_string(),
+            target: tt_domain::models::agent::AgentRunTarget::Chat(
+                tt_domain::models::agent::AgentChatRunTarget {
+                    stable_chat_id: "stable_auto_prune".to_string(),
+                    chat_ref: AgentChatRef::Character {
+                        character_id: "Seraphina".to_string(),
+                        file_name: "Seraphina.png".to_string(),
+                    },
+                    generation_type: "normal".to_string(),
+                    skill_scope_refs: AgentRunSkillScopeRefs::default(),
+                    persist_base_state_id: None,
+                    input_message_count: Some(1),
+                    presentation: AgentRunPresentation::Background,
+                },
+            ),
             profile_id: None,
-            skill_scope_refs: AgentRunSkillScopeRefs::default(),
-            persist_base_state_id: None,
-            input_message_count: Some(1),
-            presentation: AgentRunPresentation::Background,
             status: AgentRunStatus::Completed,
             created_at: instant("2026-01-01T00:00:00Z"),
             updated_at: instant("2026-01-01T00:05:00Z"),

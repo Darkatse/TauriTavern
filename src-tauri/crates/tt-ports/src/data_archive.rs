@@ -82,10 +82,6 @@ pub trait DataArchiveFileGateway: Send + Sync {
     ) -> Result<UserBackupArchiveTarget, DomainError>;
     fn cleanup_directory(&self, path: &Path);
     fn cleanup_export(&self, archive_path: &Path) -> Result<(), DomainError>;
-    fn save_export(&self, archive_path: &Path, file_name: &str) -> Result<PathBuf, DomainError>;
-    fn save_user_backup(&self, archive_path: &str, file_name: &str)
-    -> Result<PathBuf, DomainError>;
-    fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError>;
 }
 
 #[async_trait]

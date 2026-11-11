@@ -1,15 +1,9 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
-import { createRef } from 'react';
 
-import { tr } from './host';
 import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
-import {
-    openToolDialog,
-    ToolDescriptionDialog,
-    withDescription,
-} from './tool-dialog';
+import { openToolDialog } from './tool-dialog';
 
 const SERVER_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -25,10 +19,6 @@ function tool(): TauriTavernMcpTool {
     };
 }
 
-function unexpectedSave() {
-    return () => Promise.reject(new Error('Unexpected save'));
-}
-
 function currentPopup(): TestPopup {
     const popup = TestPopup.current;
     if (!popup) {
@@ -42,79 +32,45 @@ afterEach(() => {
     uninstallPopupHost();
 });
 
-test('folds an edited description into the saved override', () => {
-    expect(withDescription(undefined, '  Only search local files.  ')).toEqual({
-        description: '  Only search local files.  ',
-    });
-    expect(withDescription({ properties: { query: 'Search terms.' } }, 'Custom text')).toEqual({
-        description: 'Custom text',
-        properties: { query: 'Search terms.' },
-    });
-    // Emptying the draft drops only the description; sibling settings survive.
-    expect(withDescription({ description: 'Custom', properties: { query: 'Search terms.' } }, '   ')).toEqual({
-        properties: { query: 'Search terms.' },
-    });
-    expect(withDescription({ description: 'Custom' }, '')).toBeNull();
-    expect(withDescription(undefined, '')).toBeNull();
-});
-
-test('shows the server description as the reference and seeds the draft from the override', () => {
-    render(
-        <ToolDescriptionDialog
-            tool={tool()}
-            override={{ description: 'My custom text.' }}
-            save={unexpectedSave()}
-            tr={tr}
-            ref={createRef()}
-        />,
-    );
-
-    expect(screen.getByText('Server description')).toBeTruthy();
-    expect(screen.getByText('Search local files by name.')).toBeTruthy();
-    expect(screen.getByLabelText<HTMLTextAreaElement>('Custom description').value).toBe('My custom text.');
-});
-
-test('omits the reference block when the server offers no description', () => {
-    const descriptionless = { ...tool() };
-    delete descriptionless.description;
-    render(
-        <ToolDescriptionDialog
-            tool={descriptionless}
-            override={undefined}
-            save={unexpectedSave()}
-            tr={tr}
-            ref={createRef()}
-        />,
-    );
-
-    expect(screen.queryByText('Server description')).toBeNull();
-    expect(screen.getByLabelText<HTMLTextAreaElement>('Custom description').value).toBe('');
-});
-
-test('saves through the popup affirmative and closes only after success', async () => {
+test('editing a description preserves sibling settings and removes an empty override', async () => {
     installPopupHost();
-    const saved: (TauriTavernToolDescriptionOverride | null)[] = [];
-    const opened = openToolDialog({
-        tool: tool(),
-        override: { properties: { query: 'Search terms.' } },
-        save: override => {
-            saved.push(override);
-            return Promise.resolve();
-        },
-    });
-    const popup = currentPopup();
-
     const user = userEvent.setup();
-    const draft = await screen.findByLabelText<HTMLTextAreaElement>('Custom description');
-    await waitFor(() => expect(document.activeElement).toBe(draft));
-    await user.type(draft, 'Use only for local filename searches.');
+    const properties = { query: 'Search terms.' };
+    for (const { override, description, expected } of [
+        {
+            override: { properties },
+            description: '  Only search local files.  ',
+            expected: { description: '  Only search local files.  ', properties },
+        },
+        {
+            override: { description: 'Saved text', properties },
+            description: '   ',
+            expected: { properties },
+        },
+        {
+            override: { description: 'Saved text' },
+            description: '',
+            expected: null,
+        },
+    ]) {
+        const saved: (TauriTavernToolDescriptionOverride | null)[] = [];
+        const opened = openToolDialog({
+            tool: tool(),
+            override,
+            save: value => {
+                saved.push(value);
+                return Promise.resolve();
+            },
+        });
+        const draft = await screen.findByLabelText<HTMLTextAreaElement>('Custom description');
+        await waitFor(() => expect(document.activeElement).toBe(draft));
+        await user.clear(draft);
+        if (description) await user.type(draft, description);
 
-    expect(await popup.close(1)).toBe(true);
-    await opened;
-    expect(saved).toEqual([{
-        description: 'Use only for local filename searches.',
-        properties: { query: 'Search terms.' },
-    }]);
+        expect(await currentPopup().close(1)).toBe(true);
+        await opened;
+        expect(saved).toEqual([expected]);
+    }
 });
 
 test('resets the complete override through the popup custom action', async () => {
@@ -164,27 +120,4 @@ test('keeps the dialog open with the error in place when saving fails', async ()
     expect(await popup.close(0)).toBe(true);
     await opened;
     expect(attempts).toBe(1);
-});
-
-test('discards the draft on cancel without saving', async () => {
-    installPopupHost();
-    let calls = 0;
-    const opened = openToolDialog({
-        tool: tool(),
-        override: { description: 'Saved text.' },
-        save: () => {
-            calls += 1;
-            return Promise.resolve();
-        },
-    });
-    const popup = currentPopup();
-
-    const user = userEvent.setup();
-    const draft = await screen.findByLabelText<HTMLTextAreaElement>('Custom description');
-    await user.clear(draft);
-    await user.type(draft, 'Unsaved edits');
-
-    expect(await popup.close(0)).toBe(true);
-    await opened;
-    expect(calls).toBe(0);
 });

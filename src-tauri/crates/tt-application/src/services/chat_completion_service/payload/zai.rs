@@ -10,14 +10,10 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     let reasoning_effort = payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(|value| map_zai_reasoning_effort(model, value))
+        .map(map_zai_reasoning_effort)
         .transpose()?
         .flatten();
 

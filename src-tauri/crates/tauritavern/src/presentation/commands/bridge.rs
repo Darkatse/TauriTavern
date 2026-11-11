@@ -8,7 +8,7 @@ use crate::presentation::errors::CommandError;
 #[cfg(any(dev, debug_assertions))]
 use crate::presentation::web_resources::tauri_resource_adapter::serve_dev_ipc_resource_from_app;
 
-const SILLYTAVERN_COMPAT_VERSION: &str = "1.18.0";
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.19.0";
 use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,11 +59,6 @@ pub struct VersionInfo {
 }
 
 #[tauri::command]
-pub fn get_version() -> Result<String, CommandError> {
-    Ok(crate::product::VERSION.to_string())
-}
-
-#[tauri::command]
 pub fn get_client_version() -> Result<VersionInfo, CommandError> {
     log_command("get_client_version");
 
@@ -82,11 +77,6 @@ pub fn get_client_version() -> Result<VersionInfo, CommandError> {
     };
 
     Ok(version_info)
-}
-
-#[tauri::command]
-pub fn is_ready() -> Result<bool, CommandError> {
-    Ok(true)
 }
 
 #[cfg(any(dev, debug_assertions))]
@@ -200,7 +190,7 @@ fn get_notification_permission_state_inner(
     Ok(normalize_notification_permission_state(current_state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_notification_permission_state(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
@@ -208,7 +198,7 @@ pub fn get_notification_permission_state(
     get_notification_permission_state_inner(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn request_notification_permission(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
@@ -231,7 +221,7 @@ pub fn request_notification_permission(
     Ok(normalize_notification_permission_state(requested_state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn show_system_notification(
     app: tauri::AppHandle,
     dto: ShowSystemNotificationDto,

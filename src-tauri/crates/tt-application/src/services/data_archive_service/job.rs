@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::dto::data_archive_dto::{
-    DATA_ARCHIVE_ARTIFACT_AVAILABLE, DATA_ARCHIVE_ARTIFACT_DISPOSED, DATA_ARCHIVE_ARTIFACT_MISSING,
-    DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_STATE_CANCELLED, DATA_ARCHIVE_STATE_COMPLETED,
-    DATA_ARCHIVE_STATE_FAILED, DATA_ARCHIVE_STATE_PENDING, DATA_ARCHIVE_STATE_RUNNING,
-    DataArchiveJobResult, DataArchiveJobStatus,
+    DATA_ARCHIVE_ARTIFACT_AVAILABLE, DATA_ARCHIVE_ARTIFACT_DISPOSED, DATA_ARCHIVE_KIND_EXPORT,
+    DATA_ARCHIVE_STATE_CANCELLED, DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED,
+    DATA_ARCHIVE_STATE_PENDING, DATA_ARCHIVE_STATE_RUNNING, DataArchiveJobResult,
+    DataArchiveJobStatus,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::data_archive::DataArchiveLocalMutationSummary;
@@ -162,7 +162,6 @@ impl DataArchiveJobHandle {
                 file_name: None,
                 archive_path: None,
                 artifact_state: None,
-                saved_path: None,
             });
             status.error = None;
             status.local_applied = None;
@@ -188,7 +187,6 @@ impl DataArchiveJobHandle {
                 file_name: Some(file_name),
                 archive_path: Some(archive_path.to_string_lossy().to_string()),
                 artifact_state: Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE.to_string()),
-                saved_path: None,
             });
             status.error = None;
             status.local_applied = None;
@@ -252,25 +250,11 @@ impl DataArchiveJobHandle {
         })
     }
 
-    pub(crate) fn mark_export_artifact_disposed(
-        &self,
-        saved_target: Option<String>,
-    ) -> Result<(), DomainError> {
+    pub(crate) fn mark_export_artifact_disposed(&self) -> Result<(), DomainError> {
         self.clear_export_artifact_path()?;
         self.update_status(|status| {
             if let Some(result) = status.result.as_mut() {
                 result.artifact_state = Some(DATA_ARCHIVE_ARTIFACT_DISPOSED.to_string());
-                result.saved_path = saved_target;
-            }
-        })
-    }
-
-    pub(crate) fn mark_export_artifact_missing(&self) -> Result<(), DomainError> {
-        self.clear_export_artifact_path()?;
-        self.update_status(|status| {
-            if let Some(result) = status.result.as_mut() {
-                result.artifact_state = Some(DATA_ARCHIVE_ARTIFACT_MISSING.to_string());
-                result.saved_path = None;
             }
         })
     }
@@ -286,10 +270,7 @@ impl DataArchiveJobHandle {
 
         if let Some(result) = status.result.as_ref() {
             let artifact_state = result.artifact_state.as_deref();
-            if matches!(
-                artifact_state,
-                Some(DATA_ARCHIVE_ARTIFACT_DISPOSED | DATA_ARCHIVE_ARTIFACT_MISSING)
-            ) {
+            if matches!(artifact_state, Some(DATA_ARCHIVE_ARTIFACT_DISPOSED)) {
                 return Ok(None);
             }
             if status.state == DATA_ARCHIVE_STATE_COMPLETED {
@@ -316,19 +297,6 @@ impl DataArchiveJobHandle {
             DomainError::InternalError("Failed to lock export artifact path".to_string())
         })?;
         Ok(path.take())
-    }
-
-    pub(super) fn restore_export_artifact_path(
-        &self,
-        artifact_path: PathBuf,
-    ) -> Result<(), DomainError> {
-        let mut path = self.export_artifact_path.lock().map_err(|_| {
-            DomainError::InternalError("Failed to lock export artifact path".to_string())
-        })?;
-        if path.is_none() {
-            *path = Some(artifact_path);
-        }
-        Ok(())
     }
 
     pub(crate) fn clear_export_artifact_path(&self) -> Result<(), DomainError> {

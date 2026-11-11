@@ -2,14 +2,16 @@ use std::io;
 use std::path::Path;
 
 use tokio::fs;
+use tokio::io::BufReader;
 use tt_domain::errors::DomainError;
 
-use crate::chat_format_importers::validate_chat_jsonl_header_line;
+use crate::chat_format_importers::validate_import_header;
+use crate::chat_jsonl::read_header_record_async;
 use crate::file_system::move_file_no_replace_with_fallback;
 
 use super::FileChatRepository;
 use super::backup_codec::restore_staging_file_name;
-use super::windowed_payload_io::read_first_line_and_end_offset;
+use super::windowed_payload_io::open_existing_payload_file;
 
 impl FileChatRepository {
     pub(super) async fn restore_character_chat_backup_file(
@@ -71,23 +73,27 @@ impl FileChatRepository {
     }
 
     async fn create_restore_staging_path(&self) -> Result<std::path::PathBuf, DomainError> {
-        fs::create_dir_all(&self.chat_commit_staging_dir)
+        fs::create_dir_all(self.chat_commit_sessions.directory())
             .await
             .map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to create chat restore staging directory {}: {error}",
-                    self.chat_commit_staging_dir.display()
+                    self.chat_commit_sessions.directory().display()
                 ))
             })?;
         Ok(self
-            .chat_commit_staging_dir
+            .chat_commit_sessions
+            .directory()
             .join(restore_staging_file_name()))
     }
 }
 
 async fn validate_restored_character_chat(path: &Path) -> Result<(), DomainError> {
-    let (header, _) = read_first_line_and_end_offset(path).await?;
-    validate_chat_jsonl_header_line(&header)
+    let mut reader = BufReader::new(open_existing_payload_file(path).await?);
+    let (header, _) = read_header_record_async(&mut reader)
+        .await?
+        .ok_or_else(|| DomainError::InvalidData("Chat backup has no header".to_string()))?;
+    validate_import_header(&header)
 }
 
 async fn remove_restore_stage(path: &Path) {

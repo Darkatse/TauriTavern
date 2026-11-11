@@ -22,7 +22,7 @@ import {
 } from './model-target-connection';
 import { openAgentRunTimelineDialog } from './run-timeline-panel';
 import { loadSettings, patchSettings } from './settings-store';
-import { downloadBlobWithRuntime } from '../../../file-export.js';
+import { deliverBlob } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { subscribeLlmConnectionsChanged } from '../../../tauritavern/agent/llm-connection-events.js';
 import { resumeAgentRun } from '../../../tauritavern/agent/agent-run-retry.js';
@@ -55,13 +55,9 @@ async function currentChatRunFilter(): Promise<{ chatRef: TauriTavernChatRef; st
     if (!plainObject(chatRef)) {
         throw new Error('agent.run_history_current_chat_invalid: current chat ref must be an object');
     }
-    const stableChatIdValue = await chat.current.handle().stableId();
-    if (typeof stableChatIdValue !== 'string') {
-        throw new Error('agent.run_history_current_chat_invalid: stableChatId must be a string');
-    }
-    const stableChatId = stableChatIdValue.trim();
-    if (!stableChatId) {
-        throw new Error('agent.run_history_current_chat_invalid: stableChatId is required');
+    const stableChatId = await chat.current.handle().stableId();
+    if (typeof stableChatId !== 'string' || stableChatId.length === 0) {
+        throw new Error('agent.run_history_current_chat_invalid: stableChatId must be a non-empty string');
     }
     return { chatRef, stableChatId };
 }
@@ -96,7 +92,6 @@ export function openAgentSystemPanel(): void {
         throw new Error(tr('agentSystemDialogUnsupported'));
     }
     dialog.className = 'ttas-dialog';
-    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
     const mount = document.createElement('div');
     mount.className = 'ttas-popup-mount';
     dialog.appendChild(mount);
@@ -139,12 +134,12 @@ export function openAgentSystemPanel(): void {
         loadSettings,
         patchSettings,
         getProfilesApi: () => requireAgentApi().profiles,
-        listTools: async () => {
+        listTools: async (options) => {
             const api = requireAgentApi().tools;
             if (typeof api?.list !== 'function') {
                 throw new Error(tr('hostAgentToolApiUnavailable'));
             }
-            const result = await api.list();
+            const result = await api.list(options);
             return {
                 tools: result.tools,
                 diagnostics: Array.isArray(result.diagnostics) ? result.diagnostics : [],
@@ -157,9 +152,7 @@ export function openAgentSystemPanel(): void {
         subscribeModelTargetsChanged: subscribeModelTargetChanges,
         subscribeLlmConnectionsChanged,
         confirmAction,
-        downloadBlob: (blob, fileName) => downloadBlobWithRuntime(blob, fileName, {
-            fallbackName: 'agent-profile.json',
-        }),
+        downloadBlob: (blob, fileName) => deliverBlob(blob, fileName),
         notifyError: reportAgentSystemError,
         notifyWarning: (message) => window.toastr?.warning?.(message),
         notifySuccess: (message) => window.toastr?.success?.(message),

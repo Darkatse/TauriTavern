@@ -142,58 +142,6 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         return textResponse('ok');
     });
 
-    router.post('/api/characters/lorebook-conflict', async ({ body }) => {
-        const avatar = pickAvatarIdentity(body);
-        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
-        if (resolved.responseBody) {
-            return jsonResponse(resolved.responseBody, 400);
-        }
-
-        const characterId = resolved.characterId;
-        if (!characterId) {
-            return jsonResponse({ error: 'Character not found' }, 404);
-        }
-
-        const result = await context.safeInvoke('check_character_lorebook_conflict', {
-            dto: { name: characterId },
-        });
-
-        return jsonResponse(result);
-    });
-
-    router.post('/api/characters/resolve-lorebook-conflict', async ({ body }) => {
-        const avatar = pickAvatarIdentity(body);
-        const resolution = typeof body?.resolution === 'string' ? body.resolution : '';
-        const conflictToken = typeof body?.conflict_token === 'string' ? body.conflict_token : '';
-        if (!['current', 'embedded', 'copy'].includes(resolution)) {
-            return jsonResponse({ error: 'Invalid lorebook conflict resolution' }, 400);
-        }
-        if (resolution === 'copy' && !conflictToken) {
-            return jsonResponse({ error: 'Missing lorebook conflict token' }, 400);
-        }
-
-        const resolved = await resolveRouteCharacterId(context, { avatar, fallbackName: body?.name });
-        if (resolved.responseBody) {
-            return jsonResponse(resolved.responseBody, 400);
-        }
-
-        const characterId = resolved.characterId;
-        if (!characterId) {
-            return jsonResponse({ error: 'Character not found' }, 404);
-        }
-
-        const result = await context.safeInvoke('resolve_character_lorebook_conflict', {
-            dto: {
-                name: characterId,
-                resolution,
-                conflict_token: conflictToken || null,
-            },
-        });
-
-        context.invalidateCharacterCache();
-        return jsonResponse(result);
-    });
-
     router.post('/api/characters/edit-avatar', async ({ body, url }) => {
         if (!(body instanceof FormData)) {
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
@@ -374,14 +322,12 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        const payload = normalizeBinaryPayload(exported?.data);
+        const payload = normalizeBinaryPayload(exported);
         if (normalizedFormat === 'png' && payload.byteLength === 0) {
             return jsonResponse({ error: 'Character export payload is empty' }, 500);
         }
 
-        const contentType = String(
-            exported?.mime_type || (normalizedFormat === 'png' ? 'image/png' : 'application/json'),
-        );
+        const contentType = normalizedFormat === 'png' ? 'image/png' : 'application/json';
         const fallbackName = `${characterId}.${normalizedFormat}`;
         const rawDownloadName = String(avatar || fallbackName).replace(/\.png$/i, `.${normalizedFormat}`);
         const downloadName = sanitizeAttachmentFileName(rawDownloadName, fallbackName);

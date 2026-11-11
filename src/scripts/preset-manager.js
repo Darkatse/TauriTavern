@@ -24,7 +24,7 @@ import { t } from './i18n.js';
 import { instruct_presets } from './instruct-mode.js';
 import { kai_settings } from './kai-settings.js';
 import { convertNovelPreset } from './nai-settings.js';
-import { oai_settings, openai_setting_names, openai_settings } from './openai.js';
+import { getPresetApplicationPromise, oai_settings, openai_setting_names, openai_settings } from './openai.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
 import { context_presets, getContextSettings, power_user } from './power-user.js';
 import { reasoning_templates } from './reasoning.js';
@@ -60,7 +60,7 @@ function buildPortablePresetForExport(preset) {
 /**
  * Automatically select a preset for current API based on character or group name.
  */
-function autoSelectPreset() {
+async function autoSelectPreset() {
     const presetManager = getPresetManager();
 
     if (!presetManager) {
@@ -85,7 +85,7 @@ function autoSelectPreset() {
 
     if (preset !== undefined && preset !== null) {
         console.log(`Preset found for API: ${main_api}, name: ${name}`);
-        presetManager.selectPreset(preset);
+        await presetManager.selectPreset(preset);
     }
 }
 
@@ -420,14 +420,19 @@ class PresetManager {
 
     /**
      * Selects a preset by option value.
+     * Chat Completion settings apply asynchronously; wait before running follow-up commands.
      * @param {string} value Preset option value
+     * @returns {Promise<void>}
      */
-    selectPreset(value) {
+    async selectPreset(value) {
         const option = $(this.select).filter(function () {
             return $(this).val() === value;
         });
         option.prop('selected', true);
         $(this.select).val(value).trigger('change');
+        if (this.apiId === 'openai') {
+            await getPresetApplicationPromise();
+        }
     }
 
     /**
@@ -965,7 +970,7 @@ async function presetCommandCallback(_, name) {
             const presetValue = presetManager.findPreset(exactMatch);
 
             if (presetValue) {
-                presetManager.selectPreset(presetValue);
+                await presetManager.selectPreset(presetValue);
                 shouldReconnect && await waitForConnection();
             }
         }
@@ -988,7 +993,7 @@ async function presetCommandCallback(_, name) {
             console.log('Found fuzzy preset match', fuzzyPresetName);
 
             if (currentPreset !== fuzzyPresetName) {
-                presetManager.selectPreset(fuzzyPresetValue);
+                await presetManager.selectPreset(fuzzyPresetValue);
                 shouldReconnect && await waitForConnection();
             }
         }
@@ -1239,7 +1244,7 @@ export async function initPresetManager() {
             await presetManager.deletePreset();
             await presetManager.savePreset(name, data.preset);
             const option = presetManager.findPreset(name);
-            presetManager.selectPreset(option);
+            await presetManager.selectPreset(option);
             const successToast = !presetManager.isAdvancedFormatting() ? t`Default preset restored` : t`Default template restored`;
             toastr.success(successToast);
         } else {
@@ -1252,7 +1257,7 @@ export async function initPresetManager() {
             }
 
             const option = presetManager.findPreset(name);
-            presetManager.selectPreset(option);
+            await presetManager.selectPreset(option);
             const successToast = !presetManager.isAdvancedFormatting() ? t`Preset restored` : t`Template restored`;
             toastr.success(successToast);
         }

@@ -99,12 +99,6 @@ export const TOOL_GROUPS: readonly AgentToolGroup[] = Object.freeze([
         tools: ['builtin:chat.search', 'builtin:chat.read_messages', 'builtin:worldinfo.read_activated'],
     },
     {
-        id: 'skills',
-        labelKey: 'skillTools',
-        icon: 'fa-book-open',
-        tools: ['builtin:skill.list', 'builtin:skill.search', 'builtin:skill.read', 'builtin:skill.run_script'],
-    },
-    {
         id: 'workspace-read',
         labelKey: 'workspaceReadTools',
         icon: 'fa-folder-tree',
@@ -114,7 +108,7 @@ export const TOOL_GROUPS: readonly AgentToolGroup[] = Object.freeze([
         id: 'workspace-write',
         labelKey: 'workspaceWriteTools',
         icon: 'fa-pen-to-square',
-        tools: ['builtin:workspace.write_file', 'builtin:workspace.apply_patch'],
+        tools: ['builtin:workspace.write_file', 'builtin:workspace.apply_patch', 'builtin:workspace.shell'],
     },
     {
         id: 'control',
@@ -240,7 +234,7 @@ export type AgentSystemPanelControllerDeps = {
     ) => Promise<AgentSystemSettings>;
     // Resolve lazily so a missing Host API fails at the action that needs it.
     getProfilesApi: () => TauriTavernAgentProfilesApi;
-    listTools: () => Promise<{
+    listTools: (options?: { context?: TauriTavernAgentToolScope }) => Promise<{
         tools: TauriTavernAgentToolCatalogItem[];
         diagnostics: AgentToolCatalogDiagnostic[];
     }>;
@@ -251,7 +245,7 @@ export type AgentSystemPanelControllerDeps = {
     subscribeModelTargetsChanged: (listener: () => void) => () => void;
     subscribeLlmConnectionsChanged: (listener: () => void) => () => void;
     confirmAction: (message: string) => Promise<boolean>;
-    downloadBlob: (blob: Blob, fileName: string) => Promise<{ mode?: string; completed?: boolean } | undefined>;
+    downloadBlob: (blob: Blob, fileName: string) => Promise<{ delivered: boolean }>;
     notifyError: (error: unknown) => void;
     notifyWarning: (message: string) => void;
     notifySuccess: (message: string) => void;

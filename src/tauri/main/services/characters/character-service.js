@@ -2,6 +2,7 @@
 
 import {
     assertCharacterAvatarFileName,
+    characterAvatarFileNameFromStem,
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from './character-identity.js';
@@ -468,7 +469,7 @@ export function createCharacterService({ safeInvoke }) {
             // characterId is normally a storage stem; exact avatar filenames are accepted for callers that already have one.
         }
 
-        const pngName = `${key}.png`;
+        const pngName = characterAvatarFileNameFromStem(key);
         const byPng = characterByAvatar.get(pngName);
         if (byPng?.avatar) {
             return byPng.avatar;

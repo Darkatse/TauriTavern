@@ -84,6 +84,7 @@ function createLogitBiasListItem(entry, logitBias, containerSelector) {
     });
     template.find('.logit_bias_remove').on('click', function () {
         $(this).closest('.logit_bias_form').remove();
+        $(containerSelector).find('[id$="_logit_bias_new_entry"]').first().trigger('focus');
         const index = logitBias.indexOf(entry);
         if (index > -1) {
             logitBias.splice(index, 1);

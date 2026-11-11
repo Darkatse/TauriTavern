@@ -1,5 +1,7 @@
 // @ts-check
 
+import { getCurrentWindow, listen } from '../../../../tauri-bridge.js';
+
 /**
  * @typedef {(reason: string) => unknown | Promise<unknown>} LifecycleFlushHandler
  */
@@ -8,12 +10,17 @@ export const TAURI_GRACEFUL_EXIT_EVENT = 'tauritavern-graceful-exit-requested';
 
 /**
  * @param {{
- *   windowObject: Pick<Window, 'addEventListener' | 'removeEventListener' | '__TAURI__'>;
+ *   windowObject: Pick<Window, 'addEventListener' | 'removeEventListener'>;
  *   documentObject: Pick<Document, 'addEventListener' | 'removeEventListener' | 'visibilityState'>;
+ *   listen?: (event: string, handler: () => Promise<void>) => Promise<() => void>;
+ *   getCurrentWindow?: () => { destroy: () => Promise<void> };
  *   logger?: Pick<Console, 'error'>;
  * }} deps
  */
-export function createLifecycleFlushService({ windowObject, documentObject, logger = console }) {
+export function createLifecycleFlushService({
+    windowObject, documentObject, listen: listenNative = listen,
+    getCurrentWindow: currentWindow = getCurrentWindow, logger = console,
+}) {
     /** @type {Map<string, { handler: LifecycleFlushHandler; priority: number }>} */
     const handlers = new Map();
     let installed = false;
@@ -96,13 +103,7 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
     };
 
     function installNativeExitHandler() {
-        const tauriEvent = windowObject.__TAURI__?.event;
-        const tauriWindow = windowObject.__TAURI__?.window;
-        if (typeof tauriEvent?.listen !== 'function' || typeof tauriWindow?.getCurrentWindow !== 'function') {
-            return;
-        }
-
-        void tauriEvent.listen(TAURI_GRACEFUL_EXIT_EVENT, async () => {
+        void listenNative(TAURI_GRACEFUL_EXIT_EVENT, async () => {
             if (nativeExitPending) {
                 return;
             }
@@ -110,7 +111,7 @@ export function createLifecycleFlushService({ windowObject, documentObject, logg
             nativeExitPending = true;
             try {
                 await flush('tauri:exit-requested');
-                await tauriWindow.getCurrentWindow().destroy();
+                await currentWindow().destroy();
             } catch (error) {
                 nativeExitPending = false;
                 logger.error('Lifecycle flush failed; keeping the app open', error);

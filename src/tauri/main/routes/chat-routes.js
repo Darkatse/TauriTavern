@@ -9,10 +9,21 @@ import { resolveRouteCharacterId } from './character-route-utils.js';
 import { registerChatImportRoutes } from './chat-import-routes.js';
 import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
+import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
     registerChatImportRoutes(router, context, { jsonResponse });
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
+    const { createByteStream } = createReadableFileStreamService({
+        invoke: (...args) => context.invokeTransport(...args),
+    });
+
+    async function openChatResponse(target, allowNotFound) {
+        const rid = await context.invokeTransport('open_chat_payload_json', { target, allowNotFound });
+        return rid === null
+            ? jsonResponse([])
+            : new Response(createByteStream(rid), { headers: { 'Content-Type': 'application/json' } });
+    }
 
     router.post('/api/chats/get', async ({ body }) => {
         const allowNotFound = allowMissingChat(body);
@@ -32,13 +43,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            const payload = await loadCharacterChatPayload({
-                characterName: characterId,
-                avatarUrl: body?.avatar_url,
-                fileName,
-                allowNotFound,
-            });
-            return jsonResponse(payload);
+            return await openChatResponse({ kind: 'character', characterId, fileName }, allowNotFound);
         } catch (error) {
             return jsonResponse(
                 {
@@ -284,8 +289,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         }
 
         try {
-            const payload = await loadGroupChatPayload({ id, allowNotFound });
-            return jsonResponse(payload);
+            return await openChatResponse({ kind: 'group', chatId: context.stripJsonl(id) }, allowNotFound);
         } catch (error) {
             return jsonResponse(
                 {

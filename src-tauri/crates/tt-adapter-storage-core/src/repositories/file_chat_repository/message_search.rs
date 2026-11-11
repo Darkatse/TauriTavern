@@ -11,6 +11,7 @@ use tt_ports::repositories::chat_repository::{
 };
 
 use super::{FileChatRepository, classify_message_role};
+use crate::chat_jsonl::trim_whitespace;
 
 const MAX_QUERY_TOKENS: usize = 64;
 const MAX_BIGRAM_TOKENS_PER_SEGMENT: usize = 32;
@@ -480,6 +481,11 @@ fn collect_candidates_from_lines(
             continue;
         }
 
+        if !trim_whitespace(line.as_bytes()).starts_with(b"{") {
+            return Err(DomainError::InvalidData(format!(
+                "Chat message {index} must be a JSON object"
+            )));
+        }
         let mut message: SearchableChatMessage = serde_json::from_str(line).map_err(|error| {
             DomainError::InvalidData(format!("Failed to parse chat message JSON: {}", error))
         })?;

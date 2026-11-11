@@ -61,7 +61,6 @@ export function SkillScopeDialog(props: {
         <dialog
             ref={ref}
             className="ttas-scope-dialog"
-            data-tt-mobile-surface="fullscreen-window"
             onCancel={(event) => { event.preventDefault(); controller.closeScopeDialog(); }}
             onClose={controller.closeScopeDialog}
         >
@@ -143,7 +142,6 @@ export function SkillSourceDialog(props: {
         <dialog
             ref={ref}
             className="ttas-scope-dialog ttas-skill-source-dialog"
-            data-tt-mobile-surface="fullscreen-window"
             onCancel={(event) => { event.preventDefault(); controller.closeSourceDialog(); }}
             onClose={controller.closeSourceDialog}
         >
@@ -218,7 +216,6 @@ export function SkillPreviewDialog(props: {
         <dialog
             ref={ref}
             className="ttas-file-dialog ttas-skill-preview-dialog"
-            data-tt-mobile-surface="fullscreen-window"
             onCancel={(event) => { event.preventDefault(); controller.previewCancelled(); }}
             onClose={controller.previewClosed}
         >

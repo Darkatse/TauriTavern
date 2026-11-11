@@ -17,7 +17,7 @@ use crate::restricted_endpoint::{
 };
 
 pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
-pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 pub const TOKENIZER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PROVIDER_METADATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);

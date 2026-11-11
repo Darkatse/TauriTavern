@@ -103,7 +103,7 @@ function createPanelWorld(selectedProfile = defaultProfile()) {
             state.repairs.push(input);
             return Promise.resolve();
         },
-        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [] }),
+        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [], sessionProfileUpdated: false }),
         save: (input) => {
             const profile = 'profile' in input ? input.profile : input;
             state.saves.push(profile);
@@ -150,7 +150,7 @@ function createPanelWorld(selectedProfile = defaultProfile()) {
             state.confirmations.push(message);
             return Promise.resolve(state.confirm);
         },
-        downloadBlob: () => Promise.resolve({ mode: 'browser-download', completed: true }),
+        downloadBlob: () => Promise.resolve({ delivered: true }),
         notifyError: (error) => {
             state.errors.push(error instanceof Error ? error.message : 'unknown error');
         },
@@ -346,6 +346,45 @@ test('tool catalog keeps available disabled tools visible', async () => {
     expect(screen.getAllByText('Read workspace file').length).toBeGreaterThan(0);
 });
 
+test('an unregistered extension tool blocks only a new checkbox selection', async () => {
+    const toolId = 'extension/third-party/example:inspect';
+    const profile = defaultProfile('writer');
+    profile.tools.allow.push(toolId);
+    const { deps, state } = createPanelWorld(profile);
+    let tools: TauriTavernAgentToolCatalogItem[] = [];
+    deps.listTools = () => Promise.resolve({ tools, diagnostics: [] });
+    const controller = createAgentSystemPanelController(deps);
+    const user = userEvent.setup();
+    renderPanel(controller);
+    await act(async () => controller.init());
+
+    // Keeping a saved unavailable selection must not block unrelated edits.
+    act(() => controller.setIdentityField('displayName', 'Renamed writer'));
+    await user.click(screen.getByRole('checkbox', { name: 'builtin:workspace.read_file' }));
+    expect(controller.getSnapshot().draft.tools.allow.filter(id => id === toolId)).toHaveLength(1);
+    await act(async () => controller.saveProfile());
+    expect(state.saves.at(-1)?.tools.allow).toContain(toolId);
+    expect(state.saves.at(-1)?.tools.allow).not.toContain('builtin:workspace.read_file');
+    expect(state.saves.at(-1)?.displayName).toBe('Renamed writer');
+
+    const checkbox = screen.getByRole<HTMLInputElement>('checkbox', { name: toolId });
+    await user.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    await user.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    expect(screen.getByText(`extensionToolUnavailable tool=${toolId}`)).toBeDefined();
+
+    // Query live registration again; an extension-level off switch does not
+    // prevent selecting the tool for later use in this Profile.
+    tools = [{
+        id: toolId, nativeName: 'inspect', title: 'Inspect', description: 'Inspect state.',
+        inputSchema: {}, source: 'extension', extensionId: 'third-party/example',
+        contexts: ['chat'], enabled: false,
+    }];
+    await user.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+});
+
 test('failed profile selection keeps the previous selection and draft together', async () => {
     const writer = defaultProfile('writer');
     const reviewer = defaultProfile('reviewer');
@@ -381,6 +420,19 @@ test('a saved profile remains committed when its list refresh fails', async () =
     expect(state.definitions.get(profile.id)?.displayName).toBe('Saved Writer');
     expect(controller.getSnapshot().draft.displayName).toBe('Saved Writer');
     expect(state.errors).toContain('profile list refresh failed');
+});
+
+test('export compares the draft with the saved profile in the same form', async () => {
+    const profile = defaultProfile('writer');
+    // The backend omits an empty descriptionForAgents; the editor writes null.
+    Reflect.deleteProperty(profile.delegation, 'descriptionForAgents');
+    const controller = createAgentSystemPanelController(createPanelWorld(profile).deps);
+    disposables.push(controller);
+    await controller.init();
+
+    await controller.exportSelectedProfile();
+    controller.setIdentityField('displayName', 'Unsaved Writer');
+    await expect(controller.exportSelectedProfile()).rejects.toThrow('agentProfileExportSaveFirst');
 });
 
 test('a dirty draft rejects an external overwrite and save', async () => {

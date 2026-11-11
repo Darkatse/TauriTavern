@@ -2,7 +2,7 @@ import { invoke } from '../../../tauri-bridge.js';
 import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 
-const { createChatByteStream } = createReadableFileStreamService({ invoke });
+const { createByteStream } = createReadableFileStreamService({ invoke });
 const pendingSources = new WeakMap();
 let currentSource;
 let enabled = false;
@@ -47,8 +47,8 @@ export async function loadColdChatPayload(target, allowNotFound) {
     const opened = await invoke('open_cold_chat', { target, allowNotFound });
     if (!opened) return [];
     try {
-        const payload = await jsonlStreamToPayload(createChatByteStream(opened.readerId));
-        if (payload.some(message => message.tt_swipe_cold)) {
+        const payload = await jsonlStreamToPayload(createByteStream(opened.readerId));
+        if (payload.some((record, index) => index > 0 && record.tt_swipe_cold)) {
             pendingSources.set(payload, opened.sourceId);
         } else {
             closeSource(opened.sourceId);
@@ -62,7 +62,7 @@ export async function loadColdChatPayload(target, allowNotFound) {
 
 export async function readColdSwipeRecord(reference) {
     const rid = await invoke('open_cold_swipe_record', reference);
-    const records = await jsonlStreamToPayload(createChatByteStream(rid));
+    const records = await jsonlStreamToPayload(createByteStream(rid), { hasHeader: false });
     if (records.length !== 1) throw new Error('Cold swipe source did not return one message');
     return records[0];
 }
@@ -91,8 +91,8 @@ export async function hydrateMessageSwipes(message) {
 /** The capture runs synchronously alongside JSON serialization; one commit has one opened source. */
 export function coldSourceForPayload(payload) {
     let sourceId;
-    for (const message of payload) {
-        const reference = message?.tt_swipe_cold;
+    for (let index = 1; index < payload.length; index++) {
+        const reference = payload[index].tt_swipe_cold;
         if (!reference) continue;
         if (!Number.isInteger(reference.sourceId) || reference.sourceId < 0) {
             throw new Error('Cold swipe message has no source');

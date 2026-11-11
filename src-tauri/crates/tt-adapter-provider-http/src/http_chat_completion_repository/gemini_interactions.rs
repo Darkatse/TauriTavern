@@ -144,6 +144,10 @@ impl InteractionsStreamState {
                     on_delta(ChatCompletionStreamDelta::Reasoning {
                         text: text.to_string(),
                     });
+                } else {
+                    on_delta(ChatCompletionStreamDelta::Text {
+                        text: text.to_string(),
+                    });
                 }
                 self.saw_text |= field == "content";
                 self.send_delta(sender, projection_delta(field, text));
@@ -253,6 +257,8 @@ impl InteractionsStreamState {
         {
             if field == "reasoning_content" {
                 on_delta(ChatCompletionStreamDelta::Reasoning { text: text.clone() });
+            } else {
+                on_delta(ChatCompletionStreamDelta::Text { text: text.clone() });
             }
             self.saw_text |= field == "content";
             self.send_delta(sender, projection_delta(field, &text));
@@ -895,6 +901,12 @@ mod tests {
                 },
                 ChatCompletionStreamDelta::Reasoning {
                     text: "more".to_string()
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "Hel".to_string()
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "lo".to_string()
                 },
             ]
         );

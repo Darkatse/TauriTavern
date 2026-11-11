@@ -30,7 +30,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             ]),
         ],
     );
-    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 3, 10_000).await;
+    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 10_000).await;
     let mcp_tool = tt_domain::models::tool::ToolId::parse(&mcp_tool_id).unwrap();
     let registration_id =
         tt_domain::models::mcp::McpRegistrationId::from_provider_id(mcp_tool.provider_id())
@@ -115,13 +115,16 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             _ => None,
         })
         .expect("MCP result returned to model");
-    assert!(mcp_result.content.contains("too large to include here"));
+    assert!(mcp_result.content.contains("preview"));
     assert!(mcp_result.content.contains("workspace_read_file"));
-    assert!(mcp_result.content.contains("## Prefix preview"));
+    assert_eq!(mcp_result.content.matches('界').count(), 3_000);
+    assert!(!mcp_result.content.contains("End of result."));
+    assert!(mcp_result.content.chars().count() < 10_000);
     assert_eq!(mcp_result.structured["externalized"], true);
     assert_eq!(mcp_result.structured["charLimit"], 10_000);
     let readable_path = mcp_result.structured["path"].as_str().unwrap();
     let audit_path = mcp_result.structured["auditPath"].as_str().unwrap();
+    assert!(mcp_result.content.contains(readable_path));
     assert_eq!(
         readable_path,
         "tool-results/inv_root/round-001-call_fe79da5f09df9787.txt"
@@ -136,14 +139,17 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         vec![readable_path.to_string(), audit_path.to_string()]
     );
     let stored = read_workspace_json(&fixture.agent_repository, &handle.run_id, audit_path).await;
-    assert_eq!(stored["content"].as_str().unwrap().len(), 60_000);
+    assert_eq!(
+        stored["content"].as_str().unwrap().matches('界').count(),
+        60_000
+    );
     assert_eq!(stored["structured"]["structuredContent"]["issueId"], 42);
     let readable = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse(readable_path).unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse(readable_path).unwrap())
         .await
         .expect("read line-addressable MCP result");
     assert!(
@@ -152,7 +158,6 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             .lines()
             .all(|line| line.chars().count() <= 3_000)
     );
-    assert!(readable.text.contains(&"x".repeat(3_000)));
     let read_result = requests[2]
         .messages
         .iter()
@@ -167,7 +172,8 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         })
         .expect("Agent can read the externalized MCP result through workspace VFS");
     assert_eq!(read_result.structured["fullRead"], true);
-    assert!(read_result.content.contains(&"x".repeat(3_000)));
+    assert_eq!(read_result.content.matches('界').count(), 60_000);
+    assert!(read_result.content.contains("End of result."));
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -196,10 +202,10 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
         .lock()
         .await
         .push_back(McpCallOutcome::OutcomeUnknown(McpCallIssue {
-            code: "mcp.response_too_large".to_string(),
-            message: "response exceeded the wire limit".to_string(),
+            code: "mcp.call_response_failed".to_string(),
+            message: "connection closed before a tool response arrived".to_string(),
         }));
-    let (profile, _) = configure_mcp_profile(&fixture, "mcp-unknown-writer", 1, 50_000).await;
+    let (profile, _) = configure_mcp_profile(&fixture, "mcp-unknown-writer", 50_000).await;
 
     let handle = start_contract_agent_run(
         &fixture,
@@ -220,11 +226,10 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
     let error = fixture
         .service
         .resume_run(tt_application::dto::agent_dto::AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
-            additional_rounds: 0,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             host_presentation: false,
             revision: None,
         })
@@ -251,11 +256,121 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
     let _ = fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn mcp_images_keep_structured_projection_and_image_only_results_readable() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use tt_ports::mcp::{McpCallDiagnostic, McpImageContent};
+
+    let root = temp_root("mcp-image-projection");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "details",
+                    "mcp__my_server__issue_create",
+                    json!({"title": "Details"}),
+                ),
+                model_tool_call(
+                    "image_only",
+                    "mcp__my_server__issue_create",
+                    json!({"title": "Image"}),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "finish",
+                "workspace_finish",
+                json!({}),
+            )]),
+        ],
+    );
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let image = McpImageContent {
+        index: 1,
+        mime_type: "image/png".into(),
+        data: STANDARD.encode(png.into_inner()),
+    };
+    fixture.mcp_gateway.outcomes.lock().await.extend([
+        McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(McpToolCallResult {
+            is_error: false,
+            text: vec![McpTextContent {
+                index: 0,
+                text: r#"{"issueId":42}"#.into(),
+            }],
+            images: vec![
+                image.clone(),
+                McpImageContent {
+                    index: 2,
+                    data: "invalid base64!".into(),
+                    ..image.clone()
+                },
+            ],
+            structured_content: Some(json!({"issueId": 42})),
+            diagnostics: vec![McpCallDiagnostic {
+                code: "mcp.call_content_unsupported".into(),
+                message: "Other content omitted.".into(),
+                content_index: Some(3),
+            }],
+        })),
+        McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(McpToolCallResult {
+            is_error: false,
+            text: Vec::new(),
+            images: vec![image],
+            structured_content: None,
+            diagnostics: Vec::new(),
+        })),
+    ]);
+    let (profile, _) = configure_mcp_profile(&fixture, "mcp-image-writer", 50_000).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "mcp-images",
+        Some(false),
+    )
+    .await;
+    assert_eq!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id)
+            .await
+            .status,
+        AgentRunStatus::Completed
+    );
+    let requests = fixture.model_gateway.requests().await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let details = results
+        .iter()
+        .find(|result| result.call_id == "details")
+        .unwrap();
+    assert_eq!(details.content.matches("issueId").count(), 1);
+    assert!(details.content.starts_with("## Details"));
+    assert!(
+        details.content.find("Other content omitted.").unwrap()
+            < details.content.find("could not be decoded").unwrap()
+    );
+    let image_only = results
+        .iter()
+        .find(|result| result.call_id == "image_only")
+        .unwrap();
+    assert_eq!(image_only.images.len(), 1);
+    assert!(!image_only.content.contains("without returning content"));
+    fs::remove_dir_all(root).await.unwrap();
+}
+
 pub(super) async fn configure_mcp_profile(
     fixture: &AgentRuntimeFixture,
     profile_id: &str,
-    max_rounds: usize,
-    mcp_result_inline_char_limit: usize,
+    external_result_inline_char_limit: usize,
 ) -> (
     tt_domain::models::agent::profile::ResolvedAgentProfile,
     String,
@@ -299,8 +414,7 @@ pub(super) async fn configure_mcp_profile(
     definition.id = AgentProfileId::parse(profile_id).unwrap();
     let mcp_tool_id = format!("mcp/{}:issue.create", server.id);
     definition.tools.allow.push(mcp_tool_id.clone());
-    definition.tools.max_rounds = max_rounds;
-    definition.tools.mcp_result_inline_char_limit = mcp_result_inline_char_limit;
+    definition.tools.external_result_inline_char_limit = external_result_inline_char_limit;
     fixture
         .profile_service
         .save_profile(definition, fixture.service.tool_catalog())

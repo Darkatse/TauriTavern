@@ -1,14 +1,11 @@
-use chrono::Utc;
 use std::fs::{self, File};
 use std::io::{BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use tauri::Manager;
 use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::zipkit::export_file_options;
-use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
 use tt_domain::errors::DomainError;
 
 const BUNDLE_ROOT_DIR: &str = "tauritavern-dev-bundle";
@@ -24,27 +21,10 @@ pub struct DevLogBundleInput {
 }
 
 pub fn export_dev_log_bundle(
-    app_handle: &tauri::AppHandle,
+    output_path: PathBuf,
     runtime_paths: &RuntimePaths,
     input: DevLogBundleInput,
 ) -> Result<PathBuf, DomainError> {
-    let output_dir = resolve_bundle_output_dir(app_handle)?;
-    fs::create_dir_all(&output_dir).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to create export output directory {}: {}",
-            output_dir.display(),
-            error
-        ))
-    })?;
-
-    let output_path = output_dir.join(default_bundle_file_name());
-    if output_path.exists() {
-        return Err(DomainError::InvalidData(format!(
-            "Export target already exists: {}",
-            output_path.display()
-        )));
-    }
-
     let output_file = File::create(&output_path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to create export bundle file {}: {}",
@@ -176,46 +156,6 @@ pub fn export_dev_log_bundle(
     })?;
 
     Ok(output_path)
-}
-
-#[cfg(target_os = "ios")]
-fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, DomainError> {
-    let path_resolver = app_handle.path();
-
-    if let Ok(cache_dir) = path_resolver.app_cache_dir() {
-        return Ok(cache_dir.join(IOS_EXPORT_STAGING_ROOT_NAME));
-    }
-
-    let temp_dir = path_resolver.temp_dir().map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to resolve temp directory for export: {}",
-            error
-        ))
-    })?;
-
-    Ok(temp_dir.join(IOS_EXPORT_STAGING_ROOT_NAME))
-}
-
-#[cfg(not(target_os = "ios"))]
-fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, DomainError> {
-    if let Ok(download_dir) = app_handle.path().download_dir() {
-        return Ok(download_dir);
-    }
-
-    let cache_dir = app_handle.path().app_cache_dir().map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to resolve app cache directory for export: {}",
-            error
-        ))
-    })?;
-
-    Ok(cache_dir.join(IOS_EXPORT_STAGING_ROOT_NAME))
-}
-
-fn default_bundle_file_name() -> String {
-    let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    let suffix = uuid::Uuid::new_v4().simple().to_string();
-    format!("tauritavern-dev-bundle-{}-{}.zip", ts, &suffix[..8])
 }
 
 fn add_text_file(

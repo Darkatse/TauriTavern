@@ -42,15 +42,6 @@ async function createContext({ tools = [descriptor], invokeCommand, createExecut
 test('one root descriptor snapshot creates fresh round aliases from the current local tool view', async () => {
     let listCalls = 0;
     const context = await createContext({
-        tools: [
-            descriptor,
-            {
-                ...descriptor,
-                toolId: 'mcp/00000000-0000-0000-0000-000000000002:issue_create',
-                nativeName: 'issue_create',
-                serverDisplayName: 'my.server',
-            },
-        ],
         invokeCommand: async command => {
             assert.equal(command, 'list_legacy_mcp_tools');
             listCalls += 1;

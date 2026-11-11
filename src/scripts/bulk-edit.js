@@ -46,7 +46,7 @@ function onSelectAllButtonClick() {
     const characters = Array.from(document.querySelectorAll('#' + BulkEditOverlay.containerId + ' .' + BulkEditOverlay.characterClass));
     let atLeastOneSelected = false;
     for (const character of characters) {
-        const checked = $(character).find('.bulk_select_checkbox:checked').length > 0;
+        const checked = characterGroupOverlay.selectedCharacters.includes(Number(character.dataset.chid));
         if (!checked && character instanceof HTMLElement) {
             characterGroupOverlay.toggleSingleCharacter(character);
             atLeastOneSelected = true;
@@ -56,7 +56,7 @@ function onSelectAllButtonClick() {
     if (!atLeastOneSelected) {
         // If none was selected, trigger click on all to deselect all of them
         for (const character of characters) {
-            const checked = $(character).find('.bulk_select_checkbox:checked') ?? false;
+            const checked = characterGroupOverlay.selectedCharacters.includes(Number(character.dataset.chid));
             if (checked && character instanceof HTMLElement) {
                 characterGroupOverlay.toggleSingleCharacter(character);
             }
@@ -65,47 +65,25 @@ function onSelectAllButtonClick() {
 }
 
 /**
- * Deletes all characters that have been selected via the bulk checkboxes.
+ * Deletes all characters that have been selected via the bulk controls.
  */
 async function onDeleteButtonClick() {
     console.log('Delete button clicked');
 
     // We just let the button trigger the context menu delete option
-    await characterGroupOverlay.handleContextMenuDelete();
+    await characterGroupOverlay.runBulkAction(characterGroupOverlay.handleContextMenuDelete);
 }
 
-/**
- * Enables bulk selection by adding a checkbox next to each character.
- */
+/** Disable non-character rows while selecting characters. */
 function enableBulkSelect() {
-    $('#rm_print_characters_block .character_select').each((i, el) => {
-        // Prevent checkbox from adding multiple times (because of stage change callback)
-        if ($(el).find('.bulk_select_checkbox').length > 0) {
-            return;
-        }
-        const checkbox = $('<input type=\'checkbox\' class=\'bulk_select_checkbox\'>');
-        checkbox.on('change', () => {
-            // Do something when the checkbox is changed
-        });
-        $(el).prepend(checkbox);
-    });
-    $('#rm_print_characters_block.group_overlay_mode_select .bogus_folder_select, #rm_print_characters_block.group_overlay_mode_select .group_select')
-        .addClass('disabled');
-
+    $('#rm_print_characters_block .bogus_folder_select, #rm_print_characters_block .group_select')
+        .addClass('disabled').each((_, row) => row.querySelector(':scope > .sr-only').setAttribute('disabled', ''));
     $('#rm_print_characters_block').addClass('bulk_select');
-    // We also need to disable the default click event for the character_select divs
-    $(document).on('click', '.bulk_select_checkbox', function (event) {
-        event.stopImmediatePropagation();
-    });
 }
 
-/**
- * Disables bulk selection by removing the checkboxes.
- */
 function disableBulkSelect() {
-    $('.bulk_select_checkbox').remove();
-    $('#rm_print_characters_block.group_overlay_mode_select .bogus_folder_select, #rm_print_characters_block.group_overlay_mode_select .group_select')
-        .removeClass('disabled');
+    $('#rm_print_characters_block .bogus_folder_select, #rm_print_characters_block .group_select')
+        .removeClass('disabled').each((_, row) => row.querySelector(':scope > .sr-only').removeAttribute('disabled'));
     $('#rm_print_characters_block').removeClass('bulk_select');
 }
 

@@ -13,7 +13,6 @@ pub const DATA_ARCHIVE_KIND_EXPORT: &str = "export";
 
 pub const DATA_ARCHIVE_ARTIFACT_AVAILABLE: &str = "available";
 pub const DATA_ARCHIVE_ARTIFACT_DISPOSED: &str = "disposed";
-pub const DATA_ARCHIVE_ARTIFACT_MISSING: &str = "missing";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DataArchiveJobResult {
@@ -23,8 +22,6 @@ pub struct DataArchiveJobResult {
     pub archive_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub saved_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -94,7 +91,6 @@ mod tests {
                 file_name: Some("tauritavern-data.zip".to_string()),
                 archive_path: Some("/tmp/tauritavern-data.zip".to_string()),
                 artifact_state: Some(DATA_ARCHIVE_ARTIFACT_AVAILABLE.to_string()),
-                saved_path: None,
             }),
             error: None,
             local_applied: None,

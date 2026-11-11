@@ -6,7 +6,7 @@ use super::super::super::model_capabilities::{
     RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
 };
 use super::super::shared::insert_if_present;
-use super::contract::{ClaudeModelContract, ClaudeSamplingMode, ClaudeThinkingMode};
+use super::contract::{ClaudeModelContract, ClaudeThinkingMode};
 use super::messages::{
     convert_messages, merge_consecutive_messages, move_assistant_images_to_next_user_message,
 };
@@ -49,6 +49,8 @@ fn build_claude_payload_inner(
         None
     };
 
+    let native_json_output = contract.is_some_and(|contract| contract.supports_json_output);
+
     let use_system_prompt = payload
         .get("use_sysprompt")
         .and_then(Value::as_bool)
@@ -57,11 +59,12 @@ fn build_claude_payload_inner(
         .get("tools")
         .and_then(Value::as_array)
         .is_some_and(|items| !items.is_empty())
-        || payload
-            .get("json_schema")
-            .and_then(Value::as_object)
-            .and_then(|schema| schema.get("value"))
-            .is_some_and(|value| !value.is_null());
+        || !native_json_output
+            && payload
+                .get("json_schema")
+                .and_then(Value::as_object)
+                .and_then(|schema| schema.get("value"))
+                .is_some_and(|value| !value.is_null());
 
     let (mut messages, system_prompt) =
         convert_messages(payload.get("messages"), use_system_prompt, use_tools)?;
@@ -71,18 +74,6 @@ fn build_claude_payload_inner(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if assistant_prefill.is_some() && reasoning_effort.is_some() {
-        return Err(ApplicationError::ValidationError(format!(
-            "Claude model `{model}` does not support assistant_prefill with reasoning_effort"
-        )));
-    }
-    if assistant_prefill.is_some()
-        && contract.is_some_and(|contract| !contract.supports_assistant_prefill)
-    {
-        return Err(ApplicationError::ValidationError(format!(
-            "Claude model `{model}` does not support assistant_prefill"
-        )));
-    }
     if let Some(assistant_prefill) = assistant_prefill {
         messages.push(json!({
             "role": "assistant",
@@ -127,11 +118,7 @@ fn build_claude_payload_inner(
     // `speed: "fast"` is Anthropic's fast-mode beta; the HTTP adapter adds the
     // matching `anthropic-beta` value when it sees this field.
     insert_if_present(&mut request, payload, "speed");
-    insert_claude_sampling_params(
-        &mut request,
-        payload,
-        contract.map(|contract| contract.sampling),
-    );
+    insert_claude_sampling_params(&mut request, payload, contract);
 
     if let Some(stop) = payload.get("stop").filter(|value| value.is_array()) {
         request.insert("stop_sequences".to_string(), stop.clone());
@@ -155,6 +142,7 @@ fn build_claude_payload_inner(
         );
     }
 
+    let mut output_config = Map::new();
     let mut forced_tool_choice: Option<Value> = None;
     if let Some(json_schema) = payload.get("json_schema").and_then(Value::as_object)
         && let Some(schema_value) = json_schema
@@ -162,27 +150,37 @@ fn build_claude_payload_inner(
             .cloned()
             .filter(|value| !value.is_null())
     {
-        let schema_name = json_schema
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("response")
-            .to_string();
+        if native_json_output {
+            output_config.insert(
+                "format".to_string(),
+                json!({
+                    "type": "json_schema",
+                    "schema": schema_value,
+                }),
+            );
+        } else {
+            let schema_name = json_schema
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("response")
+                .to_string();
 
-        let mut schema_tool = Map::new();
-        schema_tool.insert("name".to_string(), Value::String(schema_name.clone()));
-        schema_tool.insert(
-            "description".to_string(),
-            Value::String("Well-formed JSON object".to_string()),
-        );
-        schema_tool.insert("input_schema".to_string(), schema_value);
-        claude_tools.push(Value::Object(schema_tool));
+            let mut schema_tool = Map::new();
+            schema_tool.insert("name".to_string(), Value::String(schema_name.clone()));
+            schema_tool.insert(
+                "description".to_string(),
+                Value::String("Well-formed JSON object".to_string()),
+            );
+            schema_tool.insert("input_schema".to_string(), schema_value);
+            claude_tools.push(Value::Object(schema_tool));
 
-        forced_tool_choice = Some(json!({
-            "type": "tool",
-            "name": schema_name,
-        }));
+            forced_tool_choice = Some(json!({
+                "type": "tool",
+                "name": schema_name,
+            }));
+        }
     }
 
     if !claude_tools.is_empty() {
@@ -209,7 +207,7 @@ fn build_claude_payload_inner(
                     )));
                 }
             }
-            ClaudeThinkingMode::ManualOnly => {
+            ClaudeThinkingMode::Manual => {
                 if let Some(reasoning_effort) = reasoning_effort {
                     let budget_tokens =
                         calculate_claude_budget_tokens(reasoning_effort, max_tokens, stream);
@@ -228,27 +226,23 @@ fn build_claude_payload_inner(
                     request.remove("top_p");
                     request.remove("top_k");
                     if contract.supports_output_effort {
-                        request.insert(
-                            "output_config".to_string(),
-                            json!({
-                                "effort": claude_output_effort(reasoning_effort, contract),
-                            }),
+                        output_config.insert(
+                            "effort".to_string(),
+                            json!(claude_output_effort(reasoning_effort, contract)),
                         );
                     }
                 }
             }
-            ClaudeThinkingMode::ManualOrAdaptive | ClaudeThinkingMode::AdaptiveOnly => {
+            ClaudeThinkingMode::Adaptive => {
                 if let Some(reasoning_effort) = reasoning_effort {
                     request.insert(
                         "thinking".to_string(),
                         build_claude_adaptive_thinking(payload),
                     );
                     if contract.supports_output_effort {
-                        request.insert(
-                            "output_config".to_string(),
-                            json!({
-                                "effort": claude_output_effort(reasoning_effort, contract),
-                            }),
+                        output_config.insert(
+                            "effort".to_string(),
+                            json!(claude_output_effort(reasoning_effort, contract)),
                         );
                     }
                 } else if contract.thinking_defaults_on
@@ -265,12 +259,29 @@ fn build_claude_payload_inner(
             }
         }
     } else if let Some(reasoning_effort) = payload.get("reasoning_effort") {
-        request.insert(
-            "output_config".to_string(),
-            json!({ "effort": reasoning_effort }),
-        );
+        output_config.insert("effort".to_string(), reasoning_effort.clone());
     }
 
+    if contract.is_some_and(|contract| {
+        !contract.supports_assistant_prefill || request.contains_key("thinking")
+    }) && let Some(last) = messages.last_mut()
+        && last.get("role").and_then(Value::as_str) == Some("assistant")
+        && last
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .all(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            })
+    {
+        last["role"] = json!("user");
+        merge_consecutive_messages(&mut messages);
+    }
+
+    if !output_config.is_empty() {
+        request.insert("output_config".to_string(), Value::Object(output_config));
+    }
     request.insert("messages".to_string(), Value::Array(messages));
     request.insert(
         "max_tokens".to_string(),
@@ -341,16 +352,20 @@ fn claude_output_effort(
 fn insert_claude_sampling_params(
     request: &mut Map<String, Value>,
     payload: &Map<String, Value>,
-    sampling: Option<ClaudeSamplingMode>,
+    contract: Option<ClaudeModelContract>,
 ) {
-    if sampling == Some(ClaudeSamplingMode::None) {
+    if contract.is_some_and(|contract| !contract.supports_sampling) {
         return;
     }
 
-    if has_non_default_temperature(payload) {
+    let send_top_p = has_non_default_top_p(payload);
+    if has_non_default_temperature(payload)
+        && !(send_top_p
+            && contract.is_some_and(|contract| contract.sampling_params_mutually_exclusive))
+    {
         insert_if_present(request, payload, "temperature");
     }
-    if has_non_default_top_p(payload) {
+    if send_top_p {
         insert_if_present(request, payload, "top_p");
     }
     if has_non_default_top_k(payload) {

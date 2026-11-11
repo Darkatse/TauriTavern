@@ -35,19 +35,13 @@ export {};
 
 /**
  * @typedef {{
- *   savedTarget?: string;
- * }} AndroidExportResult
- */
-
-/**
- * @typedef {{
  *   safeInvoke: (command: TauriInvokeCommand, args?: any) => Promise<any>;
  *   invalidateInvoke: (command: TauriInvokeCommand, args?: any) => void;
  *   invalidateInvokeAll: (command: TauriInvokeCommand) => void;
  *   flushInvokes: (command: TauriInvokeCommand) => Promise<void>;
  *   flushAllInvokes: () => Promise<void>;
  *   invokeBroker: any;
- *   invokeTransport: (command: TauriInvokeCommand, args?: any) => Promise<any>;
+ *   invokeTransport: TauriInvokeFn;
  *   normalizeCharacter: (character: any) => any;
  *   normalizeExtensions: (extensions: any) => any;
  *   getAllCharacters: (options?: { shallow?: boolean; forceRefresh?: boolean }) => Promise<any[]>;
@@ -69,12 +63,7 @@ export {};
  *   editCharacterAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<void>;
  *   uploadAvatarFromForm: (formData: FormData, requestUrl: URL) => Promise<any>;
  *   materializeUploadFile: (file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>;
- *   materializeAndroidContentUriUpload: (contentUri: string) => Promise<MaterializedFileInfo>;
- *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
- *   pickAndroidImportArchive: () => Promise<string>;
- *   removeTemporaryFile: (filePath: string) => Promise<void>;
  *   createChatBackupDownloadStream: (name: string) => Promise<ReadableStream<Uint8Array>>;
  *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
- *   saveAndroidExportArchive: (sourcePath: string, preferredName?: string) => Promise<AndroidExportResult>;
  * }} TauriMainContext
  */

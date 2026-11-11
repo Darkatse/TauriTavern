@@ -66,7 +66,9 @@ async fn agent_runtime_checkpoint_publishes_terminal_state_after_host_presentati
         })
         .await
         .unwrap();
-    assert_eq!(stopped.status, AgentRunStatus::Completed);
+    assert!(
+        matches!(stopped, tt_application::dto::agent_dto::AgentCancelRunResultDto::Chat(handle) if handle.status == AgentRunStatus::Completed)
+    );
 
     let presentation = json!({
         "messageId": "0",
@@ -154,7 +156,7 @@ async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_m
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let retried = wait_for_event(
         &fixture,
         &handle.run_id,
@@ -242,10 +244,13 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
             .join(blocked_directory);
         fixture
             .agent_repository
+            .open_filesystem(&run.id)
+            .await
+            .expect("open workspace")
             .write_text(
-                &run.id,
                 &WorkspacePath::parse("output/main.md").unwrap(),
                 "before:",
+                tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
             )
             .await
             .unwrap();
@@ -261,7 +266,7 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
         assert!(stopped.blocked_reason.is_none());
         fs::remove_file(&blocked_path).await.unwrap();
         fs::create_dir(&blocked_path).await.unwrap();
-        resume_checkpoint(&fixture, &stopped, 0).await;
+        resume_checkpoint(&fixture, &stopped).await;
         let completed = wait_for_checkpoint(&fixture, &run.id).await;
         assert_eq!(completed.run.status, AgentRunStatus::Completed);
         assert_eq!(fixture.model_gateway.requests().await.len(), 1);
@@ -311,7 +316,7 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         .await
         .unwrap()
         .unwrap();
-    let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
     let request: AgentModelRequest =
         serde_json::from_value(checkpoint["state"]["foreground"]["prepared"]["request"].clone())
             .unwrap();
@@ -348,11 +353,10 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
     let error = fixture
         .service
         .resume_run(AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: completed.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
-            additional_rounds: 0,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             host_presentation: false,
             revision: None,
         })
@@ -362,6 +366,51 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         error
             .to_string()
             .contains("completed runs cannot be resumed")
+    );
+
+    // Status inspection does not migrate the old execution protocol. Only an
+    // explicit revision of a completed run may perform that conversion.
+    checkpoint["schemaVersion"] = json!(1);
+    checkpoint["state"]["foreground"]["prepared"]["profile"]["skills"]["maxReadCharsPerCall"] =
+        json!(100_000);
+    let legacy_bytes = serde_json::to_vec(&checkpoint).unwrap();
+    fixture
+        .agent_repository
+        .save_run_checkpoint(&run.id, &legacy_bytes)
+        .await
+        .unwrap();
+    let legacy = fixture
+        .service
+        .read_run_checkpoint(AgentReadRunCheckpointDto {
+            run_id: run.id.clone(),
+        })
+        .await
+        .expect("legacy checkpoint status remains readable");
+    assert_eq!(legacy.run.status, AgentRunStatus::Completed);
+    assert_eq!(legacy.terminal_seq, completed.terminal_seq);
+    let resume_error = fixture
+        .service
+        .resume_run(AgentResumeRunDto {
+            run_id: run.id.clone(),
+            expected_terminal_seq: completed.terminal_seq,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
+            host_presentation: false,
+            revision: None,
+        })
+        .await
+        .expect_err("legacy checkpoint cannot resume");
+    let message = resume_error.to_string();
+    assert!(message.contains("agent.resume_unavailable"), "{message}");
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        legacy_bytes,
+        "status inspection and rejected resume do not migrate checkpoints"
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 2);
 
@@ -395,7 +444,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
             )),
         ],
     );
-    let profile = configure_resume_profile(&fixture, 2, None).await;
+    let profile = configure_resume_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -422,7 +471,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
             model_tool_call("call_finish", "workspace_finish", json!({})),
         ])],
     );
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
     assert!(completed.terminal_seq > stopped.terminal_seq);
@@ -457,7 +506,7 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
         .mcp_gateway
         .wait_for_cancel
         .store(true, Ordering::SeqCst);
-    let (profile, _) = super::mcp::configure_mcp_profile(&fixture, "resume-mcp", 1, 10_000).await;
+    let (profile, _) = super::mcp::configure_mcp_profile(&fixture, "resume-mcp", 10_000).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -485,7 +534,7 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
     assert!(fixture.model_gateway.requests().await.is_empty());
@@ -494,57 +543,6 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
         read_output(&fixture, &handle.run_id).await,
         "continued original turn"
     );
-
-    fs::remove_dir_all(root).await.unwrap();
-}
-
-#[tokio::test]
-async fn agent_runtime_resume_adds_rounds_without_resetting_tool_budget() {
-    let root = temp_root("agent-resume-budget");
-    let fixture = agent_runtime_fixture_with_responses(
-        &root,
-        vec![model_tool_response(vec![model_tool_call(
-            "call_first_write",
-            "workspace_write_file",
-            json!({ "path": "output/main.md", "mode": "append", "content": "first" }),
-        )])],
-    );
-    let profile = configure_resume_profile(&fixture, 1, Some(1)).await;
-    let handle = start_contract_agent_run(
-        &fixture,
-        &profile,
-        AgentRunPresentation::Background,
-        "resume-budget",
-        Some(false),
-    )
-    .await;
-    let stopped = wait_for_checkpoint(&fixture, &handle.run_id).await;
-    assert_eq!(stopped.run.status, AgentRunStatus::Failed);
-    assert_eq!(stopped.max_rounds, 1);
-    drop(fixture);
-
-    let fixture = agent_runtime_fixture_with_responses(
-        &root,
-        vec![model_tool_response(vec![
-            model_tool_call(
-                "call_disallowed_second_write",
-                "workspace_write_file",
-                json!({ "path": "output/main.md", "mode": "append", "content": " duplicated" }),
-            ),
-            model_tool_call("call_finish", "workspace_finish", json!({})),
-        ])],
-    );
-    resume_checkpoint(&fixture, &stopped, 1).await;
-    let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
-    assert_eq!(completed.run.status, AgentRunStatus::Completed);
-    assert_eq!(completed.max_rounds, 2);
-    assert_eq!(read_output(&fixture, &handle.run_id).await, "first");
-    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
-    assert!(events.iter().any(|event| {
-        event.event_type == "tool_call_failed"
-            && event.payload["callId"] == "call_disallowed_second_write"
-            && event.payload["errorCode"] == "agent.tool_budget_exhausted"
-    }));
 
     fs::remove_dir_all(root).await.unwrap();
 }
@@ -572,48 +570,14 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
             ])],
         );
         let profile = super::delegation::configure_return_mode_profiles(&fixture).await;
-        let frozen_input = if during_preparation {
-            use tt_domain::models::agent::profile::{AgentPresetBindingMode, AgentPresetRef};
-            fixture
-                .preset_repository
-                .save_preset(&Preset::new(
-                    "child-prompt".to_string(),
-                    PresetType::OpenAI,
-                    json!({}),
-                ))
-                .await
-                .unwrap();
-            let mut child = fixture
-                .profile_service
-                .load_profile("scene-critic")
-                .await
-                .unwrap()
-                .unwrap();
-            child.preset.mode = AgentPresetBindingMode::Ref;
-            child.preset.ref_ = Some(AgentPresetRef {
-                api_id: "openai".to_string(),
-                name: "child-prompt".to_string(),
-            });
-            fixture
-                .profile_service
-                .save_profile(child, fixture.service.tool_catalog())
-                .await
-                .unwrap();
-            Some(json!({
-                "schemaVersion": 1, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
-                "promptInputs": {}, "worldInfoActivation": { "entries": [] }, "macroContext": {},
-                "currentModelConnection": {
-                    "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
-                    "settings": { "chat_completion_source": "custom", "model": "contract-model", "custom_model": "contract-model" }
-                }
-            }))
-        } else {
+        if !during_preparation {
             fixture
                 .model_gateway
                 .wait_for_cancel_on_request
                 .store(2, Ordering::SeqCst);
-            None
-        };
+        }
+        let mut frozen_input = contract_frozen_run_input();
+        frozen_input["macroContext"] = json!({ "names": { "char": "Frozen child" } });
         let handle = start_contract_agent_run_with_options(
             &fixture,
             &profile,
@@ -623,13 +587,15 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                 stream: Some(false),
                 ..Default::default()
             },
-            frozen_input,
+            Some(frozen_input),
         )
         .await;
         if during_preparation {
             wait_for_event(&fixture, &handle.run_id, "prompt_assembly_requested", 0).await;
             assert_eq!(fixture.model_gateway.requests().await.len(), 1);
         } else {
+            resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot)
+                .await;
             let mut request_count = fixture.model_gateway.request_count.subscribe();
             tokio::time::timeout(
                 AGENT_CONTRACT_ASYNC_TIMEOUT,
@@ -691,9 +657,9 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                     VecDeque::from([Ok(model_tool_response(vec![
                         model_tool_call(
                             "call_child_write",
-                            "workspace_write_file",
+                            "workspace_shell",
                             json!({
-                                "path": "summaries/note.md", "content": "Add rain."
+                                "command": "js -e 'import {workspace, macros} from \"@tauritavern/runtime\"; workspace.writeText(\"summaries/note.md\", macros.render(\"Add rain. {{char}}\"))'"
                             }),
                         ),
                         model_tool_call(
@@ -704,7 +670,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                     ]))]),
                 );
         }
-        resume_checkpoint(&fixture, &stopped, 1).await;
+        resume_checkpoint(&fixture, &stopped).await;
         let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
         assert_eq!(completed.run.status, AgentRunStatus::Completed);
         let resumed_tasks = fixture
@@ -735,13 +701,13 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
         if !during_preparation {
             let note = fixture
                 .agent_repository
-                .read_text(
-                    &handle.run_id,
-                    &WorkspacePath::parse("summaries/note.md").unwrap(),
-                )
+                .open_filesystem(&handle.run_id)
+                .await
+                .expect("open workspace")
+                .read_text(&WorkspacePath::parse("summaries/note.md").unwrap())
                 .await
                 .unwrap();
-            assert_eq!(note.text, "Add rain.");
+            assert_eq!(note.text, "Add rain. Frozen child");
         }
 
         fs::remove_dir_all(root).await.unwrap();
@@ -763,7 +729,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
-    let profile = configure_resume_profile(&fixture, 2, Some(1)).await;
+    let profile = configure_resume_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -819,10 +785,10 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     assert_eq!(
         fixture
             .agent_repository
-            .read_text(
-                &handle.run_id,
-                &WorkspacePath::parse("output/previous_output.md").unwrap()
-            )
+            .open_filesystem(&handle.run_id)
+            .await
+            .expect("open workspace")
+            .read_text(&WorkspacePath::parse("output/previous_output.md").unwrap())
             .await
             .unwrap()
             .text,
@@ -851,7 +817,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let revised_state = acknowledge_revision_output(
         &fixture,
         &handle.run_id,
@@ -921,7 +887,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     fs::remove_dir_all(root).await.unwrap();
 }
 
-async fn revise_checkpoint(
+pub(super) async fn revise_checkpoint(
     fixture: &AgentRuntimeFixture,
     checkpoint: &AgentReadRunCheckpointResultDto,
     guidance: &str,
@@ -935,11 +901,10 @@ async fn revise_checkpoint(
     let handle = fixture
         .service
         .resume_run(AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
-            additional_rounds: 0,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             host_presentation: false,
             revision: Some(AgentOutputRevisionDto {
                 guidance: guidance.to_string(),
@@ -963,7 +928,10 @@ async fn acknowledge_revision_output(
         assert_eq!(
             fixture
                 .agent_repository
-                .read_text(run_id, &path)
+                .open_filesystem(run_id)
+                .await
+                .expect("open workspace")
+                .read_text(&path)
                 .await
                 .unwrap()
                 .text,
@@ -1001,8 +969,6 @@ async fn acknowledge_revision_output(
 
 async fn configure_resume_profile(
     fixture: &AgentRuntimeFixture,
-    max_rounds: usize,
-    write_limit: Option<usize>,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
     let mut profile = fixture
         .profile_service
@@ -1010,14 +976,7 @@ async fn configure_resume_profile(
         .await
         .unwrap()
         .unwrap();
-    profile.tools.max_rounds = max_rounds;
     profile.run.model_retry.max_retries = 0;
-    if let Some(limit) = write_limit {
-        profile
-            .tools
-            .max_calls_per_tool
-            .insert("builtin:workspace.write_file".to_string(), limit);
-    }
     fixture
         .profile_service
         .save_profile(profile, fixture.service.tool_catalog())
@@ -1054,7 +1013,6 @@ pub(super) async fn wait_for_checkpoint(
 async fn resume_checkpoint(
     fixture: &AgentRuntimeFixture,
     checkpoint: &AgentReadRunCheckpointResultDto,
-    additional_rounds: usize,
 ) {
     let run = fixture
         .agent_repository
@@ -1066,9 +1024,8 @@ async fn resume_checkpoint(
         .resume_run(AgentResumeRunDto {
             run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
-            additional_rounds,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             host_presentation: false,
             revision: None,
         })
@@ -1081,29 +1038,11 @@ async fn resume_checkpoint(
 async fn read_output(fixture: &AgentRuntimeFixture, run_id: &str) -> String {
     fixture
         .agent_repository
-        .read_text(run_id, &WorkspacePath::parse("output/main.md").unwrap())
+        .open_filesystem(run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .unwrap()
         .text
-}
-
-async fn wait_for_event(
-    fixture: &AgentRuntimeFixture,
-    run_id: &str,
-    event_type: &str,
-    after_seq: u64,
-) -> tt_domain::models::agent::AgentRunEvent {
-    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
-        loop {
-            if let Some(event) = read_agent_events(&fixture.agent_repository, run_id)
-                .await
-                .into_iter()
-                .find(|event| event.seq > after_seq && event.event_type == event_type)
-            {
-                return event;
-            }
-        }
-    })
-    .await
-    .expect("expected runtime event")
 }

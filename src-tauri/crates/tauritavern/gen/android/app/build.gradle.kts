@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -36,17 +37,8 @@ android {
                     keystoreProperties.load(it)
                 }
 
-                val alias = keystoreProperties.getProperty("keyAlias")
-                val password = keystoreProperties.getProperty("password")
-                val storePath = keystoreProperties.getProperty("storeFile")
+            keyAlias = keystoreProperties["keyAlias"] as String
 
-                if (alias != null && password != null && storePath != null) {
-                    keyAlias = alias
-                    keyPassword = password
-                    storeFile = file(storePath)
-                    storePassword = password
-                }
-            }
         }
     }
     buildTypes {
@@ -66,17 +58,27 @@ android {
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
-                *fileTree(".") { include("**/*.pro") }
+                *fileTree(".") {
+                    include("**/*.pro")
+                    exclude("build/**")
+                }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
                     .toList().toTypedArray()
             )
         }
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_1_8
     }
 }
 
@@ -95,9 +97,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.4")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }
 
-apply(from = "tauri.build.gradle.kts")
+apply(from = file("tauri.build.gradle.kts"))

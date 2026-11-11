@@ -1001,20 +1001,15 @@ mod tests {
         connection
             .endpoint
             .source_specific
-            .insert("opencode_endpoint".to_string(), json!("zen"));
-        connection
-            .endpoint
-            .source_specific
             .insert("opencode_api_format".to_string(), json!("gemini"));
 
-        validate_connection(&connection).expect("Zen should support Gemini");
-
-        connection
-            .endpoint
-            .source_specific
-            .insert("opencode_endpoint".to_string(), json!("go"));
-        let error = validate_connection(&connection).unwrap_err();
-        assert!(error.to_string().contains("does not support the Gemini"));
+        for endpoint in ["zen", "go"] {
+            connection
+                .endpoint
+                .source_specific
+                .insert("opencode_endpoint".to_string(), json!(endpoint));
+            validate_connection(&connection).expect("every OpenCode service should support Gemini");
+        }
     }
 
     #[test]

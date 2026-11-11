@@ -113,6 +113,7 @@ fn wire_log_payload_redacts_inline_media_without_mutating_source() {
                 "image_url": { "url": "data:image/png;base64,AAAA" }
             }]
         }],
+        "interactions": { "type": "image", "mime_type": "image/webp", "data": "DDDDDDD" },
         "claude": {
             "source": {
                 "type": "base64",
@@ -152,6 +153,17 @@ fn wire_log_payload_redacts_inline_media_without_mutating_source() {
         payload.pointer("/messages/0/content/0/image_url/url"),
         Some(&json!("data:image/png;base64,AAAA"))
     );
+    assert_eq!(
+        sanitized.pointer("/interactions/data"),
+        Some(&json!(
+            "<inline media omitted; mime=image/webp; base64_chars=7>"
+        ))
+    );
+    assert_eq!(
+        payload.pointer("/interactions/data"),
+        Some(&json!("DDDDDDD"))
+    );
+    assert!(!pretty_json(&sanitized).contains("DDDDDDD"));
     assert!(!pretty_json(&sanitized).contains("AAAA"));
     assert!(!pretty_json(&sanitized).contains("BBBBB"));
     assert!(!pretty_json(&sanitized).contains("CCCCCC"));

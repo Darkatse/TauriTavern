@@ -35,15 +35,17 @@ current commit exactly.
 ## Dependency manifests
 
 `pnpm-sources.json` and `cargo-sources.json` are generated from the repository
-lockfiles with a pinned revision of `flatpak-builder-tools`. Regenerate them
-after either lockfile changes:
+lockfiles with a pinned revision of `flatpak-builder-tools`. The Nix check and
+Flatpak refresh workflow regenerates and commits changes to `dev` daily, or
+when manually dispatched. PR checks verify generation without requiring these
+generated files in dependency updates. To refresh them locally before a build:
 
 ```bash
 pnpm run flatpak:sources
 ```
 
-Generation requires `git` and `uv`. CI can verify that committed manifests are
-current with `pnpm run flatpak:sources:check`.
+Generation requires `git`, Node.js, and `uv`. Verify that committed manifests
+are current with `pnpm run flatpak:sources:check`.
 
 ## Sandbox
 

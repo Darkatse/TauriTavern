@@ -21,6 +21,7 @@ type WorkspaceFile = Awaited<ReturnType<TauriTavernAgentApi['readWorkspaceFile']
 type RunEventPayload = Record<string, unknown>;
 
 const ARGUMENT_BLOCK_KEYS: ReadonlySet<string> = new Set([
+    'command',
     'content',
     'old_string',
     'new_string',
@@ -40,7 +41,7 @@ export function formatArgumentsSection(
     for (const [key, value] of Object.entries(args)) {
         if (value == null) continue;
         if (ARGUMENT_BLOCK_KEYS.has(key)) {
-            addBlock(blocks, { literal: labelForKey(key) }, value);
+            addBlock(blocks, key === 'command' ? 'timelineShellCommand' : { literal: labelForKey(key) }, value);
         } else if (isPrimitive(value)) {
             fields.push(field(labelForKey(key), primitiveText(value)));
         } else {
@@ -144,7 +145,7 @@ function rangeSummary(structured: RunEventPayload): string {
 
 function toolContentForDisplay(content: string, name: string): string {
     const normalized = content.trim();
-    if ((name === 'workspace.read_file' || name === 'skill.read') && normalized.includes('\n')) {
+    if (name === 'workspace.read_file' && normalized.includes('\n')) {
         return normalized.slice(normalized.indexOf('\n') + 1).trim();
     }
     return normalized;

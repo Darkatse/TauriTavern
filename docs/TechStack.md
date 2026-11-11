@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，并用 Rust 后端替代上游 Node/Express 后端。
+TauriTavern 将 SillyTavern 前端移植到 Tauri v2 原生应用中，当前已同步至 1.19.0，并用 Rust 后端替代上游 Node/Express 后端。
 
 核心取舍：
 
@@ -39,7 +39,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tt-ports` | repository / gateway / runtime trait |
 | `tt-application` | use case、service、job coordinator、policy 编排 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
-| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、响应边界、分页与 schema validation |
+| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、协议版本策略、分页与 schema validation |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret 等基础存储 |
@@ -74,7 +74,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 
 ## 5. 前端技术栈
 
-前端主体来自 SillyTavern 1.18.0，保留其 HTML/CSS/JavaScript 组织方式和上游依赖生态。
+前端主体来自 SillyTavern，保留其 HTML/CSS/JavaScript 组织方式和上游依赖生态。
 
 常见技术：
 
@@ -170,8 +170,8 @@ pnpm run check:rust:dev
 
 移动端：
 
-- Android：Tauri Android 工程与 WebView/Insets 适配，见 `docs/AndroidDevelopment.md`
-- iOS：WKWebView、safe area、policy 与 native glue，见 `docs/iOSDevelopment.md`
+- Android：Tauri Android 工程与原生内容视口，见 `docs/AndroidDevelopment.md`
+- iOS：WKWebView 内容视口、policy 与 native glue，见 `docs/iOSDevelopment.md`
 
 便携模式通过 `TAURITAVERN_RUNTIME_MODE=portable` 或 `portable.flag` 启用。
 

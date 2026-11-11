@@ -1,4 +1,5 @@
 // @ts-check
+import { applyWindowBackdrop } from '../../window-backdrop.js';
 
 // Keep the startup restoration in index.html in sync with these names.
 const STORAGE_KEY = 'tauritavern:oled_background';
@@ -16,4 +17,5 @@ export function setOledBackgroundEnabled(enabled) {
         localStorage.removeItem(STORAGE_KEY);
     }
     document.documentElement.classList.toggle(CLASS_NAME, enabled);
+    applyWindowBackdrop();
 }

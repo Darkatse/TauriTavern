@@ -174,11 +174,12 @@ export function errorText(error: unknown, fallback: string): string {
     return typeof error === 'string' && error ? error : fallback;
 }
 
-export async function waitForHostReady(): Promise<void> {
-    const ready = window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__;
-    if (ready !== undefined && ready !== null) {
-        await ready;
+export function waitForHostReady(): Promise<void> {
+    const ready = window.__TAURITAVERN__?.ready;
+    if (ready == null) {
+        throw new Error(tr('hostApiUnavailable'));
     }
+    return ready;
 }
 
 export function requireMcpApi(): TauriTavernMcpApi {

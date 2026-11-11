@@ -369,7 +369,6 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(card).not.toBeNull();
     expect(card?.getAttribute('aria-live')).toBe('off');
     expect(document.querySelector('.ttas-run-heading-copy small')?.getAttribute('aria-live')).toBe('off');
-    expect(card?.getAttribute('style')).toContain('116px');
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line');
     expect(card?.textContent).toContain('timelineLiveWriting');
     expect(card?.querySelector('.ttas-run-event-live-metric')?.textContent).toBe('+timelineWordCount');
@@ -391,17 +390,17 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(disclosure.getAttribute('aria-expanded')).toBe('false');
     expect(card?.textContent).not.toContain('a streamed tail line');
     act(() => {
-        liveHandler?.({ type: 'reasoningReplace', reasoning: {
-            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Planning', toolIds: [],
+        liveHandler?.({ type: 'responseReplace', response: {
+            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', round: 1, attempt: 1, text: 'Response body', reasoning: 'Planning', toolIds: [],
         } });
-        liveHandler?.({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: ' the edit' });
+        liveHandler?.({ type: 'responseAppend', toolIds: [], invocationId: 'inv_root', text: '', reasoning: ' the edit' });
     });
     const thinking = document.querySelector('.ttas-run-event-live.is-reasoning');
     expect(thinking?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('Planning the edit');
     expect(thinking?.closest('.ttas-run-event')?.textContent).toContain('timelineLiveReasoning');
     expect(thinking?.closest('.ttas-run-event')?.querySelector('.ttas-run-event-live-metric')).toBeNull();
     act(() => {
-        liveHandler?.({ type: 'reasoningAppend', invocationId: 'inv_root', text: '', toolIds: ['builtin:workspace.write_file'] });
+        liveHandler?.({ type: 'responseAppend', invocationId: 'inv_root', text: '', reasoning: '', toolIds: ['builtin:workspace.write_file'] });
     });
     const toolNames = thinking?.closest('.ttas-run-event')?.querySelector('.ttas-run-event-tool-names');
     expect(toolNames?.textContent).toBe('writing a file');

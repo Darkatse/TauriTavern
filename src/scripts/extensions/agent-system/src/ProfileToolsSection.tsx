@@ -61,6 +61,7 @@ export function ProfileToolsSection({ snapshot, controller, tr }: ProfileToolsSe
                                         <div key={tool} className={rowClass}>
                                             <input
                                                 type="checkbox"
+                                                aria-label={toolTitle(toolItem, tool)}
                                                 checked={draft.tools.allow.includes(tool)}
                                                 disabled={builtin}
                                                 onChange={(event) => void controller.toggleToolAllowed(tool, event.target.checked)}

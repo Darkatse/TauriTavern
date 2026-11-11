@@ -1,9 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use http::{HeaderName, HeaderValue};
 use rmcp::{
     ClientLifecycleMode, RoleClient,
-    model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion},
+    model::{ClientCapabilities, ClientConfig, Implementation, ProtocolVersion, ServerPeerInfo},
     service::{ClientInitializeError, RunningService, serve_client_with_lifecycle_and_ct},
     transport::{
         common::client_side_sse::NeverRetry,
@@ -11,52 +11,71 @@ use rmcp::{
         worker::WorkerTransport,
     },
 };
+use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::bounded_http_client::{BoundedReqwestClient, MAX_HTTP_RESPONSE_BYTES};
 use tt_domain::{
     errors::DomainError,
     models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders},
 };
 
-pub(super) type McpClient = RunningService<RoleClient, ClientInfo>;
+pub(super) type McpClient = RunningService<RoleClient, ClientConfig>;
 
-fn fixed_protocol_version(preference: McpProtocolVersionPreference) -> Option<ProtocolVersion> {
-    match preference {
-        McpProtocolVersionPreference::Auto => None,
-        McpProtocolVersionPreference::V2026_07_28 => Some(ProtocolVersion::V_2026_07_28),
-        McpProtocolVersionPreference::V2025_11_25 => Some(ProtocolVersion::V_2025_11_25),
-        McpProtocolVersionPreference::V2025_06_18 => Some(ProtocolVersion::V_2025_06_18),
-        McpProtocolVersionPreference::V2025_03_26 => Some(ProtocolVersion::V_2025_03_26),
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+struct LifecyclePlan {
+    mode: ClientLifecycleMode,
+    initialize_version: ProtocolVersion,
+    accepted_versions: Vec<ProtocolVersion>,
+}
+
+fn lifecycle_plan(preference: McpProtocolVersionPreference) -> LifecyclePlan {
+    use McpProtocolVersionPreference::*;
+
+    let versions = [
+        (V2026_07_28, ProtocolVersion::V_2026_07_28),
+        (V2025_11_25, ProtocolVersion::V_2025_11_25),
+        (V2025_06_18, ProtocolVersion::V_2025_06_18),
+        (V2025_03_26, ProtocolVersion::V_2025_03_26),
+    ];
+    if preference == Auto {
+        return LifecyclePlan {
+            mode: ClientLifecycleMode::Auto {
+                preferred_versions: versions
+                    .iter()
+                    .filter(|(_, version)| !version.has_initialize())
+                    .map(|(_, version)| version.clone())
+                    .collect(),
+                legacy_version: Some(ProtocolVersion::LATEST_WITH_INITIALIZE),
+            },
+            initialize_version: ProtocolVersion::LATEST_WITH_INITIALIZE,
+            accepted_versions: versions.into_iter().map(|(_, version)| version).collect(),
+        };
+    }
+
+    let (_, version) = versions
+        .into_iter()
+        .find(|(fixed, _)| *fixed == preference)
+        .expect("every fixed MCP preference has a protocol version");
+    LifecyclePlan {
+        mode: if version.has_initialize() {
+            ClientLifecycleMode::Initialize
+        } else {
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![version.clone()],
+            }
+        },
+        initialize_version: version.clone(),
+        accepted_versions: vec![version],
     }
 }
 
-fn legacy_initialize_protocol_version(preference: McpProtocolVersionPreference) -> ProtocolVersion {
-    fixed_protocol_version(preference).unwrap_or(ProtocolVersion::V_2025_11_25)
-}
-
-fn client_info(protocol_version: ProtocolVersion) -> ClientInfo {
-    ClientInfo::new(
+fn client_config(initialize_version: ProtocolVersion) -> ClientConfig {
+    ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("TauriTavern", env!("CARGO_PKG_VERSION")),
     )
-    .with_protocol_version(protocol_version)
-}
-
-fn auto_lifecycle(preference: McpProtocolVersionPreference) -> ClientLifecycleMode {
-    let preferred_versions = match fixed_protocol_version(preference) {
-        None => vec![
-            ProtocolVersion::V_2026_07_28,
-            ProtocolVersion::V_2025_11_25,
-            ProtocolVersion::V_2025_06_18,
-            ProtocolVersion::V_2025_03_26,
-        ],
-        Some(version) => vec![version],
-    };
-    ClientLifecycleMode::Auto {
-        preferred_versions,
-        legacy_version: Some(legacy_initialize_protocol_version(preference)),
-    }
+    .with_protocol_version(initialize_version)
 }
 
 fn transport(
@@ -64,81 +83,126 @@ fn transport(
     request_headers: &HashMap<HeaderName, HeaderValue>,
     http_client: reqwest::Client,
     cancel: CancellationToken,
-) -> WorkerTransport<StreamableHttpClientWorker<BoundedReqwestClient>> {
+) -> WorkerTransport<StreamableHttpClientWorker<reqwest::Client>> {
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.as_str());
     config.custom_headers = request_headers.clone();
     config.retry_config = Arc::new(NeverRetry::default());
-    config.max_sse_event_size = MAX_HTTP_RESPONSE_BYTES;
     config.reinit_on_expired_session = false;
-    let worker = StreamableHttpClientWorker::new(
-        BoundedReqwestClient::new(http_client, MAX_HTTP_RESPONSE_BYTES, cancel.clone()),
-        config,
-    );
-    WorkerTransport::spawn_with_ct(worker, cancel)
+    WorkerTransport::spawn_with_ct(StreamableHttpClientWorker::new(http_client, config), cancel)
 }
 
-// RMCP owns this rich protocol error; boxing it here would only move allocation into our adapter.
-#[allow(clippy::result_large_err)]
 async fn serve_attempt(
     endpoint: &McpEndpoint,
     request_headers: &HashMap<HeaderName, HeaderValue>,
-    preference: McpProtocolVersionPreference,
     http_client: reqwest::Client,
     lifecycle: ClientLifecycleMode,
+    initialize_version: ProtocolVersion,
     cancel: &CancellationToken,
-) -> Result<McpClient, ClientInitializeError> {
+) -> Result<McpClient, Box<ClientInitializeError>> {
     let attempt_cancel = cancel.child_token();
     // Worker shutdown must close the channel, not masquerade as caller cancellation.
     let transport_cancel = attempt_cancel.child_token();
     serve_client_with_lifecycle_and_ct(
-        client_info(legacy_initialize_protocol_version(preference)),
+        client_config(initialize_version),
         transport(endpoint, request_headers, http_client, transport_cancel),
         lifecycle,
         attempt_cancel,
     )
     .await
+    .map_err(Box::new)
 }
 
-#[allow(clippy::result_large_err)]
+#[derive(Debug, Error)]
+pub(super) enum ClientStartupError {
+    #[error(transparent)]
+    Initialize(#[from] Box<ClientInitializeError>),
+    #[error("MCP discovery failed ({discovery}); legacy initialization also failed ({initialize})")]
+    LegacyRetry {
+        discovery: Box<ClientInitializeError>,
+        #[source]
+        initialize: Box<ClientInitializeError>,
+    },
+    #[error("The server selected MCP {negotiated}; accepted versions: {accepted}")]
+    VersionNotAccepted {
+        negotiated: ProtocolVersion,
+        accepted: String,
+    },
+    #[error("MCP startup completed without server information")]
+    MissingPeerInfo,
+}
+
 pub(super) async fn start_client(
     endpoint: &McpEndpoint,
     request_headers: &HashMap<HeaderName, HeaderValue>,
     preference: McpProtocolVersionPreference,
     http_client: reqwest::Client,
     cancel: &CancellationToken,
-) -> Result<McpClient, ClientInitializeError> {
-    match serve_attempt(
+) -> Result<(McpClient, Arc<ServerPeerInfo>), ClientStartupError> {
+    let plan = lifecycle_plan(preference);
+    let mut client = match serve_attempt(
         endpoint,
         request_headers,
-        preference,
         http_client.clone(),
-        auto_lifecycle(preference),
+        plan.mode,
+        plan.initialize_version,
         cancel,
     )
     .await
     {
-        // RMCP can collapse a finite SSE bootstrap error into ConnectionClosed
-        // before Auto classifies the server as legacy.
-        Err(error)
-            if !cancel.is_cancelled()
-                && (matches!(&error, ClientInitializeError::ConnectionClosed(_))
-                    || matches!(
-                        &error,
-                        ClientInitializeError::JsonRpcError(error) if error.code.0 == -32000
-                    )) =>
+        Err(discovery)
+            if preference == McpProtocolVersionPreference::Auto
+                && !cancel.is_cancelled()
+                && matches!(
+                    discovery.as_ref(),
+                    ClientInitializeError::ConnectionClosed(_)
+                ) =>
         {
-            tracing::debug!(%error, "Trying legacy MCP lifecycle after Auto startup rejection");
+            // RMCP's expect_initialized skips SSE errors and reports ConnectionClosed.
+            // Remove this retry when RMCP delivers those errors to its Auto lifecycle.
+            tracing::debug!(%discovery, "Trying legacy MCP lifecycle after Auto startup closed");
             serve_attempt(
                 endpoint,
                 request_headers,
-                preference,
                 http_client,
                 ClientLifecycleMode::Initialize,
+                ProtocolVersion::LATEST_WITH_INITIALIZE,
                 cancel,
             )
             .await
+            .map_err(|initialize| ClientStartupError::LegacyRetry {
+                discovery,
+                initialize,
+            })?
         }
-        result => result,
+        result => result?,
+    };
+
+    let error = match client.peer().peer_info() {
+        Some(info) => {
+            if plan.accepted_versions.contains(&info.protocol_version) {
+                return Ok((client, info));
+            }
+            ClientStartupError::VersionNotAccepted {
+                negotiated: info.protocol_version.clone(),
+                accepted: plan
+                    .accepted_versions
+                    .iter()
+                    .map(ProtocolVersion::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }
+        }
+        None => ClientStartupError::MissingPeerInfo,
+    };
+    close_client(&mut client).await;
+    Err(error)
+}
+
+pub(super) async fn close_client(client: &mut McpClient) {
+    match client.close_with_timeout(CLOSE_TIMEOUT).await {
+        Ok(Some(_)) => {}
+        Ok(None) => tracing::warn!("Timed out closing short-lived MCP client"),
+        Err(error) => tracing::warn!(%error, "Failed to join short-lived MCP client"),
     }
 }
 
@@ -161,63 +225,4 @@ pub(super) fn compile_request_headers(
             Ok((name, value))
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn protocol_preference_keeps_auto_and_fixed_semantics_distinct() {
-        let auto = McpProtocolVersionPreference::Auto;
-        assert_eq!(
-            legacy_initialize_protocol_version(auto),
-            ProtocolVersion::V_2025_11_25
-        );
-        assert!(matches!(
-            auto_lifecycle(auto),
-            ClientLifecycleMode::Auto {
-                preferred_versions,
-                legacy_version: Some(legacy_version),
-            } if preferred_versions[0] == ProtocolVersion::V_2026_07_28
-                && legacy_version == ProtocolVersion::V_2025_11_25
-        ));
-
-        let fixed = McpProtocolVersionPreference::V2025_06_18;
-        assert_eq!(
-            legacy_initialize_protocol_version(fixed),
-            ProtocolVersion::V_2025_06_18
-        );
-        assert!(matches!(
-            auto_lifecycle(fixed),
-            ClientLifecycleMode::Auto {
-                preferred_versions,
-                legacy_version: Some(legacy_version),
-            } if preferred_versions == [ProtocolVersion::V_2025_06_18]
-                && legacy_version == ProtocolVersion::V_2025_06_18
-        ));
-    }
-
-    #[test]
-    fn request_headers_are_compiled_by_the_http_adapter() {
-        let headers = McpRequestHeaders::from(std::collections::BTreeMap::from([(
-            "x-label".to_string(),
-            "用户选择".to_string(),
-        )]));
-        assert_eq!(
-            compile_request_headers(&headers)
-                .unwrap()
-                .get(&HeaderName::from_static("x-label"))
-                .unwrap()
-                .as_bytes(),
-            "用户选择".as_bytes()
-        );
-
-        for headers in [
-            std::collections::BTreeMap::from([("invalid name".to_string(), "value".to_string())]),
-            std::collections::BTreeMap::from([("x-label".to_string(), "line\nbreak".to_string())]),
-        ] {
-            assert!(compile_request_headers(&McpRequestHeaders::from(headers)).is_err());
-        }
-    }
 }

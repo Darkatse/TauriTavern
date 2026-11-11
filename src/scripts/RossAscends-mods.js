@@ -1,3 +1,4 @@
+import { isMobileHost } from './util/host-identity.js';
 import { DOMPurify, Bowser } from '../lib.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { installChatInputFullscreenEditor } from './chat-input-fullscreen-editor.js';
@@ -18,10 +19,13 @@ import {
     getEntitiesList,
     buildAvatarList,
     selectCharacterById,
+    setCharacterPopupOpen,
+    setChatHistoryOpen,
     eventSource,
     menu_type,
     substituteParams,
     sendTextareaMessage,
+    canSubmitAgentGuidance,
     doNavbarIconClick,
     isSwipingAllowed,
     setChatScrollTop,
@@ -914,7 +918,8 @@ export function initRossMods() {
     installChatInputFullscreenEditor({
         sendTextArea,
         sendMessage: sendTextareaMessage,
-        isMobile,
+        canSubmitGuidance: canSubmitAgentGuidance,
+        isMobileHost,
     });
 
     restoreUserInput();
@@ -1084,7 +1089,6 @@ export function initRossMods() {
                 function doRegenerate() {
                     console.debug('Regenerating with Ctrl+Enter');
                     $('#option_regenerate').trigger('click');
-                    $('#options').hide();
                 }
 
                 // If there is input text, we do not trigger a regenerate - we just send it
@@ -1216,12 +1220,12 @@ export function initRossMods() {
             }
 
             if ($('#select_chat_popup').is(':visible')) {
-                $('#select_chat_cross').trigger('click');
+                setChatHistoryOpen(false);
                 return;
             }
 
             if ($('#character_popup').is(':visible')) {
-                $('#character_cross').trigger('click');
+                setCharacterPopupOpen(false);
                 return;
             }
 

@@ -1,20 +1,21 @@
 use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use tauri::AppHandle;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri::Manager;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri::path::BaseDirectory;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri_plugin_fs::FsExt;
 use tokio::fs;
 
 use tt_domain::errors::DomainError;
 
-static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
+static DEFAULT_FILES_MANIFEST: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
 
-#[cfg(any(target_os = "android", feature = "portable"))]
+#[cfg(any(embedded_resources, feature = "portable"))]
 mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
@@ -39,7 +40,7 @@ pub fn read_resource_bytes(
 ) -> Result<Vec<u8>, DomainError> {
     let normalized = normalize_resource_relative_path(relative_path)?;
 
-    #[cfg(target_os = "android")]
+    #[cfg(embedded_resources)]
     {
         let _ = app_handle;
         if let Some(bytes) = embedded_resources::get_embedded_resource(&normalized) {
@@ -52,7 +53,7 @@ pub fn read_resource_bytes(
         )))
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(embedded_resources))]
     {
         let path = resolve_resource_path(app_handle, &normalized)?;
         match app_handle.fs().read(&path) {
@@ -120,7 +121,7 @@ pub async fn copy_resource_to_file(
     })
 }
 
-pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
+pub fn list_default_files_under(root: &str, prefix: &str) -> Vec<String> {
     let normalized_prefix = prefix.trim_matches('/').replace('\\', "/");
     let query = if normalized_prefix.is_empty() {
         String::new()
@@ -128,7 +129,8 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         format!("{}/", normalized_prefix)
     };
 
-    let files = DEFAULT_CONTENT_MANIFEST.get_or_init(load_default_content_manifest);
+    let manifest = DEFAULT_FILES_MANIFEST.get_or_init(load_default_files_manifest);
+    let files = manifest.get(root).expect("known default resource root");
     if query.is_empty() {
         return files.to_vec();
     }
@@ -140,25 +142,15 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         .collect()
 }
 
-fn load_default_content_manifest() -> Vec<String> {
-    let raw = include_str!(concat!(env!("OUT_DIR"), "/default_content_manifest.json"));
-    match serde_json::from_str::<Vec<String>>(raw) {
-        Ok(mut entries) => {
-            entries.sort();
-            entries
-        }
-        Err(error) => {
-            tracing::error!(
-                target: crate::observability_targets::USER_VISIBLE_ERROR,
-                "Failed to load generated default content manifest: {}",
-                error
-            );
-            Vec::new()
-        }
-    }
+fn load_default_files_manifest() -> BTreeMap<String, Vec<String>> {
+    serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/default_files_manifest.json"
+    )))
+    .expect("valid generated default resource manifest")
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 fn resolve_resource_path(
     app_handle: &AppHandle,
     relative_path: &str,
@@ -186,7 +178,7 @@ fn normalize_resource_relative_path(relative_path: &str) -> Result<String, Domai
     Ok(normalized)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))

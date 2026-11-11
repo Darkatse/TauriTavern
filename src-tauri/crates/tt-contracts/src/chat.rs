@@ -25,22 +25,6 @@ impl From<String> for ChatImportFormat {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(clippy::upper_case_acronyms)]
-pub enum ChatExportFormat {
-    JSONL,
-    PlainText,
-}
-
-impl From<String> for ChatExportFormat {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "plaintext" => ChatExportFormat::PlainText,
-            _ => ChatExportFormat::JSONL,
-        }
-    }
-}
-
 /// Chat search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSearchResult {
@@ -53,6 +37,13 @@ pub struct ChatSearchResult {
     pub chat_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_metadata: Option<Value>,
+}
+
+/// Current file identity, read independently of rebuildable directory summaries.
+#[derive(Debug, Clone)]
+pub struct CharacterChatIdentity {
+    pub file_name: String,
+    pub integrity: Option<String>,
 }
 
 /// Metadata-only entry for the chat backup catalog.

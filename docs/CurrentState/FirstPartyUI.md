@@ -1,12 +1,13 @@
 # First-party UI 当前架构
 
-本文说明 TauriTavern 自有前端的现行架构与维护边界。SillyTavern 1.18.0 仍拥有页面、扩展加载和全局生命周期；TauriTavern 只在既有页面中挂载独立的 React client island，不建立第二套页面壳或路由。
+本文说明 TauriTavern 自有前端的现行架构与维护边界。SillyTavern 前端仍拥有页面、扩展加载和全局生命周期；TauriTavern 只在既有页面中挂载独立的 React client island，不建立第二套页面壳或路由。
 
 ## 1. 范围
 
 First-party UI 包含：
 
 - Agent System；
+- In-App Assistant；
 - MCP Manager；
 - Tauri Settings、Dev Logs 与 Sync。
 
@@ -35,6 +36,7 @@ Rspack 直接拥有以下 TypeScript/TSX 源码：
 
 ```text
 src/scripts/extensions/agent-system/src
+src/scripts/extensions/in-app-agent/src
 src/scripts/extensions/mcp-manager/src
 src/scripts/tauri/setting/settings-app
 src/scripts/tauri/setting/dev-logs-app
@@ -46,12 +48,17 @@ src/scripts/tauri/setting/sync-app
 | 功能 | Rspack entry | 输出 | 加载方 |
 | --- | --- | --- | --- |
 | Agent System | `agent-system/src/index.tsx` | `agent-system/dist/index.bundle.js` | Agent manifest |
+| In-App Assistant | `in-app-agent/src/index.ts` | `in-app-agent/dist/index.bundle.js`、`index.bundle.css` | Assistant manifest |
 | MCP Manager | `mcp-manager/src/index.tsx` | `mcp-manager/dist/index.bundle.js` | MCP manifest |
 | Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
 | Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
 | Sync | `sync-app/index.ts` | `setting/dist/sync.bundle.js` | Sync popup 与 listener 外壳 |
 
+In-App Assistant 的 manifest 加载构建生成的 `dist/index.bundle.css`，因为光标样式要从 app-use 包导入；Agent System 与 MCP Manager 的 manifest 直接加载 `style.css`。所以改了助手的 `style.css`，要经 rspack 重新构建才会生效。
+
 本地 TS/TSX 模块使用无扩展名相对 import。显式 `.js` import 只指向磁盘上真实存在、由浏览器执行的 JavaScript 模块。
+
+[app-use](../../packages/app-use/README.md) 是例外：它的相对 import 写显式 `.ts`，构建时由 TypeScript 改写为 `.js`。包用自己的 tsconfig（NodeNext）做类型检查和 lint。TT 直接 import 包的源码，所以 `tsconfig.ui.json` 打开了 `allowImportingTsExtensions`。ESLint 按目录显式指定 tsconfig，因为自动查找会用到上游的 `src/jsconfig.json`。
 
 `src/scripts/tauri/setting/*.js` 与 `setting-panel/*.js` 是 WebView 直接加载的宿主适配层。它们拥有 Popup 生命周期、保存/关闭时序、原生事件接线和 bundle 动态导入，因此继续以浏览器 ESM 交付。`format-bytes.js` 同时服务宿主脚本与 TS bundle，并在实现中通过 `// @ts-check` 和 JSDoc 提供类型信息。
 
@@ -66,6 +73,13 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 - Panel、Timeline 与 Skill Manager 各自拥有 feature-local contract、controller/model 和 React presentation。
 - `i18n.ts` 负责翻译与插值，消息 key 由静态 catalog 推导类型。
 - `chat-input-toggle.ts` 与 `embedded-assets-buttons.ts` 是接入上游 DOM 的原生适配器，不创建额外 React root。
+
+### In-App Assistant
+
+- 一个 React island 挂载于原 A 抽屉；SillyTavern 保留外围 DOM 与抽屉行为，隐藏不卸载。
+- `host.ts` 组合公共 API；controller 管理会话、任务与输入草稿，组件管理设置草稿和视图。
+
+启动顺序、消息归属与工具边界见 [应用内助手](InAppAssistant.md)。
 
 ### MCP Manager
 

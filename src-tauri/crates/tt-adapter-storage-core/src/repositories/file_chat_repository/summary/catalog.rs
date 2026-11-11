@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use tokio::fs;
@@ -8,7 +9,10 @@ use tt_ports::repositories::chat_repository::ChatSearchResult;
 use crate::file_system::list_files_with_extension;
 
 use super::super::FileChatRepository;
-use super::{ChatFileDescriptor, SummaryCacheEntry, summary_cache_key};
+use super::{
+    ChatFileDescriptor, FileSignature, SummaryCacheEntry, message_display_text, projection,
+    summary_cache_key,
+};
 
 impl FileChatRepository {
     async fn list_character_chat_directory_keys(&self) -> Result<Vec<String>, DomainError> {
@@ -143,13 +147,11 @@ impl FileChatRepository {
             .collect())
     }
 
-    pub(super) async fn get_chat_summary_entry(
+    async fn lookup_chat_summary(
         &self,
         descriptor: &ChatFileDescriptor,
         require_fingerprint: bool,
-    ) -> Result<SummaryCacheEntry, DomainError> {
-        self.summary_cache.lock().await.ensure_loaded()?;
-
+    ) -> Result<(FileSignature, Option<SummaryCacheEntry>), DomainError> {
         let metadata = fs::metadata(&descriptor.path).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to read chat metadata {:?}: {error}",
@@ -159,17 +161,29 @@ impl FileChatRepository {
         let signature = Self::file_signature_from_metadata(&metadata);
         let cache_key = summary_cache_key(&descriptor.path);
 
-        {
-            let cache = self.summary_cache.lock().await;
-            if let Some(entry) = cache.get(&cache_key)
-                && entry.signature == signature
-                && (!require_fingerprint || entry.fingerprint.is_some())
-            {
-                return Ok(entry.clone());
-            }
+        let mut cache = self.summary_cache.lock().await;
+        cache.ensure_loaded().await;
+        let entry = cache
+            .get(&cache_key)
+            .filter(|entry| entry.signature == signature)
+            .filter(|entry| !require_fingerprint || entry.fingerprint.is_some())
+            .cloned();
+        Ok((signature, entry))
+    }
+
+    pub(super) async fn get_chat_summary_entry(
+        &self,
+        descriptor: &ChatFileDescriptor,
+        require_fingerprint: bool,
+    ) -> Result<SummaryCacheEntry, DomainError> {
+        let (signature, cached) = self
+            .lookup_chat_summary(descriptor, require_fingerprint)
+            .await?;
+        if let Some(entry) = cached {
+            return Ok(entry);
         }
 
-        let scanned = self
+        let (scanned, _) = self
             .scan_chat_summary_file(
                 &descriptor.path,
                 &descriptor.character_name,
@@ -181,8 +195,66 @@ impl FileChatRepository {
         self.summary_cache
             .lock()
             .await
-            .set(cache_key, scanned.clone());
+            .set(summary_cache_key(&descriptor.path), scanned.clone());
         Ok(scanned)
+    }
+
+    /// Character-list summaries plus untruncated last-message display text.
+    /// Missing text remains `None` so the consumer can choose its empty label.
+    /// Full text is returned from the cold scan or read only from the tail on a cache hit.
+    pub async fn list_chat_summaries_with_full_text(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<(ChatSearchResult, Option<String>)>, DomainError> {
+        let descriptors = self.list_character_chat_files(Some(character_name)).await?;
+        let mut results = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            match self.get_chat_summary_with_full_text(&descriptor).await {
+                Ok(result) => results.push(result),
+                Err(error) => tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to inspect chat '{}': {}",
+                    descriptor.path.display(),
+                    error
+                ),
+            }
+        }
+        results.sort_by_key(|(summary, _)| Reverse(summary.date));
+        self.flush_summary_index_best_effort().await;
+        Ok(results)
+    }
+
+    async fn get_chat_summary_with_full_text(
+        &self,
+        descriptor: &ChatFileDescriptor,
+    ) -> Result<(ChatSearchResult, Option<String>), DomainError> {
+        let (signature, cached) = self.lookup_chat_summary(descriptor, false).await?;
+        let (entry, text) = if let Some(entry) = cached {
+            let text = if entry.preview_unavailable {
+                message_display_text(projection::MessageText::Unavailable)
+            } else if entry.summary.message_count == 0 {
+                None
+            } else {
+                message_display_text(projection::read_last_raw_tail(&descriptor.path).await?.mes)
+            };
+            (entry, text)
+        } else {
+            let (entry, text) = self
+                .scan_chat_summary_file(
+                    &descriptor.path,
+                    &descriptor.character_name,
+                    &descriptor.file_name,
+                    signature,
+                    false,
+                )
+                .await?;
+            self.summary_cache
+                .lock()
+                .await
+                .set(summary_cache_key(&descriptor.path), entry.clone());
+            (entry, text)
+        };
+        Ok((entry.summary.into(), text))
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_chat_summary(
@@ -190,14 +262,17 @@ impl FileChatRepository {
         descriptor: &ChatFileDescriptor,
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError> {
-        let mut summary = self
-            .get_chat_summary_entry(descriptor, false)
-            .await?
-            .summary;
-        if !include_metadata {
-            summary.chat_metadata = None;
+        let mut result = ChatSearchResult::from(
+            self.get_chat_summary_entry(descriptor, false)
+                .await?
+                .summary,
+        );
+        if include_metadata {
+            result.chat_metadata = self
+                .read_optional_chat_metadata_from_path(&descriptor.path)
+                .await?;
         }
-        Ok(summary)
+        Ok(result)
     }
 
     pub(in crate::repositories::file_chat_repository) async fn collect_chat_summaries(

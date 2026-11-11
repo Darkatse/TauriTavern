@@ -49,16 +49,8 @@ pub trait CharacterRepository: Send + Sync {
         &self,
         file_path: &Path,
         name: &str,
-        primary_lorebook: Option<&str>,
+        primary_lorebook: &str,
     ) -> Result<Character, DomainError>;
-
-    /// Export a character card to a target path without mutating the stored source file.
-    async fn export_character(
-        &self,
-        name: &str,
-        target_path: &Path,
-        character_card_json: &str,
-    ) -> Result<(), DomainError>;
 
     /// Read the raw character card JSON payload as stored (PNG metadata, preferring V3 when available).
     async fn read_character_card_json(&self, name: &str) -> Result<String, DomainError>;

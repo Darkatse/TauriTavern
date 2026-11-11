@@ -52,3 +52,8 @@ export function characterStemFromAvatarFileName(value, fieldName, { required = f
     const fileName = assertCharacterAvatarFileName(value, fieldName, { required });
     return fileName ? fileName.slice(0, -CHARACTER_AVATAR_FILE_EXTENSION.length) : '';
 }
+
+/** Convert the storage stem used by TT commands back to its avatar filename. @param {string} stem */
+export function characterAvatarFileNameFromStem(stem) {
+    return `${stem}${CHARACTER_AVATAR_FILE_EXTENSION}`;
+}

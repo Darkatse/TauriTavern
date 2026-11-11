@@ -9,7 +9,6 @@ use tokio::fs;
 use crate::file_system::move_file_no_replace_with_fallback;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::strip_jsonl_extension;
-use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
@@ -80,7 +79,7 @@ impl GroupChatRepository for FileChatRepository {
 
         let search_cache_key = Self::group_search_cache_key(&normalized_query, chat_ids);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
-            return Ok(cached);
+            return Ok(cached.into_iter().map(ChatSearchResult::from).collect());
         }
 
         let descriptors = self.list_group_chat_files(chat_ids).await?;
@@ -94,7 +93,7 @@ impl GroupChatRepository for FileChatRepository {
                 .await;
         }
         self.flush_summary_index_best_effort().await;
-        Ok(results)
+        Ok(results.into_iter().map(ChatSearchResult::from).collect())
     }
 
     async fn get_group_chat_payload_path(
@@ -233,19 +232,6 @@ impl GroupChatRepository for FileChatRepository {
     async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
         self.read_chat_metadata_from_path(&path).await
-    }
-
-    async fn set_group_chat_metadata_extension(
-        &self,
-        chat_id: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), DomainError> {
-        let target = ChatPayloadTarget::Group {
-            chat_id: chat_id.to_owned(),
-        };
-        self.set_chat_metadata_extension(target, namespace, value)
-            .await
     }
 
     async fn get_group_chat_store_json(

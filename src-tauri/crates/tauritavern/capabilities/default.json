@@ -18,24 +18,11 @@
     "fs:allow-read-text-file",
     "fs:allow-resource-read-recursive",
     "fs:default",
-    "fs:allow-appcache-write-recursive",
-    "fs:allow-temp-write-recursive",
     {
       "identifier": "fs:scope",
       "allow": [
         "/storage/emulated/0/Android/data/com.tauritavern.client/**",
         "/sdcard/Android/data/com.tauritavern.client/**"
-      ]
-    },
-    {
-      "identifier": "fs:allow-write-file",
-      "allow": [
-        {
-          "path": "$DOWNLOAD/**"
-        },
-        {
-          "path": "$DOCUMENT/**"
-        }
       ]
     }
   ]

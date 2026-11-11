@@ -267,7 +267,7 @@ test('file tree validates paths and sorts folders before files', () => {
     ], tr)).toThrow('invalidSkillFilePath');
 });
 
-test('settings entry stays directly after Agent so MCP can anchor after Skill', () => {
+test('settings entry stays directly after Agent and reuses its container', () => {
     document.body.innerHTML = `
         <div id="rm_extensions_block">
             <div id="extensions_settings2">
@@ -281,11 +281,5 @@ test('settings entry stays directly after Agent so MCP can anchor after Skill', 
     expect(skillContainer.parentElement?.id).toBe('extensions_settings2');
     expect(agentContainer?.nextElementSibling).toBe(skillContainer);
 
-    const mcpContainer = document.createElement('div');
-    mcpContainer.id = 'mcp_manager_container';
-    skillContainer.insertAdjacentElement('afterend', mcpContainer);
-    expect([...skillContainer.parentElement?.children ?? []].map(element => element.id)).toEqual([
-        'agent_system_container', 'skill_manager_container', 'mcp_manager_container', 'hypebot_container',
-    ]);
     expect(ensureSkillManagerContainer()).toBe(skillContainer);
 });

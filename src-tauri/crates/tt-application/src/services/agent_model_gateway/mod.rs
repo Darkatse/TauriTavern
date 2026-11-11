@@ -22,6 +22,7 @@ mod tests;
 
 #[cfg(feature = "test-support")]
 pub use decode::decode_chat_completion_response;
+pub(crate) use encode::call_model_alias;
 pub use provider_state::reset_transport_for_resume;
 
 #[async_trait]
@@ -44,6 +45,9 @@ pub struct AgentModelExchange {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum AgentModelStreamDelta {
+    Text {
+        text: String,
+    },
     ToolCall {
         tool_call_index: usize,
         tool_id: ToolId,
@@ -80,6 +84,9 @@ impl AgentModelGateway for ChatCompletionAgentModelGateway {
         let exchange = match on_delta {
             Some(on_delta) => {
                 let mut forward_delta = |delta: ChatCompletionStreamDelta| match delta {
+                    ChatCompletionStreamDelta::Text { text } => {
+                        on_delta(AgentModelStreamDelta::Text { text });
+                    }
                     ChatCompletionStreamDelta::Reasoning { text } => {
                         on_delta(AgentModelStreamDelta::Reasoning { text });
                     }

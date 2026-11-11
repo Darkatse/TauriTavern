@@ -1,36 +1,7 @@
 use serde_json::json;
 
-use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN};
+use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
 use tt_domain::models::tool::{ToolDescriptor, ToolId};
-
-pub(in crate::services::agent_tools) fn agent_list_descriptor() -> ToolDescriptor {
-    ToolDescriptor {
-        id: ToolId::builtin(AGENT_LIST).expect("builtin tool name must be valid"),
-        title: Some("Agent List".to_string()),
-        description: Some("Find other Agents you can ask for focused help. This tool is read-only and does not start any work.".to_string()),
-        input_schema: json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "purpose": {
-                    "type": "string",
-                    "enum": ["any", "delegate", "handoff"],
-                    "description": "Optional kind of help to look for. Defaults to any."
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Optional text filter over Agent id, display name, and description."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum Agents to return. Defaults to 8; maximum is 20."
-                }
-            }
-        }),
-        output_schema: None,
-        annotations: json!({ "readOnly": true, "sourceKind": "agent" }),
-    }
-}
 
 pub(in crate::services::agent_tools) fn agent_delegate_descriptor() -> ToolDescriptor {
     ToolDescriptor {
@@ -43,7 +14,7 @@ pub(in crate::services::agent_tools) fn agent_delegate_descriptor() -> ToolDescr
             "properties": {
                 "agentId": {
                     "type": "string",
-                    "description": "Agent id returned by agent_list."
+                    "description": "ID from the available agents marked delegate."
                 },
                 "task": {
                     "type": "object",
@@ -120,7 +91,7 @@ pub(in crate::services::agent_tools) fn agent_handoff_descriptor() -> ToolDescri
             "properties": {
                 "agentId": {
                     "type": "string",
-                    "description": "Agent id returned by agent_list with purpose handoff."
+                    "description": "ID from the available agents marked handoff."
                 },
                 "handoff": {
                     "type": "object",

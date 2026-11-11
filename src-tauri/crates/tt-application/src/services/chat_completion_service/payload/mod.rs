@@ -10,7 +10,6 @@ use super::opencode::{self, OpenCodeApiFormat};
 mod aws_bedrock;
 mod chutes;
 mod claude;
-mod claude_messages;
 mod cohere;
 mod content_parts;
 mod custom;
@@ -69,7 +68,7 @@ pub(super) fn build_payload(
             match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
                 OpenCodeApiFormat::OpenAiResponses => openai_responses::build(payload),
-                OpenCodeApiFormat::ClaudeMessages => claude_messages::build(payload),
+                OpenCodeApiFormat::ClaudeMessages => claude::build_passthrough(payload),
                 OpenCodeApiFormat::Gemini => makersuite::build(payload),
             }
         }
@@ -96,17 +95,6 @@ pub(super) fn build_payload(
         options.apply(body.as_object_mut().expect("wire builders return objects"));
     }
     Ok((endpoint, body))
-}
-
-pub(super) fn validate_upstream_tool_transcript(
-    endpoint_path: &str,
-    upstream_payload: &Value,
-) -> Result<(), ApplicationError> {
-    if endpoint_path != "/chat/completions" {
-        return Ok(());
-    }
-
-    tool_calls::validate_openai_chat_tool_transcript(upstream_payload.get("messages"), false)
 }
 
 #[cfg(test)]
@@ -202,22 +190,24 @@ mod tests {
     }
 
     #[test]
-    fn openai_gpt_6_astra_uses_responses_api() {
-        let payload = json!({
-            "model": "gpt-6-astra",
-            "messages": [{"role": "user", "content": "hello"}],
-            "temperature": 0.7
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn openai_gpt_6_family_uses_responses_api() {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"] {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.7
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (endpoint, upstream) =
-            build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
+            let (endpoint, upstream) =
+                build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
 
-        assert_eq!(endpoint, "/responses");
-        assert_eq!(upstream["model"], "gpt-6-astra");
-        assert_eq!(upstream["temperature"], 0.7);
+            assert_eq!(endpoint, "/responses", "{model}");
+            assert_eq!(upstream["model"], model);
+            assert_eq!(upstream["temperature"], 0.7);
+        }
     }
 
     #[test]
@@ -298,31 +288,6 @@ mod tests {
         assert_eq!(input[1]["call_id"], "call_1");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[2]["call_id"], "call_1");
-    }
-
-    #[test]
-    fn custom_openai_responses_rejects_orphan_tool_output_through_payload_boundary() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "tool", "tool_call_id": "call_1", "content": "orphan" }
-            ]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build_payload(ChatCompletionSource::Custom, payload)
-            .expect_err("orphan tool output must fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("without preceding function_call")
-        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use ttsync_contract::status::StatusResponse;
 use ttsync_contract::sync::OverwritePolicy;
 
 use super::LanStatusResponse;
-use super::discovery::LocalLanAddressDiscovery;
+use super::discovery::routed_advertise_address;
 use crate::sync::http_client::{
     SyncHttpClient, bearer_auth_value, ensure_dataset_scope_v1, ensure_success,
 };
@@ -25,7 +25,7 @@ use tt_domain::models::lan_sync::{
     LanPairCompleteRequest, LanPairCompleteResponse, LanSyncPairedDevice,
 };
 use tt_ports::lan_discovery::LanDeviceDiscovery;
-use tt_ports::lan_sync::{LanAddressDiscovery, LanPairingClient};
+use tt_ports::lan_sync::LanPairingClient;
 
 #[derive(Clone)]
 pub struct LanSyncClient {
@@ -264,9 +264,7 @@ impl LanPairingClient for HttpLanPairingClient {
         })
         .await
         .map_err(|_| DomainError::Transient("Timed out locating LAN Sync device".to_string()))??;
-        let client_base_url = LocalLanAddressDiscovery
-            .routed_advertise_address(&base_url, local_device.port)
-            .await?;
+        let client_base_url = routed_advertise_address(&base_url, local_device.port).await?;
         let request = LanPairCompleteRequest {
             device_id: local_device.device_id.clone(),
             device_name: local_device.device_name.clone(),

@@ -1,12 +1,9 @@
 use serde_json::{Value, json};
 
-// Relative to the user directory; each section has its own sync selection.
-pub(super) const APPEARANCE_FILE: &str = "settings/appearance.json";
+pub(super) use tt_contracts::settings::{
+    APPEARANCE_FILE, CORE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
+};
 pub(super) const DYNAMIC_THEME_FILE: &str = "settings/dynamic-theme.json";
-pub(super) const PRESETS_FILE: &str = "settings/presets.json";
-pub(super) const LAYOUT_FILE: &str = "settings/layout.json";
-
-pub(super) const PERSONA_STATE_FILE: &str = "settings/persona-state.json";
 
 type FieldGroup = (&'static [&'static str], &'static [&'static str]);
 

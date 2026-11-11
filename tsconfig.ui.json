@@ -6,12 +6,15 @@
     "module": "ESNext",
     "tsBuildInfoFile": ".cache/tsconfig.ui.tsbuildinfo",
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "types": ["react", "react-dom"]
   },
   "include": [
     "src/types.d.ts",
     "src/scripts/extensions/agent-system/src/**/*.ts",
+    "src/scripts/extensions/in-app-agent/src/**/*.ts",
     "src/scripts/extensions/agent-system/src/**/*.tsx",
+    "src/scripts/extensions/in-app-agent/src/**/*.tsx",
     "src/scripts/extensions/mcp-manager/src/**/*.ts",
     "src/scripts/extensions/mcp-manager/src/**/*.tsx",
     "src/scripts/tauri/setting/**/*.ts",

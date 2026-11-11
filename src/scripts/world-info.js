@@ -1,10 +1,21 @@
+import { getPageForItem, initPagination } from './pagination.js';
 import { Fuse } from '../lib.js';
+import {
+    flushWorldInfoSaves,
+    deleteWorldInfoDocument,
+    discardWorldInfoDocument,
+    loadWorldInfo,
+    prefetchWorldInfos,
+    saveWorldInfo,
+    worldInfoCache,
+} from './world-info-persistence.js';
+
+import { isInlineDrawerOpen } from './drawers.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
 import { extension_prompt_roles } from './extension-prompts.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml, setInfoBlock, clearInfoBlock } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
-import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { getTokenCountAsync, getTokenPrefixCountsAsync } from './tokenizers.js';
@@ -19,16 +30,17 @@ import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandE
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { StructuredCloneMap } from './util/StructuredCloneMap.js';
 import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
-import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
+import { LorebookAdoptionConflictError } from '../tauri/main/api/character-cards.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
+
+export { flushWorldInfoSaves, loadWorldInfo, saveWorldInfo, worldInfoCache };
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -67,6 +79,8 @@ export const scan_state = {
 
 const WI_ENTRY_HEADER_TEMPLATE = $('#entry_edit_template .world_entry');
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry_edit');
+// The editor keeps the same list even when Panel Runtime detaches it from document.
+const worldEntriesList = $('#world_popup_entries_list');
 
 export let world_info = {};
 export let selected_world_info = [];
@@ -86,76 +100,6 @@ export let world_info_use_group_scoring = false;
 export let world_info_character_strategy = world_info_insertion_strategy.character_first;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-/** @type {Map<string, { data: any; revision: number }>} */
-const dirtyWorldInfos = new Map();
-let worldInfoDirtyRevision = 0;
-/** @type {Promise<void>} */
-let worldInfoFlushChain = Promise.resolve();
-
-/**
- * Flushes pending debounced lorebook saves to disk.
- *
- * This is required for correctness because some extensions/scripts run inside
- * isolated iframes (e.g. JSR/MVU) and therefore read lorebooks via /api (disk),
- * while the editor uses debounced persistence.
- *
- * @param {string} [reason]
- */
-export function flushWorldInfoSaves(reason = 'worldinfo_flush') {
-    const task = worldInfoFlushChain.then(async () => {
-        if (dirtyWorldInfos.size === 0) {
-            return;
-        }
-
-        const pending = Array.from(dirtyWorldInfos.keys());
-        for (const name of pending) {
-            const latest = dirtyWorldInfos.get(name);
-            if (!latest?.data) {
-                continue;
-            }
-
-            await _save(name, latest.data, latest.revision);
-        }
-    });
-
-    worldInfoFlushChain = task.catch(() => undefined);
-    return task;
-}
-
-const saveWorldDebounced = debounce(() => {
-    flushWorldInfoSaves('worldinfo_debounced_save').catch((error) => console.error(error));
-}, debounce_timeout.relaxed);
-
-let worldInfoFlushHooksInstalled = false;
-function installWorldInfoFlushHooks() {
-    if (worldInfoFlushHooksInstalled) {
-        return;
-    }
-    worldInfoFlushHooksInstalled = true;
-
-    /** @param {string} event */
-    const flushBefore = (event) => {
-        eventSource.makeFirst(event, async () => {
-            await flushWorldInfoSaves(`event:${event}`);
-        });
-    };
-
-    flushBefore(event_types.CHAT_CHANGED);
-    flushBefore(event_types.CHAT_LOADED);
-    flushBefore(event_types.GENERATION_STARTED);
-    flushBefore(event_types.GENERATE_BEFORE_COMBINE_PROMPTS);
-
-    /** @param {string} reason */
-    const flushSoon = (reason) => {
-        if (dirtyWorldInfos.size === 0) {
-            return Promise.resolve();
-        }
-        return flushWorldInfoSaves(reason).catch((error) => console.error(error));
-    };
-
-    registerLifecycleFlushHandler('world-info', flushSoon);
-}
-installWorldInfoFlushHooks();
 let worldInfoSettingsSavePending = false;
 const scheduleWorldInfoSettingsSave = debounce(() => {
     worldInfoSettingsSavePending = false;
@@ -964,20 +908,6 @@ export const wi_anchor_position = {
 };
 
 /**
- * The cache of all world info data that was loaded from the backend.
- *
- * Calling `loadWorldInfo` will fill this cache and utilize this cache, so should be the preferred way to load any world info data.
- * Only use the cache directly if you need synchronous access.
- *
- * This will return a deep clone of the data, so no way to modify the data without actually saving it.
- * Should generally be only used for readonly access.
- *
- * @type {StructuredCloneMap<string,object>}
- * */
-export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
-const worldInfoInFlight = new Map();
-
-/**
  * Gets the world info based on chat messages.
  * @param {string[]} chat - The chat messages to scan, in reverse order.
  * @param {number} maxContext - The maximum context size of the generation.
@@ -1147,6 +1077,81 @@ export function reloadEditor(file, loadIfNotSelected = false) {
     if (selectedIndex !== -1 && (loadIfNotSelected || currentIndex === selectedIndex)) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     }
+}
+
+/** Refresh the working document and editor after a backend write. */
+export async function refreshWorldInfoAfterExternalWrite(name, { created = false } = {}) {
+    discardWorldInfoDocument(name);
+    const data = await loadWorldInfo(name);
+    await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+    if (created) await updateWorldInfoList();
+    reloadEditor(name);
+}
+
+/**
+ * Resolve an adoption decision and refresh the linked lorebook and character views.
+ * @param {string} avatar
+ * @param {TauriTavernCharacterImportResult['lorebook']} adoption
+ * @param {{ skipPopup?: boolean, notify?: boolean }} [options]
+ * @returns {Promise<{ world: string, changed: boolean } | null>}
+ */
+export async function completeCharacterLorebookAdoption(avatar, adoption, { skipPopup = false, notify = true } = {}) {
+    if (adoption.status === 'decision') {
+        /** @type {'adopt' | 'update'} */
+        let choice = 'adopt';
+        if (!skipPopup) {
+            const current = `<code>${escapeHtml(adoption.world)}</code>`;
+            const target = `<code>${escapeHtml(adoption.target)}</code>`;
+            const body = `<div>${t`The new card's lorebook differs from the current one, ${current}.`}</div>
+                <div class="m-t-1">${t`Switch to New: use ${target}; the current one stays unchanged.`}</div>
+                ${adoption.can_update ? `<div>${t`Update Current: overwrite ${current}.`}</div>` : ''}`;
+            const customButtons = [{ text: t`Switch to New`, result: POPUP_RESULT.CUSTOM1 }];
+            if (adoption.can_update) customButtons.push({ text: t`Update Current`, result: POPUP_RESULT.CUSTOM2 });
+            const result = await Popup.show.confirm(t`Update Lorebook`, body, {
+                okButton: false,
+                cancelButton: t`Keep Current`,
+                customButtons,
+                defaultResult: POPUP_RESULT.CUSTOM1,
+            });
+            if (result !== POPUP_RESULT.CUSTOM1 && result !== POPUP_RESULT.CUSTOM2) return null;
+            choice = result === POPUP_RESULT.CUSTOM1 ? 'adopt' : 'update';
+        }
+        try {
+            adoption = await window.__TAURITAVERN__.api.characterCards.resolveLorebookAdoption(avatar, choice, adoption.token);
+        } catch (error) {
+            if (error instanceof LorebookAdoptionConflictError) {
+                throw new Error(t`The lorebook was changed elsewhere; nothing was applied`, { cause: error });
+            }
+            throw error;
+        }
+    }
+
+    if (adoption.status !== 'linked') return null;
+    const relinked = adoption.previous !== adoption.world;
+    const changed = relinked || adoption.created || adoption.updated;
+    if (adoption.created || adoption.updated) {
+        try {
+            await refreshWorldInfoAfterExternalWrite(adoption.world, { created: adoption.created });
+        } catch (error) {
+            console.error('Lorebook saved, but its view could not be refreshed:', error);
+            toastr.error(error?.message, t`Lorebook refresh failed`);
+        }
+    }
+
+    if (relinked) {
+        const index = characters.findIndex(character => character.avatar === avatar);
+        if (index !== -1) {
+            await getOneCharacter(avatar);
+            if (characters[this_chid]?.avatar === avatar) select_selected_character(this_chid, { switchMenu: false });
+        }
+    }
+    if (characters[this_chid]?.avatar === avatar) setWorldInfoButtonClass(this_chid);
+    if (notify && changed) {
+        toastr.success(adoption.updated
+            ? t`Updated lorebook "${adoption.world}"`
+            : t`Linked lorebook "${adoption.world}"`);
+    }
+    return { world: adoption.world, changed };
 }
 
 //MARK: regWISlashCommands
@@ -2175,109 +2180,6 @@ export async function showWorldEditor(name) {
     await displayWorldEntries(name, wiData);
 }
 
-async function prefetchWorldInfos(names) {
-    const missing = [];
-    const seen = new Set();
-
-    for (const rawName of names) {
-        const name = typeof rawName === 'string' ? rawName : '';
-        if (name === '' || seen.has(name) || worldInfoCache.has(name)) {
-            continue;
-        }
-
-        seen.add(name);
-        missing.push(name);
-    }
-
-    if (!missing.length) {
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/worldinfo/get-batch', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ names: missing }),
-            cache: 'no-cache',
-        });
-
-        if (response.ok) {
-            const payload = await response.json();
-            const items = Array.isArray(payload?.items) ? payload.items : [];
-            for (const item of items) {
-                const name = typeof item?.name === 'string' ? item.name : '';
-                if (name === '') {
-                    continue;
-                }
-
-                const data = item?.data;
-                if (!data || typeof data !== 'object' || Array.isArray(data)) {
-                    continue;
-                }
-
-                worldInfoCache.set(name, data);
-            }
-        } else {
-            console.warn(`[WI] World info get-batch failed: ${response.status}`);
-        }
-    } catch (error) {
-        console.warn('[WI] World info get-batch failed:', error);
-    }
-
-    const stillMissing = missing.filter((name) => !worldInfoCache.has(name));
-    if (stillMissing.length) {
-        await Promise.allSettled(stillMissing.map((name) => loadWorldInfo(name)));
-    }
-}
-
-/**
- * Loads world info from the backend.
- *
- * This function will return from `worldInfoCache` if it has already been loaded before.
- *
- * @param {string} name - The name of the world to load
- * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
- */
-export async function loadWorldInfo(name) {
-    name = String(name ?? '');
-    if (name === '') return;
-
-    if (worldInfoCache.has(name)) {
-        return worldInfoCache.get(name);
-    }
-
-    const inFlight = worldInfoInFlight.get(name);
-    if (inFlight) {
-        return inFlight;
-    }
-
-    const task = (async () => {
-        const response = await fetch('/api/worldinfo/get', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: name }),
-            cache: 'no-cache',
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            worldInfoCache.set(name, data);
-            return data;
-        }
-
-        return null;
-    })();
-
-    worldInfoInFlight.set(name, task);
-    task.finally(() => {
-        if (worldInfoInFlight.get(name) === task) {
-            worldInfoInFlight.delete(name);
-        }
-    });
-
-    return task;
-}
-
 export async function updateWorldInfoList() {
     const result = await fetch('/api/settings/get', {
         method: 'POST',
@@ -2537,7 +2439,6 @@ function clearEntryList($list) {
 async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true) {
     updateEditor = async (navigation, flashOnNav = true) => await displayWorldEntries(name, data, navigation, flashOnNav);
 
-    const worldEntriesList = $('#world_popup_entries_list');
     clearEntryList(worldEntriesList);
     worldEntriesList.show();
 
@@ -2607,34 +2508,20 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         return entriesArray;
     }
 
-    const storageKey = 'WI_PerPage';
-    const perPageDefault = 25;
-    let startPage = 1;
-
-    if (navigation === navigation_option.previous) {
-        startPage = $('#world_info_pagination').pagination('getCurrentPageNum');
-    }
+    const paginationSettings = { storageKey: 'WI_PerPage', defaultPageSize: 25 };
+    let startPage = navigation === navigation_option.previous ? undefined : 1;
 
     if (typeof navigation === 'number' && Number(navigation) >= 0) {
         const data = getDataArray();
         const uidIndex = data.findIndex(x => x.uid === navigation);
-        const perPage = Number(accountStorage.getItem(storageKey)) || perPageDefault;
-        startPage = Math.floor(uidIndex / perPage) + 1;
+        startPage = getPageForItem(uidIndex, paginationSettings);
     }
 
-    $('#world_info_pagination').pagination({
-        dataSource: getDataArray,
-        pageSize: Number(accountStorage.getItem(storageKey)) || perPageDefault,
+    initPagination($('#world_info_pagination'), {
+        ...paginationSettings,
         sizeChangerOptions: [10, 25, 50, 100, 500, 1000],
-        showSizeChanger: true,
-        pageRange: 1,
+        dataSource: getDataArray,
         pageNumber: startPage,
-        position: 'top',
-        showPageNumbers: false,
-        prevText: '<',
-        nextText: '>',
-        formatNavigator: PAGINATION_TEMPLATE,
-        showNavigator: true,
         callback: async function (/** @type {object[]} */ page) {
             try {
                 clearEntryList(worldEntriesList);
@@ -2666,25 +2553,24 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 console.error('Error while rendering WI entries:', error);
             }
         },
-        afterSizeSelectorChange: function (e) {
-            accountStorage.setItem(storageKey, e.target.value);
-        },
         afterPaging: function () {
-            $('#world_popup_entries_list textarea[name="comment"]').each(function () {
+            if (!worldEntriesList[0].isConnected) return;
+            worldEntriesList.find('textarea[name="comment"]').each(function () {
                 initScrollHeight($(this));
             });
         },
     });
 
     if (typeof navigation === 'number' && Number(navigation) >= 0) {
-        const selector = `#world_popup_entries_list [uid="${navigation}"]`;
-        waitUntilCondition(() => document.querySelector(selector) !== null).finally(() => {
-            const element = $(selector);
+        const selector = `[uid="${navigation}"]`;
+        waitUntilCondition(() => worldEntriesList.find(selector).length > 0).finally(() => {
+            const element = worldEntriesList.find(selector);
 
             if (element.length === 0) {
                 console.log(`Could not find element for uid ${navigation}`);
                 return;
             }
+            if (!element[0].isConnected) return;
 
             const elementOffset = element.offset();
             const parentOffset = element.parent().offset();
@@ -2722,45 +2608,120 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
     $('#world_apply_current_sorting').off('click').on('click', async () => {
         const entryCount = Object.keys(data.entries).length;
-        const moreThan100 = entryCount > 100;
 
-        let content = '<span>' + t`Apply your current sorting to the "Order" field. The Order values will go down from the chosen number.` + '</span>';
-        if (moreThan100) {
-            content += '<div class="m-t-1"><i class="fa-solid fa-triangle-exclamation" style="color: #FFD43B;"></i> ' + t`More than 100 entries in this world. If you don't choose a number higher than that, the lower entries will default to 0.<br />(Usual default: 100)<br />Minimum: ${entryCount}` + '</div>';
-        }
+        const contentEl = document.createElement('div');
 
-        const result = await Popup.show.input(t`Apply Current Sorting`, content, '100', { okButton: t`Apply`, cancelButton: 'Cancel' });
-        if (!result) return;
+        const heading = document.createElement('h3');
+        heading.textContent = t`Apply Current Sorting`;
+        contentEl.appendChild(heading);
 
-        const start = Number(result);
-        if (isNaN(start) || start < 0) {
-            toastr.error(t`Invalid number: ${result}`, t`Apply Current Sorting`);
+        const descriptionText = document.createElement('p');
+        descriptionText.innerHTML = t`Assigns Order values to all entries based on their current sort position.`;
+        contentEl.appendChild(descriptionText);
+        const descriptionDetail = document.createElement('p');
+        descriptionDetail.innerHTML = t`Entries are ordered <b>descending</b> by default — the first entry in the list gets the highest value and will be inserted first into the prompt.`;
+        contentEl.appendChild(descriptionDetail);
+        const entryCountText = document.createElement('small');
+        entryCountText.textContent = t`(${entryCount} entries total)`;
+        contentEl.appendChild(entryCountText);
+
+        const warningEl = document.createElement('div');
+        contentEl.appendChild(warningEl);
+
+        /** @type {(startInput: HTMLInputElement, stepInput: HTMLInputElement, ascendingInput: HTMLInputElement) => void} */
+        const updateWarning = (startInput, stepInput, ascendingInput) => {
+            const startVal = Number(startInput.value);
+            const stepVal = Number(stepInput.value);
+            const isAscending = ascendingInput.checked;
+            if (!isAscending && !isNaN(startVal) && !isNaN(stepVal) && startVal - (entryCount - 1) * stepVal < 0) {
+                setInfoBlock(warningEl, t`Some entries will be clamped to Order 0, causing collisions at the bottom. The last entry would reach ${startVal - (entryCount - 1) * stepVal} (${entryCount} entries, step ${stepVal}).`, 'warning');
+            } else {
+                clearInfoBlock(warningEl);
+            }
+        };
+
+        /** @type {import('./popup.js').CustomPopupInput[]} */
+        const customInputs = [
+            {
+                id: 'wi_sort_start',
+                label: t`Starting value`,
+                tooltip: t`The Order value assigned to the first entry. In descending mode, values count down from here; in ascending mode, values count up from here.` + ' ' + t`(${entryCount} entries total)`,
+                type: 'number',
+                defaultState: '100',
+                min: 0,
+                step: 1,
+                autoFocus: true,
+            },
+            {
+                id: 'wi_sort_step',
+                label: t`Step`,
+                tooltip: t`The gap between each Order value. For example, a step of 5 produces values like 100, 95, 90... (descending) or 0, 5, 10... (ascending).`,
+                type: 'number',
+                defaultState: '1',
+                min: 1,
+                step: 1,
+            },
+            {
+                id: 'wi_sort_ascending',
+                label: t`Ascending order`,
+                tooltip: t`When checked, Order values count upward from the starting value (first sorted entry gets the lowest Order). When unchecked, values count downward (first sorted entry gets the highest Order).`,
+                type: 'checkbox',
+                defaultState: false,
+            },
+        ];
+
+        const popup = new Popup(contentEl, POPUP_TYPE.TEXT, null, {
+            okButton: t`Apply`,
+            cancelButton: t`Cancel`,
+            customInputs,
+        });
+
+        const startInput = /** @type {HTMLInputElement} */ (popup.dlg.querySelector('#wi_sort_start'));
+        const stepInput = /** @type {HTMLInputElement} */ (popup.dlg.querySelector('#wi_sort_step'));
+        const ascendingInput = /** @type {HTMLInputElement} */ (popup.dlg.querySelector('#wi_sort_ascending'));
+        startInput.addEventListener('input', () => updateWarning(startInput, stepInput, ascendingInput));
+        stepInput.addEventListener('input', () => updateWarning(startInput, stepInput, ascendingInput));
+        ascendingInput.addEventListener('change', () => updateWarning(startInput, stepInput, ascendingInput));
+        updateWarning(startInput, stepInput, ascendingInput);
+
+        const result = await popup.show();
+        if (result !== POPUP_RESULT.AFFIRMATIVE) return;
+
+        const start = Number(popup.inputResults.get('wi_sort_start'));
+        const step = Number(popup.inputResults.get('wi_sort_step'));
+        const ascending = Boolean(popup.inputResults.get('wi_sort_ascending'));
+
+        if (!Number.isFinite(start) || start < 0) {
+            toastr.error(t`Invalid starting value: ${start}`, t`Apply Current Sorting`);
             return;
         }
-        if (start < entryCount) {
-            toastr.warning(t`A number lower than the entry count has been chosen. All entries below that will default to 0.`, t`Apply Current Sorting`);
+        if (!Number.isFinite(step) || step < 1) {
+            toastr.error(t`Invalid step value: ${step}`, t`Apply Current Sorting`);
+            return;
         }
 
         // We need to sort the entries here, as the data source isn't sorted
         const entries = Object.values(data.entries);
         sortWorldInfoEntries(entries);
 
-        let updated = 0, current = start;
-        for (const entry of entries) {
-            const newOrder = Math.max(current--, 0);
-            if (entry.order === newOrder) continue;
+        let updated = 0;
+        entries.forEach((entry, index) => {
+            const newOrder = ascending
+                ? start + index * step
+                : Math.max(start - index * step, 0);
+            if (entry.order === newOrder) return;
 
             entry.order = newOrder;
-            setWIOriginalDataValue(data, entry.order, 'order', entry.order);
+            setWIOriginalDataValue(data, entry.uid, 'order', entry.order);
             updated++;
-        }
+        });
 
         if (updated > 0) {
-            toastr.info(`Updated ${updated} Order values`, 'Apply Custom Sorting');
+            toastr.info(t`Updated ${updated} Order values`, t`Apply Current Sorting`);
             await saveWorldInfo(name, data, true);
             updateEditor(navigation_option.previous);
         } else {
-            toastr.info('All values up to date', 'Apply Custom Sorting');
+            toastr.info(t`All values up to date`, t`Apply Current Sorting`);
         }
     });
 
@@ -2805,9 +2766,9 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         delay: getSortableDelay(),
         handle: '.drag-handle',
         stop: async function (_event, _ui) {
-            const firstEntryUid = $('#world_popup_entries_list .world_entry').first().data('uid');
+            const firstEntryUid = worldEntriesList.find('.world_entry').first().data('uid');
             const minDisplayIndex = data?.entries[firstEntryUid]?.displayIndex ?? 0;
-            $('#world_popup_entries_list .world_entry').each(function (index) {
+            worldEntriesList.find('.world_entry').each(function (index) {
                 const uid = $(this).data('uid');
 
                 // Update the display index in the data array
@@ -2827,8 +2788,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             await saveWorldInfo(name, data);
         },
     });
-
-    //$("#world_popup_entries_list").disableSelection();
 }
 
 export const originalWIDataKeyMap = {
@@ -3689,12 +3648,12 @@ export async function getWorldEntry(name, data, entry) {
             clearTimeout(drawerDestroyTimeout);
             drawerDestroyTimeout = null;
         }
-        const open = event.originalEvent?.detail?.open ?? editOutlet.is(':visible');
+        const open = event.originalEvent?.detail?.open ?? isInlineDrawerOpen(editOutlet.closest('.inline-drawer').get(0));
         if (!open) {
             commitContent();
             drawerDestroyTimeout = setTimeout(() => {
                 // Drawer was reopened, so we don't destroy it
-                if (editOutlet.is(':visible')) {
+                if (isInlineDrawerOpen(editOutlet.closest('.inline-drawer').get(0))) {
                     return;
                 }
                 commitContent();
@@ -4306,80 +4265,9 @@ export function createWorldInfoEntry(_name, data) {
     return newEntry;
 }
 
-async function _save(name, data, revision = 0) {
-    // Prevent double saving if both immediate and debounced save are called
-    cancelDebounce(saveWorldDebounced);
-
-    const response = await fetch('/api/worldinfo/edit', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name, data: data }),
-    });
-    if (!response.ok) {
-        let message = response.statusText || 'Unknown error';
-        try {
-            const payload = await response.json();
-            message = payload?.error || payload?.message || message;
-        } catch {
-            try {
-                const text = await response.text();
-                if (text && text.trim()) {
-                    message = text.trim();
-                }
-            } catch {
-                // Preserve previous error message.
-            }
-        }
-
-        const error = new Error(`World info save failed (${response.status}) for "${name}": ${message}`);
-        toastr.error(error.message);
-        throw error;
-    }
-
-    await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
-    if (revision > 0) {
-        const latest = dirtyWorldInfos.get(name);
-        if (latest?.revision === revision) {
-            dirtyWorldInfos.delete(name);
-        }
-    }
-}
-
-
-/**
- * Saves the world info
- *
- * This will also refresh the `worldInfoCache`.
- * Note, for performance reasons the saved cache will not make a deep clone of the data.
- * It is your responsibility to not modify the saved data object after calling this function, or there will be data inconsistencies.
- * Call `loadWorldInfoData` or query directly from cache if you need the object again.
- *
- * @param {string} name - The name of the world info
- * @param {any} data - The data to be saved
- * @param {boolean} [immediately=false] - Whether to save immediately or use debouncing
- * @return {Promise<void>} A promise that resolves when the world info is saved
- */
-export async function saveWorldInfo(name, data, immediately = false) {
-    name = String(name ?? '');
-    if (name === '' || !data) {
-        return;
-    }
-
-    // Update cache immediately, so any future call can pull from this
-    worldInfoCache.set(name, data);
-    const revision = (worldInfoDirtyRevision += 1);
-    dirtyWorldInfos.set(name, { data, revision });
-
-    if (immediately) {
-        return await _save(name, data, revision);
-    }
-
-    saveWorldDebounced();
-}
-
 async function renameWorldInfo(name, data) {
     const oldName = name;
-    const newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
+    let newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
 
     if (oldName === newName || !newName) {
         console.debug('World info rename cancelled');
@@ -4398,6 +4286,7 @@ async function renameWorldInfo(name, data) {
         toastr.warning(t`Name not accepted, as it resolves to the same file as before.`, t`Rename World Info`);
         return;
     }
+    newName = newSanitizedName;
 
     const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
 
@@ -4421,7 +4310,7 @@ async function renameWorldInfo(name, data) {
 }
 
 /**
- * Retargets auxiliary and primary character lorebook links after a world rename.
+ * Retargets character, persona and current chat lorebook links before deleting the old world.
  * @param {string} oldName Previous world info file name
  * @param {string} newName New world info file name
  * @returns {Promise<void>}
@@ -4508,7 +4397,29 @@ async function updateWorldInfoLinks(oldName, newName) {
             tempCharLore.push(newName);
             charLore.extraBooks = tempCharLore;
         });
-        saveSettingsDebounced();
+    }
+
+    if (power_user.persona_description_lorebook === oldName) {
+        power_user.persona_description_lorebook = newName;
+        getOrCreatePersonaDescriptor().lorebook = newName;
+        setPersonaDescription();
+    }
+
+    for (const persona of Object.keys(power_user.personas)) {
+        if (persona === user_avatar) continue;
+        const descriptor = power_user.persona_descriptions[persona];
+        if (descriptor?.lorebook === oldName) {
+            descriptor.lorebook = newName;
+        }
+    }
+
+    if (chat_metadata[METADATA_KEY] === oldName) {
+        chat_metadata[METADATA_KEY] = newName;
+        await saveMetadata();
+    }
+
+    if (!await saveSettings()) {
+        throw new Error(`Failed to save lorebook links after renaming "${oldName}" to "${newName}".`);
     }
 }
 
@@ -4521,23 +4432,12 @@ async function updateWorldInfoLinks(oldName, newName) {
  */
 export async function deleteWorldInfo(worldInfoName, { saveLinkedCharacter = true } = {}) {
     worldInfoName = String(worldInfoName ?? '');
-    dirtyWorldInfos.delete(worldInfoName);
     if (!world_names.includes(worldInfoName)) {
         return false;
     }
 
-    const response = await fetch('/api/worldinfo/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: worldInfoName }),
-    });
-
-    if (!response.ok) {
+    if (!await deleteWorldInfoDocument(worldInfoName)) {
         return false;
-    }
-
-    if (worldInfoCache.has(worldInfoName)) {
-        worldInfoCache.delete(worldInfoName);
     }
 
     const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
@@ -4817,6 +4717,8 @@ async function collectWorldInfoEntries() {
         worldsToPrefetch.add(personaWorld);
     }
 
+    // Event listeners isolate failures; enforce this dependency at the actual read boundary.
+    await flushWorldInfoSaves('worldinfo_read', worldsToPrefetch);
     await prefetchWorldInfos(worldsToPrefetch);
 
     const [
@@ -4875,8 +4777,8 @@ export async function getSortedEntries() {
         return structuredClone(entries);
     }
     catch (e) {
-        console.error(e);
-        return [];
+        toastr.error(e.message, t`World Info could not be loaded`);
+        throw e;
     }
 }
 
@@ -5522,12 +5424,6 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
     const worldInfoBefore = WIBeforeEntries.length ? WIBeforeEntries.join('\n') : '';
     const worldInfoAfter = WIAfterEntries.length ? WIAfterEntries.join('\n') : '';
 
-    if (shouldWIAddPrompt) {
-        const originalAN = context.extensionPrompts[NOTE_MODULE_NAME].value;
-        const ANWithWI = `${ANTopEntries.join('\n')}\n${originalAN}\n${ANBottomEntries.join('\n')}`.replace(/(^\n)|(\n$)/g, '');
-        context.setExtensionPrompt(NOTE_MODULE_NAME, ANWithWI, chat_metadata[metadata_keys.position], chat_metadata[metadata_keys.depth], extension_settings.note.allowWIScan, chat_metadata[metadata_keys.role]);
-    }
-
     timedEffects.setTimedEffects(Array.from(allActivatedEntries.values()));
     buffer.resetExternalEffects();
     timedEffects.cleanUp();
@@ -5988,43 +5884,22 @@ export function checkEmbeddedWorld(chid) {
 
 export async function importEmbeddedWorldInfo(skipPopup = false) {
     const chid = $('#import_character_info').data('chid');
+    const character = characters[chid];
+    if (!character?.data?.character_book) return;
 
-    if (chid === undefined || chid === -1) {
-        return;
-    }
-
-    const hasEmbed = checkEmbeddedWorld(chid);
-
-    if (!hasEmbed) {
-        return;
-    }
-
-    const bookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
-
-    if (!skipPopup) {
-        const confirmation = await Popup.show.confirm(t`Are you sure you want to import '${bookName}'?`, world_names.includes(bookName) ? t`It will overwrite the World/Lorebook with the same name.` : '');
-        if (!confirmation) {
-            return;
+    try {
+        await flushWorldInfoSaves('adopt_character_lorebook');
+        const adoption = await window.__TAURITAVERN__.api.characterCards.adoptLorebook(character.avatar);
+        const result = await completeCharacterLorebookAdoption(character.avatar, adoption, { skipPopup });
+        if (!result) return;
+        if (!result.changed) {
+            toastr.info(t`Lorebook is up to date`);
         }
+        openWorldInfoEditor(result.world);
+    } catch (error) {
+        console.error('Failed to adopt the embedded lorebook:', error);
+        toastr.error(error?.message, t`Lorebook import failed`);
     }
-
-    const convertedBook = convertCharacterBook(characters[chid].data.character_book);
-
-    await saveWorldInfo(bookName, convertedBook, true);
-    await updateWorldInfoList();
-    $('#character_world').val(bookName).trigger('change');
-
-    toastr.success(t`The world '${bookName}' has been imported and linked to the character successfully.`, t`World/Lorebook imported`);
-
-    const newIndex = world_names.indexOf(bookName);
-    if (newIndex >= 0) {
-        //show&draw the WI panel before..
-        $('#WIDrawerIcon').trigger('click');
-        //..auto-opening the new imported WI
-        $('#world_editor_select').val(newIndex).trigger('change');
-    }
-
-    setWorldInfoButtonClass(chid, true);
 }
 
 export function onWorldInfoChange(args, text) {
@@ -6619,7 +6494,6 @@ export function initWorldInfo() {
             openWorldInfoEditor(worldName);
         } else if (hasEmbed && !event.shiftKey && !event.altKey) {
             await importEmbeddedWorldInfo();
-            saveCharacterDebounced();
         }
         else {
             openSetWorldMenu();

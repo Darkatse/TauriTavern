@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
+use tt_contracts::host::HostPlatform;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
 use ttsync_core::crypto::random_base64url;
 use uuid::Uuid;
@@ -13,6 +14,7 @@ use tt_ports::lan_sync::LanPeerRepository;
 
 #[derive(Debug, Clone)]
 pub struct LanPeerStore {
+    platform: HostPlatform,
     state_dir: PathBuf,
     identity_lock: Arc<Mutex<()>>,
     paired_devices_lock: Arc<Mutex<()>>,
@@ -61,8 +63,9 @@ impl LanPeerRepository for LanPeerStore {
 }
 
 impl LanPeerStore {
-    pub fn new(default_user_dir: PathBuf) -> Self {
+    pub fn new(default_user_dir: PathBuf, platform: HostPlatform) -> Self {
         Self {
+            platform,
             state_dir: default_user_dir.join("user").join("lan-sync").join("v2"),
             identity_lock: Arc::new(Mutex::new(())),
             paired_devices_lock: Arc::new(Mutex::new(())),
@@ -90,7 +93,7 @@ impl LanPeerStore {
         let path = self.identity_path();
         if path.is_file() {
             let mut identity: LanSyncIdentity = read_json_file(&path).await?;
-            identity.platform = std::env::consts::OS.to_string();
+            identity.platform = self.platform.as_str().to_string();
             return Ok(identity);
         }
 
@@ -98,7 +101,7 @@ impl LanPeerStore {
             device_id: DeviceId::new(Uuid::new_v4().to_string())
                 .expect("generated uuid must be valid"),
             device_name: "TauriTavern".to_string(),
-            platform: std::env::consts::OS.to_string(),
+            platform: self.platform.as_str().to_string(),
             ed25519_seed: random_base64url(32),
         };
         write_json_file(&path, &identity).await?;
@@ -235,7 +238,10 @@ mod tests {
     #[tokio::test]
     async fn store_round_trips_and_removes_peer() {
         let default_user_dir = temp_default_user_dir();
-        let store = LanPeerStore::new(default_user_dir.clone());
+        let store = LanPeerStore::new(
+            default_user_dir.clone(),
+            tt_contracts::host::HostPlatform::Linux,
+        );
         let device_id = test_device_id();
 
         store
@@ -265,7 +271,10 @@ mod tests {
     #[tokio::test]
     async fn update_paired_device_keeps_other_fields() {
         let default_user_dir = temp_default_user_dir();
-        let store = LanPeerStore::new(default_user_dir.clone());
+        let store = LanPeerStore::new(
+            default_user_dir.clone(),
+            tt_contracts::host::HostPlatform::Linux,
+        );
         let device_id = test_device_id();
 
         store

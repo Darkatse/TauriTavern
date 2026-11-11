@@ -17,7 +17,7 @@
 
 ## 委派一个任务
 
-调用方用 `agent.list` 查看可用 Agent，然后交付任务：
+系统提示词提供可调用 Agent 的 ID、用途和支持操作，按本次工具权限及目标资格筛选。模型从目录选择 ID，再交付任务：
 
 ```json
 {
@@ -42,7 +42,7 @@
 
 runtime 保存结构化结果，并生成 `summaries/<workspace-key>-result.md` 供其他 Agent 读取。调用方收到摘要、文件引用及结果中的其他字段，随后决定如何使用。已完成结果也会在后续轮次送入调用方上下文。
 
-委派任务使用后台执行和 `task.return` 结束方式，聊天提交由前台 Agent 负责。当前 return-mode 子 Agent 不再向下委派或交接。
+委派任务使用后台执行和 `task.return` 结束方式，聊天提交由前台 Agent 负责。当前 return-mode 子 Agent 没有委派和交接工具，因此也没有可调用 Agent 目录。
 
 ## 交给下一个 Agent
 
@@ -63,11 +63,13 @@ runtime 保存结构化结果，并生成 `summaries/<workspace-key>-result.md` 
 
 ## 接收方看到什么
 
-runtime 用目标 Profile 准备新的提示词和工具集合。初始聊天材料来自 Run 启动时冻结的输入，任务包通过 `agentTask` 进入提示词。调用方应在任务中写明目标、必要背景和文件路径。
+runtime 用目标 Profile 准备新的提示词和工具集合。初始聊天材料来自 Run 启动时冻结的输入，预设、模型与上下文范围取自目标 Profile，不继承上一棒，见 [Prompt assembly](PromptAssembly.md)。接收方先按 Profile 生成组装请求，再通过与 Session 共用的宿主组装桥调用 PromptManager。任务包通过 `agentTask` 进入提示词。调用方应在任务中写明目标、必要背景和文件路径。
 
-共享工作区意味着双方看到同一路径的内容。Profile 决定各自能读写哪些目录；涉及同一文件的并行工作仍使用工作区的内容冲突检查。不同任务可以约定各自输出文件，再由调用方汇总。
+双方共享工作文件，各自按 Profile 获得读写范围；`skills/` 使用各自的有效绑定。不同任务可约定输出文件，再由调用方汇总；文件与并发语义见 [Workspace](Workspace.md)。
 
 Profile 的 `delegation` 配置控制是否可被调用、是否可委派或交接、调用来源与并发数量。返回式子任务由 scheduler 运行；Run 收尾或取消时，runtime 结束尚未完成的子任务。
+
+目录随已准备请求保留，调用时仍检查当前目标权限和预算。目标选择错误时，工具返回原因与该操作当前可用的候选。
 
 ## 查看与修改实现
 

@@ -13,16 +13,22 @@ pub(super) fn build_agent_manifest(
     WorkspaceManifest {
         workspace_version: 1,
         run_id: run.id.clone(),
-        stable_chat_id: run.stable_chat_id.clone(),
-        chat_ref: run.chat_ref.clone(),
         created_at: Utc::now(),
         input: WorkspaceInputManifest {
             mode: "prompt_snapshot".to_string(),
             prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
             resolved_profile_path: "input/resolved_profile.json".to_string(),
         },
-        roots: workspace_roots_from_profile(profile),
-        artifacts: profile.output.artifacts.clone(),
+        roots: workspace_roots_from_profile(profile, &run.target),
+        artifacts: if run.target.session_id().is_some() {
+            Vec::new()
+        } else {
+            profile
+                .output
+                .as_ref()
+                .map(|output| output.artifacts.clone())
+                .unwrap_or_default()
+        },
         commit_policy: commit_policy_from_profile(profile),
     }
 }
