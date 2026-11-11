@@ -52,16 +52,7 @@ function createWorldInfoApi() {
     };
 }
 
-export function installWorldInfoApi() {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.worldInfo = createWorldInfoApi();
+/** @param {TauriTavernHostApi} api */
+export function installWorldInfoApi(api) {
+    api.worldInfo = createWorldInfoApi();
 }

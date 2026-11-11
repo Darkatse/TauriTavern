@@ -210,18 +210,10 @@ function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
     };
 }
 
-/** @param {any} context */
-export function installExtensionStoreApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-    const { safeInvoke, invokeTransport } = context ?? {};
-    if (typeof safeInvoke !== 'function' || typeof invokeTransport !== 'function') {
-        throw new Error('Tauri main invoke transport is missing');
-    }
-    hostAbi.api ??= {};
-    hostAbi.api.extension ??= {};
-    hostAbi.api.extension.store = createExtensionStoreApi({ safeInvoke, invokeTransport });
+/**
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
+ */
+export function installExtensionStoreApi(api, context) {
+    api.extension = { store: createExtensionStoreApi(context) };
 }

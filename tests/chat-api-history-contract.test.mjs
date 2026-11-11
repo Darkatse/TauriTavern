@@ -5,13 +5,13 @@ import { installChatApi } from '../src/tauri/main/api/chat.js';
 async function withChatApi(stContext, safeInvoke, run) {
     const previousWindow = globalThis.window;
     globalThis.window = {
-        __TAURITAVERN__: {},
         SillyTavern: { getContext: () => stContext },
     };
 
     try {
-        installChatApi({ safeInvoke });
-        await run(globalThis.window.__TAURITAVERN__.api.chat);
+        const api = {};
+        installChatApi(api, { safeInvoke });
+        await run(api.chat);
     } finally {
         if (previousWindow === undefined) {
             delete globalThis.window;

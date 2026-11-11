@@ -55,9 +55,9 @@ test('prepared content survives projection changes and commits before runtime cl
     });
     const controller = getInstalledChatSurfaceController();
     const preparation = getChatSurfaceContentPreparation();
-    rs.stubGlobal('__TAURITAVERN__', {});
-    installChatSurfaceApi();
-    const api = window.__TAURITAVERN__.api.chatSurface;
+    const hostApi = {};
+    installChatSurfaceApi(hostApi);
+    const api = hostApi.chatSurface;
     const registration = api.registerContentProcessor({
         id: 'template',
         async prepare(context, renderBase) {

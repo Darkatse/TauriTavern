@@ -121,23 +121,9 @@ function createDevApi({ safeInvoke }) {
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installDevApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    const safeInvoke = context?.safeInvoke;
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.dev = createDevApi({ safeInvoke });
+export function installDevApi(api, context) {
+    api.dev = createDevApi(context);
 }

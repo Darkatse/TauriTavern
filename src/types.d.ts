@@ -1419,7 +1419,7 @@ type TauriTavernHostAbi = {
     ready: Promise<void> | null;
     invoke: TauriTavernHostInvokeApi;
     assets: TauriTavernHostAssetsApi;
-    api?: TauriTavernHostApi;
+    api: TauriTavernHostApi;
 };
 
 type TauriTavernHostUnsubscribe = () => void | Promise<void>;

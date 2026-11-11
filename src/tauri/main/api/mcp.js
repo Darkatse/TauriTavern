@@ -74,17 +74,10 @@ function createMcpApi({ safeInvoke }) {
     };
 }
 
-/** @param {any} context */
-export function installMcpApi(context) {
-    const hostAbi = window.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-    if (typeof context?.safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-    hostAbi.api.mcp = createMcpApi({ safeInvoke: context.safeInvoke });
+/**
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
+ */
+export function installMcpApi(api, context) {
+    api.mcp = createMcpApi(context);
 }

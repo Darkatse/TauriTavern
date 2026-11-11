@@ -18,22 +18,12 @@ function stagedFile({ path, name }) {
 }
 
 /**
- * @param {{
- *   safeInvoke: (command: string, args?: any) => Promise<any>;
- *   invalidateCharacterCache: () => void;
- * }} deps
+ * @param {Pick<import('../context/types.js').TauriMainContext, 'safeInvoke' | 'invalidateCharacterCache'>} context
  */
 function createCharacterCardsApi({
     safeInvoke,
     invalidateCharacterCache,
 }) {
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-    if (typeof invalidateCharacterCache !== 'function') {
-        throw new Error('Tauri main context invalidateCharacterCache is missing');
-    }
-
     /** @param {{ multiple?: boolean }} [options] */
     async function pickFiles({ multiple = false } = {}) {
         const selected = await safeInvoke('pick_import_files', { kind: 'character-card', multiple });
@@ -90,21 +80,9 @@ function createCharacterCardsApi({
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installCharacterCardsApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.characterCards = createCharacterCardsApi({
-        safeInvoke: context?.safeInvoke,
-        invalidateCharacterCache: context?.invalidateCharacterCache,
-    });
+export function installCharacterCardsApi(api, context) {
+    api.characterCards = createCharacterCardsApi(context);
 }

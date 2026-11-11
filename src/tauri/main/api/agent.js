@@ -303,25 +303,11 @@ function isPlainObject(value) {
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installAgentApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    const safeInvoke = context?.safeInvoke;
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    const { api, restoreAssemblyBridges } = createAgentApi({ safeInvoke });
-    hostAbi.api.agent = api;
-    return restoreAssemblyBridges;
+export function installAgentApi(api, context) {
+    const agent = createAgentApi(context);
+    api.agent = agent.api;
+    return agent.restoreAssemblyBridges;
 }

@@ -21,20 +21,20 @@ function ensureCustomEvent() {
 async function installHarness() {
     ensureCustomEvent();
     globalThis.window = new EventTarget();
-    globalThis.window.__TAURITAVERN__ = { api: {} };
 
     const { installLlmConnectionsApi } = await import(pathToFileURL(path.join(
         REPO_ROOT,
         'src/tauri/main/api/llm-connection.js',
     )));
-    installLlmConnectionsApi({
+    const api = {};
+    installLlmConnectionsApi(api, {
         safeInvoke: async (command, args) => {
             return { command, args };
         },
     });
 
     return {
-        llmConnections: globalThis.window.__TAURITAVERN__.api.llmConnections,
+        llmConnections: api.llmConnections,
     };
 }
 
