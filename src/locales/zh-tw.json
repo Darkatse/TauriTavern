@@ -1474,6 +1474,8 @@
     "char_import_7": "對於允許的主機）",
     "char_import_8": "RisuRealm 角色（直接連結）",
     "char_import_10": "Perchance 角色（直接連結或 ID + .gz）",
+    "Botbooru Character (Direct Link)": "Botbooru 角色（直接連結）",
+    "Direct PNG Link": "直接 PNG 連結",
     "Supports importing multiple characters.": "支援匯入多個字元。",
     "Write each URL or ID into a new line.": "將每個 URL 或 ID 寫入新行。",
     "Export for character": "匯出字元",

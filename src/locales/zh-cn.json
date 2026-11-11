@@ -2276,6 +2276,8 @@
     "char_import_7": "）",
     "char_import_8": "RisuRealm 角色（直链）",
     "char_import_10": "Perchance 角色（直链或UUID + .gz）",
+    "Botbooru Character (Direct Link)": "Botbooru 角色（直链）",
+    "Direct PNG Link": "PNG 直链",
     "Supports importing multiple characters.": "支持导入多个角色。",
     "Write each URL or ID into a new line.": "将每个 URL 或 ID 写入新行。",
     "Enter the Git URL of the extension to install": "输入扩展程序的 Git URL 以安装",

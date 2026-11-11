@@ -16,6 +16,10 @@ use tt_ports::external_import::{
 use url::Url;
 use uuid::Uuid;
 
+const AICC_HOST: &str = "aicharactercards.com";
+const AICC_CARD_API: &str = "https://aicharactercards.com/wp-json/pngapi/v1/image";
+const BOTBOORU_HOST: &str = "botbooru.com";
+const BOTBOORU_CARD_API: &str = "https://botbooru.com/download/png";
 const CHUB_HOSTS: &[&str] = &[
     "chub.ai",
     "www.chub.ai",
@@ -136,6 +140,13 @@ impl ContentReference {
                 .collect::<Vec<_>>();
             let recognized = match segments.as_slice() {
                 [id] => pygmalion_id(id).map(Self::Pygmalion),
+                [namespace, user, id]
+                    if namespace.eq_ignore_ascii_case("AICC")
+                        && is_number(user)
+                        && is_number(id) =>
+                {
+                    Some(Self::Direct(site_url(AICC_CARD_API, &[user, id])))
+                }
                 segments => chub_reference(segments),
             };
             return recognized.ok_or_else(|| {
@@ -153,12 +164,18 @@ impl ContentReference {
             .collect::<Vec<_>>();
         let recognized = match url.host_str() {
             Some(host) if CHUB_HOSTS.contains(&host) => chub_reference(&segments),
-            Some(host) if PYGMALION_HOSTS.contains(&host) => character_page_id(&segments)
+            Some(host) if PYGMALION_HOSTS.contains(&host) => page_id(&segments, "character")
                 .and_then(pygmalion_id)
                 .map(Self::Pygmalion),
-            Some(RISU_HOST) => character_page_id(&segments)
+            Some(RISU_HOST) => page_id(&segments, "character")
                 .filter(|id| is_risu_id(id))
                 .map(|id| Self::Direct(risu_card_url(id))),
+            Some(AICC_HOST) => page_id(&segments, "cards")
+                .filter(|id| is_number(id))
+                .map(|id| Self::Direct(site_url(AICC_CARD_API, &["cards", id]))),
+            Some(BOTBOORU_HOST) => page_id(&segments, "character")
+                .filter(|id| is_number(id))
+                .map(|id| Self::Direct(site_url(BOTBOORU_CARD_API, &[id]))),
             _ => None,
         };
         Ok(recognized.unwrap_or(Self::Direct(url)))
@@ -185,11 +202,15 @@ fn chub_reference(segments: &[String]) -> Option<ContentReference> {
     }
 }
 
-fn character_page_id(segments: &[String]) -> Option<&str> {
+fn page_id<'a>(segments: &'a [String], page: &str) -> Option<&'a str> {
     match segments {
-        [page, id] if page.eq_ignore_ascii_case("character") => Some(id),
+        [name, id] if name.eq_ignore_ascii_case(page) => Some(id),
         _ => None,
     }
+}
+
+fn is_number(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// A hyphenated UUID, lowercased as Pygmalion writes it.
@@ -308,6 +329,8 @@ mod tests {
         let chub_character = ["https://api.chub.ai/api/characters/a/furina"];
         let chub_lorebook = ["https://api.chub.ai/api/lorebooks/a/world"];
         let risu_id = "3ca54c71-6efe-46a2-b9d0-4f62df23d712";
+        let aicc_card =
+            |path: &str| format!("https://aicharactercards.com/wp-json/pngapi/v1/image/{path}");
         let risu_card = format!(
             "https://realm.risuai.net/api/v1/download/png-v3/{risu_id}?non_commercial=true"
         );
@@ -350,6 +373,21 @@ mod tests {
                 format!("https://realm.risuai.net/character/{risu_id}/"),
                 none,
                 file(&risu_card, Character, None),
+            ),
+            (
+                "https://aicharactercards.com/cards/204".to_string(),
+                none,
+                file(&aicc_card("cards/204"), Character, None),
+            ),
+            (
+                "AICC/645/204".to_string(),
+                none,
+                file(&aicc_card("645/204"), Character, None),
+            ),
+            (
+                "https://botbooru.com/character/123".to_string(),
+                none,
+                file("https://botbooru.com/download/png/123", Character, None),
             ),
             (
                 "https://chub.ai.example/characters/a/furina".to_string(),

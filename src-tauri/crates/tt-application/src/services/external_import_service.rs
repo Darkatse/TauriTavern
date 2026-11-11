@@ -20,6 +20,7 @@ const PRE_APPROVED_IMPORT_SOURCES: &[&str] = &[
     "https://realm.risuai.net",
     "https://server.pygmalion.chat",
     "https://assets.pygmalion.chat",
+    "https://aicharactercards.com",
 ];
 
 /// An import source is an origin: scheme, host and port.
