@@ -30,19 +30,15 @@ android {
     signingConfigs {
         create("release") {
             val keystorePropertiesFile = rootProject.file("keystore.properties")
-            val keystoreProperties = Properties()
+
             if (keystorePropertiesFile.exists()) {
-                keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-            }
+                val keystoreProperties = Properties()
+                keystorePropertiesFile.inputStream().use {
+                    keystoreProperties.load(it)
+                }
 
             keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["password"] as String
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["password"] as String
-            // Some OEM installers read the v1 (JAR) certificate even though Android 7+ ignores it.
-            enableV1Signing = true
-            enableV2Signing = true
-            enableV3Signing = true
+
         }
     }
     buildTypes {

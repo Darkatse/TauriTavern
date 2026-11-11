@@ -1,0 +1,161 @@
+
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - moonshot-kimi-prefill
+  workflow_dispatch:
+  
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+
+      - name: Configure Android compiler
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          {
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
+            echo "AR_armv7_linux_androideabi=$toolchain/llvm-ar"
+            echo "CC_armv7_linux_androideabi=$toolchain/armv7a-linux-androideabi24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Node and pnpm
+        uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure Android networking
+        run: ./scripts/ci/configure-mobile-http.sh enable android
+      
+      - name: Prepare Android project for the custom build
+        shell: bash
+        run: |
+          set -euo pipefail
+          CRATE=src-tauri/crates/tauritavern
+          ANDROID_DIR="$CRATE/gen/android"
+          GRADLE="$ANDROID_DIR/app/build.gradle.kts"
+
+          # Keep the committed Android project. It holds AiGenerationPlugin.kt and the
+          # other hand-written Kotlin. Never delete or regenerate gen/android here.
+          test -f "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/AiGenerationPlugin.kt"
+
+          # Tauri identifier must match the Kotlin package (com.tauritavern.client) and
+          # the Rust plugin registration, or the generated files land in the wrong place.
+          sed -i 's/"identifier": "com\.tauritavern\.client\.custom"/"identifier": "com.tauritavern.client"/' "$CRATE/tauri.conf.json"
+          grep -q '"identifier": "com.tauritavern.client"' "$CRATE/tauri.conf.json"
+
+          # Install next to the official app: change only applicationId. The namespace
+          # (the Kotlin package) stays com.tauritavern.client.
+          sed -i 's/applicationId = "com\.tauritavern\.client"/applicationId = "com.tauritavern.client.custom"/' "$GRADLE"
+          grep -q 'applicationId = "com.tauritavern.client.custom"' "$GRADLE"
+          grep -q 'namespace = "com.tauritavern.client"' "$GRADLE"
+
+          # Drop imports of a package that does not exist. With the identifier set to
+          # com.tauritavern.client, Tauri's generated classes are in com.tauritavern.client
+          # itself, so the Kotlin files need no import for them.
+          find "$ANDROID_DIR/app/src/main/java/com/tauritavern/client" -maxdepth 1 -name '*.kt' \
+            -exec sed -i '/^import com\.tauritavern\.client\.custom\./d' {} +
+
+          # Launcher used by the Gradle Rust build (same as the previous workflow).
+          cat > "$CRATE/tauri" <<'EOF2'
+          import "../../../scripts/tauri-app.mjs";
+          EOF2
+
+      - name: Prepare temporary Android signing config
+        shell: bash
+        run: |
+          cd src-tauri/crates/tauritavern/gen/android
+          mkdir -p app
+          keytool -genkeypair -v \
+            -keystore app/ci-release.keystore \
+            -storepass android \
+            -alias ci-key \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=CI,O=TauriTavern,C=US"
+          cat > keystore.properties <<'EOF'
+          keyAlias=ci-key
+          password=android
+          storeFile=ci-release.keystore
+          EOF
+          
+      - name: Restore signing key
+        shell: bash
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$DEBUG_KEYSTORE_B64"
+          mkdir -p ~/.android
+          printf '%s' "$DEBUG_KEYSTORE_B64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey
+          
+      - name: Build debug APKs
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        with:
+          projectPath: src-tauri/crates/tauritavern
+          tauriScript: node ../../../scripts/tauri-app.mjs
+          mobile: android
+          args: --verbose --debug --apk --split-per-abi --target aarch64 armv7
+          uploadWorkflowArtifacts: true
+          uploadPlainBinary: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          workflowArtifactNamePattern: TauriTavern-custom-android-[arch]-apk

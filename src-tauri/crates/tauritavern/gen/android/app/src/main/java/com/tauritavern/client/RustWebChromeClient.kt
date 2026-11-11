@@ -11,6 +11,11 @@ package com.tauritavern.client
 
 // taken from https://github.com/ionic-team/capacitor/blob/6658bca41e78239347e458175b14ca8bd5c1d6e8/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
 
+import com.tauritavern.client.custom.WryActivity
+import com.tauritavern.client.custom.Rust
+import com.tauritavern.client.custom.RustWebView
+import com.tauritavern.client.custom.PermissionHelper
+import com.tauritavern.client.custom.Logger
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
