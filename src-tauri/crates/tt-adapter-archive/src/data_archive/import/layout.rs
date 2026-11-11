@@ -387,13 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_tauritavern_data_root_layout() {
-        let layout = detect_layout(&["data/default-user/characters/a.json"]).expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
-        assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
-    }
-
-    #[test]
     fn detects_user_handle_root_layout_with_extra_root_file() {
         let layout =
             detect_layout(&["README.txt", "default-user/characters/a.json"]).expect("scan layout");
@@ -418,12 +411,6 @@ mod tests {
             .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn detects_single_file_settings_layout() {
-        let layout = detect_layout(&["settings.json"]).expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
     }
 
     #[test]

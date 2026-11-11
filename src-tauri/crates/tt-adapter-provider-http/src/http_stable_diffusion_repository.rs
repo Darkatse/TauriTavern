@@ -865,7 +865,6 @@ async fn comfy_generate(
     let prompt = require_string(body, "prompt")?;
 
     let prompt_url = append_endpoint_path(&url, "prompt")?;
-    let history_url = append_endpoint_path(&url, "history")?;
     let interrupt_url = append_endpoint_path(&url, "interrupt")?;
 
     let client = http_client(http_clients)?;
@@ -900,6 +899,7 @@ async fn comfy_generate(
         .await
         .map_err(|error| DomainError::InternalError(error.to_string()))?;
     let id = prompt_json.prompt_id;
+    let history_url = append_endpoint_path(&url, &format!("history/{id}"))?;
 
     let item = loop {
         if *cancel.borrow() {
@@ -1724,6 +1724,70 @@ async fn drawthings_generate(
 mod tests {
     use super::optional_nonnegative_number_value;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn comfy_generation_queries_only_its_prompt_and_returns_the_image() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/comfy", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (target, body) in [
+                ("POST /comfy/prompt ", r#"{"prompt_id":"current"}"#),
+                (
+                    "GET /comfy/history/current ",
+                    r#"{"current":{"outputs":{"text":{"text":["ignored"]},"image":{"images":[{"filename":"current.png"}]}}}}"#,
+                ),
+                ("GET /comfy/view?filename=current.png&", "image-bytes"),
+            ] {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = BufReader::new(socket);
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert!(line.starts_with(target), "Unexpected request: {line}");
+                let mut content_length = 0;
+                loop {
+                    line.clear();
+                    assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(length) = line.to_ascii_lowercase().strip_prefix("content-length:")
+                    {
+                        content_length = length.trim().parse::<usize>().unwrap();
+                    }
+                }
+                socket
+                    .read_exact(&mut vec![0; content_length])
+                    .await
+                    .unwrap();
+                socket
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let pool = super::Arc::new(super::HttpClientPool::new("TauriTavern/test"));
+        let (_cancel, cancel) = super::watch::channel(false);
+        let result = super::comfy_generate(&pool, &json!({ "url": url, "prompt": "{}" }), cancel)
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(
+            result.body,
+            json!({ "format": "png", "data": "aW1hZ2UtYnl0ZXM=" })
+        );
+    }
 
     #[tokio::test]
     async fn comfy_workflow_save_replaces_file_and_preserves_directory_on_failure() {

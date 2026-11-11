@@ -13,6 +13,12 @@ mod setup;
 mod shutdown;
 mod window;
 
+use std::sync::Arc;
+
+use tauri::Manager;
+use tt_adapter_storage_core::commit_stage::PageGeneration;
+
+use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::presentation::commands::registry::invoke_handler;
 
 #[cfg(target_os = "windows")]
@@ -27,6 +33,15 @@ pub(crate) fn run() {
         .invoke_handler(invoke_handler())
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
+                if webview.label() == "main" {
+                    webview.state::<Arc<PageGeneration>>().advance();
+                    webview
+                        .state::<Arc<AgentExtensionTools>>()
+                        .clear_page(webview.label());
+                }
+                crate::presentation::commands::byte_reader_commands::close_page_byte_readers(
+                    webview,
+                );
                 crate::presentation::commands::chat_swipe_commands::close_page_chat_resources(
                     webview,
                 );

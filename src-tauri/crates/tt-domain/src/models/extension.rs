@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Extension type enum
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,28 +11,13 @@ pub enum ExtensionType {
     Global,
 }
 
-/// Extension struct
+/// An extension discovered in the application or user directories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Extension {
     /// Name of the extension (folder name)
     pub name: String,
     /// Type of the extension
     pub extension_type: ExtensionType,
-    /// Whether the extension is managed by TauriTavern.
-    ///
-    /// Managed extensions have a supported embedded Git repository or legacy source metadata.
-    /// Unmanaged extensions are still discoverable/loadable but cannot be updated.
-    pub managed: bool,
-    /// Path to the extension
-    pub path: PathBuf,
-    /// Remote URL of the extension repository
-    pub remote_url: Option<String>,
-    /// Current commit hash
-    pub commit_hash: Option<String>,
-    /// Current branch name
-    pub branch_name: Option<String>,
-    /// Whether the extension is up to date
-    pub is_up_to_date: Option<bool>,
 }
 
 /// Extension version information

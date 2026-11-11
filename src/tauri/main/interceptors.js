@@ -1,13 +1,10 @@
-import { createAbortError } from './kernel/abort-error.js';
+import { createAbortError, isAbortError } from './kernel/abort-error.js';
 
 export function createInterceptors({
-    isTauri,
     originalFetch,
     canHandleRequest,
     toUrl,
     routeRequest,
-    jsonResponse,
-    safeJson,
 }) {
     const fetchPatchState = new WeakMap();
     const ajaxPatchState = new WeakMap();
@@ -51,6 +48,28 @@ export function createInterceptors({
                 }
             },
         };
+    }
+
+    async function routedResponse(requestUrl, input, init, targetWindow) {
+        const signal = getAbortSignal(input, init);
+        if (signal?.aborted) throw createAbortError();
+        const abortRace = createAbortRace(signal);
+        try {
+            const pending = Promise.resolve(routeRequest(requestUrl, input, init, targetWindow))
+                .then((result) => {
+                    if (signal?.aborted) {
+                        // Opening may finish after the caller has already aborted.
+                        void result.body?.cancel().catch(error => console.warn('Failed to close aborted response', error));
+                        throw createAbortError();
+                    }
+                    if (!signal || !result.body) return result;
+                    // Native piping keeps cancellation attached after fetch resolves, including while the body is locked.
+                    return new Response(result.body.pipeThrough(new TransformStream(), { signal }), result);
+                });
+            return await (abortRace ? Promise.race([pending, abortRace.promise]) : pending);
+        } finally {
+            abortRace?.cleanup();
+        }
     }
 
     function resolveWindowBaseUrl(targetWindow) {
@@ -127,24 +146,12 @@ export function createInterceptors({
                 throw createAbortError();
             }
 
-            if (!isTauri) {
-                return delegateFetch(input, init);
-            }
-
             const requestUrl = toUrl(input, resolveWindowBaseUrl(targetWindow));
             if (!requestUrl || !canHandleRequest(requestUrl, input, init, targetWindow)) {
                 return delegateFetch(input, init);
             }
 
-            const abortRace = createAbortRace(signal);
-            try {
-                const response = abortRace
-                    ? await Promise.race([routeRequest(requestUrl, input, init, targetWindow), abortRace.promise])
-                    : await routeRequest(requestUrl, input, init, targetWindow);
-                return response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
-            } finally {
-                abortRace?.cleanup();
-            }
+            return routedResponse(requestUrl, input, init, targetWindow);
         };
 
         try {
@@ -178,10 +185,6 @@ export function createInterceptors({
         const originalAjax = $.ajax.bind($);
 
         const patchedAjax = function ajaxProxy(urlOrOptions, maybeOptions) {
-            if (!isTauri) {
-                return originalAjax(urlOrOptions, maybeOptions);
-            }
-
             const options = typeof urlOrOptions === 'string'
                 ? { ...(maybeOptions || {}), url: urlOrOptions }
                 : { ...(urlOrOptions || {}) };
@@ -195,31 +198,31 @@ export function createInterceptors({
 
             const deferred = $.Deferred();
             const jqXHR = deferred.promise();
-            jqXHR.abort = () => {
-                // Abort is a no-op for bridged requests.
-            };
+            const controller = new AbortController();
+            jqXHR.abort = () => { controller.abort(); return jqXHR; };
 
             (async () => {
                 const init = {
                     method: options.type || options.method || 'GET',
                     headers: options.headers,
                     body: options.data,
+                    signal: controller.signal,
                 };
 
-                const response = await routeRequest(requestUrl, options.url, init, targetWindow);
-                if (!response) {
-                    throw new Error(`Unsupported endpoint: ${requestUrl.pathname}`);
-                }
+                const response = await routedResponse(requestUrl, options.url, init, targetWindow);
 
                 jqXHR.status = response.status;
                 jqXHR.readyState = 4;
                 jqXHR.getResponseHeader = (name) => response.headers.get(name);
 
-                const isJson = (options.dataType || '').toLowerCase() !== 'text';
+                const dataType = (options.dataType || '*').toLowerCase();
+                const isJson = dataType === 'json' || (dataType === '*'
+                    && /\bjson\b/i.test(response.headers.get('Content-Type') || ''));
                 let payload;
 
                 if (response.ok) {
-                    payload = isJson ? await safeJson(response) : await response.text();
+                    const noContent = response.status === 204 || init.method.toUpperCase() === 'HEAD';
+                    payload = noContent ? undefined : isJson ? await response.json() : await response.text();
                 } else if (isJson) {
                     const text = await response.text();
                     const normalized = String(text ?? '').trim();
@@ -282,13 +285,14 @@ export function createInterceptors({
 
                 deferred.reject(jqXHR, 'error', error);
             })().catch((error) => {
+                const status = isAbortError(error) ? 'abort' : error instanceof SyntaxError ? 'parsererror' : 'error';
                 if (typeof options.error === 'function') {
-                    options.error(jqXHR, 'error', error);
+                    options.error(jqXHR, status, error);
                 }
                 if (typeof options.complete === 'function') {
-                    options.complete(jqXHR, 'error');
+                    options.complete(jqXHR, status);
                 }
-                deferred.reject(jqXHR, 'error', error);
+                deferred.reject(jqXHR, status, error);
             });
 
             return jqXHR;

@@ -1,19 +1,19 @@
 use serde_json::{Map, Value, json};
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use super::super::loop_runner::AgentLoopExit;
 use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
 use super::task_status::task_is_terminal;
-use crate::dto::agent_dto::AgentPromptAssemblyScopeDto;
+use crate::dto::agent_dto::AgentPreparePromptAssemblyDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
-    AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
+    AgentProfileResolveInput, ensure_profile_model_configured, validate_chat_profile,
 };
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::continuation::InvocationFrame;
 use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    frozen_macros_from_snapshot, prepare_agent_tool_request, request_from_prompt_snapshot,
-    request_summary,
+    request_summary, runtime_context_from_snapshot,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -22,7 +22,8 @@ use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
-use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
+use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
     AgentRunPresentation, AgentRunSkillScopeRefs, AgentTaskRecord, AgentTaskStatus, WorkspacePath,
@@ -162,13 +163,7 @@ impl AgentRuntimeService {
         let mut child_commit_ledger = RunCommitLedger::default();
         let exit = self
             .run_tool_loop(frame, &mut child_commit_ledger, cancel)
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
-                    frame.progress.max_rounds
-                ))
-            })?;
+            .await?;
         if let AgentLoopExit::Transferred { .. } = exit {
             return Err(ApplicationError::ValidationError(
                 "agent.child_handoff_denied: delegated tasks cannot hand off".to_string(),
@@ -231,91 +226,81 @@ impl AgentRuntimeService {
         let invocation_id = invocation.id.as_str();
         let mut profile = self.resolve_task_profile(task).await?;
         ensure_profile_model_configured(&profile)?;
-        let (invocation_kind, exit_policy_label, task_prompt) = match task.continuation {
+        let task_prompt = match task.continuation {
             AgentDelegationContinuation::ReturnToParent => {
                 profile.run.presentation = AgentRunPresentation::Background;
-                (
-                    "subagent",
-                    "taskReturnRequired",
-                    render_child_task_prompt(task),
-                )
+                render_child_task_prompt(task)
             }
-            AgentDelegationContinuation::TransferControl => (
-                "handoff",
-                "runFinishAllowed",
-                render_handoff_task_prompt(task),
-            ),
+            AgentDelegationContinuation::TransferControl => render_handoff_task_prompt(task),
         };
+        validate_chat_profile(&profile, invocation.exit_policy, profile.run.presentation)?;
         let prompt_snapshot = self
-            .workspace_repository
-            .read_text(run_id, &WorkspacePath::parse("input/prompt_snapshot.json")?)
+            .workspace_files(run_id)
+            .await?
+            .read_text(&WorkspacePath::parse("input/prompt_snapshot.json")?)
             .await?;
         let prompt_snapshot: Value = serde_json::from_str(&prompt_snapshot.text).map_err(|error| {
             ApplicationError::ValidationError(format!(
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
+        let run = self.run_repository.load_run(run_id).await?;
         let prepared_tools = self
-            .prepare_invocation_tools(&profile, invocation.exit_policy, invocation_id)
+            .prepare_invocation_tools(
+                &profile,
+                run.target.tool_scope(),
+                invocation.exit_policy,
+                invocation_id,
+                false,
+            )
             .await?;
         let tool_snapshot = prepared_tools.snapshot;
         let tool_turn = prepared_tools.turn;
         let visible_tools = prepared_tools.model_tools;
         let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
-        let run = self.run_repository.load_run(run_id).await?;
-        let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
-            let scope = AgentPromptAssemblyScopeDto {
-                run_id: run_id.to_string(),
-                invocation_id: invocation_id.to_string(),
-                invocation_kind: invocation_kind.to_string(),
-                parent_invocation_id: Some(task.parent_invocation_id.clone()),
-                task_id: Some(task.id.clone()),
-                exit_policy: Some(exit_policy_label.to_string()),
-            };
-            self.assemble_invocation_prompt_snapshot(
-                &profile,
+        let request = self
+            .prompt_assembly_service
+            .build_prompt_assembly_request(
+                AgentPreparePromptAssemblyDto {
+                    profile_id: Some(profile.id.as_str().to_owned()),
+                    generation_type: run.chat_target()?.generation_type.clone(),
+                    frozen_run_input_snapshot: frozen_run_input_snapshot_from_prompt_snapshot(
+                        &prompt_snapshot,
+                    )?,
+                    json_schema: None,
+                },
+                profile.clone(),
                 &visible_tools,
-                run.generation_type.as_str(),
-                frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
-                &scope,
-                task_prompt.clone(),
-                cancel,
+                invocation.exit_policy,
+                AgentInvocationPromptAssemblyContext {
+                    agent_task_prompt: Some(task_prompt),
+                    required_agent_prompt_components: vec![
+                        "agentSystemPrompt".into(),
+                        "agentTask".into(),
+                    ],
+                },
             )
-            .await?
-        } else {
-            None
-        };
-        let mut request = if let Some(invocation_prompt_snapshot) = invocation_prompt_snapshot {
-            request_from_prompt_snapshot(&invocation_prompt_snapshot)?
-        } else {
-            let mut request = request_from_prompt_snapshot(&prompt_snapshot)?;
-            let system_prompt = materialize_agent_system_prompt(&visible_tools, &profile);
-            request.payload.insert(
-                "messages".to_string(),
-                json!([
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": task_prompt
-                    }
-                ]),
-            );
-            request
-        };
+            .await?;
+        let mut request = self
+            .request_host_prompt_assembly(&invocation, Some(task.id.clone()), request, cancel)
+            .await?;
         self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
-        let request = prepare_agent_tool_request(
-            request,
-            &visible_tools,
-            tool_turn.choice().clone(),
-            &run.stable_chat_id,
-            run_id,
-            invocation_id,
-        )?;
+        let accepts_images = request.accepts_images;
+        let (skill_scope_order, effective_skills) = self
+            .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)
+            .await?;
+        let request = self
+            .prepare_invocation_model_request(
+                request,
+                &invocation,
+                &profile,
+                &effective_skills,
+                &visible_tools,
+                tool_turn.choice().clone(),
+            )
+            .await?;
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -327,28 +312,25 @@ impl AgentRuntimeService {
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
                 "toolDiagnostics": &tool_diagnostics,
-                "maxRounds": profile.tools.max_rounds,
                 "contextPolicy": &profile.context,
             }),
         )
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        let (skill_scope_order, effective_skills) = self
-            .resolve_child_effective_skills(&profile, &run.skill_scope_refs)
-            .await?;
         let resolved_skills = serde_json::to_string_pretty(&effective_skills).map_err(|error| {
             ApplicationError::ValidationError(format!(
                 "agent.resolved_skills_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
+        self.workspace_files(run_id)
+            .await?
             .write_text(
-                run_id,
                 &WorkspacePath::parse(format!(
                     "input/invocations/{invocation_id}/resolved_skills.json"
                 ))?,
                 &resolved_skills,
+                WorkspaceWriteGuard::Unchecked,
             )
             .await?;
         self.event(
@@ -359,21 +341,23 @@ impl AgentRuntimeService {
                 "invocationId": invocation_id,
                 "profileId": profile.id.as_str(),
                 "scopes": skill_scope_order,
-                "refs": &run.skill_scope_refs,
+                "refs": &run.chat_target()?.skill_scope_refs,
                 "effectiveSkills": skill_event_summary(&effective_skills),
             }),
         )
         .await?;
 
         Ok(PreparedInvocation {
-            frozen_macros: frozen_macros_from_snapshot(&prompt_snapshot)?,
+            runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,
             tool_snapshot,
             tool_turn,
             request,
+            accepts_images,
             effective_skills,
+            session: None,
         })
     }
 
@@ -401,7 +385,7 @@ fn frozen_run_input_snapshot_from_prompt_snapshot(
         .cloned()
         .ok_or_else(|| {
             ApplicationError::ValidationError(
-                "agent.child_prompt_assembly_frozen_snapshot_required: child preset prompt assembly requires frozenRunInputSnapshot in input/prompt_snapshot.json"
+                "agent.invocation_frozen_input_required: delegated invocation assembly requires frozenRunInputSnapshot in input/prompt_snapshot.json"
                     .to_string(),
             )
         })

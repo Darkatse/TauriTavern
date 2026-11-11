@@ -30,7 +30,7 @@ pub(super) enum CharacterImportMode<'a> {
     },
     Replace {
         file_stem: &'a str,
-        primary_lorebook: Option<&'a str>,
+        primary_lorebook: &'a str,
     },
 }
 
@@ -510,7 +510,7 @@ impl FileCharacterRepository {
             CharacterImportMode::Replace {
                 file_stem,
                 primary_lorebook,
-            } => (file_stem.to_string(), primary_lorebook),
+            } => (file_stem.to_string(), Some(primary_lorebook)),
         };
 
         Self::prepare_imported_character_for_storage(character, &file_stem);
@@ -595,7 +595,7 @@ impl FileCharacterRepository {
         let primary_lorebook = match mode {
             CharacterImportMode::Replace {
                 primary_lorebook, ..
-            } => primary_lorebook,
+            } => Some(primary_lorebook),
             CharacterImportMode::New { .. } => None,
         };
         Self::apply_spec_card_import_state(card_value, character, primary_lorebook)

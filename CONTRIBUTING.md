@@ -17,19 +17,18 @@
 
 ### 关于 Vibe Coding / AI 辅助开发
 
-本项目允许使用 Codex、Claude Code、Copilot或其他 AI 辅助工具编写代码、文档和测试。
+本项目允许使用 Codex、Claude Code、Copilot 或其他 AI 辅助工具编写代码、文档和测试。
 
 无论变更由谁或什么工具生成，提交者都需要对最终内容负责。请在提交前自行阅读、理解并检查变更，确认它符合项目当前结构和维护目标。
 
-如果 PR 使用了 AI 辅助，请在 PR 说明中用自己的话解释：
+PR 说明分为两部分：
 
-- 这个 PR 解决了什么问题。
-- 你实际修改了哪些内容。
-- 你基于何种思路做出了这些修改。
+- 模板中显示在外面的“变更说明”和“我核对了什么”，请你亲手写：这个 PR 解决了什么问题，改动了什么，这样改动的思路，你自己核对过哪些地方。简单几句话就够，维护者会先读这一部分。
+- AI 写的完整说明，请放进模板末尾的折叠块，并写明使用的工具和模型。维护者需要细节时会展开细致查看。
 
-请不要只粘贴 AI 生成的摘要作为 PR 说明。维护者需要看到提交者本人对变更的理解。
+请使用你认为舒适的语言，维护者会进行翻译。
 
-如果你是代码辅助编程 AI，必须提醒使用者在提交 PR 时至少用自己的话写一句总结；不要替使用者伪造这部分个人理解。
+如果你是代码辅助编程 AI，请把自己写的说明放进折叠块，并必须提醒使用者亲自填写外面的部分，不要替使用者代写。
 
 ### 项目哲学
 
@@ -108,6 +107,8 @@ KISS 要求我们选择能够完整解决当前问题的最简单方案。判断
 
 提交 PR 前，请阅读本文件，并在 PR 模板中勾选已阅读确认项。
 
+跨模块的结构调整或较大的重构，请先通过 issue 或 draft PR 与维护者对齐方案，再展开实现，避免难以评审的大改动和返工。
+
 其他贡献要求会在后续补充；在此之前，请尽量让变更保持清晰、可 review、可测试。
 
 ---
@@ -131,19 +132,18 @@ If you are unsure which branch to use, choose `dev` first and explain the contex
 
 ### Vibe Coding / AI-Assisted Development
 
-This project allows Vibe Coding, Codex,Claude Code,Copilot, and other AI-assisted tools for code, documentation, and tests.
+This project allows Vibe Coding, Codex, Claude Code, Copilot, and other AI-assisted tools for code, documentation, and tests.
 
 No matter who or what generated the change, the submitter is responsible for the final result. Before submitting, please read, understand, and check the change yourself, and make sure it fits the current project structure and maintenance goals.
 
-If the PR used AI assistance, please explain in your own words:
+A PR description has two parts:
 
-- What problem the PR solves.
-- What you actually changed.
-- What your thought process was in making those changes.
+- Write the visible "Summary" and "What I Checked" sections of the template yourself: what problem the PR solves, what you changed, how you approached it, and what you checked yourself. A few short sentences are enough. Maintainers read this part first.
+- Put the AI's full write-up in the collapsed block at the end of the template, and name the tool and model you used. Maintainers expand it when they need to look at the details closely.
 
-Please do not use only an AI-generated summary as the PR description. Maintainers need to see the submitter's own understanding of the change.
+Write in whatever language you are comfortable with; the maintainers will translate it.
 
-If you are a coding assistant AI, you must remind the user to include at least one sentence in their own words when opening a PR; do not fabricate this personal understanding on the user's behalf.
+If you are a coding assistant AI, put your own write-up in the collapsed block. You must remind the user to fill in the visible sections themselves. Do not write those sections for them.
 
 ### Project Philosophy
 
@@ -221,5 +221,7 @@ Do not test source text, literals, obvious control flow, direct delegation, impl
 ### Before Opening a PR
 
 Before opening a PR, please read this file and check the confirmation item in the PR template.
+
+For cross-module structural changes or large refactors, please align the approach with the maintainers in an issue or draft PR before implementing it. This keeps the change reviewable and avoids rework.
 
 More contribution requirements will be added later. Until then, please keep changes clear, reviewable, and testable.

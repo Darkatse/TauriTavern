@@ -38,6 +38,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://tauritavern.github.io/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://tauritavern.github.io/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?style=flat-square&logo=apple&logoColor=white)](https://testflight.apple.com/join/gpqAdeTm)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://github.com/Darkatse/TauriTavern/releases/latest)
 
 [全部平台下载](https://tauritavern.github.io/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -140,10 +141,12 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 15.0 或更高版本。iOS 15.0–16.3 仅提供有限支持，完整支持从 iOS 16.4 开始。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
 >
 > **Windows 便携版**（Portable）：需系统已安装 WebView2 运行时。
+>
+> **鸿蒙用户（Beta）**：Release 里的 HAP 适用于 HarmonyOS NEXT。请使用自己的证书签名安装，推荐使用 [Auto-Installer（小白调试助手）](https://github.com/likuai2010/auto-installer/)。当前仅在模拟器上进行过测试。
 
 ## 这是什么
 
-TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.18.0），后端从 Node.js 重构为 Rust（Tauri v2）。
+TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.19.0），后端从 Node.js 重构为 Rust（Tauri v2）。
 
 不需要安装 Node.js，不需要命令行，安装即用。你的角色卡、聊天记录、预设、世界书与前端扩展，全部兼容。
 
@@ -151,8 +154,8 @@ TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植
 
 ## 特性亮点
 
-- 🖥️ **全平台原生**：Windows、macOS、Linux、Android、iOS，桌面与移动同一份体验
-- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.18.0，数据格式与目录布局完全兼容
+- 🖥️ **全平台原生**：Windows、macOS、Linux、Android、iOS，桌面与移动同一份体验；原生鸿蒙版当前处于 Beta 支持。
+- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.19.0，数据格式与目录布局完全兼容
 - 🧩 **前端扩展生态**：内置原生 Git，安装、更新、切换分支都在界面内完成（不支持上游 Node-only 后端插件）
 - 🔄 **内置多设备同步**：局域网加密配对同步，或经远端 TT-Sync v2 自动上传
 - 🤖 **Agent 框架**：工具调用、Skills、子代理与运行时间线，持续演进中
@@ -200,11 +203,13 @@ pnpm run ios:dev       # iOS 开发模式
 
 **Tauri Pilot（AI Agent 界面调试）**
 
-项目已接入 [Tauri Pilot](https://github.com/mpiton/tauri-pilot) 的开发专用插件与权限。它让 AI Agent 通过可访问性快照检查和操作桌面端 WebView；普通开发与发行命令不会启用这项能力。
+项目已接入 [Tauri Pilot](https://github.com/mpiton/tauri-pilot) 的开发专用插件与权限。它让 AI Agent 通过可访问性快照检查和操作桌面端、Android 与 iOS 模拟器中的 WebView；普通开发与发行命令不会启用这项能力。
 
 ```bash
 cargo install tauri-pilot-cli  # 仅首次需要
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # 桌面
+pnpm run android:dev:pilot     # Android，连接前转发 socket，见 docs/AndroidDevelopment.md
+pnpm run ios:dev:pilot         # iOS 模拟器
 ```
 
 应用启动后，在另一终端按以下顺序操作：
@@ -242,7 +247,7 @@ tauri-pilot logs --level error
 
 ## 致谢与许可
 
-基于 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 与 [Tauri](https://tauri.app/) 构建，并感谢 [Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)，以及维护 [TauriTavern AUR 软件包](https://github.com/LX2000WASD/TauriTavern-aur) 的 [@LX2000WASD](https://github.com/LX2000WASD)。
+基于 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 与 [Tauri](https://tauri.app/) 构建，并感谢 [Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)，以及维护 [TauriTavern AUR 软件包](https://github.com/LX2000WASD/TauriTavern-aur) 的 [@LX2000WASD](https://github.com/LX2000WASD) 和完成鸿蒙移植的 [@LeenHawk](https://github.com/LeenHawk)。
 
 以 [AGPL-3.0](LICENSE) 许可发布（与 SillyTavern 同系列许可协议）。
 

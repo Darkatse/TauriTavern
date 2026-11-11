@@ -112,6 +112,7 @@ impl AgentRuntimeService {
         let item = AgentGuidanceItem::new(&dto.text, dto.client_guidance_id.as_deref())?;
 
         let run = self.run_repository.load_run(run_id.as_str()).await?;
+        run.chat_target()?;
         if !run_status_accepts_guidance(run.status) {
             return Err(ApplicationError::ValidationError(format!(
                 "agent.guidance_run_not_accepting: run `{}` is {} and cannot accept guidance",

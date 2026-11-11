@@ -100,9 +100,10 @@ function createDevApi({ safeInvoke }) {
         frontendLogs,
         backendLogs,
         async exportBundle() {
-            return safeInvoke('devlog_export_bundle', {
+            const result = await safeInvoke('devlog_export_bundle', {
                 frontend_entries: getFrontendLogEntries(),
             });
+            return result.delivered;
         },
         llmApiLogs: {
             ...llmApiLogsBridge,

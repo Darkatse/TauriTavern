@@ -1215,11 +1215,11 @@ function createPerfController(options = {}) {
             return;
         }
 
-        const wrapped = async (command, args = {}) => {
+        const wrapped = async (command, ...args) => {
             const key = recordInvokeStart(command);
             const t0 = safeNow();
             try {
-                const result = await base(command, args);
+                const result = await base(command, ...args);
                 recordInvoke(key, safeNow() - t0, true);
                 return result;
             } catch (error) {

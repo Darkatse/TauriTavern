@@ -7,6 +7,7 @@ import test from 'node:test';
 import { collectReleaseAssets } from '../scripts/ci/collect-release-assets.mjs';
 
 const ARTIFACTS = new Map([
+    ['ohos-aarch64-hap', 'entry-default-unsigned.hap'],
     ['android-arm-apk', 'app-armeabi-v7a-release.apk'],
     ['android-arm64-apk', 'app-arm64-v8a-release.apk'],
     ['darwin-aarch64-app', 'TauriTavern.app/Contents/MacOS/TauriTavern'],
@@ -27,12 +28,14 @@ const ARTIFACTS = new Map([
     ['linux-arm64-portable', 'TauriTavern-linux-arm64-portable'],
     ['linux-x64-portable', 'TauriTavern-linux-x64-portable'],
     ['linux-x86_64-rpm', 'TauriTavern-2.2.0-1.x86_64.rpm'],
+    ['web', 'web.zip'],
     ['windows-x64-msi', 'TauriTavern_2.2.0_x64_en-US.msi'],
     ['windows-x64-nsis', 'TauriTavern_2.2.0_x64-setup.exe'],
     ['windows-x64-portable', 'TauriTavern-windows-x64-portable.exe'],
 ]);
 
 const EXPECTED_RELEASE_ASSETS = [
+    'TauriTavern-2.2.0-ohos-arm64-v8a.hap',
     'TauriTavern-2.2.0-android-arm64-v8a.apk',
     'TauriTavern-2.2.0-android-armeabi-v7a.apk',
     'TauriTavern-2.2.0-ios-arm64.ipa',
@@ -48,6 +51,7 @@ const EXPECTED_RELEASE_ASSETS = [
     'TauriTavern-2.2.0-macos-arm64.dmg',
     'TauriTavern-2.2.0-macos-x64-DEBUG.dmg',
     'TauriTavern-2.2.0-macos-x64.dmg',
+    'TauriTavern-2.2.0-web.zip',
     'TauriTavern-2.2.0-windows-x64-portable.exe',
     'TauriTavern-2.2.0-windows-x64-setup-DEBUG.exe',
     'TauriTavern-2.2.0-windows-x64-setup.exe',
@@ -66,7 +70,7 @@ async function createArtifacts(root, prefix, omittedSuffixes = []) {
     }
 }
 
-test('collectReleaseAssets publishes the complete Stable naming contract', async (t) => {
+test('collectReleaseAssets publishes the complete naming contract', async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'tauritavern-release-assets-'));
     t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -94,7 +98,7 @@ test('collectReleaseAssets fails before publishing an incomplete release set', a
     const outputDirectory = join(root, 'release-assets');
     const artifactPrefix = 'TauriTavern-20260726-canary-';
     await createArtifacts(inputDirectory, artifactPrefix, [
-        'android-arm64-apk',
+        'web',
         'debug-darwin-aarch64-app',
         'debug-darwin-aarch64-dmg',
         'debug-darwin-x64-app',
@@ -108,7 +112,7 @@ test('collectReleaseAssets fails before publishing an incomplete release set', a
             outputDirectory,
             artifactPrefix,
         }),
-        { message: 'Missing workflow artifacts: TauriTavern-20260726-canary-android-arm64-apk' },
+        { message: 'Missing workflow artifacts: TauriTavern-20260726-canary-web' },
     );
     await assert.rejects(readdir(outputDirectory), { code: 'ENOENT' });
 });

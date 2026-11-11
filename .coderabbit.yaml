@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: zh-CN
+reviews:
+  auto_review:
+    # Regular PRs target dev (see CONTRIBUTING.md); main is reviewed by default.
+    base_branches: ["dev"]

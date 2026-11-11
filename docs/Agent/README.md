@@ -1,12 +1,12 @@
 # Agent
 
-TauriTavern 的 Agent 围绕文件工作：模型读取材料、修改工作区，再根据工具返回的结果继续处理，最后把选定的文件提交到聊天。运行过程写入追加日志，多个 Agent 则通过任务和结果交换信息。
+TauriTavern 的 Agent 通过模型与工具循环处理任务。Chat 将工作文件提交到聊天，Session 在持续会话中直接答复；两者共用前端 PromptManager 和 Rust 内核。
 
-这套结构把创作过程与聊天展示分开。草稿可以反复修改，辅助资料可以按需读取，聊天中呈现的是提交的内容。
+Chat 把创作过程与聊天展示分开：草稿可以反复修改，辅助资料按需读取，聊天中呈现提交的内容。
 
 ## 从文件到工作区
 
-一次生成称为一个 Run，每个 Run 有自己的工作区。`output/` 放输出，`scratch/` 放草稿，`summaries/` 放摘要；需要带到后续运行的内容放在 `persist/`。普通发送、重新生成和新 swipe 都会创建新的 Run。
+Chat 每次生成创建一个 Run 和工作区。`output/` 放输出，`scratch/` 放草稿，`summaries/` 放摘要；需要带到后续运行的内容放在 `persist/`。
 
 聊天有稳定身份，因此重命名不会改变工作区归属。同一聊天的 Run 保存在一起，持久内容以独立版本连接前后两次运行。切换 swipe 时，可以沿所选消息对应的版本继续。
 
@@ -28,9 +28,11 @@ flowchart LR
     tools --> finish[结束运行]
 ```
 
-Profile 指定模型、提示词、可用工具和工作区范围。前端沿用 SillyTavern 的 PromptManager 组装初始提示词，Rust 接手后续循环。模型通过 `workspace.commit` 提交聊天内容，通过 `workspace.finish` 完成运行。后台运行可以只产生文件。
+Profile 指定模型、提示词、可用工具和工作区范围。Chat 中模型通过 `workspace.commit` 提交聊天内容，通过 `workspace.finish` 完成运行；后台写作运行可以只产生文件。
 
-运行中的补充指令会在下一轮模型请求前加入上下文。取消操作结束当前 Run，已确认提交的聊天内容会保留。运行步骤与源码入口见 [运行循环](Runtime.md)。
+Session 独立于角色聊天，使用指定预设、共享的专用 Profile 和持续工作区。入口为 `api.agent.sessions`，见 [Agent API](../API/Agent.md#持续-session)；运行与存储规则分别见 [Runtime](Runtime.md) 和 [Workspace](Workspace.md#session-的持续工作区)。
+
+Chat 运行中的补充指令会在下一轮模型请求前加入上下文。取消操作结束当前 Run，已确认提交的内容会保留。运行步骤与源码入口见 [运行循环](Runtime.md)。
 
 ## 用日志还原过程
 
@@ -40,7 +42,7 @@ Profile 指定模型、提示词、可用工具和工作区范围。前端沿用
 
 ## 用任务连接多个 Agent
 
-一个 Run 可以包含多个 Invocation。Invocation 是某个 Profile 的一次执行，拥有自己的模型上下文和工具循环，并与同一 Run 的其他 Invocation 共享工作区。
+Chat Run 可以包含多个 Invocation。Invocation 是某个 Profile 的一次执行，拥有自己的模型上下文和工具循环，并与同一 Run 的其他 Invocation 共享工作区。
 
 Agent 间的交互可以理解为管道：调用方送出任务包，接收方处理后送回结果包，文件路径用于传递较大的材料。源码用 `AgentTaskRecord` 记录这次传递，用 `continuation` 区分两种后续动作：
 

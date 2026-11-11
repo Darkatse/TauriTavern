@@ -1,3 +1,4 @@
+use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -5,16 +6,11 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
 pub use super::chat_types::{
-    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageReadItem,
+    CharacterChatIdentity, ChatBackupCatalogEntry, ChatImportFormat, ChatMessageReadItem,
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
     ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult,
     FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
-
-#[async_trait]
-pub trait ChatByteReader: Send {
-    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError>;
-}
 
 /// Repository interface for chat management
 #[async_trait]
@@ -86,15 +82,6 @@ pub trait ChatRepository: Send + Sync {
         format: ChatImportFormat,
     ) -> Result<Chat, DomainError>;
 
-    /// Export a chat to a file
-    async fn export_chat(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        target_path: &Path,
-        format: ChatExportFormat,
-    ) -> Result<(), DomainError>;
-
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;
 
@@ -118,7 +105,7 @@ pub trait ChatRepository: Send + Sync {
     async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatByteReader>, DomainError>;
+    ) -> Result<Box<dyn ByteReader>, DomainError>;
 
     /// Restore a character chat directly from a logical backup name.
     async fn restore_character_chat_backup(
@@ -194,20 +181,28 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<Value, DomainError>;
 
+    /// Read only the header identity. Missing identity is valid legacy data;
+    /// missing files and unreadable or invalid headers are errors.
+    async fn get_character_chat_integrity(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Option<String>, DomainError>;
+
+    /// Enumerate current identities without reading message bodies. Unlike a
+    /// display catalog, this must fail if any file's identity cannot be established.
+    async fn list_character_chat_identities(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<CharacterChatIdentity>, DomainError>;
+
+    /// Stop on a confirmed match; errors from inspected headers propagate.
+    /// This does not require a complete identity enumeration.
     async fn has_character_chat_with_integrity(
         &self,
         character_name: &str,
         integrity: &str,
     ) -> Result<bool, DomainError>;
-
-    /// Set `chat_metadata.extensions[namespace]` for a character chat (header-only rewrite).
-    async fn set_character_chat_metadata_extension(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), DomainError>;
 
     /// Read a JSON value from the character chat extension store.
     async fn get_character_chat_store_json(

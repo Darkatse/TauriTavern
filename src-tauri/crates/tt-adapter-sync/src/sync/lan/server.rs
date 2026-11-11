@@ -345,6 +345,12 @@ impl IntoResponse for ApiError {
             }
             DomainError::AuthenticationError(message) => (StatusCode::UNAUTHORIZED, message),
             DomainError::Cancelled(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+            error @ DomainError::WorkspaceAccessDenied { .. } => {
+                (StatusCode::FORBIDDEN, error.to_string())
+            }
+            error @ DomainError::FileIo { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+            }
             DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
             DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
             DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
@@ -391,7 +397,6 @@ mod tests {
     use async_trait::async_trait;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use socket2::{Domain, Protocol, Socket, Type};
     use tokio::sync::{Mutex, mpsc};
     use tt_contracts::lan_discovery::LanDiscoveryAnnouncement;
     use tt_ports::lan_sync::LanPairingClient;
@@ -579,7 +584,10 @@ mod tests {
     async fn status_is_served_over_spki_pinned_https() {
         use tt_ports::lan_sync::LanPeerRepository;
         let default_user_dir = temp_default_user_dir();
-        let store = LanPeerStore::new(default_user_dir.clone());
+        let store = LanPeerStore::new(
+            default_user_dir.clone(),
+            tt_contracts::host::HostPlatform::Linux,
+        );
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
             default_user_dir.clone(),
@@ -640,10 +648,13 @@ mod tests {
             assert!(store.set_device_name(&invalid).await.is_err());
         }
         store.set_device_name("书房 Mac").await.unwrap();
-        let reloaded = LanPeerStore::new(default_user_dir.clone())
-            .load_or_create_identity()
-            .await
-            .unwrap();
+        let reloaded = LanPeerStore::new(
+            default_user_dir.clone(),
+            tt_contracts::host::HostPlatform::Linux,
+        )
+        .load_or_create_identity()
+        .await
+        .unwrap();
         assert_eq!(reloaded.device_name, "书房 Mac");
         assert_eq!(reloaded.device_id, before.device_id);
         assert_eq!(reloaded.ed25519_seed, before.ed25519_seed);
@@ -654,7 +665,7 @@ mod tests {
             let device = pairing.probe_device(&base_url, pin).await.unwrap();
             assert_eq!(device.device_name, "书房 Mac");
             assert_eq!(device.device_id, before.device_id);
-            assert_eq!(device.platform.as_deref(), Some(std::env::consts::OS));
+            assert_eq!(device.platform.as_deref(), Some("linux"));
             assert_eq!(device.spki_sha256, handle.spki_sha256);
         }
         assert!(
@@ -671,7 +682,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pair_complete_exchanges_identity_over_pinned_https() {
         let default_user_dir = temp_default_user_dir();
-        let store = LanPeerStore::new(default_user_dir.clone());
+        let store = LanPeerStore::new(
+            default_user_dir.clone(),
+            tt_contracts::host::HostPlatform::Linux,
+        );
         let identity = store
             .load_or_create_identity()
             .await
@@ -685,17 +699,12 @@ mod tests {
             completions: Mutex::new(completions),
         });
         let events = recording_events();
-        // Reserve a non-listening port so the stale candidate fails without a timing race.
-        let unavailable = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
-            .expect("reserve stale address");
-        unavailable
-            .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
+        // The stale candidate must fail at once while keeping its port reserved.
+        let stale = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
             .expect("bind stale address");
-        let stale_address = unavailable
-            .local_addr()
-            .expect("stale address")
-            .as_socket()
-            .unwrap();
+        let stale_address = stale.local_addr().expect("stale address");
+        tokio::spawn(async move { while stale.accept().await.is_ok() {} });
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
             default_user_dir.clone(),
@@ -731,7 +740,7 @@ mod tests {
             tokio::pin!(request);
             tokio::select! {
                 started = starts.recv() => started.expect("inbound pairing started"),
-                _ = &mut request => panic!("pairing finished before the inbound handler completed"),
+                result = &mut request => panic!("pairing finished before the inbound handler completed: {result:?}"),
             }
             assert_eq!(events.pairings.load(Ordering::SeqCst), 0);
             finish.send(Ok(())).expect("complete inbound pairing");
@@ -745,10 +754,7 @@ mod tests {
         assert!(response.granted_permissions.mirror_delete);
         assert!(!response.granted_permissions.write);
         assert_eq!(response.server_device_name, identity.device_name);
-        assert_eq!(
-            response.server_device_platform.as_deref(),
-            Some(std::env::consts::OS)
-        );
+        assert_eq!(response.server_device_platform.as_deref(), Some("linux"));
 
         {
             let requests = inbound.requests.lock().expect("pairing request lock");
@@ -783,7 +789,7 @@ mod tests {
                     )
                     .await
                     .expect_err("reject wrong device identity before pairing");
-                assert!(matches!(error, DomainError::AuthenticationError(_)));
+                assert!(matches!(error, DomainError::AuthenticationError(_)), "{error:?}");
             } => {}
         }
         assert_eq!(inbound.requests.lock().unwrap().len(), 1);
@@ -822,7 +828,7 @@ mod tests {
         .await
         .expect("write source file");
 
-        let store = LanPeerStore::new(sync_root.clone());
+        let store = LanPeerStore::new(sync_root.clone(), tt_contracts::host::HostPlatform::Linux);
         let peer_device_id =
             DeviceId::new("550e8400-e29b-41d4-a716-446655440001".to_string()).unwrap();
         let peer_seed = URL_SAFE_NO_PAD.encode([3u8; 32]);

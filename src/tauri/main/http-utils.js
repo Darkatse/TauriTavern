@@ -98,7 +98,8 @@ export async function getMethod(input, init) {
     return getMethodHint(input, init);
 }
 
-export async function readRequestBody(input, init) {
+export async function readRequestBody(input, init, mode = 'json') {
+    const decode = text => mode === 'text' ? text : parseMaybeJson(text);
     let rawBody;
 
     if (init && Object.prototype.hasOwnProperty.call(init, 'body')) {
@@ -117,7 +118,7 @@ export async function readRequestBody(input, init) {
     }
 
     if (typeof rawBody === 'string') {
-        return parseMaybeJson(rawBody);
+        return decode(rawBody);
     }
 
     if (isUrlSearchParamsLike(rawBody)) {
@@ -126,13 +127,15 @@ export async function readRequestBody(input, init) {
 
     if (isBlobLike(rawBody)) {
         const text = await rawBody.text();
-        return parseMaybeJson(text);
+        return decode(text);
     }
 
     if (ArrayBuffer.isView(rawBody) || isArrayBufferLike(rawBody)) {
-        const bytes = isArrayBufferLike(rawBody) ? new Uint8Array(rawBody) : new Uint8Array(rawBody.buffer);
-        const text = new TextDecoder().decode(bytes);
-        return parseMaybeJson(text);
+        const bytes = isArrayBufferLike(rawBody)
+            ? new Uint8Array(rawBody)
+            : new Uint8Array(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
+        const text = new TextDecoder('utf-8', { fatal: mode === 'text' }).decode(bytes);
+        return decode(text);
     }
 
     return rawBody;
@@ -151,21 +154,8 @@ export function parseMaybeJson(value) {
     }
 }
 
-export async function safeJson(response) {
-    try {
-        return await response.json();
-    } catch {
-        return {};
-    }
-}
-
-export function jsonResponse(data, status = 200) {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
+export function jsonResponse(data, status = 200, statusText) {
+    return new Response(JSON.stringify(data), responseInit(status, 'application/json', statusText));
 }
 
 export function safeResponseStatusText(value) {
@@ -174,10 +164,14 @@ export function safeResponseStatusText(value) {
 }
 
 export function textResponse(text, status = 200, statusText) {
+    return new Response(String(text), responseInit(status, 'text/plain; charset=utf-8', statusText));
+}
+
+function responseInit(status, contentType, statusText) {
     const init = {
         status,
         headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Type': contentType,
         },
     };
     const safeStatusText = safeResponseStatusText(statusText);
@@ -186,7 +180,5 @@ export function textResponse(text, status = 200, statusText) {
         init.statusText = safeStatusText;
     }
 
-    return new Response(String(text), {
-        ...init,
-    });
+    return init;
 }

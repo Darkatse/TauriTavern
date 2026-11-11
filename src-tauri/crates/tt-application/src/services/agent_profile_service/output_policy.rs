@@ -11,11 +11,9 @@ use super::constants::MESSAGE_BODY_ARTIFACT_TARGET;
 pub(super) fn resolve_output_policy(
     policy: &AgentOutputPolicy,
     workspace: &AgentWorkspacePolicy,
-) -> Result<ResolvedAgentOutputPolicy, ApplicationError> {
+) -> Result<Option<ResolvedAgentOutputPolicy>, ApplicationError> {
     if policy.artifacts.is_empty() {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_output_empty: output.artifacts cannot be empty".to_string(),
-        ));
+        return Ok(None);
     }
 
     let visible = workspace
@@ -93,10 +91,20 @@ pub(super) fn resolve_output_policy(
         ));
     };
 
-    Ok(ResolvedAgentOutputPolicy {
+    Ok(Some(ResolvedAgentOutputPolicy {
         artifacts,
         message_body_artifact_id,
         message_body_path,
+    }))
+}
+
+pub fn require_output(
+    profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
+) -> Result<&ResolvedAgentOutputPolicy, ApplicationError> {
+    profile.output.as_ref().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.profile_output_required: chat execution requires a message body artifact".into(),
+        )
     })
 }
 

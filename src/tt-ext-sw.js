@@ -11,6 +11,7 @@ const USER_AVATARS_ROUTE_PREFIX_ENCODED = '/User%20Avatars/';
 
 const PROXY_REQUEST_MESSAGE_TYPE = 'tt-ext-proxy-request';
 const PROXY_READY_MESSAGE_TYPE = 'tt-ext-proxy-ready';
+const CLAIM_MESSAGE_TYPE = 'tt-ext-claim';
 const CLIENT_BRIDGE_TIMEOUT_MS = 8000;
 const FORWARDED_REQUEST_HEADERS = [
     'range',
@@ -62,6 +63,10 @@ let proxyBridgeClientId = null;
 
 self.addEventListener('message', (event) => {
     const data = event?.data;
+    if (data?.type === CLAIM_MESSAGE_TYPE) {
+        event.waitUntil(self.clients.claim());
+        return;
+    }
     if (!data || data.type !== PROXY_READY_MESSAGE_TYPE) {
         return;
     }
@@ -75,10 +80,6 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('install', (event) => {
     event.waitUntil(self.skipWaiting());
-});
-
-self.addEventListener('activate', (event) => {
-    event.waitUntil(self.clients.claim());
 });
 
 self.addEventListener('fetch', (event) => {

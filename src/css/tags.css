@@ -270,7 +270,8 @@
 
 .rm_tag_bogus_drilldown .tag:not(:first-child)::before {
     font-family: 'Font Awesome 6 Free';
-    content: "\f054";
+    --fa: "\f054";
+    content: var(--fa);
     position: absolute;
     left: -1em;
     top: auto;

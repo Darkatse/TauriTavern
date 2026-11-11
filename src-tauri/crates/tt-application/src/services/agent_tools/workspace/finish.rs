@@ -18,17 +18,13 @@ pub(in crate::services::agent_tools) fn finish(
     call: &ToolInvocation,
     args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let result = AgentToolResult {
-        call_id: call.call_id.clone(),
-        tool_id: call.tool_id.clone(),
-        content: "Finished the Agent run.".to_string(),
-        structured: structured_value(WorkspaceFinishStructured {
+    let result = AgentToolResult::ok(
+        call,
+        "Finished the Agent run.".to_string(),
+        structured_value(WorkspaceFinishStructured {
             reason: args.get("reason").and_then(Value::as_str),
         }),
-        is_error: false,
-        error_code: None,
-        resource_refs: Vec::new(),
-    };
+    );
 
     Ok((result, AgentToolEffect::Finish))
 }

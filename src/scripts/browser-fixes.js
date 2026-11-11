@@ -1,4 +1,4 @@
-import { getParsedUA, isMobile } from './RossAscends-mods.js';
+import { getParsedUA } from './RossAscends-mods.js';
 
 const isFirefox = () => /firefox/i.test(navigator.userAgent);
 
@@ -80,16 +80,6 @@ function applyBrowserFixes() {
     }
 
     const safariEnvironment = getSafariEnvironmentFlags();
-
-    if (isMobile() && (safariEnvironment.isIOS || safariEnvironment.isMobileSafari)) {
-        const fixFunkyPositioning = () => {
-            console.debug('[Mobile] Device viewport change detected.');
-            document.documentElement.style.position = 'fixed';
-            requestAnimationFrame(() => document.documentElement.style.position = '');
-        };
-        window.addEventListener('resize', fixFunkyPositioning);
-        window.addEventListener('orientationchange', fixFunkyPositioning);
-    }
 
     addSafariPatch(safariEnvironment);
 }

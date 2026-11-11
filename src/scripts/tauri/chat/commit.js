@@ -1,6 +1,5 @@
 import { invoke } from '../../../tauri-bridge.js';
-import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
-import { isAndroidRuntime } from '../../util/mobile-runtime.js';
+import { commitBytes } from '../../../tauri/main/services/files/byte-commit.js';
 import { jsonlRecordsToByteChunks, serializeChatPayload } from './jsonl.js';
 import { coldSourceForPayload } from './cold-swipes.js';
 
@@ -27,68 +26,52 @@ function invokeChatCommit(...args) {
     });
 }
 
-function positiveSafeInteger(value, label) {
-    const number = Number(value);
-    if (!Number.isSafeInteger(number) || number <= 0) {
-        throw new Error(`${label} must be a positive safe integer`);
-    }
-    return number;
+export async function commitChatMetadata({ target, chatMetadata }) {
+    return commitChatRecords({
+        target,
+        operation: { kind: 'metadata' },
+        records: [serializeJson(chatMetadata)],
+        commitReason: 'mutation',
+    });
 }
 
-export async function commitChatMetadata({ target, chatMetadata }) {
-    // Snapshot before yielding: Tauri re-reads live arguments when its custom protocol falls back to postMessage.
-    const snapshot = JSON.parse(JSON.stringify(chatMetadata));
-    await invokeChatCommit('commit_chat_metadata', { target, chatMetadata: snapshot });
+export async function commitChatMetadataExtension({ target, namespace, value }) {
+    return commitChatRecords({
+        target,
+        operation: { kind: 'metadataExtension', namespace },
+        records: [serializeJson(value)],
+        commitReason: 'mutation',
+    });
+}
+
+function serializeJson(value) {
+    const text = JSON.stringify(value);
+    if (text === undefined) throw new Error('Chat commit value must serialize to JSON');
+    return text;
 }
 
 export async function commitChatPayload({ target, payload, force, commitReason }) {
     const records = serializeChatPayload(payload);
     const coldSourceId = coldSourceForPayload(payload);
-    const begin = await invokeChatCommit('begin_chat_commit', { target, force, ...(coldSourceId === undefined ? {} : { coldSourceId }) });
-    const sessionId = String(begin?.sessionId || '').trim();
-    if (!sessionId) {
-        throw new Error('Host chat commit did not return a session id');
-    }
-
-    let offset = 0;
-    try {
-        const maxFrameBytes = positiveSafeInteger(begin?.maxFrameBytes, 'Host chat commit frame limit');
-        const android = isAndroidRuntime();
-
-        for (const frame of jsonlRecordsToByteChunks(records, { maxChunkBytes: maxFrameBytes })) {
-            const headers = {
-                'session-id': sessionId,
-                offset: String(offset),
-            };
-            const nextOffset = Number(await (android
-                ? invokeChatCommit('append_chat_commit_chunk', { data: encodeBytesToBase64(frame) }, {
-                    headers: {
-                        ...headers,
-                        'chunk-encoding': 'base64',
-                    },
-                })
-                : invokeChatCommit('append_chat_commit_chunk', frame, { headers })));
-            if (nextOffset !== offset + frame.byteLength) {
-                throw new Error(`Host chat commit returned unexpected offset ${nextOffset}`);
-            }
-            offset = nextOffset;
-        }
-    } catch (error) {
-        try {
-            await invokeChatCommit('abort_chat_commit', { sessionId });
-        } catch (abortError) {
-            throw new AggregateError([error, abortError], error.message);
-        }
-        throw error;
-    }
-
-    // finish consumes the session on the host whether it succeeds or fails; nothing is left to abort.
-    const finished = await invokeChatCommit('finish_chat_commit', {
-        sessionId,
-        expectedSize: offset,
+    return commitChatRecords({
+        target,
+        operation: { kind: 'payload', force, ...(coldSourceId === undefined ? {} : { coldSourceId }) },
+        records,
         commitReason,
     });
-    if (Number(finished?.acceptedSize) !== offset) {
-        throw new Error(`Host chat commit returned unexpected accepted size ${finished?.acceptedSize}`);
-    }
+}
+
+// Callers capture all payload values as JSON text before this first await.
+async function commitChatRecords({ target, operation, records, commitReason }) {
+    await commitBytes({
+        begin: () => invokeChatCommit('begin_chat_commit', { target, operation }),
+        frames: maxChunkBytes => jsonlRecordsToByteChunks(records, { maxChunkBytes }),
+        append: (body, options) => invokeChatCommit('append_chat_commit_chunk', body, options),
+        finish: (sessionId, expectedSize) => invokeChatCommit('finish_chat_commit', {
+            sessionId,
+            expectedSize,
+            commitReason,
+        }),
+        abort: sessionId => invokeChatCommit('abort_chat_commit', { sessionId }),
+    });
 }

@@ -5,7 +5,6 @@ import { createCharacterService } from '../services/characters/character-service
 import { createCharacterFormService } from '../services/characters/character-form-service.js';
 import { createCharacterCreateService } from '../services/characters/character-create-service.js';
 import { createUploadService } from '../services/uploads/upload-service.js';
-import { createAndroidArchiveService } from '../services/android/android-archive-service.js';
 import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
 import { installLifecycleFlushHandlers, registerLifecycleFlushHandler } from '../services/lifecycle/lifecycle-flush-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
@@ -30,7 +29,6 @@ import {
  * @returns {TauriMainContext}
  */
 export function createTauriMainContext({ invoke }) {
-    const ANDROID_IMPORT_ARCHIVE_BRIDGE_NAME = 'TauriTavernAndroidImportArchiveBridge';
     const THUMBNAIL_ROUTE_TYPES = new Set(['bg', 'avatar', 'persona']);
 
     const invokeService = createInvokeService({
@@ -48,27 +46,12 @@ export function createTauriMainContext({ invoke }) {
         safeInvoke: invokeService.safeInvoke,
         materializeUploadFile: uploadService.materializeUploadFile,
     });
-    const androidArchiveService = createAndroidArchiveService({
-        safeInvoke: invokeService.safeInvoke,
-        removeTempUploadFile: uploadService.removeTempUploadFile,
-        bridgeName: ANDROID_IMPORT_ARCHIVE_BRIDGE_NAME,
-    });
     const characterFormService = createCharacterFormService({
         safeInvoke: invokeService.safeInvoke,
         resolveCharacterId: characterService.resolveCharacterId,
         resolveExistingCharacterId: characterService.resolveExistingCharacterId,
         materializeUploadFile: uploadService.materializeUploadFile,
     });
-
-    /** @param {string} filePath */
-    async function removeTemporaryFile(filePath) {
-        const invokeApi = window.__TAURI__?.core?.invoke;
-        if (typeof invokeApi !== 'function') {
-            throw new Error('Tauri invoke API is unavailable');
-        }
-
-        await uploadService.removeTempUploadFile(filePath, invokeApi);
-    }
 
     installAssetPathHelpers({
         thumbnailRouteTypes: THUMBNAIL_ROUTE_TYPES,
@@ -110,12 +93,7 @@ export function createTauriMainContext({ invoke }) {
         editCharacterAvatarFromForm: characterFormService.editCharacterAvatarFromForm,
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
         materializeUploadFile: uploadService.materializeUploadFile,
-        materializeAndroidContentUriUpload: androidArchiveService.materializeAndroidContentUriUpload,
-        materializeAndroidSkillImportArchive: androidArchiveService.materializeAndroidSkillImportArchive,
-        pickAndroidImportArchive: androidArchiveService.pickAndroidImportArchive,
-        removeTemporaryFile,
         createChatBackupDownloadStream: readableFileStreamService.createChatBackupDownloadStream,
         createReadableFileStream: readableFileStreamService.createReadableFileStream,
-        saveAndroidExportArchive: androidArchiveService.saveAndroidExportArchive,
     };
 }

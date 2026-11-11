@@ -116,7 +116,7 @@ export function getClaudeStopStatus(stopReason, stopDetails = null) {
 
     if (stopReason === 'model_context_window_exceeded') {
         return {
-            code: 'model.output_truncated',
+            code: 'model.context_overflow',
             message: 'Claude reached the context window limit. The response is incomplete.',
         };
     }

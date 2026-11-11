@@ -49,29 +49,6 @@ pub async fn get_group_chat_metadata(
 }
 
 #[tauri::command]
-pub async fn set_group_chat_metadata_extension(
-    chat_id: String,
-    namespace: String,
-    value: Value,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "set_group_chat_metadata_extension {}:{}",
-        chat_id, namespace
-    ));
-
-    app_state
-        .services
-        .group_chat_service
-        .set_group_chat_metadata_extension(&chat_id, &namespace, value)
-        .await
-        .map_err(map_command_error(format!(
-            "Failed to set group chat metadata extension {}:{}",
-            chat_id, namespace
-        )))
-}
-
-#[tauri::command]
 pub async fn get_group_chat_store_json(
     chat_id: String,
     namespace: String,

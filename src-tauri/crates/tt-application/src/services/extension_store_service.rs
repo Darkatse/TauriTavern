@@ -1,14 +1,21 @@
 use std::sync::Arc;
 
-use serde_json::Value;
-
-use crate::errors::ApplicationError;
+use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::extension_store::{EntryKind, WriteOperation};
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
 
-const DEFAULT_TABLE: &str = "main";
+use crate::errors::ApplicationError;
 
 pub struct ExtensionStoreService {
     repository: Arc<dyn ExtensionStoreRepository>,
+}
+
+fn resolve_table(table: Option<&str>) -> &str {
+    table
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main")
 }
 
 impl ExtensionStoreService {
@@ -16,59 +23,57 @@ impl ExtensionStoreService {
         Self { repository }
     }
 
-    fn resolve_table<'a>(&self, table: Option<&'a str>) -> &'a str {
-        table
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(DEFAULT_TABLE)
-    }
-
-    pub async fn get_json(
+    pub async fn open_entry(
         &self,
         namespace: &str,
         table: Option<&str>,
         key: &str,
-    ) -> Result<Value, ApplicationError> {
-        let table = self.resolve_table(table);
-        Ok(self.repository.get_json(namespace, table, key).await?)
+        kind: EntryKind,
+    ) -> Result<Option<Box<dyn ByteReader>>, ApplicationError> {
+        Ok(self
+            .repository
+            .open_entry(namespace, resolve_table(table), key, kind)
+            .await?)
     }
 
-    pub async fn try_get_json(
+    pub async fn begin_commit(
         &self,
         namespace: &str,
         table: Option<&str>,
         key: &str,
-    ) -> Result<Option<Value>, ApplicationError> {
-        let table = self.resolve_table(table);
-        Ok(self.repository.try_get_json(namespace, table, key).await?)
+        operation: WriteOperation,
+    ) -> Result<CommitBegin, ApplicationError> {
+        Ok(self
+            .repository
+            .begin_commit(namespace, resolve_table(table), key, operation)
+            .await?)
     }
 
-    pub async fn set_json(
+    pub async fn append_commit(
         &self,
-        namespace: &str,
-        table: Option<&str>,
-        key: &str,
-        value: Value,
+        session_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<u64, ApplicationError> {
+        Ok(self
+            .repository
+            .append_commit(session_id, offset, bytes)
+            .await?)
+    }
+
+    pub async fn finish_commit(
+        &self,
+        session_id: &str,
+        expected_size: u64,
     ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository
-            .set_json(namespace, table, key, value)
-            .await?;
-        Ok(())
+        Ok(self
+            .repository
+            .finish_commit(session_id, expected_size)
+            .await?)
     }
 
-    pub async fn update_json(
-        &self,
-        namespace: &str,
-        table: Option<&str>,
-        key: &str,
-        value: Value,
-    ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository
-            .update_json(namespace, table, key, value)
-            .await?;
-        Ok(())
+    pub async fn abort_commit(&self, session_id: &str) -> Result<(), ApplicationError> {
+        Ok(self.repository.abort_commit(session_id).await?)
     }
 
     pub async fn rename_json_key(
@@ -78,31 +83,35 @@ impl ExtensionStoreService {
         key: &str,
         new_key: &str,
     ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository
-            .rename_json_key(namespace, table, key, new_key)
-            .await?;
-        Ok(())
+        Ok(self
+            .repository
+            .rename_json_key(namespace, resolve_table(table), key, new_key)
+            .await?)
     }
 
-    pub async fn delete_json(
+    pub async fn delete_entry(
         &self,
         namespace: &str,
         table: Option<&str>,
         key: &str,
+        kind: EntryKind,
     ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository.delete_json(namespace, table, key).await?;
-        Ok(())
+        Ok(self
+            .repository
+            .delete_entry(namespace, resolve_table(table), key, kind)
+            .await?)
     }
 
-    pub async fn list_json_keys(
+    pub async fn list_keys(
         &self,
         namespace: &str,
         table: Option<&str>,
+        kind: EntryKind,
     ) -> Result<Vec<String>, ApplicationError> {
-        let table = self.resolve_table(table);
-        Ok(self.repository.list_json_keys(namespace, table).await?)
+        Ok(self
+            .repository
+            .list_keys(namespace, resolve_table(table), kind)
+            .await?)
     }
 
     pub async fn list_tables(&self, namespace: &str) -> Result<Vec<String>, ApplicationError> {
@@ -110,51 +119,6 @@ impl ExtensionStoreService {
     }
 
     pub async fn delete_table(&self, namespace: &str, table: &str) -> Result<(), ApplicationError> {
-        self.repository.delete_table(namespace, table).await?;
-        Ok(())
-    }
-
-    pub async fn get_blob(
-        &self,
-        namespace: &str,
-        table: Option<&str>,
-        key: &str,
-    ) -> Result<Vec<u8>, ApplicationError> {
-        let table = self.resolve_table(table);
-        Ok(self.repository.get_blob(namespace, table, key).await?)
-    }
-
-    pub async fn set_blob(
-        &self,
-        namespace: &str,
-        table: Option<&str>,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository
-            .set_blob(namespace, table, key, bytes)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn delete_blob(
-        &self,
-        namespace: &str,
-        table: Option<&str>,
-        key: &str,
-    ) -> Result<(), ApplicationError> {
-        let table = self.resolve_table(table);
-        self.repository.delete_blob(namespace, table, key).await?;
-        Ok(())
-    }
-
-    pub async fn list_blob_keys(
-        &self,
-        namespace: &str,
-        table: Option<&str>,
-    ) -> Result<Vec<String>, ApplicationError> {
-        let table = self.resolve_table(table);
-        Ok(self.repository.list_blob_keys(namespace, table).await?)
+        Ok(self.repository.delete_table(namespace, table).await?)
     }
 }

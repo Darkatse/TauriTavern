@@ -22,21 +22,8 @@ pub(super) fn map_call_outcome(outcome: McpCallOutcome) -> McpCallOutcomeDto {
     match outcome {
         McpCallOutcome::KnownResponse(response) => McpCallOutcomeDto::KnownResponse {
             response: match response {
-                McpKnownResponse::ToolResult(result) => McpKnownResponseDto::ToolResult {
-                    is_error: result.is_error,
-                    text_blocks: result
-                        .text
-                        .into_iter()
-                        .map(|content| McpTextContentDto {
-                            index: content.index,
-                            text: content.text,
-                        })
-                        .collect(),
-                    structured_json: result.structured_content.map(|value| {
-                        serde_json::to_string_pretty(&value)
-                            .expect("serde_json::Value is always serializable")
-                    }),
-                    diagnostics: result
+                McpKnownResponse::ToolResult(result) => {
+                    let mut diagnostics = result
                         .diagnostics
                         .into_iter()
                         .map(|diagnostic| McpCallDiagnosticDto {
@@ -44,8 +31,36 @@ pub(super) fn map_call_outcome(outcome: McpCallOutcome) -> McpCallOutcomeDto {
                             message: diagnostic.message,
                             content_index: diagnostic.content_index,
                         })
-                        .collect(),
-                },
+                        .chain(result.images.into_iter().map(|image| McpCallDiagnosticDto {
+                            code: "mcp.call_content_unsupported".to_owned(),
+                            message: format!(
+                                "Image content ({}, {} encoded bytes) is not supported",
+                                image.mime_type,
+                                image.data.len()
+                            ),
+                            content_index: Some(image.index),
+                        }))
+                        .collect::<Vec<_>>();
+                    diagnostics.sort_by_key(|diagnostic| {
+                        (diagnostic.content_index.is_none(), diagnostic.content_index)
+                    });
+                    McpKnownResponseDto::ToolResult {
+                        is_error: result.is_error,
+                        text_blocks: result
+                            .text
+                            .into_iter()
+                            .map(|content| McpTextContentDto {
+                                index: content.index,
+                                text: content.text,
+                            })
+                            .collect(),
+                        structured_json: result.structured_content.map(|value| {
+                            serde_json::to_string_pretty(&value)
+                                .expect("serde_json::Value is always serializable")
+                        }),
+                        diagnostics,
+                    }
+                }
                 McpKnownResponse::ServerError(error) => McpKnownResponseDto::ServerError {
                     code: error.code,
                     message: error.message,

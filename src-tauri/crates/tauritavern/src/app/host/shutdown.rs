@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::app::AppState;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(desktop, not(windows)))]
 use tauri::WindowEvent;
 use tauri::{Emitter, Manager};
 
@@ -16,7 +16,7 @@ pub(crate) fn request_frontend_shutdown(
     window.emit(FRONTEND_SHUTDOWN_EVENT, ())
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(desktop, not(windows)))]
 pub(super) fn install_window_close_handler(window: &tauri::webview::WebviewWindow) {
     let window_for_close = window.clone();
     window.on_window_event(move |event| {

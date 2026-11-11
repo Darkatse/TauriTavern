@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
@@ -7,7 +5,7 @@ use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
-use super::shared::message_content_to_text;
+use super::shared::{json_schema_fields, message_content_to_text};
 use super::tool_calls::message_tool_call_id;
 
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
@@ -17,7 +15,6 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let mut upstream_payload = Value::Object(request);
     copy_internal_provider_state(&payload, &mut upstream_payload)?;
-    finalize_openai_responses_payload(&mut upstream_payload)?;
 
     Ok(("/responses".to_string(), upstream_payload))
 }
@@ -37,18 +34,20 @@ fn build_openai_responses_payload(
         })?;
 
     let previous_response_id = non_empty_string(payload.get("previous_response_id"));
-    let input = build_input_items(payload.get("messages"), previous_response_id.is_some())?;
+    let input = build_input_items(payload.get("messages"))?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     request.insert("input".to_string(), Value::Array(input));
+    let store = payload.get("store").filter(|value| !value.is_null());
+    if store.is_some_and(|value| !value.is_boolean()) {
+        return Err(ApplicationError::ValidationError(
+            "OpenAI Responses store must be a boolean".to_string(),
+        ));
+    }
     request.insert(
         "store".to_string(),
-        payload
-            .get("store")
-            .filter(|value| !value.is_null())
-            .cloned()
-            .unwrap_or(Value::Bool(false)),
+        store.cloned().unwrap_or(Value::Bool(false)),
     );
 
     for key in [
@@ -90,13 +89,21 @@ fn build_openai_responses_payload(
         );
     }
 
+    let mut text = Map::new();
+    if let Some(mut format) = json_schema_fields(payload) {
+        format.insert("type".to_string(), json!("json_schema"));
+        text.insert("format".to_string(), Value::Object(format));
+    }
     if let Some(verbosity) = payload
         .get("verbosity")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
     {
-        request.insert("text".to_string(), json!({ "verbosity": verbosity }));
+        text.insert("verbosity".to_string(), json!(verbosity));
+    }
+    if !text.is_empty() {
+        request.insert("text".to_string(), Value::Object(text));
     }
 
     let mut tools = payload
@@ -127,10 +134,7 @@ fn build_openai_responses_payload(
     Ok(request)
 }
 
-fn build_input_items(
-    messages: Option<&Value>,
-    allow_orphan_tool_outputs: bool,
-) -> Result<Vec<Value>, ApplicationError> {
+fn build_input_items(messages: Option<&Value>) -> Result<Vec<Value>, ApplicationError> {
     let Some(messages) = messages else {
         return Ok(Vec::new());
     };
@@ -148,18 +152,12 @@ fn build_input_items(
         )
     })?;
 
-    ResponsesTranscriptCompiler {
-        allow_orphan_tool_outputs,
-        ..Default::default()
-    }
-    .compile(entries)
+    ResponsesTranscriptCompiler::default().compile(entries)
 }
 
 #[derive(Default)]
 struct ResponsesTranscriptCompiler {
     input: Vec<Value>,
-    function_call_ids: HashSet<String>,
-    allow_orphan_tool_outputs: bool,
 }
 
 impl ResponsesTranscriptCompiler {
@@ -188,14 +186,7 @@ impl ResponsesTranscriptCompiler {
         match role.as_str() {
             "assistant" => self.compile_assistant_message(message),
             "tool" | "function" => self.compile_tool_message(message),
-            "system" => {
-                self.input.push(json!({
-                    "role": "developer",
-                    "content": responses_input_message_content(message.get("content"), false)?,
-                }));
-                Ok(())
-            }
-            "developer" | "user" => {
+            "system" | "developer" | "user" => {
                 self.input.push(json!({
                     "role": role,
                     "content": responses_input_message_content(
@@ -216,10 +207,7 @@ impl ResponsesTranscriptCompiler {
         message: &Map<String, Value>,
     ) -> Result<(), ApplicationError> {
         if let Some(native_output) = message_native_openai_responses_output(message)? {
-            for item in native_output {
-                self.remember_function_call_item(&item)?;
-                self.input.push(item);
-            }
+            self.input.extend(native_output);
             return Ok(());
         }
 
@@ -233,7 +221,6 @@ impl ResponsesTranscriptCompiler {
         }
 
         for call in assistant_function_calls(message.get("tool_calls"))? {
-            self.function_call_ids.insert(call.call_id.clone());
             self.input.push(call.into_responses_item());
         }
 
@@ -251,38 +238,11 @@ impl ResponsesTranscriptCompiler {
             )
         })?;
 
-        if !self.allow_orphan_tool_outputs && !self.function_call_ids.contains(&call_id) {
-            return Err(ApplicationError::ValidationError(format!(
-                "Responses function_call_output references call_id without preceding function_call: {call_id}"
-            )));
-        }
-
         self.input.push(json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": message_content_to_text(message.get("content")),
+            "output": responses_input_message_content(message.get("content"), true)?,
         }));
-
-        Ok(())
-    }
-
-    fn remember_function_call_item(&mut self, item: &Value) -> Result<(), ApplicationError> {
-        let object = item.as_object().ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenAI Responses native output item must be an object".to_string(),
-            )
-        })?;
-
-        if object.get("type").and_then(Value::as_str) != Some("function_call") {
-            return Ok(());
-        }
-
-        let call_id = non_empty_string(object.get("call_id")).ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenAI Responses native function_call item is missing call_id".to_string(),
-            )
-        })?;
-        self.function_call_ids.insert(call_id);
 
         Ok(())
     }
@@ -518,45 +478,12 @@ fn message_native_openai_responses_output(
     Ok(Some(output))
 }
 
-fn finalize_openai_responses_payload(payload: &mut Value) -> Result<(), ApplicationError> {
-    let object = payload.as_object_mut().ok_or_else(|| {
-        ApplicationError::InternalError("OpenAI Responses payload must be an object".to_string())
-    })?;
-
-    validate_openai_responses_payload(object)?;
-    ensure_reasoning_encrypted_include(object)?;
-    validate_openai_responses_payload(object)
-}
-
-fn validate_openai_responses_payload(object: &Map<String, Value>) -> Result<(), ApplicationError> {
-    non_empty_string(object.get("model")).ok_or_else(|| {
-        ApplicationError::ValidationError("OpenAI Responses payload is missing model".to_string())
-    })?;
-
-    if object.get("input").and_then(Value::as_array).is_none() {
-        return Err(ApplicationError::ValidationError(
-            "OpenAI Responses payload is missing input array".to_string(),
-        ));
-    }
-
-    if let Some(store) = object.get("store")
-        && !store.is_boolean()
-    {
-        return Err(ApplicationError::ValidationError(
-            "OpenAI Responses store must be a boolean".to_string(),
-        ));
-    }
-
-    if let Some(include) = object.get("include") {
-        validate_include(include)?;
-    }
-
-    Ok(())
-}
-
 fn ensure_reasoning_encrypted_include(
     object: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
+    if let Some(include) = object.get("include") {
+        validate_include(include)?;
+    }
     let entry = object
         .entry("include".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
@@ -713,6 +640,41 @@ mod tests {
     use super::build;
 
     #[test]
+    fn openai_responses_payload_preserves_json_schema_and_verbosity() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "answer": { "type": "string" } },
+            "required": ["answer"],
+            "additionalProperties": false,
+        });
+        let payload = json!({
+            "model": "gpt-6-astra",
+            "messages": [{ "role": "user", "content": "Answer in JSON" }],
+            "verbosity": "low",
+            "json_schema": {
+                "name": "answer",
+                "value": schema,
+                "strict": false,
+                "description": "A short answer",
+            },
+        });
+        let (_, upstream) = build(payload.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            upstream["text"],
+            json!({
+                "verbosity": "low",
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer",
+                    "schema": schema,
+                    "strict": false,
+                    "description": "A short answer",
+                },
+            })
+        );
+    }
+
+    #[test]
     fn openai_responses_payload_maps_system_and_tool_turns_to_typed_items() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -755,7 +717,7 @@ mod tests {
             .cloned()
             .unwrap_or_default();
 
-        assert_eq!(input[0]["role"], "developer");
+        assert_eq!(input[0]["role"], "system");
         assert_eq!(input[0]["content"], "sys");
         assert_eq!(input[1]["content"], "hi");
         assert_eq!(input[2]["type"], "function_call");
@@ -1078,29 +1040,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_rejects_orphan_tool_output() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "tool", "tool_call_id": "call_1", "content": "orphan" }
-            ]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("without preceding function_call")
-        );
-    }
-
-    #[test]
     fn openai_responses_payload_allows_incremental_tool_output_after_previous_response() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -1125,6 +1064,27 @@ mod tests {
                 "call_id": "call_123",
                 "output": "ok"
             }])
+        );
+    }
+
+    #[test]
+    fn tool_result_images_are_preserved() {
+        let payload = json!({"model":"gpt-5",
+            "messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+            ]}).as_object().unwrap().clone();
+        let (_, upstream) = build(payload).unwrap();
+        let output = upstream["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "function_call_output")
+            .unwrap();
+        assert_eq!(
+            output["output"],
+            json!([{"type":"input_text","text":"screen"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}])
         );
     }
 }

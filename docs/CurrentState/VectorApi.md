@@ -1,6 +1,6 @@
 # Vector 兼容层当前契约
 
-本文记录 TauriTavern 对 SillyTavern 1.18.0 Vector 扩展的原生兼容边界。
+本文记录 TauriTavern 对 SillyTavern Vector 扩展的原生兼容边界。
 
 ## 1. 可观察契约
 

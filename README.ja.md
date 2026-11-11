@@ -37,6 +37,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?logo=apple&logoColor=white&style=flat-square)](https://testflight.apple.com/join/gpqAdeTm)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?logo=harmonyos&logoColor=white&style=flat-square)](https://github.com/Darkatse/TauriTavern/releases/latest)
 
 [すべてのプラットフォーム](https://tauritavern.github.io/en/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -139,10 +140,12 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 15.0以降が必要です。iOS 15.0〜16.3は限定サポートで、完全サポートはiOS 16.4以降です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
 >
 > **Windowsポータブル版**：システムにWebView2ランタイムが必要です。
+>
+> **HarmonyOS（ベータ）**：ReleaseのHAPはHarmonyOS NEXT向けです。ご自身の証明書で署名してからインストールしてください。[Auto-Installer](https://github.com/likuai2010/auto-installer/)の利用をおすすめします。現在はエミュレーターでのみテストしています。
 
 ## TauriTavernとは
 
-TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.18.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
+TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.19.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
 
 Node.jsのインストールやコマンドライン操作は必要ありません。ダウンロードして、そのまま起動できます。キャラクターカード、チャット、プリセット、世界情報、フロントエンド拡張はSillyTavernと互換性があります。
 
@@ -150,13 +153,13 @@ Node.jsのインストールやコマンドライン操作は必要ありませ�
 
 ## 主な機能
 
-- 🖥️ **5つのネイティブプラットフォーム**：Windows、macOS、Linux、Android、iOSで同じように利用できます
-- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.18.0と同期し、データ形式とディレクトリ構成にも対応
+- 🖥️ **5つのネイティブプラットフォーム**：Windows、macOS、Linux、Android、iOSで同じように利用できます。ネイティブのHarmonyOS版は現在ベータです
+- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.19.0と同期し、データ形式とディレクトリ構成にも対応
 - 🧩 **フロントエンド拡張**：ネイティブGitを内蔵し、画面上でインストール、更新、ブランチ切り替えを行えます（Node.js専用のバックエンドプラグインは非対応）
 - 🔄 **端末間同期**：暗号化されたLANペアリング、またはTT-Sync v2を使ったリモート自動アップロードに対応
 - 🤖 **Agentフレームワーク**：ツール呼び出し、Skills、サブエージェント、実行タイムラインを備えています。開発は継続中です
 - 📦 **簡単な移行**：SillyTavern用エクスポートスクリプトとアプリ内インポートを用意
-- ⚡ **動作の最適化**：段階的な起動処理とチャットのウィンドウ読み込みにより、長いチャットでも操作性を保ちます
+- ⚡ **動作の最適化**：段階的な起動処理とチャットDOMの仮想化により、非常に長いチャットでもスムーズに操作できます
 - 🔒 **ユーザーデータを手元で管理**：データは端末内に保存され、必要に応じてポータブルモードも選べます
 
 ## スクリーンショット
@@ -199,11 +202,13 @@ pnpm run ios:dev       # iOS開発モード
 
 **Tauri Pilot（AIエージェントを使ったUI開発）**
 
-このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
+このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップ、Android、iOSシミュレーターのWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
 
 ```bash
 cargo install tauri-pilot-cli  # 初回のみ必要
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # デスクトップ
+pnpm run android:dev:pilot     # Android。接続前にソケットを転送（docs/AndroidDevelopment.md）
+pnpm run ios:dev:pilot         # iOSシミュレーター
 ```
 
 アプリを起動したら、別のターミナルで次の基本手順を実行します。
@@ -240,7 +245,7 @@ IssueとPull Requestを受け付けています。最初に[CONTRIBUTING.md](CON
 
 ## 謝辞とライセンス
 
-[SillyTavern](https://github.com/SillyTavern/SillyTavern)と[Tauri](https://tauri.app/)を基盤として開発しています。[Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)、そして[TauriTavern AURパッケージ](https://github.com/LX2000WASD/TauriTavern-aur)を管理している[@LX2000WASD](https://github.com/LX2000WASD)さんに感謝します。
+[SillyTavern](https://github.com/SillyTavern/SillyTavern)と[Tauri](https://tauri.app/)を基盤として開発しています。[Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)、[TauriTavern AURパッケージ](https://github.com/LX2000WASD/TauriTavern-aur)を管理している[@LX2000WASD](https://github.com/LX2000WASD)さん、そしてHarmonyOS版を移植した[@LeenHawk](https://github.com/LeenHawk)さんに感謝します。
 
 [AGPL-3.0](LICENSE)（SillyTavernと同系統のライセンス）のもとで公開しています。
 

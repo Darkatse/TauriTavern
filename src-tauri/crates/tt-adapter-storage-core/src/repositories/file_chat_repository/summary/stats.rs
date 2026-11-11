@@ -1,11 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::fs::{self, File};
+use tokio::fs;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tt_domain::errors::DomainError;
-use tt_domain::models::chat::parse_message_timestamp_value;
 
 use crate::chat_directory_identity::{self, SharedChatAliasStore};
 use crate::file_system::list_files_with_extension;
@@ -13,7 +12,7 @@ use crate::file_system::list_files_with_extension;
 use super::super::FileChatRepository;
 use super::index::ChatStatsCacheEntry;
 use super::projection;
-use super::{ChatFileDescriptor, SummaryCache, summary_cache_key};
+use super::{ChatFileDescriptor, SummaryCache, directory_date, summary_cache_key};
 
 const MAX_CONCURRENT_READS: usize = 8;
 
@@ -140,47 +139,19 @@ impl FileChatRepository {
 
         {
             let mut cache = summary_cache.lock().await;
-            cache.ensure_loaded()?;
+            cache.ensure_loaded().await;
             if let Some(entry) = cache.get_stats(&cache_key, signature) {
                 return Ok(entry);
             }
         }
 
-        let mut file = File::open(&descriptor.path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to open chat file {:?}: {error}",
-                descriptor.path
-            ))
-        })?;
-        let signature =
-            Self::file_signature_from_metadata(&file.metadata().await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to read chat metadata {:?}: {error}",
-                    descriptor.path
-                ))
-            })?);
-        {
-            let mut cache = summary_cache.lock().await;
-            cache.ensure_loaded()?;
-            if let Some(entry) = cache.get_stats(&cache_key, signature) {
-                return Ok(entry);
-            }
-        }
-
-        let send_date =
-            projection::read_last_raw_date(&mut file, &descriptor.path, signature.size).await?;
-        let parsed_date = parse_message_timestamp_value(send_date.as_ref());
+        let send_date = projection::read_last_raw_date(&descriptor.path).await?;
         let entry = ChatStatsCacheEntry {
             signature,
-            date: if parsed_date > 0 {
-                parsed_date
-            } else {
-                signature.modified_millis
-            },
+            date: directory_date(send_date.as_ref(), signature.modified_millis),
         };
 
         let mut cache = summary_cache.lock().await;
-        cache.ensure_loaded()?;
         cache.set_stats(cache_key, entry.clone());
         Ok(entry)
     }

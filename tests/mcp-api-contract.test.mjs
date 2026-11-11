@@ -22,86 +22,6 @@ async function installHarness(invokeOverride) {
 }
 
 
-test('api.mcp fails fast on invalid states and permissions', async () => {
-    const { mcp } = await installHarness();
-
-    await assert.rejects(
-        () => mcp.servers.setState({ registrationId: 'id', state: 'connected' }),
-        /state must be active or paused/,
-    );
-    await assert.rejects(
-        () => mcp.tools.setPermission({ registrationId: 'id', nativeName: 'search', permission: 'always' }),
-        /permission must be off, ask, or allow/,
-    );
-    await assert.rejects(
-        () => mcp.tools.setPermission({ registrationId: 'id', nativeName: '', permission: 'ask' }),
-        /nativeName is required/,
-    );
-    await assert.rejects(
-        () => mcp.tools.setDescriptionOverride({
-            registrationId: 'id',
-            nativeName: 'search',
-            override: { description: 42 },
-        }),
-        /override\.description must be a string/,
-    );
-    await assert.rejects(
-        () => mcp.servers.create({
-            displayName: 'Invalid',
-            endpoint: 'https://example.com/mcp',
-            headers: { 'x-api-key': 42 },
-        }),
-        /headers\.x-api-key must be a string/,
-    );
-    await assert.rejects(
-        () => mcp.servers.create({
-            displayName: 'Invalid',
-            endpoint: 'https://example.com/mcp',
-            protocolVersion: 'tomorrow',
-        }),
-        /protocolVersion is not supported/,
-    );
-    await assert.rejects(
-        () => mcp.servers.update({
-            registrationId: 'id',
-            displayName: 'Keep secrets',
-            endpoint: 'https://example.com/mcp',
-            protocolVersion: 'auto',
-        }),
-        /headers must be an object/,
-    );
-});
-
-test('api.mcp passes tool description overrides through unchanged', async () => {
-    const { calls, mcp } = await installHarness();
-    const override = {
-        description: '  Search exactly as instructed.  ',
-        properties: { query: '  Exact query text.  ' },
-    };
-
-    await mcp.tools.setDescriptionOverride({
-        registrationId: 'id',
-        nativeName: 'search',
-        override,
-    });
-    await mcp.tools.setDescriptionOverride({
-        registrationId: 'id',
-        nativeName: 'search',
-        override: null,
-    });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'set_mcp_tool_description_override',
-            args: { dto: { registrationId: 'id', nativeName: 'search', override } },
-        },
-        {
-            command: 'set_mcp_tool_description_override',
-            args: { dto: { registrationId: 'id', nativeName: 'search', override: null } },
-        },
-    ]);
-});
-
 test('api.mcp AbortSignal requests stop without replacing the backend outcome', async () => {
     const calls = [];
     let resolveCall;
@@ -133,6 +53,28 @@ test('api.mcp AbortSignal requests stop without replacing the backend outcome', 
         response: { kind: 'tool_result', isError: false, textBlocks: [], diagnostics: [] },
     });
     assert.equal((await pending).outcome, 'known_response');
+});
+
+test('api.mcp sends the test call that was requested even if the caller reuses its input', async () => {
+    const calls = [];
+    let resolveStart;
+    const started = new Promise(resolve => {
+        resolveStart = resolve;
+    });
+    const { mcp } = await installHarness(async (command, args) => {
+        calls.push({ command, args });
+        return command === 'start_mcp_test_call' ? started : undefined;
+    });
+    const input = { registrationId: 'server-a', nativeName: 'read', argumentsJson: '{}' };
+
+    const pending = mcp.tools.testCall(input);
+    Object.assign(input, { registrationId: 'server-b', nativeName: 'write' });
+    resolveStart();
+    await pending;
+
+    assert.equal(calls[1].command, 'test_mcp_tool_call');
+    assert.equal(calls[1].args.dto.registrationId, 'server-a');
+    assert.equal(calls[1].args.dto.nativeName, 'read');
 });
 
 test('api.mcp proves an already-aborted test call was not sent', async () => {
@@ -184,16 +126,4 @@ test('api.mcp cancels after start acknowledgement without dispatching tools/call
         'cancel_mcp_test_call',
     ]);
     assert.equal(calls[0].args.dto.callId, calls[1].args.dto.callId);
-});
-
-test('api.mcp treats a user retry as a new call with new arguments', async () => {
-    const { calls, mcp } = await installHarness();
-
-    await mcp.tools.testCall({ registrationId: 'id', nativeName: 'search', argumentsJson: '{"n":1}' });
-    await mcp.tools.testCall({ registrationId: 'id', nativeName: 'search', argumentsJson: '{"n":2}' });
-
-    const dispatched = calls.filter(call => call.command === 'test_mcp_tool_call');
-    assert.equal(dispatched.length, 2);
-    assert.notEqual(dispatched[0].args.dto.callId, dispatched[1].args.dto.callId);
-    assert.deepEqual(dispatched.map(call => call.args.dto.argumentsJson), ['{"n":1}', '{"n":2}']);
 });

@@ -51,7 +51,14 @@ impl AgentProfileDiagnosticService {
                 tool_catalog,
             })
             .await
-        {
+            .and_then(|profile| {
+                super::agent_profile_service::validate_chat_profile(
+                    &profile,
+                    tt_domain::models::agent::AgentInvocationExitPolicy::RunFinishAllowed,
+                    profile.run.presentation,
+                )?;
+                Ok(profile)
+            }) {
             Ok(profile) => profile,
             Err(ApplicationError::ValidationError(message)) => {
                 return Ok(AgentProfileHealth {
@@ -341,9 +348,10 @@ fn blocks(diagnostics: &[AgentProfileDiagnostic], block: AgentProfileDiagnosticB
 
 #[cfg(test)]
 mod tests {
+    use crate::services::agent_profile_service::TestAgentProfileRepository;
     use crate::services::agent_run_retention_test_support::TestSettingsRepository;
     use std::collections::BTreeSet;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use async_trait::async_trait;
     use serde_json::json;
@@ -352,17 +360,14 @@ mod tests {
     use crate::services::agent_tools::BuiltinAgentToolRegistry;
     use tt_domain::errors::DomainError;
     use tt_domain::models::agent::profile::{
-        AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition,
-        AgentProfileId,
+        AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
     };
     use tt_domain::models::llm_connection::{
         LlmConnectionDefinition, LlmConnectionId, LlmConnectionSummary,
     };
     use tt_domain::models::preset::{DefaultPreset, Preset};
     use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
-    use tt_ports::repositories::agent_profile_storage_health_repository::{
-        AgentProfileStorageHealthRepository, AgentProfileStorageScan,
-    };
+    use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
     use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 
     #[tokio::test]
@@ -506,7 +511,7 @@ mod tests {
         let profile_repository = Arc::new(TestAgentProfileRepository::default());
         let profile_repository_trait: Arc<dyn AgentProfileRepository> = profile_repository.clone();
         let profile_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
-            profile_repository;
+            profile_repository.clone();
         let preset_repository: Arc<dyn PresetRepository> = Arc::new(preset_repository);
         let llm_connection_service = Arc::new(LlmConnectionService::new(
             Arc::new(llm_connection_repository),
@@ -516,6 +521,7 @@ mod tests {
             profile_repository_trait,
             profile_health_repository,
             preset_repository.clone(),
+            profile_repository,
         ));
         let diagnostic_service = AgentProfileDiagnosticService::new(
             profile_service.clone(),
@@ -532,71 +538,6 @@ mod tests {
     fn only_diagnostic(health: &AgentProfileHealth) -> &AgentProfileDiagnostic {
         assert_eq!(health.diagnostics.len(), 1);
         &health.diagnostics[0]
-    }
-
-    #[derive(Default)]
-    struct TestAgentProfileRepository {
-        profiles: Mutex<Vec<AgentProfileDefinition>>,
-    }
-
-    #[async_trait]
-    impl AgentProfileRepository for TestAgentProfileRepository {
-        async fn load_profile(
-            &self,
-            id: &AgentProfileId,
-        ) -> Result<Option<AgentProfileDefinition>, DomainError> {
-            Ok(self
-                .profiles
-                .lock()
-                .expect("profiles lock")
-                .iter()
-                .find(|profile| profile.id == *id)
-                .cloned())
-        }
-
-        async fn save_profile(&self, profile: &AgentProfileDefinition) -> Result<(), DomainError> {
-            let mut profiles = self.profiles.lock().expect("profiles lock");
-            if let Some(existing) = profiles
-                .iter_mut()
-                .find(|existing| existing.id == profile.id)
-            {
-                *existing = profile.clone();
-            } else {
-                profiles.push(profile.clone());
-            }
-            Ok(())
-        }
-
-        async fn delete_profile(&self, id: &AgentProfileId) -> Result<(), DomainError> {
-            self.profiles
-                .lock()
-                .expect("profiles lock")
-                .retain(|profile| profile.id != *id);
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl AgentProfileStorageHealthRepository for TestAgentProfileRepository {
-        async fn scan_profiles(&self) -> Result<AgentProfileStorageScan, DomainError> {
-            Ok(AgentProfileStorageScan {
-                profiles: self
-                    .profiles
-                    .lock()
-                    .expect("profiles lock")
-                    .iter()
-                    .map(AgentProfileDefinition::summary)
-                    .collect(),
-                issues: Vec::new(),
-            })
-        }
-
-        async fn normalize_profile_file_identity(
-            &self,
-            _id: &AgentProfileId,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     #[derive(Default)]

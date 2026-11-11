@@ -39,6 +39,28 @@ pub async fn get_character_chat_summary(
 }
 
 #[tauri::command]
+pub async fn get_character_chat_integrity(
+    character_name: String,
+    file_name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, CommandError> {
+    log_command(format!(
+        "get_character_chat_integrity {}/{}",
+        character_name, file_name
+    ));
+
+    app_state
+        .services
+        .chat_service
+        .get_character_chat_integrity(&character_name, &file_name)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get chat identity {}/{}",
+            character_name, file_name
+        )))
+}
+
+#[tauri::command]
 pub async fn get_character_chat_metadata(
     character_name: String,
     file_name: String,
@@ -57,30 +79,6 @@ pub async fn get_character_chat_metadata(
         .map_err(map_command_error(format!(
             "Failed to get chat metadata {}/{}",
             character_name, file_name
-        )))
-}
-
-#[tauri::command]
-pub async fn set_character_chat_metadata_extension(
-    character_name: String,
-    file_name: String,
-    namespace: String,
-    value: Value,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "set_character_chat_metadata_extension {}/{}:{}",
-        character_name, file_name, namespace
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .set_character_chat_metadata_extension(&character_name, &file_name, &namespace, value)
-        .await
-        .map_err(map_command_error(format!(
-            "Failed to set chat metadata extension {}/{}:{}",
-            character_name, file_name, namespace
         )))
 }
 

@@ -1,6 +1,6 @@
 /**
  * Read prompt cache usage from normalized completions or native Claude/Gemini streams.
- * Missing cache counters mean unknown; an explicit zero means a cache miss.
+ * Missing or inconsistent counters mean unknown; an explicit valid zero means a cache miss.
  * @param {object} usage Provider usage snapshot
  * @returns {{ input_tokens: number, cached_tokens: number } | null}
  */
@@ -20,7 +20,8 @@ export function getPromptCacheUsage(usage) {
 
     if (!Number.isSafeInteger(inputTokens) || !Number.isSafeInteger(cachedTokens)
         || cachedTokens < 0 || inputTokens < cachedTokens) {
-        throw new Error('Invalid prompt cache usage: expected 0 <= cached tokens <= input tokens');
+        // Optional telemetry, including partial stream snapshots, must not abort a valid reply.
+        return null;
     }
     return { input_tokens: inputTokens, cached_tokens: cachedTokens };
 }

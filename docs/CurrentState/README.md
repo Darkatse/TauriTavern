@@ -5,7 +5,7 @@
 | 模块 | 文档内容 |
 | --- | --- |
 | [第三方扩展](ThirdPartyExtensions.md) | 加载、发现与资源访问 |
-| [移动端样式](MobileStyleAdaptation.md) | WebView、safe area 与浮层适配 |
+| [移动端视口](MobileStyleAdaptation.md) | 原生内容视口、窗口背景与第一方移动端行为 |
 | [消息内嵌运行时](EmbeddedRuntime.md) | iframe 的生命周期与渲染 |
 | [启动流程](StartupOptimization.md) | Shell、Core、Full 阶段 |
 | [Bootstrap](BootstrapOptimization.md) | 启动输入与内存开销 |
@@ -14,10 +14,11 @@
 | [媒体资源](MediaAssetContract.md) | 浏览器资源与 Range 请求 |
 | [系统 TTS](TTS.md) | Android Web Speech 接入与当前边界 |
 | [同步](Sync.md) | LAN Sync 与 TT-Sync |
+| [文件传输](FileTransfer.md) | 原生选取、交付与暂存 |
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |
-| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录与重命名 |
+| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录、重命名与世界书绑定 |
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |
 | [资源缓存](HostResourceCaching.md) | 资源版本与条件请求 |
 | [更新渠道](UpdateChannels.md) | Stable、Canary 与更新检测 |
@@ -26,3 +27,4 @@
 | [MCP](MCP.md) | 服务器、工具目录与模型调用 |
 | [向量 API](VectorApi.md) | 索引、embedding 与查询 |
 | [自有界面](FirstPartyUI.md) | React、TypeScript 与构建流程 |
+| [Web Host](WebHost.md) | 浏览器嵌入方（Tavern Studio）使用的宿主实现 |

@@ -273,6 +273,16 @@ impl ClaudeMessageAccumulator {
                         arguments_fragment: String::new(),
                     });
                 }
+                if content_block.get("type").and_then(Value::as_str) == Some("text")
+                    && let Some(text) = content_block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                {
+                    on_delta(ChatCompletionStreamDelta::Text {
+                        text: text.to_string(),
+                    });
+                }
                 if content_block.get("type").and_then(Value::as_str) == Some("thinking")
                     && let Some(text) = content_block
                         .get("thinking")
@@ -344,7 +354,11 @@ impl ClaudeMessageAccumulator {
     ) -> Result<(), DomainError> {
         match delta {
             ClaudeContentDelta::TextDelta { text } => {
-                append_block_string(self.block_mut(index)?, "text", &text)
+                append_block_string(self.block_mut(index)?, "text", &text)?;
+                if !text.is_empty() {
+                    on_delta(ChatCompletionStreamDelta::Text { text });
+                }
+                Ok(())
             }
             ClaudeContentDelta::ThinkingDelta { thinking } => {
                 append_block_string(self.block_mut(index)?, "thinking", &thinking)?;
@@ -593,6 +607,9 @@ mod tests {
         assert_eq!(
             deltas,
             vec![
+                ChatCompletionStreamDelta::Text {
+                    text: "hello".to_string()
+                },
                 ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "workspace_write_file".to_string(),

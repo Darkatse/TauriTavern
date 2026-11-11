@@ -50,6 +50,13 @@ await store.setBlob({
 const blob = await store.getBlob({ namespace: 'my-ext', key: 'icon.png' });
 ```
 
+大文件可用 `getBlobStream()` 逐块读取；提前停止时应取消流：
+
+```js
+const stream = await store.getBlobStream({ namespace: 'my-ext', key: 'archive.bin' });
+await stream.pipeTo(destination); // destination 是调用方的 WritableStream
+```
+
 ## 1. KV JSON 方法
 
 所有 KV 方法都支持可选 `table` 字段：
@@ -63,7 +70,7 @@ const blob = await store.getBlob({ namespace: 'my-ext', key: 'icon.png' });
 
 - 扩展设置（settings / feature flags）
 - 索引、映射表、状态快照（index / map / progress）
-- 需要 `updateJson()` 深度合并的场景（只 patch 一小部分字段）
+- 需要 `updateJson()` 深度合并对象的场景
 
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
@@ -92,7 +99,8 @@ const blob = await store.getBlob({ namespace: 'my-ext', key: 'icon.png' });
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
 | `getBlob({ namespace, key, table? })` | `Promise<Blob>` | 读取 blob（文件类型 mimeType 基于 key 文件扩展名猜测） |
-| `setBlob({ namespace, key, data, table? })` | `Promise<void>` | 写入 blob |
+| `getBlobStream({ namespace, key, table? })` | `Promise<ReadableStream<Uint8Array>>` | 按消费速度读取原始字节；取消会关闭 reader |
+| `setBlob({ namespace, key, data, table? })` | `Promise<void>` | 写入 blob，允许空内容 |
 | `deleteBlob({ namespace, key, table? })` | `Promise<void>` | 删除 blob |
 | `listBlobKeys({ namespace, table? })` | `Promise<string[]>` | 列出 table 下所有 blob key |
 
@@ -122,4 +130,11 @@ const blob = await store.getBlob({ namespace: 'my-ext', key: 'icon.png' });
 - `setBlob({ namespace: 'my-ext', key: 'icon.png', data })`
   - 存储在`data_root/_tauritavern/extension-store/my-ext/blobs/main/icon.png`
 
-如果你希望“一个 table 就是一个大 JSON 文件”，可以用一个固定 `key` 代表整张表（例如 `key: 'db'`），把内容整体放进 JSON 里即可。
+小型整体状态可以使用固定 key；持续增长的数据应拆成多个 key，按需读取。
+
+## 5. 读写边界
+
+- 写入保存调用时快照，以单文件原子替换发布；失败不暴露部分内容，不承诺断电持久化。页面重载前应等待需要确认的写入完成。
+- 并发修改按发布顺序生效；`updateJson()` 的读取、合并和发布作为一次原子更新。删除不取消在途写入，没有跨 key 事务。
+- 已打开的读取保持原文件版本，不受后续覆盖或删除影响。
+- `getJson()` / `getBlob()` 返回完整值；JSON 写入和 base64 输入仍有整份数据的内存成本。大型二进制优先使用 Blob 写入和 `getBlobStream()` 读取。

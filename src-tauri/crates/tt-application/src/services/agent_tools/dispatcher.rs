@@ -2,14 +2,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
+use tokio::sync::watch;
 
 use super::chat;
 use super::dice;
 use super::session::AgentToolSession;
-use super::skill;
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -19,16 +20,49 @@ use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
-use tt_ports::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
-use tt_ports::skill_script::SkillScriptEngine;
+use tt_ports::tool_images::ToolImageRejection;
+use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
+use tt_ports::workspace_shell::WorkspaceShell;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
+
+pub(crate) type IncomingToolImage = Result<Vec<u8>, ToolImageRejection>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AgentToolDispatchOutcome {
     pub result: AgentToolResult,
     pub effect: AgentToolEffect,
     pub elapsed_ms: u128,
+    pub images: Vec<IncomingToolImage>,
+}
+
+impl AgentToolDispatchOutcome {
+    pub(crate) fn new(result: AgentToolResult, effect: AgentToolEffect, elapsed_ms: u128) -> Self {
+        Self {
+            result,
+            effect,
+            elapsed_ms,
+            images: Vec::new(),
+        }
+    }
+
+    pub(crate) fn error(
+        call: &ToolInvocation,
+        code: &str,
+        message: &str,
+        elapsed_ms: u128,
+    ) -> Self {
+        Self::new(
+            AgentToolResult::error(call, code, message),
+            AgentToolEffect::None,
+            elapsed_ms,
+        )
+    }
+
+    pub(crate) fn with_images(mut self, images: Vec<IncomingToolImage>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,11 +77,9 @@ pub(crate) enum AgentToolEffect {
         replacements: usize,
         old_sha256: String,
     },
-    /// 一次工具调用批量写入多个工作区文件（如 skill 脚本的最终 delta）。
-    /// 所有文件进入 journal / 事件；最后一次 mutation 单独供 auto-commit 使用。
-    WorkspaceFilesWritten {
-        files: Vec<WorkspaceFile>,
-        last_text_mutation: Option<WorkspacePath>,
+    /// Direct filesystem operations need only a publication candidate, not a text delta.
+    AutoCommitCandidateUpdated {
+        path: Option<WorkspacePath>,
     },
     ChatCommitRequested {
         path: WorkspacePath,
@@ -70,9 +102,8 @@ pub(crate) struct AgentToolDispatcher {
     run_repository: Arc<dyn AgentRunRepository>,
     chat_repository: Arc<dyn ChatRepository>,
     group_chat_repository: Arc<dyn GroupChatRepository>,
-    workspace_repository: Arc<dyn WorkspaceRepository>,
     skill_service: Arc<SkillService>,
-    skill_script_engine: Arc<dyn SkillScriptEngine>,
+    workspace_shell: Arc<dyn WorkspaceShell>,
 }
 
 impl AgentToolDispatcher {
@@ -80,20 +111,22 @@ impl AgentToolDispatcher {
         run_repository: Arc<dyn AgentRunRepository>,
         chat_repository: Arc<dyn ChatRepository>,
         group_chat_repository: Arc<dyn GroupChatRepository>,
-        workspace_repository: Arc<dyn WorkspaceRepository>,
         skill_service: Arc<SkillService>,
-        skill_script_engine: Arc<dyn SkillScriptEngine>,
+        workspace_shell: Arc<dyn WorkspaceShell>,
     ) -> Self {
         Self {
             run_repository,
             chat_repository,
             group_chat_repository,
-            workspace_repository,
             skill_service,
-            skill_script_engine,
+            workspace_shell,
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "tool dispatch carries the current invocation context"
+    )]
     pub(crate) async fn dispatch(
         &self,
         run_id: &str,
@@ -101,28 +134,20 @@ impl AgentToolDispatcher {
         args: &Map<String, Value>,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
-    ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
-        self.dispatch_with_model_workspace_repository(
-            run_id,
-            call,
-            args,
-            session,
-            profile,
-            self.workspace_repository.as_ref(),
-        )
-        .await
-    }
-
-    pub(crate) async fn dispatch_with_model_workspace_repository(
-        &self,
-        run_id: &str,
-        call: &ToolInvocation,
-        args: &Map<String, Value>,
-        session: &mut AgentToolSession,
-        profile: &ResolvedAgentProfile,
-        model_workspace_repository: &dyn WorkspaceRepository,
+        raw_files: Arc<dyn WorkspaceFs>,
+        cancel: watch::Receiver<bool>,
+        auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
+        let workspace = ScopedWorkspaceFs::new(
+            raw_files.clone(),
+            WorkspaceAccessPolicy::from_profile(profile),
+        )
+        .with_skills(
+            self.skill_service.file_repository(),
+            session.effective_skills.clone(),
+            session.runtime_context.frozen_macros.clone(),
+        );
         let outcome = match builtin_tool_name(&call.tool_id)? {
             chat::CHAT_SEARCH => {
                 chat::search(
@@ -132,7 +157,7 @@ impl AgentToolDispatcher {
                     run_id,
                     call,
                     args,
-                    &session.frozen_macros,
+                    &session.runtime_context.frozen_macros,
                 )
                 .await?
             }
@@ -144,61 +169,45 @@ impl AgentToolDispatcher {
                     run_id,
                     call,
                     args,
-                    &session.frozen_macros,
+                    &session.runtime_context.frozen_macros,
                 )
                 .await?
             }
             world_info::WORLDINFO_READ_ACTIVATED => {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
                 // workspace file; invocation workspace policy must not gate this read.
-                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                let prompt_snapshot = Self::read_run_prompt_snapshot(raw_files.as_ref()).await?;
                 world_info::read_activated(&prompt_snapshot, call, args)?
             }
             dice::DICE_ROLL => dice::roll(call, args).await?,
-            skill::SKILL_LIST => skill::list(call, session, profile).await?,
-            skill::SKILL_SEARCH => {
-                skill::search(self.skill_service.as_ref(), call, args, session, profile).await?
+            workspace::WORKSPACE_LIST_FILES => {
+                workspace::list_files(&workspace, call, args).await?
             }
-            skill::SKILL_READ => {
-                skill::read(self.skill_service.as_ref(), call, args, session, profile).await?
+            workspace::WORKSPACE_SEARCH_FILES => {
+                workspace::search_files(&workspace, call, args).await?
             }
-            skill::SKILL_SCRIPT => {
-                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
-                skill::script(
-                    skill::ScriptContext {
-                        skill_service: self.skill_service.as_ref(),
-                        engine: self.skill_script_engine.as_ref(),
-                        workspace_repository: model_workspace_repository,
-                        run_id,
-                        prompt_snapshot,
-                    },
+            workspace::WORKSPACE_READ_FILE => {
+                workspace::read_file(&workspace, call, args, session).await?
+            }
+            workspace::WORKSPACE_WRITE_FILE => {
+                workspace::write_file(&workspace, call, args, session).await?
+            }
+            workspace::WORKSPACE_APPLY_PATCH => {
+                workspace::apply_patch(&workspace, call, args, session).await?
+            }
+            workspace::WORKSPACE_SHELL => {
+                workspace::shell(
+                    self.workspace_shell.as_ref(),
+                    Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
+                    session.runtime_context.clone(),
                     call,
                     args,
-                    session,
-                    profile,
+                    cancel,
                 )
                 .await?
             }
-            workspace::WORKSPACE_LIST_FILES => {
-                workspace::list_files(model_workspace_repository, run_id, call, args).await?
-            }
-            workspace::WORKSPACE_SEARCH_FILES => {
-                workspace::search_files(model_workspace_repository, run_id, call, args).await?
-            }
-            workspace::WORKSPACE_READ_FILE => {
-                workspace::read_file(model_workspace_repository, run_id, call, args, session)
-                    .await?
-            }
-            workspace::WORKSPACE_WRITE_FILE => {
-                workspace::write_file(model_workspace_repository, run_id, call, args, session)
-                    .await?
-            }
-            workspace::WORKSPACE_APPLY_PATCH => {
-                workspace::apply_patch(model_workspace_repository, run_id, call, args, session)
-                    .await?
-            }
             workspace::WORKSPACE_COMMIT => {
-                workspace::commit(model_workspace_repository, run_id, call, args, profile).await?
+                workspace::commit(&workspace, call, args, profile).await?
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call, args)?,
             other => {
@@ -208,21 +217,19 @@ impl AgentToolDispatcher {
             }
         };
 
-        Ok(AgentToolDispatchOutcome {
-            result: outcome.0,
-            effect: outcome.1,
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+        Ok(AgentToolDispatchOutcome::new(
+            outcome.0,
+            outcome.1,
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn read_run_prompt_snapshot(
-        &self,
-        run_id: &str,
+        files: &dyn WorkspaceFs,
     ) -> Result<serde_json::Value, ApplicationError> {
         let snapshot_path = WorkspacePath::parse(RUN_PROMPT_SNAPSHOT_PATH)?;
-        let snapshot_file = self
-            .workspace_repository
-            .read_text(run_id, &snapshot_path)
+        let snapshot_file = files
+            .read_text(&snapshot_path)
             .await
             .map_err(ApplicationError::from)?;
         serde_json::from_str(&snapshot_file.text).map_err(|error| {

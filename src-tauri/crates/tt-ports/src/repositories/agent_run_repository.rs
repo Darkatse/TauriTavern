@@ -49,8 +49,10 @@ pub trait AgentRunRepository: Send + Sync {
 
     async fn load_run(&self, run_id: &str) -> Result<AgentRun, DomainError>;
 
+    /// Chat history only; Session history is read through AgentSessionRepository.
     async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError>;
 
+    /// Chat retention candidates; Session runs have an independent lifetime.
     async fn list_all_runs(&self) -> Result<Vec<AgentRun>, DomainError>;
 
     async fn inspect_run_storage(

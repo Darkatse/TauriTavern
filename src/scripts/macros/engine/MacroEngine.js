@@ -1,8 +1,9 @@
 import { MacroParser } from './MacroParser.js';
 import { MacroCstWalker } from './MacroCstWalker.js';
-import { MacroRegistry, MacroValueType } from './MacroRegistry.js';
+import { MacroRegistry } from './MacroRegistry.js';
 import { logMacroGeneralError, logMacroInternalError, logMacroRuntimeWarning, logMacroSyntaxWarning } from './MacroDiagnostics.js';
 import { ELSE_MARKER } from '../definitions/core-macros.js';
+import { normalizeMacroResult } from '../values.js';
 
 /** @typedef {import('./MacroCstWalker.js').MacroCall} MacroCall */
 /** @typedef {import('./MacroEnv.types.js').MacroEnv} MacroEnv */
@@ -165,60 +166,12 @@ class MacroEngine {
      * @returns {string} The resolved macro.
      */
     #resolveMacro(call) {
-        const { name, env } = call;
-
+        const { name, definition } = call;
         const raw = `{{${call.rawInner}}}`;
-        if (!name) return raw;
-
-        // First check if this is a dynamic macro to use. If so, we will create a temporary macro definition for it and use that over any registered macro.
-        // Dynamic macro keys are normalized to lowercase for case-insensitive matching.
-        /** @type {MacroDefinition|null} */
-        let defOverride = null;
-        const nameLower = name.toLowerCase();
-        if (Object.hasOwn(env.dynamicMacros, nameLower)) {
-            const impl = env.dynamicMacros[nameLower];
-
-            // Dynamic macros support three formats:
-            // 1. string - direct value, no args allowed
-            // 2. function - handler function, no args allowed (legacy behavior)
-            // 3. MacroDefinitionOptions object - full definition with handler, args, type validation, etc.
-
-            // Check if this looks like a MacroDefinitionOptions object (has handler property)
-            const looksLikeOptions = impl && typeof impl === 'object' &&
-                'handler' in impl && typeof impl.handler === 'function';
-
-            if (looksLikeOptions) {
-                // Case 3: MacroDefinitionOptions - use the full definition builder
-                try {
-                    const options = /** @type {MacroDefinitionOptions} */ (impl);
-                    defOverride = MacroRegistry.buildMacroDefFromOptions(name, options);
-                } catch (error) {
-                    // If building fails, log warning and fall through to check registered macros
-                    logMacroRuntimeWarning({ message: `Dynamic macro "${name}" has invalid options: ${error.message}`, call });
-                }
-            } else if (['string', 'number', 'boolean', 'function'].includes((typeof impl))) {
-                // Case 1 & 2: string or handler function
-                if (['number', 'boolean'].includes(typeof impl)) {
-                    logMacroRuntimeWarning({ message: `Dynamic macro "${name}" uses unsupported number/boolean format.`, call });
-                }
-                defOverride = MacroRegistry.buildMacroDefFromOptions(name, {
-                    handler: typeof impl === 'function' ? impl : () => String(impl ?? ''),
-                    category: 'dynamic',
-                    description: 'Dynamic macro',
-                    returnType: MacroValueType.STRING,
-                });
-            } else {
-                logMacroRuntimeWarning({ message: `Dynamic macro "${name}" is not defined correctly (must be string, a handler function, or a macro def options object with handler property).`, call });
-            }
-        }
-
-        // If not, check if the macro exists and is registered
-        if (!defOverride && !MacroRegistry.hasMacro(name)) {
-            return raw; // Unknown macro: keep macro syntax, but nested macros inside rawInner are already resolved.
-        }
+        if (!name || !definition) return raw;
 
         try {
-            const result = MacroRegistry.executeMacro(call, { defOverride });
+            const result = MacroRegistry.executeMacro(call, { defOverride: definition });
 
             try {
                 return call.env.functions.postProcess(result);
@@ -330,21 +283,7 @@ class MacroEngine {
     * @returns {string}
     */
     normalizeMacroResult(value) {
-        if (value === null || value === undefined) {
-            return '';
-        }
-        if (value instanceof Date) {
-            return value.toISOString();
-        }
-        if (typeof value === 'object' || Array.isArray(value)) {
-            try {
-                return JSON.stringify(value);
-            } catch (_error) {
-                return String(value);
-            }
-        }
-
-        return String(value);
+        return normalizeMacroResult(value);
     }
 
     /**

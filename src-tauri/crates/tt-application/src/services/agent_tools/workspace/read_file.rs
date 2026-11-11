@@ -3,16 +3,16 @@ use serde_json::{Map, Value};
 
 use super::args::{
     classify_workspace_io_error, ensure_only_args, ensure_visible_workspace_path,
-    optional_usize_arg, parse_workspace_path, required_trimmed_string_arg, tool_error,
+    optional_usize_arg, parse_workspace_path, required_trimmed_string_arg,
 };
-use super::policy::workspace_access_policy;
 use super::{MAX_READ_BYTES, MAX_READ_CHARS, MAX_READ_LINES};
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_lines::TextLineSelection;
 use tt_domain::text_metrics::TextMetrics;
-use tt_ports::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
@@ -29,22 +29,22 @@ struct WorkspaceReadFileStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn read_file(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     if let Err(message) = ensure_only_args(args, &["path", "start_line", "line_count"]) {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", &message),
+            AgentToolResult::error(call, "tool.invalid_arguments", &message),
             AgentToolEffect::None,
         ));
     }
     let Some(path) = required_trimmed_string_arg(args, "path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "path is required"),
             AgentToolEffect::None,
         ));
     };
@@ -52,7 +52,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         Ok(path) => path,
         Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(error) = ensure_visible_workspace_path(&policy, &path) {
+    if let Err(error) = ensure_visible_workspace_path(policy, &path) {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 
@@ -60,7 +60,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         Ok(value) => value.unwrap_or(1),
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
@@ -69,13 +69,13 @@ pub(in crate::services::agent_tools) async fn read_file(
         Ok(value) => value,
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
     };
 
-    let file = match workspace_repository.read_text(run_id, &path).await {
+    let file = match workspace_files.read_text(&path).await {
         Ok(file) => file,
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),
@@ -107,7 +107,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         Ok(selection) => selection,
         Err(error) => {
             return Ok((
-                tool_error(call, "workspace.invalid_line_range", &error.to_string()),
+                AgentToolResult::error(call, "workspace.invalid_line_range", &error.to_string()),
                 AgentToolEffect::None,
             ));
         }
@@ -150,28 +150,23 @@ pub(in crate::services::agent_tools) async fn read_file(
         ));
     }
 
-    Ok((
-        AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content,
-            structured: structured_value(WorkspaceReadFileStructured {
-                path: file.path.as_str(),
-                sha256: file.sha256.as_str(),
-                range: TextLineRangePayload::new(
-                    selected_metrics,
-                    total_metrics,
-                    selection.total_lines,
-                    selection.start_line,
-                    selection.end_line,
-                    selection.line_truncated,
-                ),
-                full_read,
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs: vec![file.path.as_str().to_string()],
-        },
-        AgentToolEffect::None,
-    ))
+    let mut result = AgentToolResult::ok(
+        call,
+        content,
+        structured_value(WorkspaceReadFileStructured {
+            path: file.path.as_str(),
+            sha256: file.sha256.as_str(),
+            range: TextLineRangePayload::new(
+                selected_metrics,
+                total_metrics,
+                selection.total_lines,
+                selection.start_line,
+                selection.end_line,
+                selection.line_truncated,
+            ),
+            full_read,
+        }),
+    );
+    result.resource_refs = vec![file.path.as_str().to_string()];
+    Ok((result, AgentToolEffect::None))
 }

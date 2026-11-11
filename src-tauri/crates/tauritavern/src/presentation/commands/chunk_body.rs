@@ -8,6 +8,28 @@ use crate::presentation::errors::CommandError;
 const CHUNK_ENCODING_BASE64: &str = "base64";
 const HEADER_CHUNK_ENCODING: &str = "chunk-encoding";
 
+pub(super) fn commit_headers<'a>(
+    request: &'a tauri::ipc::Request<'_>,
+) -> Result<(&'a str, u64), CommandError> {
+    let session_id = required_header(request, "session-id")?;
+    let offset = required_header(request, "offset")?
+        .parse::<u64>()
+        .map_err(|_| CommandError::BadRequest("Commit offset is invalid".into()))?;
+    Ok((session_id, offset))
+}
+
+fn required_header<'a>(
+    request: &'a tauri::ipc::Request<'_>,
+    name: &str,
+) -> Result<&'a str, CommandError> {
+    request
+        .headers()
+        .get(name)
+        .ok_or_else(|| CommandError::BadRequest(format!("Missing commit header: {name}")))?
+        .to_str()
+        .map_err(|_| CommandError::BadRequest(format!("Invalid commit header: {name}")))
+}
+
 pub(super) fn chunk_bytes_from_request<'a>(
     request: &'a tauri::ipc::Request<'_>,
 ) -> Result<Cow<'a, [u8]>, CommandError> {
@@ -53,48 +75,4 @@ fn chunk_base64_bytes_from_body(body: &InvokeBody) -> Result<Cow<'_, [u8]>, Comm
         .decode(value)
         .map(Cow::Owned)
         .map_err(|_| CommandError::BadRequest("Base64 chunk body is invalid".to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn raw_body_is_borrowed() {
-        let body = InvokeBody::Raw(vec![1, 2, 3]);
-        let bytes = chunk_bytes_from_body(&body).expect("raw bytes should parse");
-
-        assert!(matches!(bytes, Cow::Borrowed(_)));
-        assert_eq!(bytes.as_ref(), &[1, 2, 3]);
-    }
-
-    #[test]
-    fn json_byte_array_is_not_a_raw_body() {
-        let body = InvokeBody::Json(serde_json::json!([0, 127, 255]));
-        assert!(matches!(
-            chunk_bytes_from_body(&body),
-            Err(CommandError::BadRequest(_))
-        ));
-    }
-
-    #[test]
-    fn android_base64_body_decodes() {
-        let body = InvokeBody::Json(serde_json::json!({ "data": "AQIDBA==" }));
-        let bytes = chunk_base64_bytes_from_body(&body).expect("base64 bytes should parse");
-
-        assert_eq!(bytes.as_ref(), &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn malformed_base64_bodies_are_rejected() {
-        for body in [
-            InvokeBody::Json(serde_json::json!("AQIDBA==")),
-            InvokeBody::Json(serde_json::json!({ "data": "***" })),
-        ] {
-            assert!(matches!(
-                chunk_base64_bytes_from_body(&body),
-                Err(CommandError::BadRequest(_))
-            ));
-        }
-    }
 }

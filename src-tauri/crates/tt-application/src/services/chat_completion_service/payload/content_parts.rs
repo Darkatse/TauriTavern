@@ -123,33 +123,6 @@ pub(super) fn reject_media_for_text_only_content(
     Ok(())
 }
 
-pub(super) fn reject_video_for_provider(
-    provider_name: &str,
-    messages: Option<&Value>,
-) -> Result<(), ApplicationError> {
-    let Some(messages) = messages else {
-        return Ok(());
-    };
-
-    let Some(entries) = messages.as_array() else {
-        return Ok(());
-    };
-
-    for entry in entries {
-        let Some(message) = entry.as_object() else {
-            continue;
-        };
-
-        if contains_media_kind(message.get("content"), "video") {
-            return Err(ApplicationError::ValidationError(format!(
-                "{provider_name} cannot preserve video input in this provider format. Use a provider that supports video input or disable video inlining."
-            )));
-        }
-    }
-
-    Ok(())
-}
-
 pub(super) fn rewrite_audio_url_parts_to_input_audio(
     provider_name: &str,
     messages: Option<&mut Value>,
@@ -325,17 +298,6 @@ fn first_media_kind_in_content(content: Option<&Value>) -> Option<&'static str> 
 
 pub(super) fn media_kind_in_value(value: &Value) -> Option<&'static str> {
     value.as_object().and_then(media_kind_in_object)
-}
-
-fn contains_media_kind(content: Option<&Value>, rejected_kind: &str) -> bool {
-    match content {
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(media_kind_in_value)
-            .any(|kind| kind == rejected_kind),
-        Some(Value::Object(object)) => media_kind_in_object(object) == Some(rejected_kind),
-        _ => false,
-    }
 }
 
 fn rewrite_audio_url_content_parts(

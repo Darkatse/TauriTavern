@@ -15,6 +15,7 @@ import {
     saveItemizedPrompts,
     setActiveGroup,
     getCurrentChatDetails,
+    setChatHistoryOpen,
 } from '../script.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import {
@@ -50,11 +51,14 @@ const bookmarkNameToken = 'Checkpoint #';
 function resolveAgentPersistentStateFork(targetChatName, targetIntegrity) {
     const chatApi = window.__TAURITAVERN__.api.chat;
     const sourceChatRef = chatApi.current.ref();
-    const sourceStableChatId = String(sourceChatRef.kind === 'group'
+    const sourceStableChatId = sourceChatRef.kind === 'group'
         ? sourceChatRef.chatId
-        : (chat_metadata.integrity ?? '')).trim();
-    if (!sourceStableChatId) {
+        : chat_metadata.integrity;
+    if (sourceStableChatId === undefined) {
         return null;
+    }
+    if (typeof sourceStableChatId !== 'string' || sourceStableChatId.length === 0) {
+        throw new Error('Source chat integrity must be a non-empty string');
     }
     const targetChatRef = sourceChatRef.kind === 'group'
         ? { kind: 'group', chatId: targetChatName }
@@ -129,7 +133,7 @@ async function getBookmarkName({ isReplace = false, forceName = null } = {}) {
         return `${cleanName} - ${bookmarkNameToken}${i}`;
     }
     const existingChats = await getExistingChatNames();
-    const suggestedName = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildCheckpointName });
+    const suggestedName = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildCheckpointName, startIndex: 1 });
 
     const body = await renderTemplateAsync('createCheckpoint', { isReplace: isReplace, suggestedName: suggestedName });
     let name = forceName ?? await Popup.show.input('Create Checkpoint', body, suggestedName);
@@ -247,7 +251,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return `${cleanName} - Branch #${i}`;
     }
     const existingChats = await getExistingChatNames();
-    const name = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildBranchName });
+    const name = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildBranchName, startIndex: 1 });
     if (!name) {
         console.error('Could not generate a unique branch name.');
         toastr.error('Could not generate a unique branch name.', 'Branch creation failed');
@@ -727,32 +731,37 @@ export function initBookmarks() {
             return;
         }
 
-        const fileName = $(this).hasClass('mes_bookmark')
-            ? $(this).closest('.mes').attr('bookmark_link')
-            : $(this).attr('file_name');
+        const isBookmark = this.classList.contains('mes_bookmark');
+        const target = isBookmark
+            ? { avatar: characters[this_chid]?.avatar, group: selected_group, file: mes.attr('bookmark_link') }
+            : this.closest('.select_chat_block_wrapper').dataset;
+        const { avatar, group: groupId, file: fileName } = target;
 
         if (!fileName) {
             return;
         }
 
+        setChatHistoryOpen(false);
         const loaderHandle = loader.show({
             slug: 'chat-load',
+            blocking: false,
             title: t`Chat History`,
             message: t`Loading chat…`,
             toastMode: loader.ToastMode.STATIC,
         });
 
         try {
-            if (selected_group) {
-                await openGroupChat(selected_group, fileName);
+            if (groupId) {
+                await openGroupChat(groupId, fileName);
             } else {
-                await openCharacterChat(fileName);
+                await openCharacterChat(fileName, avatar);
             }
+        } catch (error) {
+            console.error('Chat could not be opened:', error);
+            toastr.error(error.message, t`Chat could not be opened.`);
         } finally {
             await loaderHandle.hide();
         }
-
-        $('#shadow_select_chat_popup').css('display', 'none');
     });
 
     $(document).on('click', '.mes_create_bookmark', async function () {

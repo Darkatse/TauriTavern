@@ -1,5 +1,6 @@
 import { presentAgentRunFailure } from '../../../tauritavern/agent/agent-error-presenter.js';
 import type { AgentSystemMessageKey, AgentSystemMessageParams } from './i18n';
+import { normalizeInvocationId } from './run-invocation-projector';
 import { displayToolName } from './run-tool-labels';
 import { textMetricsSummary } from './run-text-metrics';
 import type { TimelineItem } from './RunTimelineContract';
@@ -81,7 +82,7 @@ export function presentRunEvent(
         kind: eventKind(type, payload, meta.kind),
         titleKey: meta.titleKey,
         titleParams: eventTitleParams(type, payload),
-        summary: eventSummary(type, payload, allEvents),
+        summary: eventSummary(event, payload, allEvents),
         rawEvent: event,
         ...(rowSpan > 1 ? { rowSpan } : {}),
     };
@@ -91,6 +92,25 @@ export function modelTurnNarration(payload: unknown): string {
     const value = plainObject(payload) ? payload : {};
     const narration = plainObject(value.narration) ? value.narration : null;
     return stringValue(narration?.text).trim();
+}
+
+export function findToolRequest(
+    events: readonly TauriTavernAgentRunEvent[],
+    source: TauriTavernAgentRunEvent,
+): TauriTavernAgentRunEvent | null {
+    const sourcePayload = plainObject(source.payload) ? source.payload : {};
+    const callId = stringValue(sourcePayload.callId).trim();
+    if (!callId) return null;
+    const invocationId = normalizeInvocationId(sourcePayload.invocationId);
+    for (let index = events.length - 1; index >= 0; index--) {
+        const event = events[index];
+        if (!event || event.type !== 'tool_call_requested' || event.seq >= source.seq) continue;
+        const payload = plainObject(event.payload) ? event.payload : {};
+        if (stringValue(payload.callId) === callId
+            && normalizeInvocationId(payload.invocationId) === invocationId
+            && (sourcePayload.round === undefined || payload.round === sourcePayload.round)) return event;
+    }
+    return null;
 }
 
 function eventRowSpan(type: string, payload: RunEventPayload): number {
@@ -158,11 +178,11 @@ function eventTitleParams(type: string, payload: RunEventPayload): AgentSystemMe
 }
 
 function eventSummary(
-    type: string,
+    event: TauriTavernAgentRunEvent,
     payload: RunEventPayload,
     allEvents: readonly TauriTavernAgentRunEvent[],
 ): string {
-    switch (type) {
+    switch (event.type) {
         case 'model_completed':
             return '';
         case 'agent_handoff_accepted':
@@ -188,14 +208,9 @@ function eventSummary(
                     .join(' | ')
                 : '';
         case 'tool_call_requested':
-            return stringValue(payload.callId);
         case 'tool_call_completed':
-            return textMetricsSummary(payload.displayMetrics)
-                || textMetricsSummary(payload)
-                || resourceSummary(payload.resourceRefs)
-                || elapsedSummary(payload.elapsedMs);
         case 'tool_call_failed':
-            return firstString(payload.message, payload.errorCode);
+            return toolCallSummary(event, payload, allEvents);
         case 'workspace_file_written':
         case 'direct_output_captured':
         case 'workspace_patch_applied':
@@ -228,6 +243,30 @@ function eventSummary(
             return failureSummary(payload);
         default:
             return '';
+    }
+}
+
+function toolCallSummary(
+    event: TauriTavernAgentRunEvent,
+    payload: RunEventPayload,
+    allEvents: readonly TauriTavernAgentRunEvent[],
+): string {
+    let command = '';
+    if (payload.toolId === 'builtin:workspace.shell') {
+        const request = event.type === 'tool_call_requested' ? event : findToolRequest(allEvents, event);
+        command = plainObject(request?.payload) ? stringValue(request.payload.command) : '';
+    }
+    switch (event.type) {
+        case 'tool_call_requested':
+            return command || stringValue(payload.callId);
+        case 'tool_call_failed':
+            return joinValues(command, firstString(payload.message, payload.errorCode));
+        default:
+            if (command) return joinValues(command, elapsedSummary(payload.elapsedMs));
+            return textMetricsSummary(payload.displayMetrics)
+                || textMetricsSummary(payload)
+                || resourceSummary(payload.resourceRefs)
+                || elapsedSummary(payload.elapsedMs);
     }
 }
 

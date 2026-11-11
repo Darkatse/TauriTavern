@@ -1,16 +1,19 @@
 // Tauri commands
 pub mod agent_commands;
+pub mod agent_extension_tool_commands;
 mod agent_live_projection;
+pub mod agent_session_commands;
 pub mod asset_commands;
 pub mod avatar_commands;
 pub mod background_commands;
 pub mod bootstrap_commands;
 pub mod bridge;
+pub mod byte_reader_commands;
 pub mod character_commands;
 pub mod chat_api_commands;
 pub mod chat_commands;
+pub mod chat_commit_commands;
 pub mod chat_completion_commands;
-pub mod chat_payload_commit_commands;
 pub mod chat_swipe_commands;
 mod chunk_body;
 pub mod content_commands;
@@ -20,14 +23,14 @@ pub mod dev_logging_commands;
 pub mod extension_commands;
 pub mod extension_store_commands;
 pub mod file_commands;
+pub mod file_staging_commands;
+pub mod file_transfer_commands;
 pub mod group_chat_api_commands;
 pub mod group_chat_commands;
 pub mod group_commands;
 pub mod helpers;
 pub mod image_commands;
 pub mod image_metadata_commands;
-#[cfg(target_os = "ios")]
-pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;
 pub mod llm_connection_commands;
 pub mod mcp_commands;
@@ -36,7 +39,7 @@ pub mod provider_metadata_commands;
 pub mod quick_reply_commands;
 pub mod registry;
 pub mod resource_bridge_commands;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 pub mod runtime_paths_commands;
 pub mod searxng_search_commands;
 pub mod secret_commands;
@@ -52,9 +55,9 @@ pub mod translate_commands;
 pub mod tt_sync_commands;
 pub mod tts_commands;
 pub mod update_commands;
-pub mod upload_staging_commands;
 pub mod user_commands;
 pub mod user_directory_commands;
 mod user_endpoint_access;
 pub mod vector_commands;
+pub mod window_layout_commands;
 pub mod world_info_commands;

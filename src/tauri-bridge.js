@@ -1,32 +1,11 @@
 // Core Tauri bridge for frontend modules.
 
-import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
-
-function detectTauriEnv() {
-    if (typeof window === 'undefined') {
-        return false;
-    }
-
-    // __TAURI_RUNNING__ is set in init.js before dynamic imports to avoid
-    // startup races where mobile bridge internals are injected a bit later.
-    return window.__TAURI_RUNNING__ === true
-        || window.__TAURI_INTERNALS__ !== undefined
-        || typeof window.__TAURI__?.core?.invoke === 'function';
-}
-
-export const isTauriEnv = detectTauriEnv();
-
 function getTauri() {
     if (typeof window === 'undefined') {
         return null;
     }
 
     return window.__TAURI__ || null;
-}
-
-function getInvokeFn() {
-    const fn = getTauri()?.core?.invoke;
-    return typeof fn === 'function' ? fn : null;
 }
 
 function isPlainObject(value) {
@@ -105,6 +84,19 @@ export function createChannel(onmessage) {
     return new Channel(onmessage);
 }
 
+export function getCurrentWindow() {
+    const getCurrentWindow = getTauri()?.window?.getCurrentWindow;
+    if (typeof getCurrentWindow !== 'function') {
+        throw new Error('Tauri window API is unavailable');
+    }
+    return getCurrentWindow();
+}
+
+// Optional plugin: absence is a valid state, not an error.
+export function getBarcodeScanner() {
+    return getTauri()?.barcodeScanner;
+}
+
 export const convertFileSrc = (path, protocol = 'asset') => {
     const fn = getTauri()?.core?.convertFileSrc;
     if (typeof fn !== 'function') {
@@ -113,63 +105,8 @@ export const convertFileSrc = (path, protocol = 'asset') => {
     return fn(path, protocol);
 };
 
-export function isTauri() {
-    return detectTauriEnv();
-}
-
-export async function initializeBridge() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        return false;
-    }
-
-    try {
-        return await invokeFn('is_ready');
-    } catch (error) {
-        console.error('Failed to initialize Tauri bridge:', error);
-        return false;
-    }
-}
-
-export async function getCsrfToken() {
-    return 'tauri-dummy-token';
-}
-
-export async function initializeApp() {
-    return initializeBridge();
-}
-
-export async function getVersion() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        const response = await fetch('/version');
-        return response.json();
-    }
-
-    return invokeFn('get_version');
-}
-
 export async function getClientVersion() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        const response = await fetch('/version');
-        return response.json();
-    }
-
-    try {
-        return await invokeFn('get_client_version');
-    } catch (error) {
-        console.error('Error getting client version from Tauri backend:', error);
-        const version = await invokeFn('get_version');
-        return {
-            agent: `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:TauriTavern`,
-            pkgVersion: SILLYTAVERN_COMPAT_VERSION,
-            tauriVersion: version,
-            gitRevision: null,
-            gitBranch: null,
-            defaultUpdateChannel: 'stable',
-        };
-    }
+    return invoke('get_client_version');
 }
 
 export async function checkForUpdate(channel) {
@@ -177,21 +114,11 @@ export async function checkForUpdate(channel) {
 }
 
 export async function getTauriTavernSettings() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
-
-    return invokeFn('get_tauritavern_settings');
+    return invoke('get_tauritavern_settings');
 }
 
 export async function getChatBackupStorageStats() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
-
-    return invokeFn('get_chat_backup_storage_stats');
+    return invoke('get_chat_backup_storage_stats');
 }
 
 export async function updateTauriTavernSettings(dto) {
@@ -203,12 +130,7 @@ export async function updateTauriTavernSettings(dto) {
 }
 
 export async function getRuntimePaths() {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
-
-    return invokeFn('get_runtime_paths');
+    return invoke('get_runtime_paths');
 }
 
 export async function setDataRoot(dataRoot) {
@@ -219,11 +141,6 @@ export async function setDataRoot(dataRoot) {
 }
 
 export async function openDialog(options = {}) {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
-
     if (!isPlainObject(options)) {
         throw new Error('Invalid dialog options: expected an object');
     }
@@ -252,39 +169,8 @@ function normalizeExternalUrl(url) {
 
 export async function openExternalUrl(url, openWith) {
     const href = normalizeExternalUrl(url);
-    const invokeFn = getInvokeFn();
-
-    if (invokeFn) {
-        return invokeFn('plugin:opener|open_url', {
-            url: href,
-            with: openWith,
-        });
-    }
-
-    const openedWindow = typeof window.open === 'function'
-        ? window.open(href, '_blank', 'noopener,noreferrer')
-        : null;
-
-    if (openedWindow) {
-        return;
-    }
-
-    if (typeof window.location?.assign === 'function') {
-        window.location.assign(href);
-        return;
-    }
-
-    throw new Error('Unable to open external URL');
-}
-
-export function getAssetUrl(path) {
-    if (!isTauriEnv || !convertFileSrc || !path) {
-        return path;
-    }
-
-    try {
-        return convertFileSrc(path, 'asset');
-    } catch {
-        return path;
-    }
+    return invoke('plugin:opener|open_url', {
+        url: href,
+        with: openWith,
+    });
 }

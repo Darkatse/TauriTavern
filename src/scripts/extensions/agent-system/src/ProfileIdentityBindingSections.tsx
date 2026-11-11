@@ -93,7 +93,6 @@ export function ProfileBindingSection({ snapshot, controller, tr }: ProfileSecti
                     >
                         <option value="currentPromptSnapshot">{tr('currentPromptPreset')}</option>
                         <option value="ref">{tr('savedChatCompletionPreset')}</option>
-                        <option value="none">{tr('noPromptPreset')}</option>
                     </select>
                 </label>
                 {draft.preset.mode === 'ref' ? (

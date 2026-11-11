@@ -55,7 +55,13 @@ impl From<DomainError> for CommandError {
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
             DomainError::Conflict(msg) => CommandError::Conflict(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
+            error @ DomainError::WorkspaceAccessDenied { .. } => {
+                CommandError::Unauthorized(error.to_string())
+            }
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
+            error @ DomainError::FileIo { .. } => {
+                CommandError::InternalServerError(error.to_string())
+            }
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
             DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
             DomainError::Transient(msg) => CommandError::InternalServerError(msg),

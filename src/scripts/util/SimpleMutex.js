@@ -24,7 +24,7 @@ export class SimpleMutex {
     /**
      * Updates the mutex by calling the callback if not busy.
      * @param  {...any} args Callback args
-     * @returns {Promise<void>}
+     * @returns {Promise<any>} The callback result, or undefined if already busy.
      */
     async update(...args) {
         // Don't touch me I'm busy...
@@ -35,7 +35,7 @@ export class SimpleMutex {
         // I'm free. Let's update!
         try {
             this.isBusy = true;
-            await this.callback(...args);
+            return await this.callback(...args);
         } finally {
             this.isBusy = false;
         }

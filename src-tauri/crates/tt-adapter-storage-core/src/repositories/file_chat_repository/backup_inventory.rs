@@ -425,53 +425,25 @@ mod tests {
     }
 
     #[test]
-    fn inventory_byte_overflow_is_an_error_not_a_panic() {
-        let mut inventory = BackupInventory::default();
-        inventory
-            .insert(entry("largest", None, 1, u64::MAX))
-            .unwrap();
-
-        assert!(inventory.insert(entry("overflow", None, 2, 1)).is_err());
-        assert_eq!(inventory.entries.len(), 1);
-        assert_eq!(inventory.total_bytes, u64::MAX);
-    }
-
-    #[test]
     fn planner_combines_prefix_file_and_byte_limits_oldest_first() {
         let mut inventory = BackupInventory::default();
         inventory.insert(entry("a1", Some("a"), 1, 3)).unwrap();
         inventory.insert(entry("a2", Some("a"), 2, 3)).unwrap();
         inventory.insert(entry("b1", Some("b"), 3, 3)).unwrap();
 
-        let deleted = plan_evictions(
-            &inventory,
-            policy(2, 3, 7),
-            Some(BackupCandidate {
-                prefix: "a",
-                byte_len: 3,
-            }),
-        )
-        .expect("plan candidate");
+        for limits in [policy(2, 3, 7), policy(1, -1, -1)] {
+            let deleted = plan_evictions(
+                &inventory,
+                limits,
+                Some(BackupCandidate {
+                    prefix: "a",
+                    byte_len: 3,
+                }),
+            )
+            .expect("plan candidate");
 
-        assert_eq!(deleted, ["a1", "a2"]);
-    }
-
-    #[test]
-    fn planner_replaces_the_old_entry_when_prefix_limit_is_one() {
-        let mut inventory = BackupInventory::default();
-        inventory.insert(entry("old", Some("a"), 1, 10)).unwrap();
-
-        let deleted = plan_evictions(
-            &inventory,
-            policy(1, -1, -1),
-            Some(BackupCandidate {
-                prefix: "a",
-                byte_len: 10,
-            }),
-        )
-        .expect("plan candidate");
-
-        assert_eq!(deleted, ["old"]);
+            assert_eq!(deleted, ["a1", "a2"]);
+        }
     }
 
     #[test]

@@ -1,12 +1,10 @@
-use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::dto::world_info_dto::GetWorldInfosBatchItemDto;
+use crate::dto::world_info_dto::WorldInfoJsonDto;
 use crate::errors::ApplicationError;
-use tt_domain::models::world_info::{
-    WorldInfo, sanitize_world_info_import_name, sanitize_world_info_name,
-};
+use tt_contracts::byte_commit::CommitBegin;
+use tt_domain::models::world_info::{sanitize_world_info_import_name, sanitize_world_info_name};
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
 pub struct WorldInfoService {
@@ -20,32 +18,14 @@ impl WorldInfoService {
         }
     }
 
-    pub async fn get_world_info(&self, name: &str) -> Result<Value, ApplicationError> {
-        let world_info = self
+    pub async fn get_world_info(&self, name: &str) -> Result<WorldInfoJsonDto, ApplicationError> {
+        let bytes = self
             .world_info_repository
-            .get_world_info(name, true)
+            .read_world_info_json(name)
             .await?
-            .unwrap_or_else(|| json!({ "entries": {} }));
+            .unwrap_or_else(|| br#"{"entries":{}}"#.to_vec());
 
-        Ok(world_info)
-    }
-
-    pub async fn get_world_infos_batch(
-        &self,
-        names: Vec<String>,
-    ) -> Result<Vec<GetWorldInfosBatchItemDto>, ApplicationError> {
-        let mut items = Vec::with_capacity(names.len());
-        for name in names {
-            let data = self
-                .world_info_repository
-                .get_world_info(&name, true)
-                .await?
-                .unwrap_or_else(|| json!({ "entries": {} }));
-
-            items.push(GetWorldInfosBatchItemDto { name, data });
-        }
-
-        Ok(items)
+        Ok(WorldInfoJsonDto { bytes })
     }
 
     pub fn normalize_world_info_name(
@@ -68,17 +48,35 @@ impl WorldInfoService {
         Ok(normalized)
     }
 
-    pub async fn save_world_info(&self, name: &str, data: Value) -> Result<(), ApplicationError> {
-        let world_info = WorldInfo::new(name.to_string(), data);
-        world_info
-            .validate()
-            .map_err(ApplicationError::ValidationError)?;
+    pub async fn begin_commit(&self) -> Result<CommitBegin, ApplicationError> {
+        Ok(self.world_info_repository.begin_commit().await?)
+    }
 
+    pub async fn append_commit(
+        &self,
+        session_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<u64, ApplicationError> {
+        Ok(self
+            .world_info_repository
+            .append_commit(session_id, offset, bytes)
+            .await?)
+    }
+
+    pub async fn finish_commit(
+        &self,
+        session_id: &str,
+        expected_size: u64,
+    ) -> Result<(), ApplicationError> {
         self.world_info_repository
-            .save_world_info(&world_info.name, &world_info.data)
+            .finish_commit(session_id, expected_size)
             .await?;
-
         Ok(())
+    }
+
+    pub async fn abort_commit(&self, session_id: &str) -> Result<(), ApplicationError> {
+        Ok(self.world_info_repository.abort_commit(session_id).await?)
     }
 
     pub async fn delete_world_info(&self, name: &str) -> Result<(), ApplicationError> {

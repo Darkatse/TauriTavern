@@ -8,19 +8,20 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
+use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
-use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_triviumdb::TriviumDatabaseBackend;
+use tt_adapter_workspace_shell::WorkspaceShellEngine;
 use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
 use tt_application::services::background_service::BackgroundService;
 use tt_application::services::character_service::CharacterService;
+use tt_application::services::chat_commit_service::ChatCommitService;
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
-use tt_application::services::chat_payload_commit_service::ChatPayloadCommitService;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::database_service::DatabaseService;
@@ -52,7 +53,6 @@ use tt_application::services::user_service::UserService;
 use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
-use tt_ports::skill_script::SkillScriptEngine;
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::{adapters, repositories};
@@ -144,7 +144,6 @@ pub(super) async fn build(
     let searxng_search_service = Arc::new(SearxngSearchService::new(
         repositories.searxng_search_repository.clone(),
     ));
-    let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new());
     let vector_service = Arc::new(VectorService::new(
         repositories.vector_repository.clone(),
         repositories.remote_embedding_repository.clone(),
@@ -152,17 +151,25 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
-    let agent_services = agent::build(
-        &repositories,
-        skill_service.clone(),
-        chat_completion_service.clone(),
-        llm_connection_service.clone(),
-        mcp_service.clone(),
-        skill_script_engine,
-    );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),
     ));
+    let agent_services = agent::build(
+        &repositories,
+        agent::AgentDependencies {
+            tool_image_normalizer: Arc::new(tt_adapter_media::MediaToolImageNormalizer),
+            skill_service: skill_service.clone(),
+            chat_completion_service: chat_completion_service.clone(),
+            llm_connection_service: llm_connection_service.clone(),
+            mcp_service: mcp_service.clone(),
+            tokenization_service: tokenization_service.clone(),
+            workspace_shell: Arc::new(WorkspaceShellEngine),
+            extension_tools: app_handle
+                .state::<Arc<AgentExtensionTools>>()
+                .inner()
+                .clone(),
+        },
+    );
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository.clone(),
         repositories.secret_repository.clone(),
@@ -188,8 +195,8 @@ pub(super) async fn build(
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
     ));
-    let chat_payload_commit_service = Arc::new(ChatPayloadCommitService::new(
-        repositories.chat_payload_commit_repository.clone(),
+    let chat_commit_service = Arc::new(ChatCommitService::new(
+        repositories.chat_commit_repository.clone(),
         chat_history_coordinator.clone(),
     ));
 
@@ -262,7 +269,7 @@ pub(super) async fn build(
         chat_service,
         group_chat_service,
         chat_history_coordinator,
-        chat_payload_commit_service,
+        chat_commit_service,
         user_service,
         settings_service,
         user_directory_service,

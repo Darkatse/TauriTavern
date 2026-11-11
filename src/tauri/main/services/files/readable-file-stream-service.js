@@ -1,20 +1,8 @@
 // @ts-check
+import { FILE_READ_COUNT_BYTES, readByteResponse } from '../../kernel/byte-protocol.js';
 
 // Amortize IPC roundtrips while bounding each response and decode burst.
 const FS_READ_MAX_CHUNK_BYTES = 4 * 1024 * 1024;
-
-/** @param {any} data */
-function normalizeReadResponse(data) {
-    if (data instanceof Uint8Array) {
-        return data;
-    }
-
-    if (data instanceof ArrayBuffer) {
-        return new Uint8Array(data);
-    }
-
-    throw new Error('Unexpected resource read response');
-}
 
 /**
  * @param {{ invoke: Function }} deps
@@ -50,6 +38,7 @@ export function createReadableFileStreamService({ invoke }) {
 
                 try {
                     const bytes = await readChunk(rid);
+                    if (closed) return;
                     if (bytes.byteLength === 0) {
                         await closeOnce();
                         controller.close();
@@ -95,15 +84,15 @@ export function createReadableFileStreamService({ invoke }) {
                     return new Uint8Array(0);
                 }
 
-                // plugin-fs returns the requested length even on a short read, plus its 8-byte trailer.
+                // plugin-fs returns the bytes it read followed by their count as an 8-byte trailer.
                 const len = Math.min(FS_READ_MAX_CHUNK_BYTES, remaining);
                 const data = await invoke('plugin:fs|read', {
                     rid,
                     len,
                 });
-                const bytes = normalizeReadResponse(data);
-                const bytesRead = Number(new DataView(bytes.buffer, bytes.byteOffset + bytes.byteLength - 8, 8).getBigUint64(0));
-                if (bytesRead > len || bytesRead > bytes.byteLength - 8) {
+                const bytes = readByteResponse(data);
+                const bytesRead = Number(new DataView(bytes.buffer, bytes.byteOffset + bytes.byteLength - FILE_READ_COUNT_BYTES, FILE_READ_COUNT_BYTES).getBigUint64(0));
+                if (bytesRead > len || bytesRead > bytes.byteLength - FILE_READ_COUNT_BYTES) {
                     throw new Error(`Invalid fs read length for ${filePath}: ${bytesRead}`);
                 }
                 if (bytesRead === 0) {
@@ -118,22 +107,22 @@ export function createReadableFileStreamService({ invoke }) {
     /** @param {string} name */
     async function createChatBackupDownloadStream(name) {
         const rid = await invoke('open_chat_backup_download', { name });
-        return createChatByteStream(rid);
+        return createByteStream(rid);
     }
 
     /** @param {number} rid */
-    function createChatByteStream(rid) {
+    function createByteStream(rid) {
         return createReadableResourceStream(
             Promise.resolve(rid),
-            async (rid) => normalizeReadResponse(
-                await invoke('read_chat_bytes', { rid }),
+            async (rid) => readByteResponse(
+                await invoke('read_bytes', { rid }),
             ),
         );
     }
 
     return {
         createChatBackupDownloadStream,
-        createChatByteStream,
+        createByteStream,
         createReadableFileStream,
     };
 }

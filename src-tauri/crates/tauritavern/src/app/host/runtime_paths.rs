@@ -4,14 +4,14 @@
 //! host subsystem reads data/log/resource locations from this one snapshot, so
 //! do not resolve paths again in sibling modules.
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 use std::sync::Arc;
 
 use crate::infrastructure::paths::{RuntimePaths, resolve_runtime_paths};
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 use crate::infrastructure::runtime_paths_config_store::FilesystemRuntimePathConfigStore;
 use tauri::Manager;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 use tt_application::services::runtime_paths_service::{
     RuntimeModeInfo, RuntimePathsService, RuntimePathsSnapshot,
 };
@@ -25,7 +25,7 @@ pub(super) fn install(
     let runtime_paths = resolve_runtime_paths(app_handle)?;
     app.manage(runtime_paths.clone());
 
-    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    #[cfg(desktop)]
     // Desktop exposes data-root migration controls through a small managed
     // service. Mobile uses the platform sandbox path directly and has no runtime
     // data-root switcher.
@@ -37,7 +37,7 @@ pub(super) fn install(
     Ok(runtime_paths)
 }
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 fn runtime_paths_snapshot(runtime_paths: &RuntimePaths) -> RuntimePathsSnapshot {
     RuntimePathsSnapshot {
         mode: match runtime_paths.mode {

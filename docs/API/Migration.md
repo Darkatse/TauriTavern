@@ -19,7 +19,7 @@
 
 ## 背景：完整历史与增强查询
 
-TauriTavern 与 SillyTavern 1.18.0 一样，保证 **`getContext().chat` 包含当前聊天的完整、有序消息历史**。因此，依赖完整数组与绝对索引的上游扩展无需为了数据窗口做兼容分支。
+TauriTavern 与 SillyTavern 一样，保证 **`getContext().chat` 包含当前聊天的完整、有序消息历史**。因此，依赖完整数组与绝对索引的上游扩展无需为了数据窗口做兼容分支。
 
 增强 API（`findLastMessage`、`searchMessages`、`history.*`）不是修复不完整数组的旁路，而是可选的高效后端能力：它们适合有界扫描、CJK 检索、分页任务或避免在扩展中建立第二份大数组。
 

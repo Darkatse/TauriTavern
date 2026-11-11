@@ -128,12 +128,12 @@ pub(super) fn validate_tools(tools: Vec<Tool>) -> (Vec<McpDiscoveredTool>, Vec<M
 }
 
 #[derive(Debug)]
-pub(super) struct ToolValidationError {
+struct ToolValidationError {
     code: &'static str,
     message: String,
 }
 
-pub(super) fn validate_tool(
+fn validate_tool(
     tool: Tool,
 ) -> Result<(McpDiscoveredTool, Option<ToolValidationError>), ToolValidationError> {
     let native_name = tool.name.to_string();
@@ -197,7 +197,7 @@ pub(super) fn validate_tool(
     ))
 }
 
-pub(super) fn validate_schema(schema: &Value) -> Result<(), String> {
+fn validate_schema(schema: &Value) -> Result<(), String> {
     jsonschema::draft202012::options()
         .build(schema)
         .map(|_| ())

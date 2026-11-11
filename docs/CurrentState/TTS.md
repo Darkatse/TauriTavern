@@ -5,7 +5,7 @@ Android WebView 缺少 Web Speech Synthesis 时，宿主在文档开始加载时
 ## 接入位置
 
 - `src-tauri/crates/tauritavern/src/platform/speech_synthesis.rs`：注册 Android 插件，通过 Tauri 的 all-frame 初始化脚本安装兼容对象。
-- `src/tauri/main/compat/android-speech-synthesis.js`：提供 Web API 对象、事件和状态，串行提交原生命令。
+- `src/tauri/main/compat/android-speech-synthesis.js`：提供 Web API 对象、事件和状态，串行提交原生命令。它在 document-start 以经典脚本注入，早于应用模块和 Tauri 全局 API，因此不经 `tauri-bridge.js`，调用时才读取 `window.__TAURI__`。
 - `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/SpeechSynthesisPlugin.kt`：连接系统默认 TTS 引擎，使用原生队列播放并回传进度。
 
 插件命令权限在 host 的 `build.rs` 中声明，由 `capabilities/android-speech-synthesis.json` 仅向 Android 主窗口授予。

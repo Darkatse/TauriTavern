@@ -71,7 +71,7 @@ pub(super) fn install(
     })
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub(super) fn emit_pending_runtime_migration_error(runtime_paths: &RuntimePaths) {
     // Desktop migration failures should surface as user-visible backend errors.
     // Mobile has no runtime data-root migration path, so this whole check is

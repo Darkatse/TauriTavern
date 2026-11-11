@@ -18,7 +18,7 @@ impl FileAgentRepository {
         let mut stats = AgentRunStorageStats::default();
 
         add_run_scan_stats(scan_run_storage(&run_dir).await?, &mut stats)?;
-        add_required_index_file(&self.index_run_path(&run.id)?, &mut stats).await?;
+        add_required_index_file(&self.index_path_for_run(run)?, &mut stats).await?;
         add_optional_index_file(&self.index_run_summary_path(&run.id)?, &mut stats).await?;
 
         Ok(stats)
@@ -65,7 +65,7 @@ impl FileAgentRepository {
             ))
         })?;
 
-        remove_index_file_if_exists(&self.index_run_path(&run.id)?, "agent run index").await?;
+        remove_index_file_if_exists(&self.index_path_for_run(run)?, "agent run index").await?;
         remove_index_file_if_exists(&self.index_run_summary_path(&run.id)?, "agent run summary")
             .await?;
         self.event_sequences.lock().await.remove(&run.id);
@@ -214,7 +214,10 @@ async fn remove_empty_run_dirs(run_dir: &Path, mut dirs: Vec<PathBuf>) -> Result
     Ok(())
 }
 
-async fn remove_index_file_if_exists(path: &Path, label: &str) -> Result<(), DomainError> {
+pub(super) async fn remove_index_file_if_exists(
+    path: &Path,
+    label: &str,
+) -> Result<(), DomainError> {
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
