@@ -46,8 +46,7 @@ tracing-appender = "0.2"
 chrono = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
-futures-util = "0.3"
-reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks", "stream"] }
+reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks"] }
 bytes = "1"
 base64 = "0.23"
 uuid = { workspace = true }
@@ -64,6 +63,7 @@ tt-contracts = { path = "../tt-contracts" }
 tt-ports = { path = "../tt-ports" }
 tt-application = { path = "../tt-application" }
 tt-adapter-http = { path = "../tt-adapter-http" }
+tt-adapter-external-import = { path = "../tt-adapter-external-import" }
 tt-adapter-mcp = { path = "../tt-adapter-mcp" }
 tt-adapter-tokenization = { path = "../tt-adapter-tokenization" }
 tt-adapter-sync = { path = "../tt-adapter-sync" }

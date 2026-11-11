@@ -1,0 +1,18 @@
+[package]
+name = "tt-adapter-external-import"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+futures-util = "0.3"
+reqwest = { workspace = true, features = ["stream"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util"] }
+tt-adapter-http = { path = "../tt-adapter-http" }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

@@ -54,6 +54,7 @@ src-tauri/
     ├── tt-ports
     ├── tt-application
     ├── tt-adapter-http
+    ├── tt-adapter-external-import
     ├── tt-adapter-mcp
     ├── tt-adapter-provider-http
     ├── tt-adapter-vector
@@ -78,6 +79,7 @@ src-tauri/
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-external-import` | 导入下载：逐跳检查来源、大小上限 |
 | `tt-adapter-mcp` | RMCP client、协议版本策略与 Streamable HTTP lifecycle、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
 | `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
@@ -120,6 +122,7 @@ flowchart TB
 
 ```text
 tt-adapter-provider-http    -> tt-adapter-http
+tt-adapter-external-import  -> tt-adapter-http
 tt-adapter-mcp              -> tt-adapter-http
 tt-adapter-tokenization     -> tt-adapter-http
 tt-adapter-extension        -> tt-adapter-http + tt-adapter-storage-core
@@ -224,7 +227,7 @@ setup 不会因用户数据失败。宿主设置与 iOS 策略的启动快照（
 - logging / Dev observability 中需要 Tauri event 或 AppHandle 的部分。
 - Data Archive 的 Tauri file picker/share glue。
 - `file_content_repository` 与 `file_preset_repository`，因为它们仍依赖 packaged default content / bundled resources。
-- 小型 host-bound API glue，例如更新检查和外部导入下载器。
+- 小型 host-bound API glue，例如更新检查。
 
 新的 Tauri-free repository 不应再放回 host infrastructure。
 
@@ -250,7 +253,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-extension` 承载 third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动，以及 Git transport、repository 与 worktree 物化边界。扩展仓库不是普通 user data JSON。
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
 - `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、Skill 绑定、冻结宏投影与发布策略由 application 拥有。
-- `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
+- `tt-adapter-provider-http`、`tt-adapter-external-import`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
 - `tt-adapter-http` 构建出站 client 时统一设置传输规则：产品 UA、平台 TLS、每个请求新建连接、解析结果 IPv4 优先、对端约 5 分钟没有回应才判定连接断开。profile 只增加超时、重定向等差异。传输失败也只在这里（`upstream`）分类。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 
@@ -286,6 +289,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
 | LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
 | Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
+| 导入下载 | `tt-adapter-external-import` | 是否放行来源由 application 经 `DownloadSources` 决定 |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 在 host `infrastructure/sync_host.rs`，经 `HostEnvironment` 交给 composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |

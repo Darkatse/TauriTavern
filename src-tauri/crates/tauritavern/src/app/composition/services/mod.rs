@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
-use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
+use tt_adapter_external_import::HttpExternalImportDownloader;
 use tt_adapter_mcp::RmcpMcpGateway;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_triviumdb::TriviumDatabaseBackend;
