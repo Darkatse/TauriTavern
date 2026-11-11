@@ -7,7 +7,6 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::grant_repository::GrantRepository;
 use url::Url;
 
-use crate::errors::ApplicationError;
 use crate::services::user_grants::{GrantList, UserGrants};
 
 /// Origins imports may download from without asking.
@@ -16,19 +15,12 @@ const PRE_APPROVED_IMPORT_SOURCES: &[&str] = &[
     "https://files.catbox.moe",
     "https://raw.githubusercontent.com",
     "https://botbooru.com",
+    "https://api.chub.ai",
+    "https://avatars.charhub.io",
+    "https://realm.risuai.net",
+    "https://server.pygmalion.chat",
+    "https://assets.pygmalion.chat",
 ];
-
-pub fn parse_external_import_url(raw: &str) -> Result<Url, ApplicationError> {
-    let url = Url::parse(raw.trim())
-        .map_err(|_| ApplicationError::ValidationError("Invalid import URL".to_string()))?;
-
-    match url.scheme() {
-        "http" | "https" => Ok(url),
-        _ => Err(ApplicationError::ValidationError(
-            "Unsupported URL protocol".to_string(),
-        )),
-    }
-}
 
 /// An import source is an origin: scheme, host and port.
 pub fn import_source(url: &Url) -> String {

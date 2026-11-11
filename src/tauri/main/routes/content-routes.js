@@ -1,22 +1,19 @@
-import { stagedCardBytes } from './character-route-utils.js';
+import { stageUrlContent, takeUrlContent } from '../services/files/url-content.js';
 
-export function registerContentRoutes(router, context, { jsonResponse }) {
-    router.post('/api/content/importURL', async ({ body }) => {
-        const card = await stagedCardBytes(context, String(body?.url || ''));
-        return new Response(card.bytes, {
+export function registerContentRoutes(router, context) {
+    async function importContent({ body }) {
+        const content = await stageUrlContent(context.safeInvoke, String(body?.url || ''));
+        const { bytes, type } = await takeUrlContent(context, content);
+        return new Response(bytes, {
             status: 200,
             headers: {
-                'Content-Type': card.type,
-                'Content-Disposition': `attachment; filename="${encodeURI(card.name)}"`,
-                'X-Custom-Content-Type': 'character',
+                'Content-Type': type,
+                'Content-Disposition': `attachment; filename="${encodeURI(content.name)}"`,
+                'X-Custom-Content-Type': content.kind,
             },
         });
-    });
+    }
 
-    router.post('/api/content/importUUID', async () => {
-        return jsonResponse(
-            { error: 'UUID import is not supported in this Tauri build. Use a direct URL.' },
-            501,
-        );
-    });
+    router.post('/api/content/importURL', importContent);
+    router.post('/api/content/importUUID', importContent);
 }

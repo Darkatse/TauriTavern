@@ -1,7 +1,7 @@
 // @ts-check
 
-import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { StagedFile } from '../services/files/staged-file.js';
+import { expectCharacter, stageUrlContent, takeUrlContent } from '../services/files/url-content.js';
 import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
 
 export class LorebookAdoptionConflictError extends Error {
@@ -18,11 +18,14 @@ function stagedFile({ path, name }) {
 }
 
 /**
- * @param {Pick<import('../context/types.js').TauriMainContext, 'safeInvoke' | 'invalidateCharacterCache'>} context
+ * @param {Pick<import('../context/types.js').TauriMainContext,
+ *   'safeInvoke' | 'invalidateCharacterCache' | 'adoptStagedFile' | 'createReadableFileStream'>} context
  */
 function createCharacterCardsApi({
     safeInvoke,
     invalidateCharacterCache,
+    adoptStagedFile,
+    createReadableFileStream,
 }) {
     /** @param {{ multiple?: boolean }} [options] */
     async function pickFiles({ multiple = false } = {}) {
@@ -32,10 +35,20 @@ function createCharacterCardsApi({
 
     /** @param {string} url */
     async function stageFromUrl(url) {
-        return stagedFile(await safeInvoke('stage_character_card_from_url', {
-            url,
-            locale: getSillyTavernLocale(),
-        }));
+        return stagedFile(expectCharacter(await stageUrlContent(safeInvoke, url)));
+    }
+
+    /**
+     * @param {string} url
+     * @returns {Promise<TauriTavernUrlContent>}
+     */
+    async function contentFromUrl(url) {
+        const content = await stageUrlContent(safeInvoke, url);
+        if (content.kind === 'character') {
+            return { kind: content.kind, file: stagedFile(content) };
+        }
+        const { bytes, type } = await takeUrlContent({ adoptStagedFile, createReadableFileStream }, content);
+        return { kind: content.kind, file: new File([bytes], content.name, { type }) };
     }
 
     /** @param {string} uri @param {string} name */
@@ -73,6 +86,7 @@ function createCharacterCardsApi({
     return {
         pickFiles,
         stageFromUrl,
+        contentFromUrl,
         stageSharedFile,
         adoptLorebook,
         resolveLorebookAdoption,

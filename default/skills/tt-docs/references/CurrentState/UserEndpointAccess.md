@@ -34,7 +34,7 @@ iOS 的系统 Local Network permission 与本 grant 相互独立。Android 升�
 
 ## 导入来源
 
-导入下载（URL 导入角色卡、资源库下载、Skill 的 URL 导入）使用同一种授权，单位是来源（scheme、host、port）。`https://cdn.discordapp.com`、`https://files.catbox.moe`、`https://raw.githubusercontent.com`、`https://botbooru.com` 预先批准，其余来源首次使用时询问。
+导入下载（URL 导入、资源库下载、Skill 的 URL 导入）使用同一种授权，单位是来源（scheme、host、port）。常用文件托管与已识别站点的来源已预先批准（`external_import_service.rs` 的 `PRE_APPROVED_IMPORT_SOURCES`），其余来源首次使用时询问。
 
 - 下载自己跟随重定向，首个请求与每个重定向目标按同一规则检查。
 - grant 保存在 `<app_root>/security/import-source-grants.json`，与端点 grant 分开存放，处理方式相同。

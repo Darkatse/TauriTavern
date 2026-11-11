@@ -1320,11 +1320,17 @@ type TauriTavernCharacterImportResult = {
 
 type TauriTavernStagedFile = import('./tauri/main/services/files/staged-file.js').StagedFile;
 
+type TauriTavernUrlContent =
+    | { kind: 'character'; file: TauriTavernStagedFile }
+    | { kind: 'lorebook'; file: File };
+
 type TauriTavernCharacterCardsApi = {
     /** Project: `null` when cancelled. */
     pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<TauriTavernStagedFile[] | null>;
-    /** Project. */
+    /** Project: character cards only. */
     stageFromUrl: (url: string) => Promise<TauriTavernStagedFile>;
+    /** Project. */
+    contentFromUrl: (url: string) => Promise<TauriTavernUrlContent>;
     /** Project, Android only. */
     stageSharedFile: (uri: string, name: string) => Promise<TauriTavernStagedFile>;
     /** Project: adopt the stored card's embedded lorebook using its current binding. */

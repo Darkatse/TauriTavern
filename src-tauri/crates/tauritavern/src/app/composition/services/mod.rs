@@ -8,9 +8,10 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
-use tt_adapter_external_import::HttpExternalImportDownloader;
+use tt_adapter_external_import::{HttpExternalImportDownloader, SiteImportContentResolver};
 use tt_adapter_mcp::RmcpMcpGateway;
 use tt_adapter_storage_core::file_system::DataDirectory;
+use tt_adapter_storage_userdata::PngCharacterCardEmbedder;
 use tt_adapter_triviumdb::TriviumDatabaseBackend;
 use tt_adapter_workspace_shell::WorkspaceShellEngine;
 use tt_application::services::asset_service::AssetService;
@@ -80,6 +81,10 @@ pub(super) async fn build(
     let content_service = Arc::new(ContentService::new(
         repositories.content_repository.clone(),
         external_import_downloader.clone(),
+        Arc::new(SiteImportContentResolver::new(
+            external_import_downloader.clone(),
+        )),
+        Arc::new(PngCharacterCardEmbedder),
     ));
     let asset_service = Arc::new(AssetService::new(
         repositories.asset_repository.clone(),

@@ -16,6 +16,7 @@ use crate::presentation::commands::helpers::{
 };
 use crate::presentation::commands::import_source::ImportSources;
 use crate::presentation::errors::CommandError;
+use tt_application::services::external_import_service::ContentKind;
 
 const DEFAULT_KIND: &str = "generic";
 const HEADER_FILE_PATH: &str = "file-path";
@@ -45,6 +46,14 @@ pub struct StageFileFinishResult {
 pub struct StagedFileResult {
     pub path: String,
     pub name: String,
+}
+
+/// The staged file follows [`StagedFileResult`].
+#[derive(Debug, Serialize)]
+pub struct StagedContentResult {
+    pub path: String,
+    pub name: String,
+    pub kind: ContentKind,
 }
 
 #[derive(Debug, Serialize)]
@@ -220,48 +229,49 @@ pub async fn stage_file_from_url(
 }
 
 #[tauri::command]
-pub async fn stage_character_card_from_url(
+pub async fn stage_content_from_url(
     app: AppHandle,
     window: WebviewWindow,
     url: String,
     locale: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<StagedFileResult, CommandError> {
-    log_command("stage_character_card_from_url");
-    stage_character_card(&app, &window, &app_state, &url, &locale)
+) -> Result<StagedContentResult, CommandError> {
+    log_command("stage_content_from_url");
+    stage_content(&app, &window, &app_state, &url, &locale)
         .await
-        .map_err(map_command_error("Failed to stage character card"))
+        .map_err(map_command_error("Failed to stage content"))
 }
 
-async fn stage_character_card(
+async fn stage_content(
     app: &AppHandle,
     window: &WebviewWindow,
     app_state: &AppState,
     url: &str,
     locale: &str,
-) -> Result<StagedFileResult, CommandError> {
+) -> Result<StagedContentResult, CommandError> {
     let sources = ImportSources::new(window, app_state, locale)?;
-    let download = create_staged_file(app, "character-card", "bin").await?;
+    let download = create_staged_file(app, "content", "bin").await?;
     let result = async {
-        let card = app_state
+        let content = app_state
             .services
             .content_service
-            .download_character_card(url, &download, &sources)
+            .download_content(url, &download, &sources)
             .await?;
-        let path = download.with_extension(card.extension);
+        let path = download.with_extension(content.extension);
         fs::rename(&download, &path).await.map_err(|error| {
-            CommandError::InternalServerError(format!("Failed to stage character card: {error}"))
+            CommandError::InternalServerError(format!("Failed to stage content: {error}"))
         })?;
-        Ok::<_, CommandError>(StagedFileResult {
+        Ok::<_, CommandError>(StagedContentResult {
             path: path.to_string_lossy().into_owned(),
-            name: card.name,
+            name: content.name,
+            kind: content.kind,
         })
     }
     .await;
     if result.is_err()
         && let Err(cleanup_error) = discard_file(&download).await
     {
-        tracing::warn!(%cleanup_error, "Failed to discard incomplete character card download");
+        tracing::warn!(%cleanup_error, "Failed to discard incomplete content download");
     }
     result
 }

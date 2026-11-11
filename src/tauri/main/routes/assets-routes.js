@@ -1,5 +1,5 @@
 import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
-import { stagedCardBytes } from './character-route-utils.js';
+import { expectCharacter, stageUrlContent, takeUrlContent } from '../services/files/url-content.js';
 
 export function registerAssetsRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/assets/get', async () => {
@@ -11,8 +11,9 @@ export function registerAssetsRoutes(router, context, { jsonResponse, textRespon
         const url = String(body?.url || '');
         const category = String(body?.category || '');
         if (category === 'character') {
-            const card = await stagedCardBytes(context, url);
-            return new Response(card.bytes, { status: 200, headers: { 'Content-Type': card.type } });
+            const card = expectCharacter(await stageUrlContent(context.safeInvoke, url));
+            const { bytes, type } = await takeUrlContent(context, card);
+            return new Response(bytes, { status: 200, headers: { 'Content-Type': type } });
         }
 
         await context.safeInvoke('download_asset', {

@@ -43,7 +43,7 @@ test('/api/assets/download returns a character card through the host card downlo
     const router = createAssetsRouter({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            return { path: '/cache/character-card/0f3a.png', name: 'card.png' };
+            return { path: '/cache/content/0f3a.png', name: 'card.png', kind: 'character' };
         },
         adoptStagedFile: filePath => ({ filePath, cleanup: async () => { discarded.push(filePath); } }),
         createReadableFileStream: async () => new Blob([new Uint8Array([137, 80, 78, 71])]).stream(),
@@ -65,13 +65,13 @@ test('/api/assets/download returns a character card through the host card downlo
     assert.equal(response.headers.get('Content-Type'), 'image/png');
     assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [137, 80, 78, 71]);
     assert.deepEqual(calls, [{
-        command: 'stage_character_card_from_url',
+        command: 'stage_content_from_url',
         args: {
             url: 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/card.png',
             locale: getSillyTavernLocale(),
         },
     }]);
-    assert.deepEqual(discarded, ['/cache/character-card/0f3a.png']);
+    assert.deepEqual(discarded, ['/cache/content/0f3a.png']);
 });
 
 test('/api/assets/download returns upstream-style OK for stored assets', async () => {

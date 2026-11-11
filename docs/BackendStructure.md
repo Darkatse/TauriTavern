@@ -79,7 +79,7 @@ src-tauri/
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
-| `tt-adapter-external-import` | 导入下载：逐跳检查来源、大小上限 |
+| `tt-adapter-external-import` | 导入下载（逐跳检查来源、大小上限）与内容站点的地址和响应格式 |
 | `tt-adapter-mcp` | RMCP client、协议版本策略与 Streamable HTTP lifecycle、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
 | `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
@@ -289,7 +289,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
 | LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
 | Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
-| 导入下载 | `tt-adapter-external-import` | 是否放行来源由 application 经 `DownloadSources` 决定 |
+| 导入下载、内容站点的地址与响应格式 | `tt-adapter-external-import` | 是否放行来源由 application 经 `DownloadSources` 决定 |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 在 host `infrastructure/sync_host.rs`，经 `HostEnvironment` 交给 composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |

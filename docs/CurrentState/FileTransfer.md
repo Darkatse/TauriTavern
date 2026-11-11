@@ -8,8 +8,9 @@
 - **交付消费源文件。** 保存、取消或失败都会结束本次产物。
 - **交付结果为 `{ delivered }`。** 完成目标写入或系统交接后为 `true`，取消为 `false`，失败抛错。目标是普通文件时，同步落盘后才算完成。
 - **选取按用途过滤。** 角色卡、Skill 归档、数据归档分别映射为各平台的过滤条件；文件内容由导入方校验。
-- **暂存文件的扩展名就是格式。** 由产出者确定一次：选取看文件名，Android 分享由 Kotlin 认定 PNG，URL 下载先看 `Content-Type` 再看文件名。名称只是标签。
-- **导入消费暂存文件。** 宿主持有的文件按路径交给 Rust 导入，字节不回到页面；导入结束后删除。
+- **暂存文件的扩展名就是格式。** 由产出者确定一次：选取看文件名，Android 分享由 Kotlin 认定 PNG，URL 下载的文件先看 `Content-Type` 再看文件名，宿主写成的卡是 PNG。名称只是标签。
+- **URL 导入先识别站点。** 已识别站点的链接与 ID 换成站点提供的内容，站点分开提供卡片与图片时由宿主写成 PNG 卡；其余 URL 按直链下载，视为角色卡。站点规则在 `tt-adapter-external-import`。
+- **导入消费暂存文件。** 宿主持有的文件按路径交给 Rust 导入，字节不回到页面，只有世界书与 ST 兼容路由整份读回。导入结束后删除。
 
 ## 2. 平台实现
 
@@ -47,6 +48,7 @@ Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自
 | 用户备份 | `export_user_backup_archive` |
 | 调试包 | `devlog_export_bundle` |
 | 角色卡导入（选取、Android 分享、URL） | `api.characterCards` 得到 `StagedFile`，再经 `processDroppedFiles` 导入 |
+| 世界书导入（URL） | `api.characterCards.contentFromUrl` 得到 `File`，再经 `importWorldInfo` 导入 |
 | Skill 归档选取 | `pick_import_files` |
 
 `<input type="file">`、拖放和桌面目录选择沿用原有入口。新增的导入导出功能接入上述入口。

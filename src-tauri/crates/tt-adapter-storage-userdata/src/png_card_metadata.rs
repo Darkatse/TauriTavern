@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use image::ImageFormat;
 use std::io::Cursor;
@@ -6,13 +7,14 @@ use std::path::Path;
 use tt_adapter_storage_core::png_metadata::write_chunk;
 #[cfg(test)]
 use tt_adapter_storage_core::png_metadata::{
-    CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, CHUNK_TYPE_ZTXT, PNG_SIGNATURE, read_next_png_chunk,
+    CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, CHUNK_TYPE_ZTXT, read_next_png_chunk,
+};
+use tt_adapter_storage_core::png_metadata::{
+    PNG_SIGNATURE, read_preferred_text_chunk, replace_text_chunks, write_text_chunk,
 };
 pub use tt_adapter_storage_core::png_metadata::{TextChunk, read_text_chunks_from_png};
-use tt_adapter_storage_core::png_metadata::{
-    read_preferred_text_chunk, replace_text_chunks, write_text_chunk,
-};
 use tt_domain::errors::DomainError;
+use tt_ports::external_import::CharacterCardEmbedder;
 use tt_ports::repositories::character_repository::ImageCrop;
 
 /// PNG text keys used for character data.
@@ -72,6 +74,30 @@ pub fn write_character_data_to_png(
         write_text_chunk(&mut chunks, CHUNK_NAME_V3, &payload);
     }
     replace_text_chunks(image_data, &[CHUNK_NAME_V2, CHUNK_NAME_V3], &chunks)
+}
+
+pub(crate) fn is_png_bytes(image_data: &[u8]) -> bool {
+    image_data.starts_with(&PNG_SIGNATURE)
+}
+
+pub struct PngCharacterCardEmbedder;
+
+#[async_trait]
+impl CharacterCardEmbedder for PngCharacterCardEmbedder {
+    async fn embed(&self, image: &Path, card_json: &str) -> Result<(), DomainError> {
+        let image_data = tokio::fs::read(image).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to read card image: {error}"))
+        })?;
+        let png = if is_png_bytes(&image_data) {
+            image_data
+        } else {
+            process_avatar_image(image_data, None).await?
+        };
+        let card = write_character_data_to_png(&png, card_json)?;
+        tokio::fs::write(image, card).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to write character card: {error}"))
+        })
+    }
 }
 
 /// Process an image for use as a character avatar.

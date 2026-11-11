@@ -2989,71 +2989,34 @@ export function setupScrollToTop({ scrollContainerId, buttonId, drawerId, visibi
  * @returns {Promise<void>} A promise that resolves when the import is complete.
  */
 export async function importFromExternalUrl(url, { preserveFileName = null, replacement = false } = {}) {
-    if (isValidUrl(url)) {
-        console.debug('Custom content import started for URL: ', url);
-        let file;
-        try {
-            file = await window.__TAURITAVERN__.api.characterCards.stageFromUrl(url);
-        } catch (error) {
-            if (replacement) {
-                throw error;
-            }
-
-            toastr.info(error.message, 'Custom content import failed');
-            console.error('Custom content import failed', error);
-            return;
-        }
-
-        const extraData = new Map();
-        if (preserveFileName) {
-            extraData.set(file, preserveFileName);
-        }
-        await processDroppedFiles([file], extraData, { replacement });
-        return;
-    }
-
-    console.debug('Custom content import started for Char UUID: ', url);
-    const request = await fetch('/api/content/importUUID', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ url }),
-    });
-
-    if (!request.ok) {
-        const error = new Error(`Custom content import failed: ${request.statusText || `HTTP ${request.status}`}`);
+    console.debug('Custom content import started: ', url);
+    const characterCards = window.__TAURITAVERN__.api.characterCards;
+    let content;
+    try {
+        content = replacement
+            ? { kind: 'character', file: await characterCards.stageFromUrl(url) }
+            : await characterCards.contentFromUrl(url);
+    } catch (error) {
         if (replacement) {
             throw error;
         }
 
-        toastr.info(request.statusText, 'Custom content import failed');
-        console.error('Custom content import failed', request.status, request.statusText);
+        toastr.info(error.message, 'Custom content import failed');
+        console.error('Custom content import failed', error);
         return;
     }
 
-    const customContentType = request.headers.get('X-Custom-Content-Type');
-    if (replacement && customContentType !== 'character') {
-        throw new Error(`Expected character content, received: ${customContentType || 'unknown'}`);
-    }
-
-    const data = await request.blob();
-    const fileName = request.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '');
-    const file = new File([data], fileName, { type: data.type });
-
     const extraData = new Map();
     if (preserveFileName) {
-        extraData.set(file, preserveFileName);
+        extraData.set(content.file, preserveFileName);
     }
 
-    switch (customContentType) {
+    switch (content.kind) {
         case 'character':
-            await processDroppedFiles([file], extraData, { replacement });
+            await processDroppedFiles([content.file], extraData, { replacement });
             break;
         case 'lorebook':
-            await importWorldInfo(file);
-            break;
-        default:
-            toastr.warning('Unknown content type');
-            console.error('Unknown content type', customContentType);
+            await importWorldInfo(content.file);
             break;
     }
 }

@@ -43,7 +43,8 @@ impl HttpExternalImportDownloader {
                 None if response.status().is_success() => return Ok(response),
                 None => {
                     return Err(DomainError::InternalError(format!(
-                        "Upstream responded with HTTP {}",
+                        "{} responded with HTTP {}",
+                        response.url().origin().ascii_serialization(),
                         response.status()
                     )));
                 }
@@ -125,7 +126,8 @@ fn redirect_target(response: &Response) -> Result<Option<Url>, DomainError> {
         .map(Some)
         .ok_or_else(|| {
             DomainError::InternalError(format!(
-                "Upstream responded with HTTP {status} without a usable Location"
+                "{} responded with HTTP {status} without a usable Location",
+                response.url().origin().ascii_serialization()
             ))
         })
 }

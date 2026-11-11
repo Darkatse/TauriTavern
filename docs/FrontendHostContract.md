@@ -124,7 +124,8 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
   - `api.characterCards`（Project，第一方使用）：把角色卡放进宿主暂存，以及接管卡内的世界书。
-    - `pickFiles({ multiple? })`、`stageFromUrl(url)`、`stageSharedFile(uri, name)`（仅 Android）得到 `StagedFile { path, name }`，交给 `processDroppedFiles` 导入，规则见[文件导入与导出](CurrentState/FileTransfer.md)。`pickFiles` 取消时返回 `null`。
+    - `pickFiles({ multiple? })`、`stageFromUrl(url)`、`stageSharedFile(uri, name)`（仅 Android）得到 `StagedFile { path, name }`，交给 `processDroppedFiles` 导入，规则见[文件导入与导出](CurrentState/FileTransfer.md)。`pickFiles` 取消时返回 `null`；`stageFromUrl` 只接受角色卡。
+    - `contentFromUrl(url)` 接受 URL 或站点 ID，返回 `{ kind, file }`：`character` 为 `StagedFile`，`lorebook` 为 `File`。
     - 世界书接管，参数为头像文件名：
       - `adoptLorebook(avatar)`：按角色当前的绑定，接管卡内世界书。
       - `resolveLorebookAdoption(avatar, choice, token)`：提交 `adopt` 或 `update`。决定已过期时，以 `LorebookAdoptionConflictError` 拒绝。
@@ -245,7 +246,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 `/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。请求可以用 `staged_path`（宿主暂存文件的路径）代替 `avatar`。
 
-`/api/content/importURL` 与 `/api/assets/download` 的 `character` 类别由宿主下载角色卡，响应与上游相同；名单外的来源先询问用户（[导入来源](CurrentState/UserEndpointAccess.md#导入来源)）。
+`/api/content/importURL`、`/api/content/importUUID` 与 `/api/assets/download` 的 `character` 类别由宿主下载，响应与上游相同；名单外的来源先询问用户（[导入来源](CurrentState/UserEndpointAccess.md#导入来源)）。两条 content 路由都接受 URL 或站点 ID。
 
 `/api/characters/delete` 只删除角色和请求删除的聊天，不删除世界书。界面删卡时如何清理世界书，见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
 

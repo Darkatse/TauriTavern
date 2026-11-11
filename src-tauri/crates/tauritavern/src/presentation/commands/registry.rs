@@ -263,7 +263,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::file_staging_commands::stage_file_begin,
         super::file_staging_commands::stage_file_chunk,
         super::file_staging_commands::stage_file_finish,
-        super::file_staging_commands::stage_character_card_from_url,
+        super::file_staging_commands::stage_content_from_url,
         super::file_staging_commands::stage_file_from_url,
         super::file_staging_commands::stage_file_discard,
         // Chat payload commit commands

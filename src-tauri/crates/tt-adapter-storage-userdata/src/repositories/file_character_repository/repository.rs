@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::png_card_metadata::{
-    process_avatar_image, read_character_data_from_png, read_character_data_from_png_file,
-    write_character_data_to_png,
+    is_png_bytes, process_avatar_image, read_character_data_from_png,
+    read_character_data_from_png_file, write_character_data_to_png,
 };
 use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
@@ -24,11 +24,6 @@ struct CreateAvatarCarrier {
     image_data: Vec<u8>,
     can_fallback_to_default: bool,
     warnings: Vec<CharacterCreateWarning>,
-}
-
-fn is_png_bytes(image_data: &[u8]) -> bool {
-    const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    image_data.starts_with(&PNG_SIGNATURE)
 }
 
 fn avatar_import_warning(message: impl Into<String>) -> CharacterCreateWarning {
