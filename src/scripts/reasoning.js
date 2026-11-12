@@ -829,6 +829,15 @@ export class PromptReasoning {
         }
         return content;
     }
+
+    /**
+     * Returned reasoning is new thinking and starts a new paragraph: a prefix reasoning the model continues arrives in the reply text.
+     * @param {string} reasoning Reasoning returned by the continuation
+     * @returns {string} Text to append to the prefix reasoning
+     */
+    formatContinuation(reasoning) {
+        return reasoning && this.prefixReasoning ? `\n\n${reasoning}` : reasoning;
+    }
 }
 
 function loadReasoningSettings() {

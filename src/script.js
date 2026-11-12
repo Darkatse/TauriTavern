@@ -4759,8 +4759,9 @@ class StreamingProcessor {
                 if (logprobs) {
                     this.messageLogprobs.push(...(Array.isArray(logprobs) ? logprobs : [logprobs]));
                 }
-                // Get the updated reasoning string into the handler
-                this.reasoningHandler.updateReasoning(this.messageId, state?.reasoning);
+                // Get the updated reasoning string into the handler. Without returned reasoning it keeps its own, which auto-parse may have filled.
+                const continuation = this.promptReasoning.formatContinuation(state?.reasoning);
+                this.reasoningHandler.updateReasoning(this.messageId, continuation && this.promptReasoning.prefixReasoning + continuation);
                 this.images = state?.images ?? [];
                 this.reasoningSignature = state?.signature ?? null;
                 this.native = state?.native ?? null;
@@ -6703,7 +6704,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             if (originalType !== 'continue') {
                 ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, providerReplay, promptCache, hasToolCalls }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, providerReplay, promptCache, hasToolCalls }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning: promptReasoning.formatContinuation(reasoning), imageUrls, reasoningSignature, native, providerReplay, promptCache, hasToolCalls }));
             }
             toolTurnOwner = chat.at(-1) ?? null;
 
