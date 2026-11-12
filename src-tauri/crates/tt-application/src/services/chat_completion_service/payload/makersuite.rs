@@ -195,40 +195,32 @@ fn build_google_payload(
         generation_config.insert("stopSequences".to_string(), Value::Array(stop.clone()));
     }
 
+    let json_schema = payload
+        .get("json_schema")
+        .and_then(Value::as_object)
+        .and_then(|schema| schema.get("value"))
+        .filter(|value| !value.is_null());
+
     let response_mime_type = payload
         .get("responseMimeType")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| Value::String(value.to_string()))
-        .or_else(|| {
-            payload
-                .get("json_schema")
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("value"))
-                .filter(|value| !value.is_null())
-                .map(|_| Value::String("application/json".to_string()))
-        });
-
-    let response_schema = payload
-        .get("responseSchema")
-        .cloned()
-        .filter(|value| !value.is_null())
-        .or_else(|| {
-            payload
-                .get("json_schema")
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("value"))
-                .cloned()
-                .filter(|value| !value.is_null())
-        });
+        .or_else(|| json_schema.map(|_| Value::String("application/json".to_string())));
 
     if let Some(response_mime_type) = response_mime_type {
         generation_config.insert("responseMimeType".to_string(), response_mime_type);
     }
 
-    if let Some(response_schema) = response_schema {
-        generation_config.insert("responseSchema".to_string(), response_schema);
+    // Gemini's OpenAPI-subset fields cannot carry arbitrary JSON Schema.
+    if let Some(response_schema) = payload
+        .get("responseSchema")
+        .filter(|value| !value.is_null())
+    {
+        generation_config.insert("responseSchema".to_string(), response_schema.clone());
+    } else if let Some(json_schema) = json_schema {
+        generation_config.insert("responseJsonSchema".to_string(), json_schema.clone());
     }
 
     if enable_image_modality {
@@ -831,28 +823,9 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
         };
 
         if tool_type == "function" {
-            let Some(function) = tool.get("function").and_then(Value::as_object) else {
-                continue;
-            };
-
-            let mut function = function.clone();
-
-            if let Some(parameters) = function
-                .get_mut("parameters")
-                .and_then(Value::as_object_mut)
-            {
-                parameters.remove("$schema");
-
-                if parameters
-                    .get("properties")
-                    .and_then(Value::as_object)
-                    .is_some_and(|properties| properties.is_empty())
-                {
-                    function.remove("parameters");
-                }
+            if let Some(function) = tool.get("function").and_then(Value::as_object) {
+                function_declarations.push(function_declaration(function));
             }
-
-            function_declarations.push(Value::Object(function));
             continue;
         }
 
@@ -866,6 +839,20 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
     }
 
     (function_declarations, custom_tools)
+}
+
+fn function_declaration(function: &Map<String, Value>) -> Value {
+    let mut declaration = Map::new();
+    for (key, gemini_key) in [
+        ("name", "name"),
+        ("description", "description"),
+        ("parameters", "parametersJsonSchema"),
+    ] {
+        if let Some(value) = function.get(key).filter(|value| !value.is_null()) {
+            declaration.insert(gemini_key.to_string(), value.clone());
+        }
+    }
+    Value::Object(declaration)
 }
 
 fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationError> {
@@ -1692,6 +1679,53 @@ mod tests {
             .expect("tools must be array");
 
         assert!(tools.iter().any(|tool| tool.get("google_search").is_some()));
+    }
+
+    #[test]
+    fn makersuite_sends_json_schemas_in_its_json_schema_fields() {
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "title": { "type": "string" },
+                "context": { "type": "object", "additionalProperties": true }
+            },
+            "required": ["title"]
+        });
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "start_task",
+                    "description": "Start a task.",
+                    "parameters": schema,
+                    "strict": true
+                }
+            }],
+            "json_schema": { "name": "task", "value": schema }
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("schemas should map");
+        assert_eq!(
+            upstream.pointer("/tools/0/function_declarations/0"),
+            Some(&json!({
+                "name": "start_task",
+                "description": "Start a task.",
+                "parametersJsonSchema": schema,
+            }))
+        );
+        assert_eq!(upstream["generationConfig"]["responseJsonSchema"], schema);
+        assert_eq!(
+            upstream["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
+        assert!(upstream["generationConfig"].get("responseSchema").is_none());
     }
 
     #[test]

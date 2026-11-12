@@ -18,7 +18,7 @@ AgentModelRequest
 
 Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 reasoning signature、thought signature 或原生 output blocks。这些内容随消息保留。Timeline 使用 `readModelTurn()` 提供的可见文本和 reasoning 投影。
 
-Gateway 编码时交出全部原生内容，payload 构建只保留本次格式读取的一份，见[原生 API 格式](../CurrentState/NativeApiFormats.md#3-工具回合与原生内容)。
+Gateway 只产出请求中间格式：原生内容全部交出，工具定义交出模型名称、描述与原样的参数 schema。保留本次格式读取的原生内容、写入各格式的 schema 字段等适配由 payload 构建完成，见[原生 API 格式](../CurrentState/NativeApiFormats.md#3-工具回合与原生内容)。
 
 规范消息与工具调用用结构表达运行时理解的内容，其余线路字段放在各自的 `providerMetadata.fields`。encode 原样并入这些字段，它们不能覆盖结构产出的键。decode 只把之后需要回放的响应字段写入 `fields`，`refusal` 等只属于响应的字段不会发回；完整响应由 model response store 按轮保存。
 
@@ -79,7 +79,7 @@ Claude 的 `model_context_window_exceeded` 停止原因在 Rust gateway 与原�
 
 ## 修改入口
 
-- [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、请求消息转换 `request_messages`、结构键 `fields`、工具 schema 与 provider adapter。
+- [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、请求消息转换 `request_messages`、结构键 `fields` 与 provider adapter。
 - [provider_state.rs](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/provider_state.rs)：续接状态。
 - [ChatCompletionService](../../src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs)：统一模型调用。
 - [tt-adapter-provider-http](../../src-tauri/crates/tt-adapter-provider-http/src)：实际网络请求与 provider 协议。

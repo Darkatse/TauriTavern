@@ -218,7 +218,8 @@ fn claude_tool_calls_and_results_are_structured() {
             "function": {
                 "name": "weather",
                 "description": "get weather",
-                "parameters": { "type": "object", "properties": {} }
+                "parameters": { "type": "object", "properties": {} },
+                "strict": true
             }
         }]
     })
@@ -252,6 +253,7 @@ fn claude_tool_calls_and_results_are_structured() {
         "weather"
     );
     assert_eq!(upstream["tools"][0]["eager_input_streaming"], true);
+    assert_eq!(upstream["tools"][0]["strict"], true);
 
     let tool_result_block = messages
         .get(1)

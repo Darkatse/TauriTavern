@@ -7,7 +7,6 @@ use crate::services::agent_model_gateway::fields;
 use crate::services::agent_model_gateway::format::resolve_request_adapter;
 use crate::services::agent_model_gateway::provider_state;
 use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
-use crate::services::agent_model_gateway::schema;
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
     AgentToolResult, OPENAI_CONTENT_PART_PROVIDER,
@@ -63,7 +62,7 @@ pub(crate) fn encode_chat_completion_request(
     } else {
         payload.insert(
             "tools".to_string(),
-            Value::Array(schema::render_openai_tools(&request.tools, adapter)),
+            request.tools.iter().map(encode_tool_definition).collect(),
         );
         payload.insert(
             "tool_choice".to_string(),
@@ -82,6 +81,14 @@ fn tool_image_message(images: Vec<Value>) -> Value {
         vec![json!({ "type": "text", "text": "Attached image(s) from tool result:" })];
     content.extend(images);
     json!({ "role": "user", "content": content })
+}
+
+fn encode_tool_definition(tool: &AgentModelTool) -> Value {
+    let mut function = json!({ "name": tool.model_alias, "parameters": tool.input_schema });
+    if let Some(description) = &tool.description {
+        function["description"] = Value::String(description.clone());
+    }
+    json!({ "type": "function", "function": function })
 }
 
 fn encode_tool_choice(

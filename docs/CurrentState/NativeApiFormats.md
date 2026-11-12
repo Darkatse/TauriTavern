@@ -39,6 +39,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 ## 3. 工具回合与原生内容
 
 - `tool_call_id` 是不透明字符串，原样传递与存储。
+- 工具定义的 `parameters` 是 JSON Schema。构造器把它写入本格式的 schema 字段，除个别来源已核实的约束外不做改写。function 的其余字段只有 OpenAI 兼容格式原样发送，其他格式只取自己支持的字段，例如 Responses 与 Claude 的 `strict`。
 - `native` 与 `signature` 是 TT 的扩展字段。`build_payload` 在 Prompt Post-Processing 与格式构造之前统一投影：`native` 只保留本次格式的键，不是对象时报错；`signature` 只保留给两种 Gemini 格式与 OpenRouter。
 - OpenRouter 只从 `reasoning.encrypted` 类型的 `reasoning_details` 项读取签名，构造器把 `signature` 改写为这类项。
 - 原生内容原样保存，不清洗未知字段。回放前由 `provider-replay.js` 核对正文、来源、模型与格式。Legacy 回放 Claude 与两种 Custom Gemini 格式的原生内容。
@@ -77,6 +78,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 ### Gemini generateContent
 
 - Custom 复用 Google AI Studio 的翻译与传输。Base URL 与模型分开配置：保留显式的 `/v1` 或 `/v1beta`，否则补 `/v1beta`。Additional Parameters 在翻译之后应用。`n` 多候选尚未实现。
+- 工具定义的 schema 写入 `parametersJsonSchema`，`json_schema` 写入 `generationConfig.responseJsonSchema`。`parameters` 与 `responseSchema` 只接受 OpenAPI 子集，且 Gemini API 与 Vertex 接受的范围不同。payload 中直接写的 `responseSchema` 原样使用。
 - 普通消息的 `native.gemini.content.parts` 原样进入 `contents`。无法核对的旧记录只保留正文与可见推理；流式请求完整结束后才提交原生内容。
 - Google AI Studio、Custom 与 Vertex AI 共用流式累加与响应归一化。响应须包含可见文本、工具调用或内联媒体；没有候选时报告 `promptFeedback.blockReason`。
 - 模型列表读取全部分页并保留 metadata，中途失败时不返回部分列表。服务器返回已经请求过的分页令牌时停止分页，丢弃重复的一页。

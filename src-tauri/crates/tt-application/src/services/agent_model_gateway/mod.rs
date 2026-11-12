@@ -17,7 +17,6 @@ mod format;
 mod provider_state;
 mod providers;
 mod request_messages;
-mod schema;
 
 #[cfg(test)]
 mod tests;

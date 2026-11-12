@@ -7,7 +7,6 @@ use super::provider_state::{
 };
 use super::providers::AgentProviderAdapter;
 use super::request_messages::canonical_request_messages;
-use super::schema::sanitize_schema_for_provider;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
@@ -524,66 +523,6 @@ fn rejects_incomplete_agent_turns_with_their_recovery_code() {
         let error = decode_chat_completion_response(response, &[]).unwrap_err();
         assert!(error.to_string().contains(code));
     }
-}
-
-#[test]
-fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
-    let schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "agentId": { "type": "string" },
-            "task": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                    "title": { "type": "string" },
-                    "objective": { "type": "string" },
-                    "context": {
-                        "type": "object",
-                        "additionalProperties": true,
-                        "description": "Free-form task context."
-                    }
-                },
-                "required": ["objective"]
-            }
-        },
-        "required": ["agentId", "task", "missing"]
-    });
-
-    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::Gemini);
-
-    assert_eq!(sanitized["required"], json!(["agentId", "task"]));
-    assert!(sanitized["properties"]["task"].get("required").is_none());
-    assert_eq!(sanitized["properties"]["task"]["type"], "object");
-    assert_eq!(
-        sanitized["properties"]["task"]["properties"]["context"]["type"],
-        "string"
-    );
-}
-
-#[test]
-fn claude_schema_sanitizer_only_removes_transport_metadata() {
-    let schema = json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "tool.schema.json",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "mode": {
-                "$id": "mode",
-                "type": "string",
-                "const": "draft"
-            }
-        }
-    });
-
-    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::ClaudeMessages);
-    assert!(sanitized.get("$schema").is_none());
-    assert!(sanitized.get("$id").is_none());
-    assert!(sanitized["properties"]["mode"].get("$id").is_none());
-    assert_eq!(sanitized["additionalProperties"], false);
-    assert_eq!(sanitized["properties"]["mode"]["const"], "draft");
 }
 
 #[test]
