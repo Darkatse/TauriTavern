@@ -14,7 +14,7 @@
 
 工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射的快照。输出修订沿用原快照。`tool_request_gate` 检查快照与本轮工具选择后，调用明确分派到 Builtin、MCP 或 Extension；`prompt` 工具返回可恢复的 `tool.no_executor`。
 
-提示词可以在 `generationParameters.tools` 中声明工具，组装完成后按模型调用名称并入快照：同名时替换已有工具的描述、参数 schema 与 `fields`，执行者不变；其余成为 `prompt` 工具。
+提示词可以在 `generationParameters.tools` 中声明工具（例如[预设工具条目](../CurrentState/PresetToolEntries.md)），组装完成后按模型调用名称并入快照：同名时替换已有工具的描述、参数 schema 与 `fields`，执行者不变；其余成为 `prompt` 工具。
 
 新 Profile 默认启用 Shell。
 

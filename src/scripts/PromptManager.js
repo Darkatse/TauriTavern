@@ -13,6 +13,7 @@ import { Popup } from './popup.js';
 import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
+import { prepareEntryFields } from './prompt-entry-fields.js';
 import {
     assertPromptOrderReferences,
     isPromptManagerImportDataValid,
@@ -163,6 +164,9 @@ class Prompt {
      */
     marker;
 
+    /** @type {Record<string, unknown>|undefined} */
+    fields;
+
     /**
      * Create a new Prompt instance.
      *
@@ -182,8 +186,9 @@ class Prompt {
      * @param {string} [param0.attach_role] - The role of the message to attach to.
      * @param {number} [param0.attach_index] - The ordinal index of the message to attach to.
      * @param {string} [param0.attach_side] - The side of the message to attach to (start/end).
+     * @param {Record<string, unknown>} [param0.fields]
      */
-    constructor({ identifier, role, content, name, system_prompt, position, injection_depth, injection_position, forbid_overrides, extension, injection_order, injection_trigger, attach_role, attach_index, attach_side } = {}) {
+    constructor({ identifier, role, content, name, system_prompt, position, injection_depth, injection_position, forbid_overrides, extension, injection_order, injection_trigger, attach_role, attach_index, attach_side, fields } = {}) {
         this.identifier = identifier;
         this.role = role;
         this.content = content;
@@ -199,6 +204,7 @@ class Prompt {
         this.attach_role = attach_role ?? 'user';
         this.attach_index = attach_index ?? 1;
         this.attach_side = attach_side ?? 'end';
+        this.fields = fields;
     }
 }
 
@@ -1509,6 +1515,11 @@ class PromptManager {
             if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
             else preparedPrompt.content = substitute(prompt.content);
         }
+
+        const fieldOptions = {};
+        if (typeof original === 'string') fieldOptions.original = original;
+        if (0 < groupMembers.length) fieldOptions.groupOverride = groupMembers.join(', ');
+        preparedPrompt.fields = prepareEntryFields(prompt, text => substitute(text, fieldOptions));
 
         return preparedPrompt;
     }

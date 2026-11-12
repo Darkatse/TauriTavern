@@ -5255,5 +5255,12 @@
     "Lorebook import failed": "世界書匯入失敗",
     "Character imported; lorebook import failed": "角色已匯入，但世界書匯入失敗",
     "Also deleted lorebook \"${0}\"": "已一併刪除世界書「${0}」",
-    "Character deleted; lorebook cleanup failed": "角色已刪除，但世界書清理失敗"
+    "Character deleted; lorebook cleanup failed": "角色已刪除，但世界書清理失敗",
+    "Prompt \"${0}\": fields must be a JSON object.": "提示詞「${0}」：欄位必須是 JSON 物件。",
+    "Prompt \"${0}\": fields contain \"${1}\" twice once macros are replaced.": "提示詞「${0}」：取代巨集後，欄位中出現了兩個「${1}」。",
+    "Prompt \"${0}\": fields cannot contain \"${1}\".": "提示詞「${0}」：欄位不能包含「${1}」。",
+    "Prompt \"${0}\": a tool definition needs a name.": "提示詞「${0}」：工具定義需要 name。",
+    "Prompt \"${0}\": a tool response needs a tool_call_id.": "提示詞「${0}」：工具回應需要 tool_call_id。",
+    "Prompt \"${0}\": tool_calls must be an array of calls, each with an id and a function name.": "提示詞「${0}」：tool_calls 必須是呼叫陣列，每個呼叫都要有 id 與函式名稱。",
+    "Prompt \"${0}\": an entry with fields cannot attach to an existing message.": "提示詞「${0}」：帶欄位的條目不能附著到既有訊息。"
 }

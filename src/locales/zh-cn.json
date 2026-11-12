@@ -4745,5 +4745,12 @@
     "Lorebook import failed": "世界书导入失败",
     "Character imported; lorebook import failed": "角色已导入，但世界书导入失败",
     "Also deleted lorebook \"${0}\"": "已一并删除世界书「${0}」",
-    "Character deleted; lorebook cleanup failed": "角色已删除，但世界书清理失败"
+    "Character deleted; lorebook cleanup failed": "角色已删除，但世界书清理失败",
+    "Prompt \"${0}\": fields must be a JSON object.": "提示词「${0}」：字段必须是 JSON 对象。",
+    "Prompt \"${0}\": fields contain \"${1}\" twice once macros are replaced.": "提示词「${0}」：替换宏后，字段中出现了两个「${1}」。",
+    "Prompt \"${0}\": fields cannot contain \"${1}\".": "提示词「${0}」：字段不能包含「${1}」。",
+    "Prompt \"${0}\": a tool definition needs a name.": "提示词「${0}」：工具定义需要 name。",
+    "Prompt \"${0}\": a tool response needs a tool_call_id.": "提示词「${0}」：工具响应需要 tool_call_id。",
+    "Prompt \"${0}\": tool_calls must be an array of calls, each with an id and a function name.": "提示词「${0}」：tool_calls 必须是调用数组，每个调用都要有 id 和函数名称。",
+    "Prompt \"${0}\": an entry with fields cannot attach to an existing message.": "提示词「${0}」：带字段的条目不能附着到已有消息。"
 }

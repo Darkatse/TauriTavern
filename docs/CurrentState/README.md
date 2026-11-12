@@ -18,6 +18,7 @@
 | [文件传输](FileTransfer.md) | 原生选取、交付与暂存 |
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
+| [预设工具条目](PresetToolEntries.md) | 工具定义、调用与响应条目，`fields` 与工具清单 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |
 | [角色身份](CharacterIdentityContract.md) | 角色、聊天目录、重命名与世界书绑定 |
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |

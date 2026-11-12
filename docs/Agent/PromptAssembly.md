@@ -31,7 +31,7 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 每个 Invocation 按自己的 Profile 选择预设与连接：`currentPromptSnapshot` 取冻结的 `currentPreset` 与 `currentModelConnection`，`ref` 与 `connectionRef` 解析具名资源。“当前”是 Run 捕获时的聊天，不随根 Agent 的绑定或运行中的 UI 切换改变。
 
-聊天根 Invocation 绑定当前预设时，直接复用 `Generate()` 的 live 生成，保留扩展钩子对消息和参数的修改。其余情况都独立组装。根绑定指定预设时：
+聊天根 Invocation 绑定当前预设时，直接复用 `Generate()` 的 live 生成，保留扩展钩子对消息、工具数据和参数的修改。其余情况都独立组装。根绑定指定预设时：
 
 ```text
 冻结聊天输入
