@@ -39,6 +39,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 ## 3. 工具回合与原生内容
 
 - `tool_call_id` 是不透明字符串，原样传递与存储。
+- 调用与结果的配对由服务商判定。两种 Gemini 格式需要工具结果的名称：先取它所回应的调用的名称，再取消息的 `name`，都没有时报错。
 - 工具定义的 `parameters` 是 JSON Schema。构造器把它写入本格式的 schema 字段，除个别来源已核实的约束外不做改写。function 的其余字段只有 OpenAI 兼容格式原样发送，其他格式只取自己支持的字段，例如 Responses 与 Claude 的 `strict`。
 - `native` 与 `signature` 是 TT 的扩展字段。`build_payload` 在 Prompt Post-Processing 与格式构造之前统一投影：`native` 只保留本次格式的键，不是对象时报错；`signature` 只保留给两种 Gemini 格式与 OpenRouter。
 - OpenRouter 只从 `reasoning.encrypted` 类型的 `reasoning_details` 项读取签名，构造器把 `signature` 改写为这类项。
@@ -53,7 +54,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 
 ### OpenAI Responses
 
-- assistant `tool_calls` 编码为 `function_call`，tool 消息编码为 `function_call_output`；缺少 id、名称、参数或 `tool_call_id` 时报错。转换层只翻译工具项，调用与结果的配对由服务商判定。
+- assistant `tool_calls` 编码为 `function_call`，tool 消息编码为 `function_call_output`；缺少 id、名称、参数或 `tool_call_id` 时报错。
 - `store` 为 `false`，`include` 包含 `reasoning.encrypted_content`。`json_schema` 映射为 `text.format`。`enable_web_search` 加入托管的 `web_search` 工具，它不进入 Agent 本地工具表。
 - 默认非流式请求走 HTTP，流式请求走 SSE。连接设置中的 WebSocket 模式默认关闭；开启后 WebSocket、`previous_response_id` 与增量输入一起生效，失败时不回退 HTTP。只有内部 `_tauritavern_provider_state.transport` 为 `responses_websocket` 的请求使用 run 级持久会话。
 - WebSocket 经 `HttpClientPool` 的 ChatCompletion WebSocket profile 建连，沿用代理、TLS 与超时设置；会话键包含 transport revision，代理或 client 配置变化后重建会话。
@@ -92,6 +93,6 @@ Custom 变体在设置中保存为 `chat_completion_source="custom"`，格式记
 ## 修改入口
 
 - 格式判定：[`exchange.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/exchange.rs)
-- 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，扩展字段投影在 `extension_fields.rs`，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
+- 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，扩展字段投影在 `extension_fields.rs`，工具调用与结果的共用规则在 `tool_calls.rs`，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
 - 传输、流式与归一化：[`http_chat_completion_repository/`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository)，按 endpoint 分流在 `mod.rs`，响应归一化在 `normalizers.rs`
 - 前端：[`openai.js`](../../src/scripts/openai.js) 负责格式选择、流式解析与工具回合组装，[`provider-replay.js`](../../src/scripts/tauritavern/provider-replay.js) 负责回放核对

@@ -2,8 +2,7 @@ use serde_json::{Map, Value, json};
 use tt_domain::models::tool::ToolArguments;
 
 use super::shared::message_content_to_text;
-
-const DEFAULT_TOOL_NAME: &str = "tool";
+use crate::errors::ApplicationError;
 
 #[derive(Debug, Clone)]
 pub(super) struct OpenAiToolCall {
@@ -52,8 +51,20 @@ pub(super) fn message_tool_call_id(message: &Map<String, Value>) -> Option<Strin
     non_empty_string(message.get("tool_call_id"))
 }
 
-pub(super) fn message_tool_name(message: &Map<String, Value>) -> Option<String> {
-    non_empty_string(message.get("name"))
+pub(super) fn tool_response_name(
+    format: &str,
+    index: usize,
+    call_name: Option<&str>,
+    message: &Map<String, Value>,
+) -> Result<String, ApplicationError> {
+    call_name
+        .map(str::to_string)
+        .or_else(|| non_empty_string(message.get("name")))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "{format} tool message {index} answers no earlier call and has no name"
+            ))
+        })
 }
 
 pub(super) fn message_tool_result_text(message: &Map<String, Value>) -> String {
@@ -71,10 +82,6 @@ pub(super) fn normalize_tool_result_payload(content: &str) -> Value {
         Ok(other) => json!({ "content": other }),
         Err(_) => json!({ "content": content }),
     }
-}
-
-pub(super) fn fallback_tool_name() -> &'static str {
-    DEFAULT_TOOL_NAME
 }
 
 fn non_empty_string(value: Option<&Value>) -> Option<String> {

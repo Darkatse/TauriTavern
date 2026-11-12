@@ -15,8 +15,8 @@ use super::content_parts::{
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
-    OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
-    message_tool_name, normalize_tool_result_payload,
+    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id, normalize_tool_result_payload,
+    tool_response_name,
 };
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
@@ -401,9 +401,12 @@ fn convert_messages(
         let mut parts = if is_tool {
             let previous_call =
                 message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
-            let name = message_tool_name(message)
-                .or_else(|| previous_call.map(|(name, _)| name.clone()))
-                .unwrap_or_else(|| fallback_tool_name().to_string());
+            let name = tool_response_name(
+                "Gemini",
+                index,
+                previous_call.map(|(name, _)| name.as_str()),
+                message,
+            )?;
             let content_parts = parse_openai_chat_content(message.get("content"))?;
             let mut images = Vec::new();
             for part in &content_parts {
@@ -1385,7 +1388,7 @@ mod tests {
         ] {
             let payload = json!({
                 "model": "gemini-2.5-flash",
-                "messages": [{ "role": role, "content": content }]
+                "messages": [{ "role": role, "name": "read_state", "content": content }]
             })
             .as_object()
             .cloned()
@@ -1425,6 +1428,45 @@ mod tests {
                 .to_string()
                 .contains("Gemini system instruction cannot preserve image input")
         );
+    }
+
+    #[test]
+    fn makersuite_names_tool_results_after_the_answered_call_then_themselves() {
+        let upstream = build_with_messages(
+            "gemini-3-flash-preview",
+            json!([
+                {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "read_state", "arguments": "{}" }
+                    }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "name": "renamed", "content": "hp: 3" },
+                { "role": "tool", "tool_call_id": "call_9", "name": "note", "content": "saved" },
+            ]),
+        );
+        let names = upstream["contents"][1]["parts"]
+            .as_array()
+            .expect("tool results must share one turn")
+            .iter()
+            .map(|part| part["functionResponse"]["name"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(names, [json!("read_state"), json!("note")]);
+
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": [
+                { "role": "user", "content": "Read the state" },
+                { "role": "tool", "tool_call_id": "call_9", "content": "hp: 3" },
+            ],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let error = build(payload).expect_err("a result without any name cannot be sent");
+        assert!(error.to_string().contains("tool message 1"));
     }
 
     #[test]
