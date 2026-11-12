@@ -1536,6 +1536,27 @@ export function parseReasoningFromString(str, { strict = true } = {}, template =
 }
 
 /**
+ * Unlike parseReasoningFromString, whitespace around the template tags is ignored, and an unclosed block makes
+ * the rest of the prefill reasoning, its end kept as written because the model continues from there.
+ * @param {string} prefill Prefill text
+ * @returns {ParsedReasoning|null} null when the prefill does not open with a reasoning block
+ */
+export function parsePrefillReasoning(prefill) {
+    const prefix = (power_user.reasoning.prefix || '').trim();
+    const suffix = (power_user.reasoning.suffix || '').trim();
+    const text = prefill.trimStart();
+    if (!prefix || !suffix || !text.startsWith(prefix)) {
+        return null;
+    }
+
+    const body = text.slice(prefix.length);
+    const end = body.indexOf(suffix);
+    return end === -1
+        ? { reasoning: body.trimStart(), content: '' }
+        : { reasoning: body.slice(0, end).trim(), content: body.slice(end + suffix.length).trimStart() };
+}
+
+/**
  * Formats reasoning and content into a string using the reasoning template.
  * This is the inverse of parseReasoningFromString.
  * @typedef {Object} FormattedReasoning

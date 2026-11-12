@@ -43,6 +43,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 - SillyTavern 会把一次工具回合拆成相邻的可见消息与 invocation 消息。两份原生内容完全相同时只回放一次；Claude 在两者不一致时报错，编辑其中任一条会使两份同时失效。
 - `extra_content` 由服务商定义，流式时以最新的非 null 快照整体替换。Legacy 与 Agent 按原 tool call 位置保存，切换 provider 或模型后不携带旧值。
 - Legacy 工具续轮在开启“请求思维链”、模型与说话角色不变时，随 assistant tool call 消息回传该轮的 `reasoning_content`。使用这一字段的连接是 DeepSeek、Moonshot、Z.AI、MiniMax 原生渠道，以及兼容格式下的 DeepSeek V4。OpenRouter 与其余 Custom 连接按 `tool_reasoning_mode` 转发 interleaved `reasoning`。一个连接只使用其中一种。
+- Moonshot 的 partial 模式只从 `reasoning_content` 接续思考。隐藏预填（最后一条 assistant 消息）若以推理模板的推理块开头，前端把推理块移入 `reasoning_content`，未闭合的推理块也是如此。`Start Reply With` 与「继续」的消息属于回复正文，推理由前端从回复文本中解析，保持文本形式。
 - OpenAI Responses 默认重放完整消息，Agent 还回放原生输出；`previous_response_id` 只在 WebSocket 模式下使用，见 [续接状态](../Agent/LlmGateway.md#续接状态)。
 
 ## 4. 各格式要点

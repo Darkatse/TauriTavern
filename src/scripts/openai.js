@@ -53,6 +53,7 @@ import {
 } from './prompt-injections.js';
 
 import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_description_positions, power_user } from './power-user.js';
+import { parsePrefillReasoning } from './reasoning.js';
 import { readSecretState, resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
 
 import { getEventSourceStream } from './sse-stream.js';
@@ -2514,6 +2515,10 @@ export async function prepareOpenAIMessages({
 
         // All information is up-to-date, render.
         if (assemblyRuntime.renderPromptManager && false === dryRun) activePromptManager.render(false);
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.MOONSHOT) {
+        moveHiddenPrefillReasoning(chatCompletion);
     }
 
     const chat = chatCompletion.getChat();
@@ -5172,6 +5177,10 @@ class Message {
         return message;
     }
 
+    isSendable() {
+        return Boolean(this.agentMessage || this.content || this.tool_calls || this.reasoningContent || this.role === 'tool');
+    }
+
     /**
      * Reconstruct the message from a tool invocation.
      * @param {import('./tool-calling.js').ToolInvocation[]} invocations - The tool invocations to reconstruct the message from.
@@ -5445,7 +5454,7 @@ class MessageCollection {
         return this.collection.reduce((acc, message) => {
             if (message.agentMessage) {
                 acc.push(message.agentMessage);
-            } else if (message.content || message.tool_calls || message.role === 'tool') {
+            } else if (message.isSendable()) {
                 acc.push({
                     role: message.role,
                     content: message.content,
@@ -5663,7 +5672,7 @@ export class ChatCompletion {
         this.checkTokenBudget(message, message.identifier);
 
         const index = this.findMessageIndex(identifier);
-        if (message.agentMessage || message.content || message.tool_calls || message.role === 'tool') {
+        if (message.isSendable()) {
             if ('start' === position) this.messages.collection[index].collection.unshift(message);
             else if ('end' === position) this.messages.collection[index].collection.push(message);
             else if (typeof position === 'number') this.messages.collection[index].collection.splice(position, 0, message);
@@ -5743,7 +5752,7 @@ export class ChatCompletion {
                 chat.push(...item.getChat());
             } else if (item instanceof Message && item.agentMessage) {
                 chat.push(item.agentMessage);
-            } else if (item instanceof Message && (item.content || item.tool_calls || item.role === 'tool')) {
+            } else if (item instanceof Message && item.isSendable()) {
                 const message = {
                     role: item.role,
                     content: item.content,
@@ -8553,6 +8562,24 @@ function replaysToolReasoningContent(settings, model = getChatCompletionModel(se
     }
     const lastSegment = String(model ?? '').trim().toLowerCase().split('/').pop() ?? '';
     return lastSegment.startsWith('deepseek-v4') || lastSegment.startsWith('deepseek-flash');
+}
+
+/**
+ * Moonshot partial mode continues reasoning natively only from reasoning_content. Start Reply With and the
+ * continued message stay text: they are part of the reply, whose reasoning is parsed from the reply text.
+ * @param {ChatCompletion} chatCompletion
+ */
+function moveHiddenPrefillReasoning(chatCompletion) {
+    const prefill = chatCompletion.getMessages().flatten().findLast(message => message.isSendable());
+    if (prefill?.role !== 'assistant' || typeof prefill.content !== 'string'
+        || prefill.identifier === 'bias' || prefill.identifier === 'continuePrefill') {
+        return;
+    }
+    const parsed = parsePrefillReasoning(prefill.content);
+    if (parsed) {
+        prefill.content = parsed.content;
+        prefill.reasoningContent = parsed.reasoning;
+    }
 }
 
 /**
