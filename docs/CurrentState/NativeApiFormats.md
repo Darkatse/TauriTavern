@@ -1,223 +1,92 @@
-# 原生 API 格式（Custom）兼容现状
+# 原生模型 API 格式
 
-最后更新：2026-10-16
+本文说明聊天请求如何从前端的 OpenAI 兼容形状转换为各家原生协议，以及响应如何归一化后交还前端。Agent 的续接状态见 [LLM gateway](../Agent/LlmGateway.md)。
 
-本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini generateContent / Gemini Interactions）的当前实现快照与持续开发约束。
+## 1. 格式与链路
 
-目标边界（回滚兼容）：
-- “倒回 SillyTavern”后，ST 1.16.0 **能启动且设置不崩** 即可（不追求 ST 原生理解新字段）。
+前端提交 OpenAI 兼容的 generate payload。Rust payload builder 按格式构造上游请求，provider repository 负责传输，并把响应归一化为 `chat.completion` 与 `chat.completion.chunk`。前端按格式选择解析分支，并在消息的 `extra.native` 中保存原生内容。
 
----
+| 格式 | 上游端点 | 交给前端的流 | 原生内容 |
+| --- | --- | --- | --- |
+| OpenAI 兼容 | `/chat/completions` | chunk | `tool_calls[].extra_content` |
+| OpenAI Responses | `/responses` | 归一化为 chunk | `openai_responses.output` |
+| Claude Messages | `/messages` | Anthropic 事件 | `claude.content`（仅含 client `tool_use` 的回合） |
+| Gemini generateContent | `/models/{model}:generateContent` 与 `:streamGenerateContent` | Gemini 事件，末包带原生内容 | `gemini.content` |
+| Gemini Interactions | `/interactions` | 归一化为 chunk，末包带原生内容 | `gemini_interactions.steps` |
 
-## 1. 当前解决了什么问题
+格式由 `ChatCompletionProviderFormat` 统一判定：Custom 与 OpenCode 取连接设置，内建来源取来源与模型。例如原生 OpenAI 的 GPT-6 使用 Responses，直连、Bedrock 与 Vertex 上的 Claude 使用 Claude Messages。Custom 的 repository 再按 endpoint path 选择传输。
 
-在保持前端尽量沿用 SillyTavern 语义（`chat.completion` / tool loop / 事件流）前提下，为 `Custom` 入口新增四种“原生协议”变体：
+响应中明确的 error（包括 HTTP 200 的 JSON error）在共同读取处转为错误，Legacy 与 Agent 走同一传播路径。流式前端只跳过非 JSON 帧。
 
-- **OpenAI Responses**：`/v1/responses`（支持 stream + tool calling）
-- **Claude Messages**：`/v1/messages`（显式启用 prompt caching 或快速模式时补充所需 beta header）
-- **Gemini generateContent**：`/v1beta/models/{model}:generateContent` / `:streamGenerateContent?alt=sse`（复用 Google AI Studio 链路，支持 stream + tool calling + native parts 回放）
-- **Gemini Interactions**：`/v1beta/interactions`（支持 stream + tool calling + thought signature/native blocks 回放）
+normalizer 把缓存读取数写入 `usage.prompt_tokens_details.cached_tokens`，缺失时不补零；Claude 的 `prompt_tokens` 包含缓存读取、缓存写入与未缓存输入。前端把缺失或不一致的计数视为未知，此时不显示缓存命中率。OpenAI 兼容的流式请求设置 `stream_options.include_usage=true`，usage 尾包可以没有 choices，读取要持续到流正常结束。
 
-核心原则：
-- **协议复杂度集中在 Rust 后端 translator + normalizer**；前端尽量只做最小选择/回显与少量解析分支。
-- **配置回滚友好**：落盘仍以 `chat_completion_source=custom` 为主，新能力通过新增字段 `custom_api_format` 扩展。
+## 2. 请求参数
 
----
+Reasoning Effort 选 `Auto` 时不发送 `reasoning_effort`。
 
-## 2. 端到端链路现在如何工作
+内建来源按已核实的模型事实构造请求。这些事实集中在 `model_capabilities.rs` 与各来源的 builder，本文不逐个列举模型；它们只用于构造请求，不在本地重复服务商的参数校验。共同规则如下：
 
-### 2.1 配置与选择（前端）
+- 推理强度换算为模型支持的档位。只有 low、high、max 三档的模型共用一套映射：Minimum 与 Low 发 low，Medium、High 与 XHigh 发 high，Maximum 发 max。
+- 模型固定的采样参数，以及当前推理强度下不接受的采样参数，不发送。
+- “请求思维链”对能开关思考的模型决定是否思考。始终思考的模型不发送思考开关，此时该设置只决定是否保留思考内容，即是否显示、是否在工具续轮中回传。
+- 不接受强制工具调用的 Claude 模型，JSON schema 使用 `output_config.format`；其他 Claude 使用 schema tool。
 
-UI：OpenAI 设置的 `Chat Completion Source` 增加 4 个选项：
-- `Custom (OpenAI Responses)`
-- `Custom (Claude Messages)`
-- `Custom (Gemini generateContent)`
-- `Custom (Gemini Interactions)`
+Custom 连接不按模型名启用、校验或降级参数。显式值按格式转换后发送：`reasoning_effort` 对应 Responses 的 `reasoning.effort`、Claude 的 `output_config.effort` 与 Interactions 的 `generation_config.thinking_level`。上游不接受时错误原样返回，用户可以用 include/exclude body override 覆盖或删除字段。以下两处按模型名处理：
 
-落盘语义（关键契约）：
-- 任何 “Custom (*)” 变体最终都落到：
-  - `oai_settings.chat_completion_source = "custom"`
-  - `oai_settings.custom_api_format ∈ {"openai_compat","openai_responses","claude_messages","gemini_interactions","gemini_generate_content"}`
+- Gemini generateContent 的模型名中能识别出 Gemini 模型 ID 时（包括 `models/` 与中转前缀），推理强度按该模型的思考级别或预算映射；其他别名映射为 `thinkingLevel`。
+- Custom 与 OpenCode 的 OpenAI 兼容格式下的 DeepSeek V4 与原生 DeepSeek 共用后端适配，在协议构建之后、用户覆盖之前执行。
 
-这保证把配置文件拷回 ST 1.16.0 时：
-- `chat_completion_source` 仍是 ST 已知的 `custom`
-- `custom_api_format` 作为“未知字段”被 ST 忽略（但不应导致设置页崩溃）
+## 3. 工具回合与原生内容
 
-Connection Profiles（Connection Manager 扩展）：
-- profile 中的 `api` 对 Custom 统一记录为 `custom`，避免把 UI 变体值写入配置造成回滚风险。
-- Custom 变体由单独字段 `custom-api-format` 记录与回放（等价于执行 `/custom-api-format <format>`）。
+- `tool_call_id` 是不透明字符串，原样传递与存储。
+- 原生内容原样保存，不清洗未知字段。回放前由 `provider-replay.js` 核对正文、来源、模型与格式。Legacy 回放 Claude 与两种 Custom Gemini 格式的原生内容。
+- SillyTavern 会把一次工具回合拆成相邻的可见消息与 invocation 消息。两份原生内容完全相同时只回放一次；Claude 在两者不一致时报错，编辑其中任一条会使两份同时失效。
+- `extra_content` 由服务商定义，流式时以最新的非 null 快照整体替换。Legacy 与 Agent 按原 tool call 位置保存，切换 provider 或模型后不携带旧值。
+- Legacy 工具续轮在开启“请求思维链”、模型与说话角色不变时，随 assistant tool call 消息回传该轮的 `reasoning_content`。使用这一字段的连接是 DeepSeek、Moonshot、Z.AI、MiniMax 原生渠道，以及兼容格式下的 DeepSeek V4。OpenRouter 与其余 Custom 连接按 `tool_reasoning_mode` 转发 interleaved `reasoning`。一个连接只使用其中一种。
+- OpenAI Responses 默认重放完整消息，Agent 还回放原生输出；`previous_response_id` 只在 WebSocket 模式下使用，见 [续接状态](../Agent/LlmGateway.md#续接状态)。
 
-端点预览由所选协议和连接设置推导；Gemini generateContent 另取模型与流式状态，地址规则与后端保持一致。
+## 4. 各格式要点
 
-### 2.2 请求构建（Rust payload builder）
+### OpenAI Responses
 
-后端入口仍按“OpenAI 兼容 generate payload”接收前端数据，在 `payload/custom.rs` 中按 `custom_api_format` 分流：
-- `openai_compat` → 走现有 `/chat/completions` 兼容构造，并应用 include/exclude overrides
-- `openai_responses` → 构造 `/responses`
-- `claude_messages` → 复用 Claude Messages 构造，并应用 include/exclude overrides
-- `gemini_interactions` → 构造 `/interactions`
-- `gemini_generate_content` → 复用 MakerSuite 翻译器与传输链路，Custom 语义见 §4.4
+- assistant `tool_calls` 编码为 `function_call`，tool 消息编码为 `function_call_output`；缺少 id、名称、参数或 `tool_call_id` 时报错。转换层只翻译工具项，调用与结果的配对由服务商判定。
+- `store` 为 `false`，`include` 包含 `reasoning.encrypted_content`。`json_schema` 映射为 `text.format`。`enable_web_search` 加入托管的 `web_search` 工具，它不进入 Agent 本地工具表。
+- 默认非流式请求走 HTTP，流式请求走 SSE。连接设置中的 WebSocket 模式默认关闭；开启后 WebSocket、`previous_response_id` 与增量输入一起生效，失败时不回退 HTTP。只有内部 `_tauritavern_provider_state.transport` 为 `responses_websocket` 的请求使用 run 级持久会话。
+- WebSocket 经 `HttpClientPool` 的 ChatCompletion WebSocket profile 建连，沿用代理、TLS 与超时设置；会话键包含 transport revision，代理或 client 配置变化后重建会话。
+- 上游 payload 移除 `_tauritavern_provider_state`；WebSocket 的 `response.create` 还移除 `stream` 与 `background`。
+- 流式语义事件归一化为 chunk。完成的 function call 作为单个 `tool_calls` delta 发出，`id` 取 `call_id`。流必须以 terminal event 结束，提前断开时报错，用户取消除外。
 
-DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各来源的参数与提示词策略；适配在协议构建后、用户覆盖前执行。
+### Gemini Interactions
 
-内建渠道的模型规则只用于构造请求，不再对构造出的 Claude payload 重复执行远端参数校验。Fable 5.1、Opus 5.5 与 Sonnet 5.5 的 JSON schema 使用 output_config.format，与 effort 和普通 tools 共存；其他 Claude 保留 schema tool。Custom 仍保留显式参数，最终是否接受由上游响应说明。
+- `custom_url` 不以 `/v1` 或 `/v1beta` 结尾时补 `/v1beta`。用户提供 `Authorization` header 时使用它，否则使用 `x-goog-api-key`。
+- `system` 消息合并为 `system_instruction`；JSON schema 写入 `response_format`。
+- 状态事件同时接受现网的 `interaction.status_update` 与文档中的命名，只以终态事件完成响应。
+- `thought_summary` 映射为 `reasoning_content`，`thought_signature` 只保留在原生 step 中。function call 参数累积到 `step.stop` 后解析，只发出一个完整的 tool call。服务端工具 step 与 annotations 只保留在原生内容中。
+- 流式 function call 的终态可以是 `completed`，因此 `finish_reason=tool_calls` 由组装出的 function call step 决定。`incomplete` 有可用文本时归一化为 `length`，否则报错。
 
-### 2.3 HTTP 调用 + Stream 处理（Rust repository）
+### Claude Messages
 
-仓库层对 `ChatCompletionSource::Custom` 以 **endpoint_path** 再分流（`http_chat_completion_repository/mod.rs`）：
-- `/responses` → OpenAI Responses repository（语义 SSE → 归一化 chunk）
-- `/interactions` → Gemini Interactions repository（语义 SSE → 归一化 chunk）
-- `/messages` → Claude repository（沿用 Claude 的事件流语义）
-- `/generateContent` / `/streamGenerateContent` → MakerSuite repository（常规 Gemini 原生 API）
-- 其他 → Custom OpenAI-compatible（`/chat/completions`）
+- Custom Claude Messages 默认不发送 `anthropic-beta`。显式开启 prompt caching 或快速模式时补充对应 header；prompt caching 还需满足 TT 的缓存策略。
+- `enable_web_search` 在直连与 Custom 中加入 `web_search_20250305` 工具。`server_tool_use` 与 `web_search_tool_result` 留在原生内容中，不投影为本地工具调用。Vertex 与 Bedrock 上的 Claude 不使用该设置。
+- 图片：data URL 转为 base64 source；直连与 Custom 的远端 URL 转为 url source。Bedrock 只接受 base64，无法保真的输入报错。`input_image.file_id` 不转换为 Files API 引用。
+- 后端透传 Anthropic 事件，前端 Claude 分支按 content block index 累积各类 delta。`stop_reason` 为 `refusal` 时保留输出并提示；为 `max_tokens` 或 `model_context_window_exceeded` 时保留部分文本并提示截断。这些终态都不执行未完成的 tool call。
 
-> 备注：Claude 的 streaming 仍保持“Anthropic 事件流 JSON”语义；Responses/Interactions streaming 则统一归一化为 OpenAI `chat.completion.chunk`。
+### Gemini generateContent
 
-JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误，Legacy 与 Agent 使用同一传播路径；流式前端只忽略非 JSON 帧，不吞掉已识别的 provider 错误。
+- Custom 复用 Google AI Studio 的翻译与传输。Base URL 与模型分开配置：保留显式的 `/v1` 或 `/v1beta`，否则补 `/v1beta`。Additional Parameters 在翻译之后应用。`n` 多候选尚未实现。
+- 普通消息的 `native.gemini.content.parts` 原样进入 `contents`。无法核对的旧记录只保留正文与可见推理；流式请求完整结束后才提交原生内容。
+- Google AI Studio、Custom 与 Vertex AI 共用流式累加与响应归一化。响应须包含可见文本、工具调用或内联媒体；没有候选时报告 `promptFeedback.blockReason`。
+- 模型列表读取全部分页并保留 metadata，中途失败时不返回部分列表。服务器返回已经请求过的分页令牌时停止分页，丢弃重复的一页。
 
----
+## 5. 设置与回滚
 
-## 3. 已支持能力 / 明确不支持
+Custom 变体在设置中保存为 `chat_completion_source="custom"`，格式记在 `custom_api_format`。Connection Profile 同样记录 `api=custom`，格式由 `custom-api-format` 字段回放。这样设置拷回 SillyTavern 1.16.0 后仍能启动，未知字段被忽略。
 
-### 3.1 能力矩阵（当前）
+模型列表与状态检查按格式选择接口：OpenAI 兼容与 Responses 使用 `/models`，Claude Messages 使用 Claude `/models`，两种 Gemini 格式使用 Gemini `/models`。端点预览按所选格式推导，地址规则与后端一致。
 
-| Custom 变体 | 非流式 | 流式 | tool calling | thought signature / native blocks | 回滚 ST 启动 |
-|---|---:|---:|---:|---:|---:|
-| OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（`tool_calls[].extra_content` opaque round-trip） | ✅ |
-| OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
-| Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
-| Gemini generateContent (`/models/{model}:…`) | ✅（normalize→chat.completion，含 native） | ✅（Gemini 原生 events，末包带 native） | ✅ | ✅（`message.extra.native.gemini.content` 回放） | ✅ |
-| Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 steps） | ✅ |
+## 修改入口
 
-### 3.2 明确的当前限制
-
-- **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求和默认关闭增强模式的 Agent 请求依赖完整 transcript / native output replay；显式启用 Responses WebSocket 模式后，Agent 才通过 run-scoped `provider_state` 使用 `previous_response_id` 与 incremental input。
-- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。Google 模型列表读取完整分页并保留模型 metadata，中途失败不返回部分列表；服务器给回已请求过的分页令牌（不转发 `pageToken` 的反向代理）时分页到此结束，重放的一页丢弃，此前各页就是它能提供的列表。
-- **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
-
----
-
-## 4. 三家实现要点（对持续开发最关键的部分）
-
-### 4.0 OpenAI-compatible（/chat/completions）
-
-- 共享 Chat Completions builder 为流式请求设置 `stream_options.include_usage=true`；现有 additional body overrides 仍可覆盖或删除该字段。usage 尾包可以没有 choices，必须消费到正常结束。
-- Claude、Gemini、Responses 与 Interactions 的 normalizer 将缓存读取数保留为 `usage.prompt_tokens_details.cached_tokens`，缺失时不补零；Claude 的 `prompt_tokens` 包含缓存读取、缓存写入和未缓存输入。Responses/Interactions 的现有流式终包携带相同 usage。
-- 缓存命中率是可选统计。前端共用解析入口将缺失或不一致的计数视为未知（`null`），不展示该统计、不猜测数值，也不因此中断流式或非流式回复；后续有效 usage 照常更新。
-- 第一方 UI 的 Reasoning Effort `Auto` 表示不生成 `reasoning_effort`；其他显式值由 Custom payload 原样发送，不按模型名启用、校验或降级。上游不接受时沿现有错误链路返回，用户仍可通过 include/exclude body override 最终覆盖或删除该字段。
-- assistant tool call 的 `extra_content` 是 provider-owned opaque JSON，流式处理中按最新非 null 快照整体替换；Legacy 与 Agent 按原 tool call 位置保存，并在同 API/model 的后续工具请求中原样回放。
-- 前端不解析其中的 provider namespace 或 signature，不按模型名启用，也不生成缺失值。
-- Rust OpenAI-compatible payload builder 继续整体转发 `messages`，不增加 provider-specific validation；上游不接受该字段时，其错误按现有链路返回用户。
-- Legacy provider/model 切换只迁移 canonical tool call 语义，不携带旧 provider 的 `extra_content`；Agent invocation 的模型连接在 run 内冻结。
-
-### 4.1 OpenAI Responses（/responses）
-
-请求侧（payload）：
-- `messages[]` → `input[]` items；`system` / `developer` / `user` 角色原样保留
-- assistant message 若携带 `message.native.openai_responses.output`，则原样回放 raw Responses `output` items
-- assistant text 会编码为 Responses `message` / `output_text`
-- assistant `tool_calls[]` 会编码为 Responses `function_call` items；`id` / `function.name` / `function.arguments` 必须可解析，缺失结构会 fail-fast
-- `tool` / `function` message 会编码为 `function_call_output`，必须有 `tool_call_id`
-- `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
-- Preset `enable_web_search=true` 会加入 `{ "type": "web_search" }` hosted tool；它可与本地 function tools 共存，不会进入 Agent 本地工具注册表
-- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
-- `json_schema` → `text.format`，与 `text.verbosity` 共存；schema 字段取值与 Chat Completions 共用。
-- `reasoning_effort` 仅做 `reasoning.effort` 的结构转换，显式值不按模型名启用、校验或降级。
-
-传输侧（repository）：
-- 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
-- 仅当内部 `_tauritavern_provider_state.transport = "responses_websocket"` 时，请求才走 run-scoped persistent WebSocket session；仅有 `sessionId` 的 portable Agent 请求仍走 HTTP
-- Custom Responses 连接设置默认关闭 WebSocket 模式；显式启用后 WebSocket、`previous_response_id` 与 incremental input 作为同一增强模式原子生效，该路径失败时不回退 HTTP
-- Responses WebSocket 建连通过 `HttpClientPool` 的 ChatCompletion WebSocket profile 发起 HTTP Upgrade，再交给 WebSocket frame stream；因此沿用现有代理、TLS/client 构建与连接超时契约
-- persistent session 的 connection key 包含 transport revision；request proxy / client 配置变更后会重建 session
-- 上游 HTTP payload 会剥离 `_tauritavern_provider_state`
-- WebSocket `response.create` payload 会剥离 `_tauritavern_provider_state`、`stream` 与 `background`
-
-流式侧（repository）：
-- 解析 Responses 语义事件（如 `response.output_text.delta` / `response.refusal.delta` / `response.output_item.done`）
-- 输出 OpenAI `chat.completion.chunk`：
-  - 文本 delta → `choices[0].delta.content`
-  - 推理 delta → `choices[0].delta.reasoning_content`
-  - 完成的 function call item → 单个 `choices[0].delta.tool_calls[]`（`id` 使用 Responses 的 `call_id`）
-- SSE 必须以 Responses terminal event 结束；连接提前关闭会 fail-fast，用户主动取消除外
-
-tool follow-up（关键契约）：
-- 普通 Custom Responses 不依赖 repository 内存缓存。转换层只翻译工具项，调用与结果的配对由服务商判定。
-- portable Agent Responses follow-up 使用 full transcript/native output replay；显式启用 WebSocket 模式后才由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动。详见 [Agent LLM gateway](../Agent/LlmGateway.md#续接状态)。
-
-### 4.2 Gemini Interactions（/v1beta/interactions）
-
-URL 与鉴权：
-- 若 `custom_url` 末尾不含 `/v1` 或 `/v1beta`，后端自动补 `.../v1beta`
-- 用户显式提供 `Authorization` 时优先使用该 header；否则使用 `x-goog-api-key`
-- streaming 由请求体 `stream: true` 启用，响应按 SSE 解析
-
-请求侧：
-- `system` message 聚合为顶层 `system_instruction`
-- user / assistant / tool history 分别构造 `user_input`、`model_output` / `function_call`、`function_result` steps
-- structured output 使用 `response_format = { "type": "text", "mime_type": "application/json", "schema": ... }`
-- `reasoning_effort` 仅做 `generation_config.thinking_level` 的结构转换，显式值不解析或降级。
-
-signature / native blocks（关键契约）：
-- 后端在 streaming 完成事件 `interaction.completed` 时，将聚合后的 `steps[]` 放入：
-  - `choices[0].delta.native = { gemini_interactions: { steps } }`
-- 前端在保存消息时将其落到 `message.extra.native`
-- 后续构造 stateless history 时，仅在正文与原响应一致、请求目标匹配时原样回放 steps。
-- SillyTavern 将带前导文本的 function-call turn 拆成相邻的可见消息与 tool invocation 时，payload translator 只对两者完全相同的 native steps 去重并回放一次
-
-流式归一化：
-- Interactions SSE 顺序为 `interaction.created` / 状态通知，随后每个输出依次经历 `step.start` / `step.delta` / `step.stop`，最后是 `interaction.completed` 与 `[DONE]`；适配器接受现网的 `interaction.status_update` 与文档命名的状态事件，但只以终态事件完成响应
-- `step.delta.type=text` → `delta.content`
-- `step.delta.type=thought_summary` → `delta.reasoning_content`；`thought_signature` 只保留在 native step
-- function call 的 id / name 来自 `step.start.step`；`step.delta.type=arguments_delta` 的 `arguments` 字符串累计到 `step.stop` 后解析，并只发送一个完整 `delta.tool_calls` item
-- Google Search 等服务端工具 step 与 text annotations 不投影到通用 chat 字段，只在流式组装后原样保留于 native steps
-- streaming function call 的 terminal status 可以是 `completed`，因此 `finish_reason=tool_calls` 由已组装的 `function_call` step 决定；非流式 function call 的状态可以是 `requires_action`
-- `incomplete` 若含可消费文本则归一化为 `finish_reason=length`；无可消费输出或不完整 function call 直接报错
-
-### 4.3 Claude Messages（/messages，Custom 变体）
-
-reasoning effort：
-- `reasoning_effort` 仅做 `output_config.effort` 的结构转换，显式值不按模型名启用、校验或降级
-- builder 不根据模型猜测或生成 `thinking`
-
-hosted web search：
-- Preset `enable_web_search=true` 在 direct Claude 与 Custom Claude Messages 中加入 `{ "type": "web_search_20250305", "name": "web_search" }`。
-- `server_tool_use` / `web_search_tool_result` 属于 provider 托管执行，保留在 Claude native content 中，不投影为 Agent 本地 function call。
-- Vertex Claude 与内建 Bedrock Claude 不继承该开关；它们有各自的 hosted-tool 能力边界。
-
-header 策略（关键契约）：
-- Custom Claude Messages 默认不自动启用 beta 特性；显式开启 prompt caching 或快速模式时，后端补充对应的 `anthropic-beta` header。
-- Prompt caching 仍需同时满足连接 opt-in 与 TT 缓存策略，用户自定义 headers 沿用现有覆盖规则。
-
-image 输入：
-- Claude Messages 复用 shared `content_parts` parser：`image_url` data URL 转成 `source.type=base64`，direct/custom Claude Messages 的远端 `http(s)` URL 转成 `source.type=url`。
-- AWS Bedrock Claude 复用 Claude renderer，但执行 base64-only source policy；远端 URL、provider file reference 等不能保真的输入会 fail-fast。
-- OpenAI-style `input_image.file_id` 暂不自动转成 Claude Files API 引用；Claude-native file source 只按 native block 保真回放，调用方需自行负责 beta/header/file 生命周期。
-
-streaming 语义：
-- 后端沿用 Claude 的 SSE `data:` JSON 事件透传（不做 chunk 归一化）
-- 前端对 direct Claude、Vertex Claude、内建 Bedrock Claude 与 `custom_api_format=claude_messages` 走 Claude streaming 分支解析
-- 前端按 content block index 累积 `text_delta`、`thinking_delta`、`signature_delta` 与 `input_json_delta`；`input_json_delta` 按 delta 契约处理，不绑定具体 tool block type
-- 前端在 `message_delta` / 非流式响应的 `stop_reason` 上显式处理终态：`refusal` 保留 provider 输出、显示 toast，并将同一警告追加到最终 `message.mes`；`max_tokens` / `model_context_window_exceeded` 保留部分文本、显示截断警告；这些终态都不会执行或回放未完成的 tool call
-- 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude`，在正文与原响应一致、请求目标匹配时回放；普通 assistant turn 使用 SillyTavern canonical content。
-- SillyTavern 将一次 tool turn 拆成相邻可见消息与 invocation 消息时，translator 仅在两者 native content 完全相等时折叠为一次，内容不一致则 fail-fast；编辑其中任一消息会同时使两份 native metadata 失效
-
-### 4.4 Gemini generateContent（常规原生 API）
-
-- Custom 入口复用 MakerSuite 的翻译与传输链路，通过 `custom_api_format=gemini_generate_content` 显式选择协议。
-- Base URL 与模型分开配置：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`。鉴权使用 Custom API Key；Additional Parameters 在翻译后应用。
-- Custom 模型名按别名处理，显式采样与图像参数按协议转发，不自动改写预填充。模型名中能识别出 Gemini 模型 ID 时（包括 `models/` 或中转前缀），`reasoning_effort` 按该模型支持的思考级别或预算映射；其他别名默认映射为 `thinkingLevel`，`auto` 不发送。Additional Parameters 可覆盖，上游错误正常返回。`n` 多候选尚未实现，不参与生成判断。
-- 原生 parts 与签名仅在正文与原响应一致、API/format/model 匹配时回放。无法核对的旧记录保留正文与可见 reasoning；流式请求仅在完整结束后提交 native 历史。
-- 请求中普通消息的 `native.gemini.content.parts` 原样进入 `contents`，不再附加签名；tool/function 消息沿既有工具转换路径处理，前导 `systemInstruction` 仍只读取正文。
-- Google AI Studio、Custom 与 Vertex AI 共用 Gemini 流式累加与响应归一化。响应须包含可见文本、工具调用或内联媒体；无候选时保留 `promptFeedback.blockReason` 的错误原因，不单独要求 `finishReason`。
-
-实现入口：[`payload/custom.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload/custom.rs)、[`makersuite.rs`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/makersuite.rs)。
-
----
-
-## 5. 最容易误改的契约（请勿破坏）
-
-1. **回滚兼容**：Custom 变体落盘必须保持 `chat_completion_source="custom"`，不要把 UI 选择值（如 `custom_openai_responses`）写入设置文件。
-2. **tool_call_id 透明性**：tool loop 不应假设 tool_call_id 是 OpenAI UUID；必须把它当作不透明字符串传递与存储。
-3. **native metadata 保真**：Agent gateway 会通过 normalized `message.native` / canonical `Native` part 保留 Claude content blocks、Gemini content parts、OpenAI Responses output items、Gemini Interactions steps。不得“清洗未知字段”，否则签名链或 reasoning continuation 会断。
-4. **Custom Claude 不注入 anthropic-beta**：该行为是为了兼容第三方；现在只有显式 opt-in 的 prompt caching 会自动补 caching header，其他场景仍不得硬编码回退。
+- 格式判定：[`exchange.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/exchange.rs)
+- 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
+- 传输、流式与归一化：[`http_chat_completion_repository/`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository)，按 endpoint 分流在 `mod.rs`，响应归一化在 `normalizers.rs`
+- 前端：[`openai.js`](../../src/scripts/openai.js) 负责格式选择、流式解析与工具回合组装，[`provider-replay.js`](../../src/scripts/tauritavern/provider-replay.js) 负责回放核对
