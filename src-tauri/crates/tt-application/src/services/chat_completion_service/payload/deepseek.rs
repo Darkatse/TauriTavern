@@ -4,9 +4,7 @@ use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use crate::errors::ApplicationError;
 
 use super::super::exchange::ChatCompletionProviderFormat;
-use super::super::model_capabilities::{
-    RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
-};
+use super::super::model_capabilities::map_low_high_max_reasoning_effort;
 use super::openai;
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
 use super::shared::add_assistant_prefix;
@@ -37,11 +35,12 @@ impl RequestOptions {
         if source == ChatCompletionSource::DeepSeek {
             let thinking_mode = resolve_thinking_mode(payload, model);
             let reasoning_effort = if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
-                normalize_reasoning_effort(
+                map_low_high_max_reasoning_effort(
                     payload
                         .get("reasoning_effort")
                         .and_then(Value::as_str)
                         .unwrap_or_default(),
+                    "DeepSeek",
                 )?
                 .map(|effort| Value::String(effort.to_string()))
             } else {
@@ -228,18 +227,6 @@ fn is_deepseek_v4_model(model: &str) -> bool {
     let last_segment = normalized.rsplit('/').next().unwrap_or_default();
 
     last_segment.starts_with("deepseek-v4") || last_segment.starts_with("deepseek-flash")
-}
-
-fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, ApplicationError> {
-    match parse_known_reasoning_effort(value, "DeepSeek")? {
-        RequestedReasoningEffort::Auto => Ok(None),
-        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("DeepSeek", value)),
-        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
-        RequestedReasoningEffort::Medium
-        | RequestedReasoningEffort::High
-        | RequestedReasoningEffort::XHigh => Ok(Some("high")),
-        RequestedReasoningEffort::Max => Ok(Some("max")),
-    }
 }
 
 fn fill_missing_tool_reasoning_content(messages: &mut [Value], has_tools: bool) {

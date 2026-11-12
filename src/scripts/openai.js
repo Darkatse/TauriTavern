@@ -637,7 +637,7 @@ const default_settings = {
     chutes_sort_models: 'alphabetically',
     siliconflow_model: 'deepseek-ai/DeepSeek-V3',
     siliconflow_endpoint: SILICONFLOW_ENDPOINT.GLOBAL,
-    minimax_model: 'MiniMax-M2.7',
+    minimax_model: 'MiniMax-M3.1-Flash',
     minimax_endpoint: MINIMAX_ENDPOINT.GLOBAL,
     aws_bedrock_model: 'anthropic.claude-sonnet-4-20250514-v1:0',
     aws_bedrock_region: AWS_BEDROCK_REGION_DEFAULT,
@@ -4041,36 +4041,6 @@ function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
     return isClaudeOneMillionContextModel(value) ? max_1mil : max_200k;
 }
 
-/**
- * Check whether a Z.AI model supports reasoning_effort.
- * @param {string} model Model name
- * @returns {boolean}
- */
-function isZaiReasoningEffortModel(model) {
-    return ['glm-5.2', 'glm-5.3', 'glm-5.3-flash'].includes(String(model ?? '').trim().toLowerCase());
-}
-
-/**
- * Get Z.AI reasoning effort for models that expose the official field.
- * @param {ChatCompletionSettings} settings Chat completion settings
- * @param {string} model Model name
- * @returns {string|undefined}
- */
-function getZaiReasoningEffort(settings, model) {
-    if (!settings.show_thoughts || !isZaiReasoningEffortModel(model)) {
-        return undefined;
-    }
-
-    switch (settings.reasoning_effort) {
-        case reasoning_effort_types.auto:
-            return undefined;
-        case reasoning_effort_types.min:
-            return 'minimal';
-        default:
-            return settings.reasoning_effort;
-    }
-}
-
 function supportsOpenAiMaxReasoningEffort(model) {
     const normalizedModel = String(model ?? '').trim().toLowerCase();
     return /^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(normalizedModel)
@@ -4121,10 +4091,6 @@ function getReasoningEffort(settings = null, model = null) {
     settings = settings ?? oai_settings;
     model = model ?? getChatCompletionModel(settings);
 
-    if (settings.chat_completion_source === chat_completion_sources.ZAI) {
-        return getZaiReasoningEffort(settings, model);
-    }
-
     if (usesClaudeMessagesSemantics(settings, model)) {
         if (settings.reasoning_effort === reasoning_effort_types.auto) {
             return undefined;
@@ -4160,7 +4126,7 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
-        if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT, chat_completion_sources.XAI].includes(settings.chat_completion_source)) {
+        if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT, chat_completion_sources.XAI, chat_completion_sources.DEEPSEEK].includes(settings.chat_completion_source)) {
             return settings.reasoning_effort === reasoning_effort_types.auto
                 ? undefined
                 : settings.reasoning_effort;
@@ -4171,7 +4137,7 @@ function getReasoningEffort(settings = null, model = null) {
         }
 
         function resolveMaximumReasoningEffort() {
-            if (settings.chat_completion_source === chat_completion_sources.DEEPSEEK || settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+            if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
                 return reasoning_effort_types.max;
             }
             return reasoning_effort_types.high;
@@ -4611,13 +4577,6 @@ export async function createGenerationParameters(settings, model, type, messages
     // https://platform.moonshot.ai/docs/api/chat#public-service-address
     if (settings.chat_completion_source === chat_completion_sources.MOONSHOT) {
         generate_data.moonshot_endpoint = settings.moonshot_endpoint || MOONSHOT_ENDPOINT.GLOBAL;
-        // >Kimi API is fully compatible with OpenAI's API format
-        if (/kimi-k2.5/.test(model)) {
-            delete generate_data.temperature;
-            delete generate_data.top_p;
-            delete generate_data.frequency_penalty;
-            delete generate_data.presence_penalty;
-        }
     }
 
     if (seedSupportedSources.includes(settings.chat_completion_source) && settings.seed >= 0) {
@@ -4914,7 +4873,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.MINIMAX, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -7940,7 +7899,7 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.MINIMAX) {
-        const maxContext = oai_settings.minimax_model === 'M2-her' ? 65536 : 204800;
+        const maxContext = oai_settings.max_context_unlocked ? unlocked_max : max_1mil;
         $('#openai_max_context').attr('max', maxContext);
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -8373,6 +8332,8 @@ export function isImageInliningSupported(settings = oai_settings) {
         'glm-4.5v',
         'glm-4.6v',
         'autoglm-phone',
+        // MiniMax
+        'MiniMax-M3',
         // SiliconFlow
         'Qwen/Qwen3-VL-32B-Instruct',
         'Qwen/Qwen3-VL-8B-Instruct',
@@ -8428,6 +8389,8 @@ export function isImageInliningSupported(settings = oai_settings) {
             return Boolean(getAwsBedrockModelCapabilities(settings.aws_bedrock_model)?.images);
         case chat_completion_sources.ZAI:
             return visionSupportedModels.some(model => settings.zai_model.includes(model));
+        case chat_completion_sources.MINIMAX:
+            return visionSupportedModels.some(model => settings.minimax_model.includes(model));
         case chat_completion_sources.SILICONFLOW:
             return visionSupportedModels.some(model => settings.siliconflow_model.includes(model));
         case chat_completion_sources.WORKERS_AI: {
@@ -8464,6 +8427,8 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
+        // MiniMax
+        'MiniMax-M3',
     ];
 
     switch (settings.chat_completion_source) {
@@ -8475,6 +8440,8 @@ export function isVideoInliningSupported(settings = oai_settings) {
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
         case chat_completion_sources.ZAI:
             return videoSupportedModels.some(model => settings.zai_model.includes(model));
+        case chat_completion_sources.MINIMAX:
+            return videoSupportedModels.some(model => settings.minimax_model.includes(model));
         case chat_completion_sources.CUSTOM:
             return true;
         default:

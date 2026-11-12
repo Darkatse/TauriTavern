@@ -1,3 +1,5 @@
+use serde_json::{Map, Value};
+
 use super::super::model_capabilities::RequestedReasoningEffort;
 
 const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
@@ -35,6 +37,8 @@ const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
 const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] =
     &["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
+const OPENAI_NO_NONE_REASONING_EFFORT_MODELS: &[&str] = &["gpt-6-astra", "gpt-6.1-sol"];
+
 // OpenAI documents xhigh as starting at gpt-5.1-codex-max and later GPT models.
 const OPENAI_XHIGH_REASONING_THRESHOLD: &str = "gpt-5.1-codex-max";
 
@@ -45,6 +49,28 @@ pub(super) fn should_forward_openai_reasoning_effort(source: &str, model: &str) 
             || supports_openai_xhigh_reasoning_effort(model))
 }
 
+/// OpenAI accepts sampling parameters only while the reasoning effort is `none`.
+pub(super) fn prepare_openai_reasoning_request(payload: &mut Map<String, Value>) {
+    let model = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let effort = payload
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_openai_reasoning_effort(value, model))
+        .map(str::to_string);
+
+    if effort.as_deref() != Some("none") {
+        payload.remove("temperature");
+        payload.remove("top_p");
+    }
+    match effort {
+        Some(effort) => payload.insert("reasoning_effort".to_string(), Value::String(effort)),
+        None => payload.remove("reasoning_effort"),
+    };
+}
+
 pub(super) fn normalize_openai_reasoning_effort<'a>(
     value: &'a str,
     model: &str,
@@ -52,7 +78,13 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
     let value = value.trim();
     match RequestedReasoningEffort::parse(value) {
         Some(RequestedReasoningEffort::Auto) => None,
-        Some(RequestedReasoningEffort::None | RequestedReasoningEffort::Minimal) => Some("none"),
+        Some(RequestedReasoningEffort::None | RequestedReasoningEffort::Minimal) => {
+            Some(if supports_openai_none_reasoning_effort(model) {
+                "none"
+            } else {
+                "low"
+            })
+        }
         Some(RequestedReasoningEffort::Low) => Some("low"),
         Some(RequestedReasoningEffort::Medium) => Some("medium"),
         Some(RequestedReasoningEffort::High) => Some("high"),
@@ -76,10 +108,17 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
     }
 }
 
-fn supports_openai_max_reasoning_effort(model: &str) -> bool {
-    OPENAI_MAX_REASONING_EFFORT_MODELS
+fn supports_openai_none_reasoning_effort(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    !OPENAI_NO_NONE_REASONING_EFFORT_MODELS
         .iter()
-        .any(|candidate| model.trim().eq_ignore_ascii_case(candidate))
+        .any(|candidate| model.starts_with(candidate))
+}
+
+fn supports_openai_max_reasoning_effort(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    OPENAI_MAX_REASONING_EFFORT_MODELS.contains(&model.as_str())
+        || parse_gpt_major_version(&model).is_some_and(|major| major >= 6)
 }
 
 fn supports_openai_xhigh_reasoning_effort(model: &str) -> bool {

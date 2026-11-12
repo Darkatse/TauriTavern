@@ -2,32 +2,48 @@ use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
 
-use super::super::model_capabilities::map_zai_reasoning_effort;
+use super::super::model_capabilities::{
+    VersionedModel, map_low_high_max_reasoning_effort, map_zai_reasoning_effort,
+};
 use super::openai;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    let version = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(|model| VersionedModel::parse(model, "glm-"))
+        .map(|glm| glm.version);
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let reasoning_effort = payload
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .map(map_zai_reasoning_effort)
-        .transpose()?
-        .flatten();
+    let reasoning_effort = payload.get("reasoning_effort").and_then(Value::as_str);
+    let reasoning_effort = match version {
+        Some((5, 3)) => reasoning_effort
+            .map(|value| map_low_high_max_reasoning_effort(value, "Z.AI"))
+            .transpose()?
+            .flatten(),
+        Some(version) if version >= (5, 2) => reasoning_effort
+            .map(map_zai_reasoning_effort)
+            .transpose()?
+            .flatten(),
+        _ => None,
+    };
+    let always_thinks = version == Some((5, 3));
 
     let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
     if endpoint == "/chat/completions"
         && let Some(body) = upstream_payload.as_object_mut()
     {
-        body.insert(
-            "thinking".to_string(),
-            serde_json::json!({
-                "type": if include_reasoning { "enabled" } else { "disabled" },
-            }),
-        );
+        if !always_thinks {
+            body.insert(
+                "thinking".to_string(),
+                serde_json::json!({
+                    "type": if include_reasoning { "enabled" } else { "disabled" },
+                }),
+            );
+        }
 
         if let Some(reasoning_effort) = reasoning_effort {
             body.insert(
@@ -108,37 +124,14 @@ mod tests {
     }
 
     #[test]
-    fn zai_payload_disables_thinking_without_reasoning_effort() {
-        let payload = payload(json!({
-            "model": "glm-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": false,
-            "chat_completion_source": "zai"
-        }));
-
-        let (_endpoint, upstream) = build(payload).expect("payload should build");
-        let body = body(&upstream);
-
-        assert_eq!(
-            body.get("thinking")
-                .and_then(Value::as_object)
-                .and_then(|thinking| thinking.get("type"))
-                .and_then(Value::as_str),
-            Some("disabled")
-        );
-        assert!(body.get("reasoning_effort").is_none());
-    }
-
-    #[test]
-    fn zai_payload_maps_effort_without_requiring_thinking() {
-        for (model, effort, expected) in [
-            ("glm-5.2", "xhigh", "max"),
-            ("glm-5.2", "max", "max"),
-            ("glm-5.3", "xhigh", "max"),
-            ("glm-5.3", "max", "max"),
-            ("glm-5.3", "medium", "medium"),
-            ("glm-5.3-flash", "xhigh", "max"),
-            ("glm-5.3-flash", "max", "max"),
+    fn zai_sends_the_thinking_controls_each_glm_model_accepts() {
+        for (model, effort, thinking, expected_effort) in [
+            ("glm-5.3-flashx-legal", "medium", None, Some("high")),
+            ("glm-5.3", "xhigh", None, Some("high")),
+            ("glm-5.3", "min", None, Some("low")),
+            ("glm-5.2", "xhigh", Some("disabled"), Some("max")),
+            ("glm-5.2", "medium", Some("disabled"), Some("medium")),
+            ("glm-4.6", "high", Some("disabled"), None),
         ] {
             let payload = payload(json!({
                 "model": model,
@@ -149,21 +142,18 @@ mod tests {
             }));
 
             let (_endpoint, upstream) = build(payload).expect("payload should build");
+            let body = body(&upstream);
 
             assert_eq!(
-                body(&upstream)
-                    .get("reasoning_effort")
+                body.get("thinking")
+                    .and_then(|thinking| thinking.get("type"))
                     .and_then(Value::as_str),
-                Some(expected),
+                thinking,
                 "{model} {effort}"
             );
             assert_eq!(
-                body(&upstream)
-                    .get("thinking")
-                    .and_then(Value::as_object)
-                    .and_then(|thinking| thinking.get("type"))
-                    .and_then(Value::as_str),
-                Some("disabled"),
+                body.get("reasoning_effort").and_then(Value::as_str),
+                expected_effort,
                 "{model} {effort}"
             );
         }

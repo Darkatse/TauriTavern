@@ -49,7 +49,8 @@ fn build_claude_payload_inner(
         None
     };
 
-    let native_json_output = contract.is_some_and(|contract| contract.supports_json_output);
+    // A JSON schema rides on a forced tool call unless the model rejects forced tool choice.
+    let native_json_output = contract.is_some_and(|contract| !contract.supports_forced_tool_choice);
 
     let use_system_prompt = payload
         .get("use_sysprompt")

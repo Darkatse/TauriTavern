@@ -56,6 +56,7 @@ pub(super) fn build_payload(
         && ChatCompletionProviderFormat::from_payload(source, &payload)?
             == ChatCompletionProviderFormat::OpenAiResponses
     {
+        openai_reasoning::prepare_openai_reasoning_request(&mut payload);
         return openai_responses::build(payload);
     }
 
@@ -81,7 +82,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => zai::build(payload),
-        ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
+        ChatCompletionSource::MiniMax => minimax::build(payload),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
@@ -190,23 +191,40 @@ mod tests {
     }
 
     #[test]
-    fn openai_gpt_6_family_uses_responses_api() {
-        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"] {
-            let payload = json!({
-                "model": model,
-                "messages": [{"role": "user", "content": "hello"}],
-                "temperature": 0.7
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
+    fn openai_gpt_6_family_uses_responses_api_with_model_effort_levels() {
+        for (model, minimum_effort) in [
+            ("gpt-6-astra", "low"),
+            ("gpt-6-sol", "none"),
+            ("gpt-6-luna", "none"),
+            ("gpt-6.1-sol", "low"),
+            ("gpt-6.1-terra", "none"),
+        ] {
+            for (effort, expected) in [("min", minimum_effort), ("max", "max")] {
+                let payload = json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "temperature": 0.7,
+                    "reasoning_effort": effort
+                })
+                .as_object()
+                .cloned()
+                .expect("payload must be object");
 
-            let (endpoint, upstream) =
-                build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
+                let (endpoint, upstream) = build_payload(ChatCompletionSource::OpenAi, payload)
+                    .expect("payload should build");
 
-            assert_eq!(endpoint, "/responses", "{model}");
-            assert_eq!(upstream["model"], model);
-            assert_eq!(upstream["temperature"], 0.7);
+                assert_eq!(endpoint, "/responses", "{model}");
+                assert_eq!(upstream["model"], model);
+                assert_eq!(
+                    upstream["reasoning"]["effort"], expected,
+                    "{model} {effort}"
+                );
+                assert_eq!(
+                    upstream.get("temperature").is_some(),
+                    expected == "none",
+                    "{model} {effort}"
+                );
+            }
         }
     }
 

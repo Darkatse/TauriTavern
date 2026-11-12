@@ -2245,7 +2245,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="opencode,deepseek,aimlapi,openrouter,custom,claude,aws_bedrock,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai,workers_ai">
+                                    <div class="range-block" data-source="opencode,deepseek,aimlapi,openrouter,custom,claude,aws_bedrock,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai,minimax,workers_ai">
                                         <label for="openai_show_thoughts" class="checkbox_label widthFreeExpand">
                                             <input id="openai_show_thoughts" type="checkbox" aria-describedby="openai_show_thoughts_description">
                                             <span data-i18n="Request model reasoning">Request model reasoning</span>
@@ -2254,12 +2254,12 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                             <span data-i18n="Allows the model to return its thinking process.">
                                                 Allows the model to return its thinking process.
                                             </span>
-                                            <strong data-i18n="This setting affects visibility only." data-source-mode="except" data-source="deepseek,zai,moonshot">
+                                            <strong data-i18n="This setting affects visibility only." data-source-mode="except" data-source="deepseek,zai,moonshot,minimax">
                                                 This setting affects visibility only.
                                             </strong>
                                         </div>
                                     </div>
-                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,opencode,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
+                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,opencode,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai,minimax">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort" id="openai_reasoning_effort_label">Reasoning Effort</span>
@@ -3172,6 +3172,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     <optgroup label="GPT-6">
                                         <option value="gpt-6-astra">gpt-6-astra</option>
                                         <option value="gpt-6.1-sol">gpt-6.1-sol</option>
+                                        <option value="gpt-6.1-terra">gpt-6.1-terra</option>
                                         <option value="gpt-6-sol">gpt-6-sol</option>
                                         <option value="gpt-6-luna">gpt-6-luna</option>
                                     </optgroup>
@@ -3305,8 +3306,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <h4><span data-i18n="Claude Model" id="model_claude_select_label">Claude Model</span></h4>
                                 <select id="model_claude_select" aria-labelledby="model_claude_select_label">
                                     <optgroup label="Versions">
+                                        <option value="claude-fable-5-2">claude-fable-5-2</option>
                                         <option value="claude-fable-5-1">claude-fable-5-1</option>
                                         <option value="claude-fable-5">claude-fable-5</option>
+                                        <option value="claude-mythos-5-2">claude-mythos-5-2</option>
                                         <option value="claude-mythos-5">claude-mythos-5</option>
                                         <option value="claude-opus-5-5">claude-opus-5-5</option>
                                         <option value="claude-opus-5">claude-opus-5</option>
@@ -3446,6 +3449,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <h4><span data-i18n="Google Model" id="model_google_select_label">Google Model</span></h4>
                                 <select id="model_google_select" aria-labelledby="model_google_select_label">
                                     <optgroup label="Gemini 4">
+                                        <option value="gemini-4-carbon">gemini-4-carbon</option>
                                         <option value="gemini-4-argon">gemini-4-argon</option>
                                     </optgroup>
                                     <optgroup label="Gemini 3.8">
@@ -3624,6 +3628,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <select id="model_vertexai_select" aria-labelledby="model_vertexai_select_label">
                                     <!-- data-mode="full" is for models that require a service account -->
                                     <optgroup label="Claude on Vertex AI">
+                                        <option value="claude-fable-5-2" data-mode="full">claude-fable-5-2</option>
                                         <option value="claude-fable-5-1" data-mode="full">claude-fable-5-1</option>
                                         <option value="claude-fable-5" data-mode="full">claude-fable-5</option>
                                         <option value="claude-opus-5-5" data-mode="full">claude-opus-5-5</option>
@@ -3753,14 +3758,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             </select>
                             <h4><span data-i18n="MiniMax Model" id="model_minimax_select_label">MiniMax Model</span></h4>
                             <select id="model_minimax_select" aria-labelledby="model_minimax_select_label">
-                                <option value="MiniMax-M2.7">MiniMax-M2.7</option>
-                                <option value="MiniMax-M2.7-highspeed">MiniMax-M2.7-highspeed</option>
-                                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
-                                <option value="MiniMax-M2.5-highspeed">MiniMax-M2.5-highspeed</option>
-                                <option value="MiniMax-M2.1">MiniMax-M2.1</option>
-                                <option value="MiniMax-M2.1-highspeed">MiniMax-M2.1-highspeed</option>
-                                <option value="MiniMax-M2">MiniMax-M2</option>
-                                <option value="M2-her">M2-her</option>
+                                <option value="MiniMax-M3.1-Flash">MiniMax-M3.1-Flash</option>
+                                <option value="MiniMax-M3">MiniMax-M3</option>
                             </select>
                         </div>
                         <div id="aws_bedrock_form" data-source="aws_bedrock">
@@ -3783,6 +3782,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             </small>
                             <select id="model_aws_bedrock_select" aria-labelledby="model_aws_bedrock_select_label">
                                 <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x/5.x)">
+                                    <option value="us.anthropic.claude-fable-5-2">us.anthropic.claude-fable-5-2</option>
                                     <option value="us.anthropic.claude-fable-5-1">us.anthropic.claude-fable-5-1</option>
                                     <option value="us.anthropic.claude-sonnet-5">us.anthropic.claude-sonnet-5</option>
                                     <option value="us.anthropic.claude-fable-5">us.anthropic.claude-fable-5</option>
@@ -3801,6 +3801,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
                                 </optgroup>
                                 <optgroup label="Cross-region inference profiles — Global">
+                                    <option value="global.anthropic.claude-fable-5-2">global.anthropic.claude-fable-5-2</option>
                                     <option value="global.anthropic.claude-fable-5-1">global.anthropic.claude-fable-5-1</option>
                                     <option value="global.anthropic.claude-sonnet-5-5">global.anthropic.claude-sonnet-5-5</option>
                                     <option value="global.anthropic.claude-sonnet-5">global.anthropic.claude-sonnet-5</option>
@@ -4238,6 +4239,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <option value="kimi-k2.7-code">kimi-k2.7-code</option>
                                 <option value="kimi-k2.7-code-highspeed">kimi-k2.7-code-highspeed</option>
                                 <option value="kimi-k3">kimi-k3</option>
+                                <option value="kimi-k3.1-pro">kimi-k3.1-pro</option>
+                                <option value="kimi-k3.1-pro-highspeed">kimi-k3.1-pro-highspeed</option>
                             </select>
                         </div>
                         <div id="zai_form" data-source="zai">
@@ -4262,6 +4265,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <select id="model_zai_select" aria-labelledby="model_zai_select_label">
                                 <option value="glm-5.3">glm-5.3</option>
                                 <option value="glm-5.3-flash">glm-5.3-flash</option>
+                                <option value="glm-5.3-flashx">glm-5.3-flashx</option>
+                                <option value="glm-5.3-flashx-legal">glm-5.3-flashx-legal</option>
                                 <option value="glm-5.2">glm-5.2</option>
                                 <option value="glm-5-turbo">glm-5-turbo</option>
                                 <option value="glm-5v-turbo">glm-5v-turbo</option>
