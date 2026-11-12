@@ -370,6 +370,13 @@ const interleaved_reasoning_providers = [
     chat_completion_sources.CUSTOM,
 ];
 
+const reasoning_content_replay_providers = [
+    chat_completion_sources.DEEPSEEK,
+    chat_completion_sources.MOONSHOT,
+    chat_completion_sources.ZAI,
+    chat_completion_sources.MINIMAX,
+];
+
 export const ZAI_ENDPOINT = {
     COMMON: 'common',
     CODING: 'coding',
@@ -1016,7 +1023,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
     const currentModel = getChatCompletionModel();
     const requestContext = getChatCompletionRequestContext(oai_settings, currentModel);
     const includeReasoningContent = oai_settings.show_thoughts
-        && usesDeepSeekReasoningContent(oai_settings, currentModel);
+        && replaysToolReasoningContent(oai_settings, currentModel);
     const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
     const includeNative = includeClaudeNative
         || (currentApi === chat_completion_sources.CUSTOM
@@ -1578,9 +1585,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(settings.custom_api_format));
     const canIncludeNative = native => includeNative
         && (!includeClaudeNative || hasClaudeToolUse(native));
-    // DeepSeek tool turns use reasoning_content instead of reasoning.
+    // A connection replays tool reasoning through reasoning_content or interleaved reasoning, never both.
     const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source)
-        && !usesDeepSeekReasoningContent(settings);
+        && !replaysToolReasoningContent(settings);
     const toolReasoningMode = isToolReasoningProvider
         ? getEffectiveToolReasoningMode(settings)
         : tool_reasoning_modes.DISABLED;
@@ -8525,16 +8532,16 @@ function isCustomGeminiGenerateContent(settings = oai_settings) {
 }
 
 /**
- * Check whether the selected connection replays DeepSeek tool reasoning.
+ * Check whether legacy tool continuations replay the turn's reasoning_content.
  * Keep this replay predicate scoped to Chat Completions; native-format continuations
  * have their own representation. Request normalization remains in the backend.
  * @param {ChatCompletionSettings} settings Settings object to use
  * @param {string} model Model id
- * @returns {boolean} Whether tool turns use DeepSeek reasoning_content
+ * @returns {boolean} Whether tool turns replay reasoning_content
  */
-function usesDeepSeekReasoningContent(settings, model = getChatCompletionModel(settings)) {
+function replaysToolReasoningContent(settings, model = getChatCompletionModel(settings)) {
     const source = settings.chat_completion_source;
-    if (source === chat_completion_sources.DEEPSEEK) {
+    if (reasoning_content_replay_providers.includes(source)) {
         return true;
     }
     const isCompat = (source === chat_completion_sources.CUSTOM
