@@ -2,7 +2,9 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
 use tt_domain::models::tool::ToolArguments;
-use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
+use tt_ports::repositories::chat_completion_repository::{
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, NATIVE_OPENAI_RESPONSES,
+};
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
 use super::shared::{json_schema_fields, message_content_to_text};
@@ -461,7 +463,7 @@ fn message_native_openai_responses_output(
     let Some(native) = message.get("native") else {
         return Ok(None);
     };
-    let Some(openai_responses) = native.get("openai_responses") else {
+    let Some(openai_responses) = native.get(NATIVE_OPENAI_RESPONSES) else {
         return Ok(None);
     };
 

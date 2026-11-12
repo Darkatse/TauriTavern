@@ -39,6 +39,8 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 ## 3. 工具回合与原生内容
 
 - `tool_call_id` 是不透明字符串，原样传递与存储。
+- `native` 与 `signature` 是 TT 的扩展字段。`build_payload` 在 Prompt Post-Processing 与格式构造之前统一投影：`native` 只保留本次格式的键，不是对象时报错；`signature` 只保留给两种 Gemini 格式与 OpenRouter。
+- OpenRouter 只从 `reasoning.encrypted` 类型的 `reasoning_details` 项读取签名，构造器把 `signature` 改写为这类项。
 - 原生内容原样保存，不清洗未知字段。回放前由 `provider-replay.js` 核对正文、来源、模型与格式。Legacy 回放 Claude 与两种 Custom Gemini 格式的原生内容。
 - SillyTavern 会把一次工具回合拆成相邻的可见消息与 invocation 消息。两份原生内容完全相同时只回放一次；Claude 在两者不一致时报错，编辑其中任一条会使两份同时失效。
 - `extra_content` 由服务商定义，流式时以最新的非 null 快照整体替换。Legacy 与 Agent 按原 tool call 位置保存，切换 provider 或模型后不携带旧值。
@@ -88,6 +90,6 @@ Custom 变体在设置中保存为 `chat_completion_source="custom"`，格式记
 ## 修改入口
 
 - 格式判定：[`exchange.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/exchange.rs)
-- 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
+- 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，扩展字段投影在 `extension_fields.rs`，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
 - 传输、流式与归一化：[`http_chat_completion_repository/`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository)，按 endpoint 分流在 `mod.rs`，响应归一化在 `normalizers.rs`
 - 前端：[`openai.js`](../../src/scripts/openai.js) 负责格式选择、流式解析与工具回合组装，[`provider-replay.js`](../../src/scripts/tauritavern/provider-replay.js) 负责回放核对

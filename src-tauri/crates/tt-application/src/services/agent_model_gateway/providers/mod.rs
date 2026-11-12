@@ -66,16 +66,6 @@ impl AgentProviderAdapter {
         }
     }
 
-    pub(super) const fn native_provider(self) -> Option<&'static str> {
-        match self {
-            Self::OpenAiCompatible => openai::NATIVE_PROVIDER,
-            Self::OpenAiResponses => responses::NATIVE_PROVIDER,
-            Self::ClaudeMessages => claude::NATIVE_PROVIDER,
-            Self::Gemini => gemini::GEMINI_NATIVE_PROVIDER,
-            Self::GeminiInteractions => gemini::INTERACTIONS_NATIVE_PROVIDER,
-        }
-    }
-
     pub(super) const fn schema_keys_to_remove(self) -> &'static [&'static str] {
         match self {
             Self::OpenAiCompatible | Self::OpenAiResponses => openai::SCHEMA_KEYS_TO_REMOVE,

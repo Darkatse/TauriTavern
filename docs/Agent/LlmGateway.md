@@ -16,7 +16,9 @@ AgentModelRequest
 
 `AgentModelRequest` 保存消息、工具和续接状态；`AgentModelResponse` 保存 assistant 消息、文本、工具调用与 usage 等信息。Gateway 根据本次工具快照，把模型返回的调用名称还原为稳定工具 ID。
 
-Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 reasoning signature、thought signature 或原生 output blocks。这些内容随消息保留，由对应 provider adapter 原样续接。Timeline 使用 `readModelTurn()` 提供的可见文本和 reasoning 投影。
+Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 reasoning signature、thought signature 或原生 output blocks。这些内容随消息保留。Timeline 使用 `readModelTurn()` 提供的可见文本和 reasoning 投影。
+
+Gateway 编码时交出全部原生内容，payload 构建只保留本次格式读取的一份，见[原生 API 格式](../CurrentState/NativeApiFormats.md#3-工具回合与原生内容)。
 
 ## 工具结果图片
 

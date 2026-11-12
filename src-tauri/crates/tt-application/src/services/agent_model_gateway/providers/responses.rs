@@ -5,7 +5,6 @@ use crate::services::agent_model_gateway::format::{string_value, usize_value};
 use tt_domain::models::agent::{AgentModelMessage, AgentModelRequest, AgentModelRole};
 use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
 
-pub(super) const NATIVE_PROVIDER: Option<&str> = Some("openai_responses");
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
 
 pub(super) fn messages_for_request(

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_ports::repositories::chat_completion_repository::NATIVE_GEMINI;
 
 use super::super::model_capabilities::{
     GeminiModel, GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
@@ -763,7 +764,7 @@ fn is_tool_role(role: &str) -> bool {
 fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
     message
         .get("native")?
-        .get("gemini")?
+        .get(NATIVE_GEMINI)?
         .get("content")?
         .get("parts")?
         .as_array()

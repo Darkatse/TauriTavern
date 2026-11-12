@@ -14,6 +14,7 @@ mod cohere;
 mod content_parts;
 mod custom;
 mod deepseek;
+mod extension_fields;
 mod gemini_interactions;
 mod makersuite;
 mod minimax;
@@ -38,6 +39,7 @@ pub(super) fn build_payload(
 ) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     // Capture provider controls before wire builders discard internal fields.
+    let format = ChatCompletionProviderFormat::from_payload(source, &payload)?;
     let deepseek_options = deepseek::RequestOptions::from_payload(source, &payload)?;
     let opencode_format = (source == ChatCompletionSource::OpenCode)
         .then(|| opencode::format_from_payload(&payload))
@@ -48,13 +50,14 @@ pub(super) fn build_payload(
         payload.remove("opencode_api_format");
     }
 
+    extension_fields::project_extension_fields(&mut payload, source, format)?;
+
     if !matches!(source, ChatCompletionSource::DeepSeek) {
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
     }
 
     if source == ChatCompletionSource::OpenAi
-        && ChatCompletionProviderFormat::from_payload(source, &payload)?
-            == ChatCompletionProviderFormat::OpenAiResponses
+        && format == ChatCompletionProviderFormat::OpenAiResponses
     {
         openai_reasoning::prepare_openai_reasoning_request(&mut payload);
         return openai_responses::build(payload);
@@ -163,6 +166,144 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn each_format_receives_only_the_extension_fields_it_reads() {
+        let call = |id: &str, signature: Option<&str>| {
+            let mut call = json!({
+                "id": id, "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            });
+            if let Some(signature) = signature {
+                call["signature"] = json!(signature);
+            }
+            call
+        };
+        let messages = json!([
+            { "role": "user", "content": "Weather?" },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [call("call_1", None)],
+                "native": {
+                    "claude": { "content": [{
+                        "type": "tool_use", "id": "call_1", "name": "weather",
+                        "input": { "city": "claude-native" }
+                    }] },
+                    "gemini": { "content": { "role": "model", "parts": [{
+                        "functionCall": { "id": "call_1", "name": "weather",
+                                          "args": { "city": "gemini-native" } },
+                        "thoughtSignature": "gemini-native-sig"
+                    }] } },
+                    "gemini_interactions": { "steps": [{
+                        "type": "function_call", "id": "call_1", "name": "weather",
+                        "arguments": { "city": "interactions-native" }, "signature": "opaque"
+                    }] },
+                    "openai_responses": { "responseId": "resp_1", "output": [{
+                        "type": "function_call", "call_id": "call_1", "name": "weather",
+                        "arguments": "{\"city\":\"responses-native\"}"
+                    }] }
+                }
+            },
+            { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" },
+            {
+                "role": "assistant",
+                "content": "And Rome?",
+                "signature": "message-sig",
+                "custom_field": "kept-field",
+                "tool_calls": [call("call_2", Some("call-sig"))]
+            },
+            { "role": "tool", "tool_call_id": "call_2", "content": "Cloudy" }
+        ]);
+        let markers = [
+            "claude-native",
+            "gemini-native",
+            "interactions-native",
+            "responses-native",
+            "message-sig",
+            "call-sig",
+            "kept-field",
+        ];
+        for (format, present) in [
+            ("openai_compat", &["kept-field"][..]),
+            ("claude_messages", &["claude-native"][..]),
+            ("openai_responses", &["responses-native"][..]),
+            (
+                "gemini_generate_content",
+                &["gemini-native", "message-sig", "call-sig"][..],
+            ),
+            (
+                "gemini_interactions",
+                &["interactions-native", "call-sig"][..],
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": format,
+                "model": "test-model",
+                "tools": [{ "type": "function", "function": {
+                    "name": "weather", "parameters": { "type": "object" }
+                } }],
+                "messages": messages.clone()
+            });
+            let (_, upstream) = build_payload(
+                ChatCompletionSource::Custom,
+                payload.as_object().unwrap().clone(),
+            )
+            .unwrap();
+            let upstream = upstream.to_string();
+            for marker in markers {
+                assert_eq!(
+                    upstream.contains(marker),
+                    present.contains(&marker),
+                    "{format}: {marker} in {upstream}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn openrouter_sends_signatures_as_reasoning_details() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "google/gemini-3.5-flash",
+            "messages": [
+                { "role": "user", "content": "Weather?" },
+                {
+                    "role": "assistant",
+                    "content": "Checking",
+                    "signature": "text-sig",
+                    "reasoning_details": [{ "type": "reasoning.text", "text": "Plan", "index": 0 }],
+                    "native": { "gemini": { "content": { "role": "model", "parts": [] } } },
+                    "tool_calls": [{
+                        "id": "call_1", "type": "function", "signature": "call-sig",
+                        "function": { "name": "weather", "arguments": "{}" }
+                    }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
+            ]
+        });
+        let (_, upstream) = build_payload(
+            ChatCompletionSource::OpenRouter,
+            payload.as_object().unwrap().clone(),
+        )
+        .unwrap();
+        let message = &upstream["messages"][1];
+
+        assert_eq!(
+            message["reasoning_details"],
+            json!([
+                { "type": "reasoning.text", "text": "Plan", "index": 0 },
+                { "index": 1, "id": "signature-1", "type": "reasoning.encrypted",
+                  "data": "text-sig", "format": "google-gemini-v1" },
+                { "index": 2, "id": "call_1", "type": "reasoning.encrypted",
+                  "data": "call-sig", "format": "google-gemini-v1" }
+            ])
+        );
+        assert!(message.get("signature").is_none());
+        assert!(message.get("native").is_none());
+        assert!(message["tool_calls"][0].get("signature").is_none());
     }
 
     #[test]

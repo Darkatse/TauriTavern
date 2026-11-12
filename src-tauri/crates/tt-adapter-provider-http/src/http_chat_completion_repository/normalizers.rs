@@ -2,7 +2,8 @@ use serde_json::{Map, Value, json};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
+    ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse, NATIVE_CLAUDE,
+    NATIVE_GEMINI, NATIVE_GEMINI_INTERACTIONS, NATIVE_OPENAI_RESPONSES,
 };
 
 use super::current_unix_timestamp;
@@ -102,7 +103,10 @@ pub(super) fn normalize_claude_response(
         native_claude.insert("stop_details".to_string(), value);
     }
     if !native_claude.is_empty() {
-        message.insert("native".to_string(), json!({ "claude": native_claude }));
+        message.insert(
+            "native".to_string(),
+            json!({ NATIVE_CLAUDE: native_claude }),
+        );
     }
 
     let finish_reason = map_claude_finish_reason(
@@ -345,7 +349,7 @@ pub(super) fn normalize_gemini_response(
         {
             choice.insert(
                 "native".to_string(),
-                json!({ "gemini": { "content": response_content.clone() } }),
+                json!({ NATIVE_GEMINI: { "content": response_content.clone() } }),
             );
         }
         normalized.insert("responseContent".to_string(), response_content);
@@ -467,7 +471,7 @@ pub(super) fn normalize_openai_responses_response(
         message.insert(
             "native".to_string(),
             json!({
-                "openai_responses": {
+                NATIVE_OPENAI_RESPONSES: {
                     "responseId": response.get("id"),
                     "output": output_items,
                 }
@@ -679,7 +683,7 @@ pub(super) fn normalize_gemini_interactions_response(
     }
     message.insert(
         "native".to_string(),
-        json!({ "gemini_interactions": { "steps": steps } }),
+        json!({ NATIVE_GEMINI_INTERACTIONS: { "steps": steps } }),
     );
 
     let finish_reason = if has_tool_calls {

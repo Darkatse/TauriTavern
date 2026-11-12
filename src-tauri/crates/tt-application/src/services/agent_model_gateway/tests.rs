@@ -871,68 +871,6 @@ fn gemini_provider_state_records_native_continuation() {
     assert_eq!(state["nativeContinuation"]["partCount"], 1);
 }
 
-#[test]
-fn cross_provider_switch_does_not_migrate_private_native_metadata() {
-    let request = basic_request(
-        "openai",
-        None,
-        vec![AgentModelMessage {
-            role: AgentModelRole::Assistant,
-            parts: vec![
-                AgentModelContentPart::Text {
-                    text: "portable text".to_string(),
-                },
-                AgentModelContentPart::Native {
-                    provider: "claude".to_string(),
-                    value: json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
-                },
-            ],
-            provider_metadata: Value::Null,
-        }],
-    );
-
-    let dto = encode_chat_completion_request(&request, false).unwrap();
-    let message = dto.payload["messages"][0].as_object().unwrap();
-    assert_eq!(message["content"], "portable text");
-    assert!(message.get("native").is_none());
-}
-
-#[test]
-fn same_provider_keeps_matching_private_native_metadata() {
-    for (source, format, provider, value) in [
-        (
-            "claude",
-            None,
-            "claude",
-            json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
-        ),
-        (
-            "custom",
-            Some("gemini_generate_content"),
-            "gemini",
-            json!({ "content": {
-            "role": "model", "parts": [{ "text": "plan", "thought": true, "thoughtSignature": "sig_1" }]
-        } }),
-        ),
-    ] {
-        let request = basic_request(
-            source,
-            format,
-            vec![AgentModelMessage {
-                role: AgentModelRole::Assistant,
-                parts: vec![AgentModelContentPart::Native {
-                    provider: provider.to_string(),
-                    value: value.clone(),
-                }],
-                provider_metadata: Value::Null,
-            }],
-        );
-
-        let dto = encode_chat_completion_request(&request, false).unwrap();
-        assert_eq!(dto.payload["messages"][0]["native"][provider], value);
-    }
-}
-
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
     let mut request = basic_request("claude", None, Vec::new());
     request.tools = model_tools(&BuiltinAgentToolRegistry::all());

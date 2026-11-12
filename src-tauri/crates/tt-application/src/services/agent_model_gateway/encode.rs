@@ -228,7 +228,7 @@ fn encode_openai_compatible_message(
         }
     }
 
-    copy_native_continuation(&mut object, &message.parts, adapter);
+    copy_native_continuation(&mut object, &message.parts);
     copy_reasoning_content(&mut object, &message.parts);
 
     Ok((Value::Object(object), tool_images))
@@ -292,19 +292,11 @@ fn openai_content_from_parts(parts: &[AgentModelContentPart]) -> Value {
     }
 }
 
-fn copy_native_continuation(
-    object: &mut Map<String, Value>,
-    parts: &[AgentModelContentPart],
-    adapter: AgentProviderAdapter,
-) {
-    let Some(native_provider) = adapter.native_provider() else {
-        return;
-    };
-
+fn copy_native_continuation(object: &mut Map<String, Value>, parts: &[AgentModelContentPart]) {
     let mut native = Map::new();
     for part in parts {
         if let AgentModelContentPart::Native { provider, value } = part
-            && provider == native_provider
+            && provider != "openai.content_part"
         {
             native.insert(provider.clone(), value.clone());
         }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_ports::repositories::chat_completion_repository::NATIVE_GEMINI_INTERACTIONS;
 
 use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
@@ -375,15 +376,10 @@ fn build_input_and_system_instruction(
 fn message_native_steps(
     message: &Map<String, Value>,
 ) -> Result<Option<&[Value]>, ApplicationError> {
-    let Some(native) = message.get("native") else {
-        return Ok(None);
-    };
-    let native = native.as_object().ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "Gemini Interactions message native state must be an object".to_string(),
-        )
-    })?;
-    let Some(interactions) = native.get("gemini_interactions") else {
+    let Some(interactions) = message
+        .get("native")
+        .and_then(|native| native.get(NATIVE_GEMINI_INTERACTIONS))
+    else {
         return Ok(None);
     };
     let interactions = interactions.as_object().ok_or_else(|| {

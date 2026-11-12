@@ -43,6 +43,11 @@ pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
 pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
 
+pub const NATIVE_CLAUDE: &str = "claude";
+pub const NATIVE_GEMINI: &str = "gemini";
+pub const NATIVE_GEMINI_INTERACTIONS: &str = "gemini_interactions";
+pub const NATIVE_OPENAI_RESPONSES: &str = "openai_responses";
+
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {
     pub synthetic_tool_call_ids: Vec<String>,

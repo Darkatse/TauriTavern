@@ -3,6 +3,7 @@ use serde_json::json;
 use url::Url;
 
 use crate::errors::ApplicationError;
+use tt_ports::repositories::chat_completion_repository::NATIVE_CLAUDE;
 
 use super::super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
@@ -203,7 +204,7 @@ fn message_native_claude_content(
 ) -> Result<Option<Vec<Value>>, ApplicationError> {
     let Some(blocks) = message
         .get("native")
-        .and_then(|native| native.get("claude"))
+        .and_then(|native| native.get(NATIVE_CLAUDE))
         .and_then(|claude| claude.get("content"))
         .and_then(Value::as_array)
     else {

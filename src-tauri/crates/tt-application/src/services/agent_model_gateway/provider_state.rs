@@ -55,7 +55,7 @@ pub(super) fn next_provider_state(
         "lastResponseId": response_id.clone(),
     });
 
-    if let Some(provider) = adapter.native_provider() {
+    if let Some(provider) = adapter.format().native_key() {
         let part_count = native_part_count(response, provider);
         if !response.tool_calls.is_empty() && part_count == 0 {
             return Err(ApplicationError::ValidationError(format!(
