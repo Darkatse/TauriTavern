@@ -314,6 +314,8 @@ pub struct AgentModelTool {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub fields: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

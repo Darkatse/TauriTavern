@@ -427,6 +427,115 @@ async fn agent_runtime_runs_from_a_snapshot_with_legacy_tool_history() {
 }
 
 #[tokio::test]
+async fn agent_runtime_applies_prompt_tool_definitions_without_granting_execution() {
+    let root = temp_root("agent-prompt-tools");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call("call_state", "read_state", json!({ "target": "Alice" })),
+                model_tool_call("call_dice", "dice_roll", json!({ "notation": "1d6" })),
+            ]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": "Alice is well." }),
+                ),
+                model_tool_call("call_finish", "workspace_finish", json!({})),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    let dice = tt_domain::models::tool::ToolId::builtin("dice.roll").unwrap();
+    profile.tools.deny.push(dice);
+    let run = contract_run(
+        "run_prompt_tools",
+        AgentRunPresentation::Background,
+        &profile,
+    );
+    fixture.agent_repository.create_run(&run).await.unwrap();
+    let write_schema = json!({ "type": "object", "properties": {
+        "path": { "type": "string" }, "content": { "type": "string" }
+    } });
+    let prompt_snapshot = json!({
+        "generationParameters": {
+            "chat_completion_source": "openai",
+            "model": "test-model",
+            "tools": [
+                { "type": "function", "function": {
+                    "name": "workspace_write_file",
+                    "description": "Write the reply.",
+                    "parameters": write_schema,
+                    "strict": true
+                } },
+                { "type": "function", "function": { "name": "read_state", "description": "Read the state." } },
+                { "type": "function", "function": { "name": "dice_roll" } }
+            ]
+        },
+        "messages": [
+            { "role": "system", "content": "Use the available Agent tools.",
+              "_tauritavern_prompt_component": "agentSystemPrompt" },
+            { "role": "user", "content": "How is Alice?" }
+        ]
+    });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    fixture
+        .service
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
+        .await
+        .expect("prompt tool definitions join the invocation");
+
+    let requests = fixture.model_gateway.requests().await;
+    let tool = |alias: &str| {
+        requests[0]
+            .tools
+            .iter()
+            .find(|tool| tool.model_alias == alias)
+            .expect("advertised tool")
+    };
+    let write = tool("workspace_write_file");
+    assert_eq!(
+        write.tool_id,
+        tt_domain::models::tool::ToolId::builtin("workspace.write_file").unwrap()
+    );
+    assert_eq!(write.description.as_deref(), Some("Write the reply."));
+    assert_eq!(write.input_schema, write_schema);
+    assert_eq!(write.fields["strict"], json!(true));
+    for alias in ["read_state", "dice_roll"] {
+        assert_eq!(
+            tool(alias).tool_id,
+            tt_domain::models::tool::ToolId::prompt(alias).unwrap()
+        );
+    }
+
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    for result in results {
+        assert_eq!(result.error_code.as_deref(), Some("tool.no_executor"));
+    }
+    let artifact = fixture
+        .agent_repository
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(artifact.text, "Alice is well.");
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
 async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_arguments() {
     let root = temp_root("agent-tool-arguments");
     let mut malformed = model_tool_call("call_invalid", "workspace_list_files", json!({}));

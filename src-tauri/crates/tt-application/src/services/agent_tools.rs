@@ -21,7 +21,7 @@ pub(crate) use session::AgentToolSession;
 
 pub(crate) use agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
 pub(crate) use policy::{
-    ExternalAgentTool, builtin_available_in_scope, builtin_model_alias,
+    ExternalAgentTool, apply_prompt_tools, builtin_available_in_scope, builtin_model_alias,
     compile_invocation_tool_snapshot, mcp_model_name, prepare_tool_bindings,
     project_agent_model_tools,
 };

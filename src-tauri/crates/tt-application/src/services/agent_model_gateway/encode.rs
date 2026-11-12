@@ -62,7 +62,11 @@ pub(crate) fn encode_chat_completion_request(
     } else {
         payload.insert(
             "tools".to_string(),
-            request.tools.iter().map(encode_tool_definition).collect(),
+            request
+                .tools
+                .iter()
+                .map(encode_tool_definition)
+                .collect::<Result<_, _>>()?,
         );
         payload.insert(
             "tool_choice".to_string(),
@@ -83,12 +87,21 @@ fn tool_image_message(images: Vec<Value>) -> Value {
     json!({ "role": "user", "content": content })
 }
 
-fn encode_tool_definition(tool: &AgentModelTool) -> Value {
-    let mut function = json!({ "name": tool.model_alias, "parameters": tool.input_schema });
+fn encode_tool_definition(tool: &AgentModelTool) -> Result<Value, ApplicationError> {
+    let mut function = Map::new();
+    function.insert("name".into(), Value::String(tool.model_alias.clone()));
     if let Some(description) = &tool.description {
-        function["description"] = Value::String(description.clone());
+        function.insert("description".into(), Value::String(description.clone()));
     }
-    json!({ "type": "function", "function": function })
+    if !tool.input_schema.is_null() {
+        function.insert("parameters".into(), tool.input_schema.clone());
+    }
+    fields::extend_with_fields(
+        &mut function,
+        &tool.fields,
+        fields::TOOL_FUNCTION_STRUCTURE_KEYS,
+    )?;
+    Ok(json!({ "type": "function", "function": function }))
 }
 
 fn encode_tool_choice(

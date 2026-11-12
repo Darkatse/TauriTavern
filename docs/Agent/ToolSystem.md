@@ -6,13 +6,15 @@
 
 工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
-只出现在提示词内容中的工具调用，例如 Legacy 聊天历史里的调用，身份是 `prompt:<调用名称>`，没有执行者，见 [LLM gateway](LlmGateway.md#请求形状的消息)。
+只从提示词得知、没有执行者的工具，身份是 `prompt:<模型调用名称>`，例如 Legacy 聊天历史里的调用，见 [LLM gateway](LlmGateway.md#请求形状的消息与工具定义)。
 
 模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
 写给模型的文字，包括工具描述、参数说明、工具结果与错误、系统提示词，提到其他工具时用模型调用名称，例如 `workspace_read_file`；说的是本次调用的工具，就写 "this tool"。Profile、运行记录和设置界面用稳定 ID。
 
-工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射的快照。输出修订沿用原快照。`tool_request_gate` 检查快照与本轮工具选择后，调用明确分派到 Builtin、MCP 或 Extension。
+工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射的快照。输出修订沿用原快照。`tool_request_gate` 检查快照与本轮工具选择后，调用明确分派到 Builtin、MCP 或 Extension；`prompt` 工具返回可恢复的 `tool.no_executor`。
+
+提示词可以在 `generationParameters.tools` 中声明工具，组装完成后按模型调用名称并入快照：同名时替换已有工具的描述、参数 schema 与 `fields`，执行者不变；其余成为 `prompt` 工具。
 
 新 Profile 默认启用 Shell。
 
@@ -78,7 +80,7 @@ Skill 提供工作方法、材料和脚本，通过只读 `skills/` 视图与 `w
 需要网络、文件或脚本引擎等外部能力时，沿用仓库的 port 与 adapter 边界。验证应从可观察的调用结果和副作用入手，见 [测试](TestingStrategy.md)。
 
 - [registry.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/registry.rs)：内置目录。
-- [policy.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/policy.rs)：Invocation 工具快照。
+- [policy.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/policy.rs)：Invocation 工具快照与提示词声明的合并。
 - [tool.rs](../../src-tauri/crates/tt-domain/src/models/tool.rs)：`ToolArguments` 的线上编码换算规则。
 - [tool_request_gate.rs](../../src-tauri/crates/tt-application/src/services/tool_request_gate.rs)：工具调用检查。
 - [tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs)：分派和记录。

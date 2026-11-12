@@ -341,7 +341,8 @@ impl AgentRuntimeService {
                 root_invocation.id.as_str(),
                 accepts_images,
             )
-            .await?;
+            .await?
+            .with_prompt_tools(&request.tools)?;
         let tool_snapshot = prepared_tools.snapshot;
         let tool_turn = prepared_tools.turn;
         let visible_tools = prepared_tools.model_tools;

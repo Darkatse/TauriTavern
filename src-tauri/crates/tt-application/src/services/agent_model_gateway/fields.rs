@@ -30,6 +30,8 @@ pub(super) fn message_structure_keys(role: AgentModelRole) -> &'static [&'static
 
 pub(super) const TOOL_CALL_STRUCTURE_KEYS: &[&str] = &["id", "type", "function"];
 
+pub(super) const TOOL_FUNCTION_STRUCTURE_KEYS: &[&str] = &["name", "description", "parameters"];
+
 pub(super) fn split_fields(
     mut object: Map<String, Value>,
     structure_keys: &[&str],
@@ -64,12 +66,20 @@ pub(super) fn merge_fields(
             "agent.invalid_model_message: providerMetadata.fields must be an object".to_string(),
         )
     })?;
+    extend_with_fields(object, fields, structure_keys)
+}
+
+pub(super) fn extend_with_fields(
+    object: &mut Map<String, Value>,
+    fields: &Map<String, Value>,
+    structure_keys: &[&str],
+) -> Result<(), ApplicationError> {
     if let Some(key) = fields
         .keys()
         .find(|key| structure_keys.contains(&key.as_str()))
     {
         return Err(ApplicationError::ValidationError(format!(
-            "agent.invalid_model_message: providerMetadata.fields cannot contain `{key}`, which the structure builds"
+            "agent.invalid_fields: fields cannot contain `{key}`, which the structure builds"
         )));
     }
     object.extend(fields.clone());

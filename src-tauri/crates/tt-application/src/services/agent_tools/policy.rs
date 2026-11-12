@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde_json::Value;
+
 use super::workspace::{WORKSPACE_COMMIT, WORKSPACE_FINISH};
 use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, BuiltinAgentToolRegistry, TASK_RETURN};
 use crate::errors::ApplicationError;
@@ -120,6 +122,43 @@ pub(crate) fn compile_invocation_tool_snapshot(
     InvocationToolSnapshot::try_new(snapshot_id, bindings).map_err(Into::into)
 }
 
+/// Prompt declarations may change model-visible definitions, never execution identity.
+pub(crate) fn apply_prompt_tools(
+    snapshot: &InvocationToolSnapshot,
+    tools: &[AgentModelTool],
+) -> Result<InvocationToolSnapshot, ApplicationError> {
+    let mut bindings = snapshot.bindings().to_vec();
+    for tool in tools {
+        let existing = bindings
+            .iter()
+            .position(|binding| binding.model_alias() == tool.model_alias);
+        let description = tool.description.clone();
+        let input_schema = tool.input_schema.clone();
+        let descriptor = match existing {
+            Some(index) => ToolDescriptor {
+                description,
+                input_schema,
+                ..bindings[index].descriptor().clone()
+            },
+            None => ToolDescriptor {
+                id: tool.tool_id.clone(),
+                title: None,
+                description,
+                input_schema,
+                output_schema: None,
+                annotations: Value::Null,
+            },
+        };
+        let binding =
+            ToolBinding::new(descriptor, &tool.model_alias)?.with_fields(tool.fields.clone());
+        match existing {
+            Some(index) => bindings[index] = binding,
+            None => bindings.push(binding),
+        }
+    }
+    InvocationToolSnapshot::try_new(snapshot.id().clone(), bindings).map_err(Into::into)
+}
+
 pub(crate) fn builtin_model_alias(name: &str) -> String {
     name.replace('.', "_")
 }
@@ -227,6 +266,7 @@ pub(crate) fn project_agent_model_tools(
                 model_alias: binding.model_alias().to_string(),
                 description: descriptor.description.clone(),
                 input_schema: descriptor.input_schema.clone(),
+                fields: binding.fields().clone(),
             })
         })
         .collect()

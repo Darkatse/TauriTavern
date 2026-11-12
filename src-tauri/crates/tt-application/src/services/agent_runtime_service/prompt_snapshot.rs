@@ -1,7 +1,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
-use crate::services::agent_model_gateway::canonical_request_messages;
+use crate::services::agent_model_gateway::{canonical_request_messages, canonical_request_tools};
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
@@ -48,6 +48,7 @@ const PROMPT_COMPONENT_FIELD: &str = "_tauritavern_prompt_component";
 pub(super) struct AgentPromptRequest {
     pub payload: Map<String, Value>,
     pub messages: Vec<AgentModelMessage>,
+    pub tools: Vec<AgentModelTool>,
     pub accepts_images: bool,
 }
 
@@ -103,7 +104,6 @@ pub(super) fn admit_prompt_snapshot(
     context_policy: &AgentContextPolicy,
 ) -> Result<AgentPromptRequest, ApplicationError> {
     let request = request_from_prompt_snapshot(prompt_snapshot)?;
-    reject_external_tool_request(&request.payload)?;
     validate_prompt_snapshot_context_policy(prompt_snapshot, context_policy)?;
     Ok(request)
 }
@@ -146,6 +146,12 @@ pub(super) fn request_from_prompt_snapshot(
         (payload, messages)
     };
     let messages = prompt_messages(messages)?;
+    if payload.contains_key("tool_choice") {
+        return Err(ApplicationError::ValidationError(
+            "agent.external_tool_choice_unsupported: Agent runtime owns tool choice".to_string(),
+        ));
+    }
+    let tools = canonical_request_tools(payload.remove("tools"))?;
     payload.insert("stream".into(), Value::Bool(false));
     payload
         .entry("chat_completion_source")
@@ -161,6 +167,7 @@ pub(super) fn request_from_prompt_snapshot(
     Ok(AgentPromptRequest {
         payload,
         messages,
+        tools,
         accepts_images,
     })
 }
@@ -208,8 +215,6 @@ pub(super) fn prepare_agent_tool_request(
         }
     }
 
-    request.payload.remove("tools");
-    request.payload.remove("tool_choice");
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
@@ -270,26 +275,6 @@ fn validate_prompt_snapshot_context_policy(
         return Err(ApplicationError::ValidationError(
             "agent.context_policy_mismatch: prompt snapshot contextPolicy does not match resolved Agent profile"
                 .to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn reject_external_tool_request(payload: &Map<String, Value>) -> Result<(), ApplicationError> {
-    let has_tools = payload
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty());
-    if has_tools {
-        return Err(ApplicationError::ValidationError(
-            "agent.external_tools_unsupported: Agent runtime owns the tool registry".to_string(),
-        ));
-    }
-
-    if payload.contains_key("tool_choice") {
-        return Err(ApplicationError::ValidationError(
-            "agent.external_tool_choice_unsupported: Agent runtime owns tool choice".to_string(),
         ));
     }
 
@@ -436,8 +421,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, reject_external_tool_request,
-        request_from_prompt_snapshot, validate_prompt_snapshot_context_policy,
+        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, request_from_prompt_snapshot,
+        validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
     use tt_domain::models::tool::ToolChoice;
@@ -450,9 +435,7 @@ mod tests {
                 "tool_choice": null
             }
         });
-        let request = request_from_prompt_snapshot(&prompt_snapshot).expect("request");
-
-        let error = reject_external_tool_request(&request.payload).expect_err("tool_choice fails");
+        let error = request_from_prompt_snapshot(&prompt_snapshot).expect_err("tool_choice fails");
         assert!(
             error
                 .to_string()

@@ -557,6 +557,7 @@ fn tool(name: &str, model_alias: &str) -> AgentModelTool {
         model_alias: model_alias.to_string(),
         description: None,
         input_schema: json!({}),
+        fields: Default::default(),
     }
 }
 

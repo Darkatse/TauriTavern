@@ -7,6 +7,7 @@ use super::provider_state::{
 };
 use super::providers::AgentProviderAdapter;
 use super::request_messages::canonical_request_messages;
+use super::request_tools::canonical_request_tools;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
@@ -29,6 +30,7 @@ fn model_tools(registry: &BuiltinAgentToolRegistry) -> Vec<AgentModelTool> {
             model_alias: descriptor.id.native_name().replace('.', "_"),
             description: descriptor.description.clone(),
             input_schema: descriptor.input_schema.clone(),
+            fields: Default::default(),
         })
         .collect()
 }
@@ -252,6 +254,43 @@ fn request_tool_results_without_an_earlier_call_need_a_name() {
 }
 
 #[test]
+fn request_tools_encode_back_to_themselves() {
+    let tools = json!([
+        { "type": "function", "function": {
+            "name": "read_state",
+            "description": "",
+            "parameters": {
+                "type": "object",
+                "properties": { "title": { "type": "string" } },
+                "additionalProperties": false
+            },
+            "strict": true
+        } },
+        { "type": "function", "function": { "name": "ping" } }
+    ]);
+
+    let mut request = basic_request("custom", Some("openai_compat"), Vec::new());
+    request.tools = canonical_request_tools(Some(tools.clone())).unwrap();
+    let encoded = encode_chat_completion_request(&request, false).unwrap();
+    assert_eq!(encoded.payload["tools"], tools);
+}
+
+#[test]
+fn request_tools_need_distinct_names() {
+    let error = canonical_request_tools(Some(json!([
+        { "type": "function", "function": { "name": "read_state" } },
+        { "type": "function", "function": { "name": "read_state", "description": "Again" } }
+    ])))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.invalid_prompt_tools: tool 1")
+    );
+}
+
+#[test]
 fn rejects_tool_names_outside_the_current_turn_aliases() {
     let registry = BuiltinAgentToolRegistry::all();
     let write = model_tool(&registry, "workspace.write_file");
@@ -394,12 +433,14 @@ fn encodes_tool_results_as_model_facing_text() {
             model_alias: "builtin_search".to_string(),
             description: None,
             input_schema: json!({ "type": "object" }),
+            fields: Default::default(),
         },
         AgentModelTool {
             tool_id: mcp_id.clone(),
             model_alias: "mcp_search".to_string(),
             description: None,
             input_schema: json!({ "type": "object" }),
+            fields: Default::default(),
         },
     ];
     request.messages = vec![AgentModelMessage {
@@ -993,6 +1034,7 @@ fn openai_tool_images_follow_the_complete_tool_result_group() {
         model_alias: "search".into(),
         description: None,
         input_schema: json!({"type":"object"}),
+        fields: Default::default(),
     });
     let dto = encode_chat_completion_request(&request, false).unwrap();
     assert_eq!(

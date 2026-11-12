@@ -25,7 +25,7 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`。`messages` 的每一项可以是带 `parts` 的 `AgentModelMessage`，也可以是 chat-completion 请求形状的消息，包括 `tool_calls` 与 tool 消息；runtime 把后者转为规范消息，Legacy `chatCompletionPayload` 的消息同样如此。请求形状的消息角色限于 system、developer、user、assistant 与 tool，无法转换时报 `agent.invalid_prompt_messages`。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`。`messages` 的每一项可以是带 `parts` 的 `AgentModelMessage`，也可以是 chat-completion 请求形状的消息，包括 `tool_calls` 与 tool 消息；runtime 把后者转为规范消息，Legacy `chatCompletionPayload` 的消息同样如此。请求形状的消息角色限于 system、developer、user、assistant 与 tool，无法转换时报 `agent.invalid_prompt_messages`。`generationParameters.tools` 中的工具定义按模型调用名称并入工具快照，见[工具](../Agent/ToolSystem.md#身份与调用名称)，无法转换时报 `agent.invalid_prompt_tools`；`tool_choice` 由 runtime 决定，不能出现在快照中。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
 `acceptsImages` 的公开默认值为 false；判定与 Invocation 生命周期见 [Prompt assembly](../Agent/PromptAssembly.md#一种组装一个-live-例外)。
 
