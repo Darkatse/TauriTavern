@@ -10,6 +10,7 @@ use crate::errors::DomainError;
 
 const TOOL_ID_SEPARATOR: char = ':';
 const BUILTIN_TOOL_PROVIDER_ID: &str = "builtin";
+const PROMPT_TOOL_PROVIDER_ID: &str = "prompt";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +106,18 @@ impl ToolId {
 
     pub fn builtin(native_name: impl AsRef<str>) -> Result<Self, DomainError> {
         Self::new(&ToolProviderId::builtin(), native_name)
+    }
+
+    /// A model-facing name with no executor.
+    pub fn prompt(model_name: impl AsRef<str>) -> Result<Self, DomainError> {
+        Self::new(
+            &ToolProviderId(PROMPT_TOOL_PROVIDER_ID.to_string()),
+            model_name,
+        )
+    }
+
+    pub fn is_prompt(&self) -> bool {
+        self.provider_id() == PROMPT_TOOL_PROVIDER_ID
     }
 
     pub fn provider_id(&self) -> &str {

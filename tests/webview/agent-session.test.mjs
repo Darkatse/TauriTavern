@@ -3,7 +3,8 @@ import { createFrontend } from '../helpers/frontend.mjs';
 
 const { load, startHost } = await createFrontend();
 const message = (role, text) => ({ role, parts: [{ type: 'text', text }], providerMetadata: {} });
-const call = { callId: 'call-1', toolId: 'builtin:workspace.read_file', arguments: { path: 'work/{{user}}.md' }, providerMetadata: { modelAlias: 'workspace_read_file', signature: 'opaque-signature' } };
+const textOf = item => item.parts ? item.parts.map(part => part.text ?? '').join('') : item.content;
+const call = { callId: 'call-1', toolId: 'builtin:workspace.read_file', arguments: { path: 'work/{{user}}.md' }, providerMetadata: { modelAlias: 'workspace_read_file', fields: { signature: 'opaque-signature' } } };
 const assistant = {
     role: 'assistant',
     parts: [
@@ -63,7 +64,7 @@ const assemble = (messages, reasoningEffort) => {
 test('Session PromptManager preserves canonical history and depth injections', async () => {
     const assembled = await assemble(history);
     const { promptSnapshot: snapshot } = assembled;
-    const recordedAssistant = snapshot.messages.find(item => item.parts.some(part => part.type === 'toolCall'));
+    const recordedAssistant = snapshot.messages.find(item => item.parts?.some(part => part.type === 'toolCall'));
     expect(JSON.parse(JSON.stringify(recordedAssistant))).toEqual(assistant);
     expect(JSON.parse(JSON.stringify(snapshot.messages.find(item => item.role === 'tool')))).toEqual(result);
 
@@ -74,8 +75,8 @@ test('Session PromptManager preserves canonical history and depth injections', a
     preset.prompts.push(depthPrompt);
     preset.prompt_order[0].order.push({ identifier: depthPrompt.identifier, enabled: true });
     const injected = (await assemble(history)).promptSnapshot.messages;
-    const injectedAt = injected.findIndex(item => item.parts.some(part => part.text === depthPrompt.content));
-    const currentAt = injected.findIndex(item => item.parts.some(part => part.text === 'Continue.'));
+    const injectedAt = injected.findIndex(item => textOf(item) === depthPrompt.content);
+    const currentAt = injected.findIndex(item => textOf(item) === 'Continue.');
     expect(injectedAt).toBe(currentAt - 1);
     preset.prompts.pop();
     preset.prompt_order[0].order.pop();
@@ -144,8 +145,8 @@ test('Session send snapshots explicit/empty local and user global before await; 
         release.resolve();
         await sending;
         const expectedLocal = variables ? 'explicit-local' : '';
-        expect(started.promptSnapshot.messages.some(item => item.parts.some(part =>
-            part.text === `Local=${expectedLocal};Global=captured-global;Char=;Last=Own Session input.`))).toBeTruthy();
+        expect(started.promptSnapshot.messages.some(item =>
+            textOf(item) === `Local=${expectedLocal};Global=captured-global;Char=;Last=Own Session input.`)).toBeTruthy();
         expect(started.promptAssemblyRequest.frozenRunInputSnapshot.variables.local).toEqual(originalVariables?.local ?? {});
         expect(started.promptAssemblyRequest.frozenRunInputSnapshot.variables.global).toEqual({ globalValue: 'captured-global' });
         expect(variables).toEqual(originalVariables);

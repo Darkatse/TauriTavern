@@ -1,10 +1,11 @@
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use crate::services::agent_model_gateway::canonical_request_messages;
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelTool,
 };
 use tt_domain::models::skill::SkillIndexEntry;
 use tt_domain::models::tool::ToolChoice;
@@ -41,6 +42,7 @@ impl super::AgentRuntimeService {
 }
 
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
+const PROMPT_COMPONENT_FIELD: &str = "_tauritavern_prompt_component";
 
 #[derive(Debug, Clone)]
 pub(super) struct AgentPromptRequest {
@@ -120,19 +122,21 @@ pub(super) fn request_from_prompt_snapshot(
         if payload.contains_key("messages") || payload.contains_key("prompt") {
             return Err(ApplicationError::ValidationError("agent.duplicate_prompt_messages: generationParameters must not contain messages or prompt".into()));
         }
-        let messages = serde_json::from_value::<Vec<AgentModelMessage>>(
-            prompt_snapshot.get("messages").cloned().ok_or_else(|| {
-                ApplicationError::ValidationError(
-                    "agent.prompt_messages_required: canonical messages are required".into(),
-                )
-            })?,
-        )
-        .map_err(|error| {
-            ApplicationError::ValidationError(format!("agent.invalid_prompt_messages: {error}"))
-        })?;
+        let messages = match prompt_snapshot.get("messages") {
+            Some(Value::Array(messages)) => messages.clone(),
+            Some(_) => {
+                return Err(ApplicationError::ValidationError(
+                    "agent.invalid_prompt_messages: messages must be an array".into(),
+                ));
+            }
+            None => {
+                return Err(ApplicationError::ValidationError(
+                    "agent.prompt_messages_required: messages are required".into(),
+                ));
+            }
+        };
         (payload, messages)
     } else {
-        // The existing Chat API is adapted once; the runtime only consumes canonical messages.
         let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
             ApplicationError::ValidationError(
                 "agent.invalid_prompt_snapshot: expected a prompt snapshot".into(),
@@ -141,6 +145,7 @@ pub(super) fn request_from_prompt_snapshot(
         let messages = messages_from_payload(&mut payload)?;
         (payload, messages)
     };
+    let messages = prompt_messages(messages)?;
     payload.insert("stream".into(), Value::Bool(false));
     payload
         .entry("chat_completion_source")
@@ -322,9 +327,7 @@ fn find_payload_object(value: &Value) -> Option<Map<String, Value>> {
     None
 }
 
-fn messages_from_payload(
-    payload: &mut Map<String, Value>,
-) -> Result<Vec<AgentModelMessage>, ApplicationError> {
+fn messages_from_payload(payload: &mut Map<String, Value>) -> Result<Vec<Value>, ApplicationError> {
     let messages = match payload.remove("messages") {
         Some(Value::Array(messages)) => messages,
         Some(Value::String(prompt)) => vec![json!({
@@ -353,11 +356,34 @@ fn messages_from_payload(
         }
     };
     payload.remove("prompt");
+    Ok(messages)
+}
 
-    messages
-        .into_iter()
-        .map(message_from_openai_value)
-        .collect::<Result<Vec<_>, _>>()
+/// Prompt markers are snapshot facts, never request fields.
+fn prompt_messages(mut messages: Vec<Value>) -> Result<Vec<AgentModelMessage>, ApplicationError> {
+    let mut components = Vec::new();
+    for (index, message) in messages.iter_mut().enumerate() {
+        reject_agent_prompt_marker(message)?;
+        if let Some(component) = message
+            .as_object_mut()
+            .and_then(|object| object.remove(PROMPT_COMPONENT_FIELD))
+        {
+            components.push((index, component));
+        }
+    }
+
+    let mut messages = canonical_request_messages(messages)?;
+    for (index, component) in components {
+        let metadata = &mut messages[index].provider_metadata;
+        if !metadata.is_object() {
+            *metadata = Value::Object(Map::new());
+        }
+        metadata
+            .as_object_mut()
+            .expect("provider metadata was just made an object")
+            .insert("promptComponent".to_string(), component);
+    }
+    Ok(messages)
 }
 
 fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
@@ -377,89 +403,6 @@ fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
     Err(ApplicationError::ValidationError(
         "agent.prompt_marker_unmaterialized: prompt snapshot must materialize agentSystemPrompt before entering the Agent runtime".to_string(),
     ))
-}
-
-fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, ApplicationError> {
-    reject_agent_prompt_marker(&value)?;
-    let mut object = match value {
-        Value::Object(object) => object,
-        _ => {
-            return Err(ApplicationError::ValidationError(
-                "agent.invalid_prompt_snapshot: message must be an object".to_string(),
-            ));
-        }
-    };
-    if object
-        .get("role")
-        .and_then(Value::as_str)
-        .is_some_and(|role| matches!(role, "tool" | "function"))
-        || object
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|calls| !calls.is_empty())
-    {
-        return Err(ApplicationError::ValidationError(
-            "agent.canonical_tool_history_required: tool history must use AgentModelMessage parts"
-                .into(),
-        ));
-    }
-    let role = match object
-        .get("role")
-        .and_then(Value::as_str)
-        .unwrap_or("user")
-        .trim()
-        .to_lowercase()
-        .as_str()
-    {
-        "system" => AgentModelRole::System,
-        "developer" => AgentModelRole::Developer,
-        "assistant" => AgentModelRole::Assistant,
-        "tool" | "function" => AgentModelRole::Tool,
-        _ => AgentModelRole::User,
-    };
-
-    let provider_metadata = json!({
-        "openai": {
-            "name": object.get("name").and_then(Value::as_str),
-        },
-        "promptComponent": object.get("_tauritavern_prompt_component"),
-    });
-
-    Ok(AgentModelMessage {
-        role,
-        parts: content_parts_from_openai_value(object.remove("content")),
-        provider_metadata,
-    })
-}
-
-fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelContentPart> {
-    match value {
-        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text }],
-        Some(Value::Array(parts)) => parts
-            .into_iter()
-            .map(|part| match part {
-                Value::String(text) => AgentModelContentPart::Text { text },
-                Value::Object(mut object)
-                    if object.get("type").and_then(Value::as_str) == Some("text") =>
-                {
-                    AgentModelContentPart::Text {
-                        text: match object.remove("text") {
-                            Some(Value::String(text)) => text,
-                            _ => String::new(),
-                        },
-                    }
-                }
-                other => AgentModelContentPart::Native {
-                    provider: "openai.content_part".to_string(),
-                    value: other,
-                },
-            })
-            .collect(),
-        Some(Value::Null) | None => Vec::new(),
-        Some(other) => vec![AgentModelContentPart::Text {
-            text: other.to_string(),
-        }],
-    }
 }
 
 /// Compile captured values once per invocation; readers share the immutable table.

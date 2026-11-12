@@ -6,6 +6,8 @@
 
 工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
+只出现在提示词内容中的工具调用，例如 Legacy 聊天历史里的调用，身份是 `prompt:<调用名称>`，没有执行者，见 [LLM gateway](LlmGateway.md#请求形状的消息)。
+
 模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
 写给模型的文字，包括工具描述、参数说明、工具结果与错误、系统提示词，提到其他工具时用模型调用名称，例如 `workspace_read_file`；说的是本次调用的工具，就写 "this tool"。Profile、运行记录和设置界面用稳定 ID。

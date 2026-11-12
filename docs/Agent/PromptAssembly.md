@@ -44,7 +44,9 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
-`openai.js` 的 `createAgentPromptSnapshot` 统一把 payload 转为 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，记录 `acceptsImages: isImageInliningSupported(settings) === true`，并从有效设置提供 `contextLimits: { context, response, tokenizerModel }`。`acceptsImages` 省略时为 false，非布尔值在入口报错；该值在本次 Invocation 中固定，计数、图片注入和 Session 压缩重建共用它。能力判定依赖界面全局 `main_api`，部分来源还依赖当前来源的 `model_list`。Session runtime 据此计数并决定压缩点；Legacy Chat payload 在入口适配。live 当前预设与 SDK 的快照共用 payload 准备入口，各自保留事件和调用来源语义。
+`openai.js` 的 `createAgentPromptSnapshot` 把 payload 拆为 `messages` 与 `generationParameters`。`messages` 保持组装结果的形状，由 Rust 转为规范消息，见 [LLM gateway](LlmGateway.md#请求形状的消息)；Legacy Chat payload 的消息走同一转换。live 当前预设与 SDK 的快照共用这一入口，各自保留事件和调用来源语义。
+
+快照还记录 `acceptsImages: isImageInliningSupported(settings) === true`，并从有效设置提供 `contextLimits: { context, response, tokenizerModel }`。`acceptsImages` 省略时为 false，非布尔值在入口报错；它在本次 Invocation 中固定，计数、图片注入和 Session 压缩重建共用它。能力判定依赖界面全局 `main_api`，部分来源还依赖当前来源的 `model_list`。Session runtime 据此计数并决定压缩点。
 
 普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 

@@ -12,9 +12,11 @@ use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelt
 
 mod decode;
 mod encode;
+mod fields;
 mod format;
 mod provider_state;
 mod providers;
+mod request_messages;
 mod schema;
 
 #[cfg(test)]
@@ -24,6 +26,7 @@ mod tests;
 pub use decode::decode_chat_completion_response;
 pub(crate) use encode::call_model_alias;
 pub use provider_state::reset_transport_for_resume;
+pub(crate) use request_messages::canonical_request_messages;
 
 #[async_trait]
 pub trait AgentModelGateway: Send + Sync {

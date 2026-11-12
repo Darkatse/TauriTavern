@@ -32,7 +32,6 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
-import { toAgentModelMessage } from './tauritavern/agent/agent-model-messages.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -2549,7 +2548,7 @@ export function createAgentPromptSnapshot(payload, { settings, contextPolicy, wo
         },
         contextPolicy,
         ...(worldInfoActivation ? { worldInfoActivation } : {}),
-        messages: messages.map(toAgentModelMessage),
+        messages,
         generationParameters,
     };
 }

@@ -6,6 +6,7 @@ use super::provider_state::{
     next_provider_state, reset_transport_for_resume, responses_websocket_session_id,
 };
 use super::providers::AgentProviderAdapter;
+use super::request_messages::canonical_request_messages;
 use super::schema::sanitize_schema_for_provider;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::services::chat_completion_service::exchange::{
@@ -77,10 +78,6 @@ fn decodes_tool_call_to_canonical_identity() {
         .unwrap()
     );
     assert_eq!(decoded.tool_calls[0].call_id, "call_1");
-    assert_eq!(
-        decoded.tool_calls[0].provider_metadata["signature"],
-        "sig_1"
-    );
 }
 
 #[test]
@@ -126,6 +123,8 @@ fn openai_compatible_replays_opaque_continuation() {
         "choices": [{
             "message": {
                 "content": null,
+                "refusal": null,
+                "annotations": [],
                 "reasoning": "Need tools",
                 "reasoning_content": " exact reasoning ",
                 "reasoning_details": [{
@@ -143,7 +142,9 @@ fn openai_compatible_replays_opaque_continuation() {
                         },
                         "extra_content": {
                             "google": { "thought_signature": "opaque-signature" }
-                        }
+                        },
+                        "signature": "call-signature",
+                        "index": 0
                     },
                     {
                         "id": "call_2",
@@ -174,12 +175,81 @@ fn openai_compatible_replays_opaque_continuation() {
             "data": "opaque-reasoning"
         }])
     );
+    assert!(message.get("refusal").is_none());
+    assert!(message.get("annotations").is_none());
     let calls = message["tool_calls"].as_array().unwrap();
     assert_eq!(
         calls[0]["extra_content"],
         json!({ "google": { "thought_signature": "opaque-signature" } })
     );
+    assert_eq!(calls[0]["signature"], "call-signature");
+    assert!(calls[0].get("index").is_none());
     assert!(calls[1].get("extra_content").is_none());
+}
+
+#[test]
+fn request_messages_encode_back_to_themselves() {
+    let messages = json!([
+        { "role": "system", "content": "Rules", "name": "narrator" },
+        { "role": "user", "content": "" },
+        { "role": "user", "content": [
+            { "type": "text", "text": "Hello" },
+            { "type": "text", "text": "World" }
+        ] },
+        { "role": "user", "content": [
+            { "type": "text", "text": "Look" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+        ] },
+        { "role": "tool", "tool_call_id": "call_1", "name": "read_lore", "content": "Unanswered." },
+        {
+            "role": "assistant",
+            "content": "Checking",
+            "reasoning_content": "",
+            "signature": "text-signature",
+            "prefix": true,
+            "native": { "gemini": { "content": { "role": "model", "parts": [] } } },
+            "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": { "name": "read_state", "arguments": "{\"target\":\"Alice\"}" },
+                "signature": "call-signature",
+                "extra_content": { "google": { "thought_signature": "opaque" } }
+            }]
+        },
+        { "role": "tool", "tool_call_id": "call_1", "name": "read_state", "content": "{\"hp\":3}", "note": "kept" },
+        {
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": " plan ",
+            "tool_calls": [{
+                "id": "call_2", "type": "function",
+                "function": { "name": "read_state", "arguments": "{}" }
+            }]
+        },
+        { "role": "tool", "tool_call_id": "call_2", "name": "read_state", "content": "" }
+    ]);
+
+    let canonical = canonical_request_messages(messages.as_array().unwrap().clone()).unwrap();
+    let request = basic_request("custom", Some("openai_compat"), canonical);
+    let encoded = encode_chat_completion_request(&request, false).unwrap();
+    assert_eq!(encoded.payload["messages"], messages);
+}
+
+#[test]
+fn request_tool_results_without_an_earlier_call_need_a_name() {
+    let error = canonical_request_messages(vec![
+        json!({ "role": "tool", "tool_call_id": "call_1", "content": "orphan" }),
+        json!({ "role": "assistant", "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": { "name": "read_state", "arguments": "{}" }
+        }] }),
+    ])
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.invalid_prompt_messages: message 0")
+    );
 }
 
 #[test]

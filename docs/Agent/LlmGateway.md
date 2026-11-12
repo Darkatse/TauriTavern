@@ -20,6 +20,16 @@ Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 re
 
 Gateway 编码时交出全部原生内容，payload 构建只保留本次格式读取的一份，见[原生 API 格式](../CurrentState/NativeApiFormats.md#3-工具回合与原生内容)。
 
+规范消息与工具调用用结构表达运行时理解的内容，其余线路字段放在各自的 `providerMetadata.fields`。encode 原样并入这些字段，它们不能覆盖结构产出的键。decode 只把之后需要回放的响应字段写入 `fields`，`refusal` 等只属于响应的字段不会发回；完整响应由 model response store 按轮保存。
+
+## 请求形状的消息
+
+PromptManager 的组装结果、Legacy Chat API 的消息等请求形状的消息，由转换器转为规范消息；已是规范形状的消息原样通过。转换是 encode 的逆映射，转换后再编码得到原消息，只含一段文本的正文数组写回为字符串。
+
+- 工具调用的身份是 `prompt:<名称>`，没有执行者，按这个名称重放。
+- 工具响应属于它之前同 ID 的最近一次调用；没有这样的调用时，属于它的 name 所指的 `prompt` 工具；两者都没有时报错。encode 按同一规则为 tool 消息命名。工具响应的正文只能是文本。
+- `reasoning_content` 只要是字符串（包括空串）就是 Reasoning part，decode 也如此。`native` 的每个键是一个原生续接。
+
 ## 工具结果图片
 
 运行时在发送前按工具结果中的工作区引用读取图片，将其注入请求副本的 `Media` 部件。图片能力来自[组装快照](PromptAssembly.md#一种组装一个-live-例外)，存储、留存与不接受图片时的处理见[工具结果](ToolSystem.md#结果如何进入下一轮)。
@@ -69,7 +79,7 @@ Claude 的 `model_context_window_exceeded` 停止原因在 Rust gateway 与原�
 
 ## 修改入口
 
-- [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、工具 schema 与 provider adapter。
+- [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、请求消息转换 `request_messages`、结构键 `fields`、工具 schema 与 provider adapter。
 - [provider_state.rs](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/provider_state.rs)：续接状态。
 - [ChatCompletionService](../../src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs)：统一模型调用。
 - [tt-adapter-provider-http](../../src-tauri/crates/tt-adapter-provider-http/src)：实际网络请求与 provider 协议。

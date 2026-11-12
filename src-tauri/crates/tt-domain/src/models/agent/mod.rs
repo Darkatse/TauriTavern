@@ -344,10 +344,10 @@ pub struct AgentToolResult {
 }
 
 impl AgentToolResult {
-    pub fn ok(call: &ToolInvocation, content: String, structured: Value) -> Self {
+    pub fn new(call_id: String, tool_id: ToolId, content: String, structured: Value) -> Self {
         Self {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
+            call_id,
+            tool_id,
             content,
             structured,
             is_error: false,
@@ -355,6 +355,15 @@ impl AgentToolResult {
             resource_refs: Vec::new(),
             images: Vec::new(),
         }
+    }
+
+    pub fn ok(call: &ToolInvocation, content: String, structured: Value) -> Self {
+        Self::new(
+            call.call_id.clone(),
+            call.tool_id.clone(),
+            content,
+            structured,
+        )
     }
 
     /// The model reads `message`; callers may replace the default structured error details.
@@ -412,6 +421,9 @@ pub enum AgentModelContentPart {
         value: Value,
     },
 }
+
+/// Unlike format continuations, this Native part stays in the message body.
+pub const OPENAI_CONTENT_PART_PROVIDER: &str = "openai.content_part";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

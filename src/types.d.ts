@@ -217,10 +217,15 @@ type TauriTavernAgentModelContentPart =
         images?: { path: string; mimeType: string }[];
     } };
 
+type TauriTavernChatCompletionMessage = {
+    role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
+    [field: string]: unknown;
+};
+
 type TauriTavernAgentPromptSnapshot = {
     acceptsImages?: boolean;
     contextLimits?: { context: number; response: number; tokenizerModel: string };
-    messages: TauriTavernAgentModelMessage[];
+    messages: Array<TauriTavernAgentModelMessage | TauriTavernChatCompletionMessage>;
     generationParameters: Record<string, unknown>;
     contextPolicy: { initialChatHistoryMessages: number; includeActivatedWorldInfo: boolean };
     worldInfoActivation?: Record<string, unknown>;

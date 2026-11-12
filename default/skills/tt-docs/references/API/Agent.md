@@ -25,11 +25,11 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`，消息为 `AgentModelMessage[]`；Legacy `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`。`messages` 的每一项可以是带 `parts` 的 `AgentModelMessage`，也可以是 chat-completion 请求形状的消息，包括 `tool_calls` 与 tool 消息；runtime 把后者转为规范消息，Legacy `chatCompletionPayload` 的消息同样如此。请求形状的消息角色限于 system、developer、user、assistant 与 tool，无法转换时报 `agent.invalid_prompt_messages`。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
 `acceptsImages` 的公开默认值为 false；判定与 Invocation 生命周期见 [Prompt assembly](../Agent/PromptAssembly.md#一种组装一个-live-例外)。
 
-canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
+指令消息的正文是文本，带有组件标记供 runtime 追加目录：请求形状写作 `_tauritavern_prompt_component: "agentSystemPrompt"`，规范形状写作 `providerMetadata.promptComponent: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
 
 手工 snapshot 需要委派或交接时须携带 `frozenRunInputSnapshot`，当前预设及其 Skill 作用域都从中取得。
 

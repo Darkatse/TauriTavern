@@ -44,7 +44,6 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
     });
     const messages = generateData?.prompt;
     assertMessagesReady(messages);
-    assertNoExternalToolTurns(messages);
     const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(generateData.frozenRunInputSnapshot);
 
     return {
@@ -170,22 +169,5 @@ async function captureAgentDryRun(script, generationType, generateOptions) {
 function assertMessagesReady(messages) {
     if (!Array.isArray(messages)) {
         throw new Error('agent.prompt_snapshot_messages_required: dryRun did not produce chat-completion messages');
-    }
-}
-
-/** @param {any[]} messages */
-function assertNoExternalToolTurns(messages) {
-    if (!Array.isArray(messages)) {
-        return;
-    }
-
-    const hasToolTurn = messages.some((message) => {
-        const role = String(message?.role || '').toLowerCase();
-        return role === 'tool'
-            || (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
-    });
-
-    if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
     }
 }

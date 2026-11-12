@@ -353,6 +353,80 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
 }
 
 #[tokio::test]
+async fn agent_runtime_runs_from_a_snapshot_with_legacy_tool_history() {
+    let root = temp_root("agent-legacy-tool-history");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "call_write",
+                "workspace_write_file",
+                json!({ "path": "output/main.md", "content": "continued from the lore" }),
+            ),
+            model_tool_call("call_finish", "workspace_finish", json!({})),
+        ])],
+    );
+    let profile = resolve_contract_profile(&fixture).await;
+    let run = contract_run(
+        "run_legacy_tool_history",
+        AgentRunPresentation::Background,
+        &profile,
+    );
+    fixture.agent_repository.create_run(&run).await.unwrap();
+    let prompt_snapshot = json!({
+        "generationParameters": { "chat_completion_source": "openai", "model": "test-model" },
+        "messages": [
+            { "role": "system", "content": "Use the available Agent tools.",
+              "_tauritavern_prompt_component": "agentSystemPrompt" },
+            { "role": "user", "content": "Who guards the gate?" },
+            { "role": "assistant", "content": "", "tool_calls": [{
+                "id": "legacy_call", "type": "function",
+                "function": { "name": "lookup_lore", "arguments": "{\"topic\":\"gate\"}" }
+            }] },
+            { "role": "tool", "tool_call_id": "legacy_call", "content": "The old knight." },
+            { "role": "user", "content": "Write it down." }
+        ]
+    });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    fixture
+        .service
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
+        .await
+        .expect("Legacy tool history is ordinary prompt content");
+
+    let requests = fixture.model_gateway.requests().await;
+    let parts = requests[0]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .collect::<Vec<_>>();
+    let prompt_tool = tt_domain::models::tool::ToolId::prompt("lookup_lore").unwrap();
+    assert!(parts.iter().any(|part| matches!(
+        part,
+        AgentModelContentPart::ToolCall { call }
+            if call.call_id == "legacy_call" && call.tool_id == prompt_tool
+    )));
+    assert!(parts.iter().any(|part| matches!(
+        part,
+        AgentModelContentPart::ToolResult { result }
+            if result.call_id == "legacy_call"
+                && result.tool_id == prompt_tool
+                && result.content == "The old knight."
+    )));
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run(&run.id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Completed
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
 async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_arguments() {
     let root = temp_root("agent-tool-arguments");
     let mut malformed = model_tool_call("call_invalid", "workspace_list_files", json!({}));

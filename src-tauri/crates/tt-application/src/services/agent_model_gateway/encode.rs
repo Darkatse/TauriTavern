@@ -3,13 +3,14 @@ use std::collections::HashMap;
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
+use crate::services::agent_model_gateway::fields;
 use crate::services::agent_model_gateway::format::resolve_request_adapter;
 use crate::services::agent_model_gateway::provider_state;
 use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
 use crate::services::agent_model_gateway::schema;
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
-    AgentToolResult,
+    AgentToolResult, OPENAI_CONTENT_PART_PROVIDER,
 };
 use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
@@ -23,19 +24,22 @@ pub(crate) fn encode_chat_completion_request(
     payload.remove("tools");
     payload.remove("tool_choice");
 
-    // Responses continuations may omit the assistant call from the outgoing slice.
+    let mut sent = adapter
+        .messages_for_request(request)?
+        .into_iter()
+        .peekable();
     let mut call_aliases = HashMap::new();
-    for message in &request.messages {
-        record_call_aliases(message, &request.tools, &mut call_aliases)?;
-    }
     let mut messages = Vec::new();
     let mut tool_images = Vec::new();
-    for message in adapter.messages_for_request(request)? {
+    for message in &request.messages {
+        // Record omitted Responses calls too, but never use future calls to name results.
+        record_call_aliases(message, &request.tools, &mut call_aliases)?;
+        if sent.next_if(|next| std::ptr::eq(*next, message)).is_none() {
+            continue;
+        }
         if message.role != AgentModelRole::Tool && !tool_images.is_empty() {
             messages.push(tool_image_message(std::mem::take(&mut tool_images)));
         }
-        // Call IDs may recur across Session runs; the preceding call owns its result.
-        record_call_aliases(message, &request.tools, &mut call_aliases)?;
         let (encoded, images) =
             encode_openai_compatible_message(message, &request.tools, &call_aliases, adapter)?;
         messages.push(encoded);
@@ -115,15 +119,6 @@ fn encode_openai_compatible_message(
         "role".to_string(),
         Value::String(role_name(message.role).to_string()),
     );
-    if let Some(name) = message
-        .provider_metadata
-        .pointer("/openai/name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        object.insert("name".to_string(), Value::String(name.to_string()));
-    }
 
     match message.role {
         AgentModelRole::Assistant => {
@@ -143,19 +138,6 @@ fn encode_openai_compatible_message(
                 .collect::<Result<Vec<_>, _>>()?;
             if !tool_calls.is_empty() {
                 object.insert("tool_calls".to_string(), Value::Array(tool_calls));
-            }
-
-            if adapter == AgentProviderAdapter::OpenAiCompatible
-                && let Some(raw_message) = message
-                    .provider_metadata
-                    .get("message")
-                    .and_then(Value::as_object)
-            {
-                for key in ["reasoning", "reasoning_details"] {
-                    if let Some(value) = raw_message.get(key).filter(|value| !value.is_null()) {
-                        object.insert(key.to_string(), value.clone());
-                    }
-                }
             }
         }
         AgentModelRole::Tool => {
@@ -177,25 +159,17 @@ fn encode_openai_compatible_message(
                 "tool_call_id".to_string(),
                 Value::String(result.call_id.clone()),
             );
-            object.insert(
-                "name".to_string(),
-                Value::String(
-                    call_aliases
-                        .get(result.call_id.as_str())
-                        .copied()
-                        .or_else(|| {
-                            model_tool_for_id(&result.tool_id, tools)
-                                .map(|tool| tool.model_alias.as_str())
-                        })
-                        .ok_or_else(|| {
-                            ApplicationError::ValidationError(format!(
-                                "agent.tool_result_call_missing: no call for tool result `{}`",
-                                result.call_id
-                            ))
-                        })?
-                        .to_string(),
-                ),
-            );
+            let name = call_aliases
+                .get(result.call_id.as_str())
+                .copied()
+                .or_else(|| tool_model_name(&result.tool_id, tools))
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "agent.tool_result_call_missing: no call for tool result `{}`",
+                        result.call_id
+                    ))
+                })?;
+            object.insert("name".to_string(), Value::String(name.to_string()));
             let mut text = tool_result_message_content(result);
             let media = message
                 .parts
@@ -230,6 +204,11 @@ fn encode_openai_compatible_message(
 
     copy_native_continuation(&mut object, &message.parts);
     copy_reasoning_content(&mut object, &message.parts);
+    fields::merge_fields(
+        &mut object,
+        &message.provider_metadata,
+        fields::message_structure_keys(message.role),
+    )?;
 
     Ok((Value::Object(object), tool_images))
 }
@@ -244,51 +223,38 @@ fn role_name(role: AgentModelRole) -> &'static str {
     }
 }
 
+enum ContentItem<'a> {
+    Text(&'a str),
+    Part(&'a Value),
+}
+
 fn openai_content_from_parts(parts: &[AgentModelContentPart]) -> Value {
-    let mut text = String::new();
-    let mut content_parts = Vec::new();
-    let mut needs_array = false;
-
-    for part in parts {
-        match part {
-            AgentModelContentPart::Text { text: part_text } => {
-                if needs_array {
-                    content_parts.push(json!({ "type": "text", "text": part_text }));
-                } else {
-                    text.push_str(part_text);
-                }
-            }
-            AgentModelContentPart::Media { value, .. } => {
-                if !text.is_empty() {
-                    content_parts.push(json!({ "type": "text", "text": text }));
-                    text = String::new();
-                }
-                needs_array = true;
-                content_parts.push(value.clone());
-            }
+    let items = parts
+        .iter()
+        .filter_map(|part| match part {
+            AgentModelContentPart::Text { text } => Some(ContentItem::Text(text)),
+            AgentModelContentPart::Media { value, .. } => Some(ContentItem::Part(value)),
             AgentModelContentPart::Native { provider, value }
-                if provider == "openai.content_part" =>
+                if provider == OPENAI_CONTENT_PART_PROVIDER =>
             {
-                if !text.is_empty() {
-                    content_parts.push(json!({ "type": "text", "text": text }));
-                    text = String::new();
-                }
-                needs_array = true;
-                content_parts.push(value.clone());
+                Some(ContentItem::Part(value))
             }
-            _ => {}
-        }
-    }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
 
-    if needs_array {
-        if !text.is_empty() {
-            content_parts.push(json!({ "type": "text", "text": text }));
-        }
-        Value::Array(content_parts)
-    } else if text.is_empty() {
-        Value::Null
-    } else {
-        Value::String(text)
+    match items.as_slice() {
+        [] => Value::Null,
+        [ContentItem::Text(text)] => Value::String(text.to_string()),
+        _ => Value::Array(
+            items
+                .into_iter()
+                .map(|item| match item {
+                    ContentItem::Text(text) => json!({ "type": "text", "text": text }),
+                    ContentItem::Part(value) => value.clone(),
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -296,7 +262,7 @@ fn copy_native_continuation(object: &mut Map<String, Value>, parts: &[AgentModel
     let mut native = Map::new();
     for part in parts {
         if let AgentModelContentPart::Native { provider, value } = part
-            && provider != "openai.content_part"
+            && provider != OPENAI_CONTENT_PART_PROVIDER
         {
             native.insert(provider.clone(), value.clone());
         }
@@ -307,15 +273,14 @@ fn copy_native_continuation(object: &mut Map<String, Value>, parts: &[AgentModel
     }
 }
 
+/// Preserve empty reasoning text: tool-call protocols can require the field.
 fn copy_reasoning_content(object: &mut Map<String, Value>, parts: &[AgentModelContentPart]) {
     let reasoning = parts
         .iter()
         .filter_map(|part| match part {
-            AgentModelContentPart::Reasoning { text, .. } => text.as_ref(),
+            AgentModelContentPart::Reasoning { text, .. } => text.as_deref(),
             _ => None,
         })
-        .map(String::as_str)
-        .filter(|value| !value.trim().is_empty())
         .collect::<Vec<_>>();
 
     if !reasoning.is_empty() {
@@ -341,19 +306,11 @@ fn encode_openai_tool_call(
             "arguments": call.arguments.encode_for_replay(),
         }),
     );
-
-    if let Some(signature) = call
-        .provider_metadata
-        .get("signature")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-    {
-        object.insert("signature".to_string(), Value::String(signature));
-    }
-
-    if let Some(extra_content) = call.provider_metadata.pointer("/raw/extra_content") {
-        object.insert("extra_content".to_string(), extra_content.clone());
-    }
+    fields::merge_fields(
+        &mut object,
+        &call.provider_metadata,
+        fields::TOOL_CALL_STRUCTURE_KEYS,
+    )?;
 
     Ok(Value::Object(object))
 }
@@ -372,13 +329,19 @@ pub(crate) fn call_model_alias<'a>(
     call.provider_metadata
         .get("modelAlias")
         .and_then(Value::as_str)
-        .or_else(|| model_tool_for_id(&call.tool_id, tools).map(|tool| tool.model_alias.as_str()))
+        .or_else(|| tool_model_name(&call.tool_id, tools))
         .ok_or_else(|| {
             ApplicationError::ValidationError(format!(
                 "agent.tool_history_alias_missing: call `{}` has no recorded model alias",
                 call.call_id
             ))
         })
+}
+
+fn tool_model_name<'a>(tool_id: &'a ToolId, tools: &'a [AgentModelTool]) -> Option<&'a str> {
+    model_tool_for_id(tool_id, tools)
+        .map(|tool| tool.model_alias.as_str())
+        .or_else(|| tool_id.is_prompt().then_some(tool_id.native_name()))
 }
 
 fn record_call_aliases<'a>(
