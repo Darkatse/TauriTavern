@@ -47,6 +47,10 @@ pub(super) fn extract_openai_tool_calls(value: Option<&Value>) -> Vec<OpenAiTool
         .collect()
 }
 
+pub(super) fn is_tool_role(role: &str) -> bool {
+    matches!(role, "tool" | "function")
+}
+
 pub(super) fn message_tool_call_id(message: &Map<String, Value>) -> Option<String> {
     non_empty_string(message.get("tool_call_id"))
 }

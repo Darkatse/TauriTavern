@@ -15,8 +15,8 @@ use super::content_parts::{
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
-    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id, normalize_tool_result_payload,
-    tool_response_name,
+    OpenAiToolCall, extract_openai_tool_calls, is_tool_role, message_tool_call_id,
+    normalize_tool_result_payload, tool_response_name,
 };
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
@@ -750,10 +750,6 @@ fn message_role(message: &Map<String, Value>) -> String {
         .unwrap_or("user")
         .trim()
         .to_lowercase()
-}
-
-fn is_tool_role(role: &str) -> bool {
-    matches!(role, "tool" | "function")
 }
 
 fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {

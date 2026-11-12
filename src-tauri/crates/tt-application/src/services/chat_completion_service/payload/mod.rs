@@ -573,4 +573,55 @@ mod tests {
             assert!(body.get("thinking").is_none(), "{source:?}: {model}");
         }
     }
+
+    #[test]
+    fn post_processing_folds_speaker_names_and_keeps_tool_messages_whole() {
+        for (format, speech, result_path, result) in [
+            (
+                "openai_compat",
+                "/messages/0/content",
+                "/messages/1",
+                json!({ "role": "tool", "tool_call_id": "call_state", "name": "read_state", "content": "hp: 3" }),
+            ),
+            (
+                "gemini_generate_content",
+                "/contents/0/parts/0/text",
+                "/contents/0/parts/1",
+                json!({ "functionResponse": { "name": "read_state", "response": { "content": "hp: 3" } } }),
+            ),
+            (
+                "gemini_interactions",
+                "/input/0/content/0/text",
+                "/input/1",
+                json!({ "type": "function_result", "name": "read_state", "call_id": "call_state",
+                        "result": [{ "type": "text", "text": "hp: 3" }] }),
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": format,
+                "custom_prompt_post_processing": "semi_tools",
+                "model": "test-model",
+                "messages": [
+                    { "role": "user", "name": "Alice", "content": "How is Mara?" },
+                    { "role": "tool", "tool_call_id": "call_state", "name": "read_state", "content": "hp: 3" }
+                ]
+            });
+            let (_, upstream) = build_payload(
+                ChatCompletionSource::Custom,
+                payload.as_object().unwrap().clone(),
+            )
+            .unwrap();
+            assert_eq!(
+                upstream.pointer(speech),
+                Some(&json!("Alice: How is Mara?")),
+                "{format}: {upstream}"
+            );
+            assert_eq!(
+                upstream.pointer(result_path),
+                Some(&result),
+                "{format}: {upstream}"
+            );
+        }
+    }
 }

@@ -179,17 +179,15 @@ fn encode_openai_compatible_message(
                 "tool_call_id".to_string(),
                 Value::String(result.call_id.clone()),
             );
-            let name = call_aliases
-                .get(result.call_id.as_str())
-                .copied()
-                .or_else(|| tool_model_name(&result.tool_id, tools))
-                .ok_or_else(|| {
+            if !call_aliases.contains_key(result.call_id.as_str()) {
+                let name = tool_model_name(&result.tool_id, tools).ok_or_else(|| {
                     ApplicationError::ValidationError(format!(
                         "agent.tool_result_call_missing: no call for tool result `{}`",
                         result.call_id
                     ))
                 })?;
-            object.insert("name".to_string(), Value::String(name.to_string()));
+                object.insert("name".to_string(), Value::String(name.to_string()));
+            }
             let mut text = tool_result_message_content(result);
             let media = message
                 .parts

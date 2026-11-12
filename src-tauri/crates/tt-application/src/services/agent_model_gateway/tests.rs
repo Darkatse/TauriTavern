@@ -111,8 +111,8 @@ fn session_history_replays_tools_without_readvertising_them() {
         "workspace_read_file"
     );
     assert_eq!(
-        encoded.payload["messages"][1]["name"],
-        "workspace_read_file"
+        encoded.payload["messages"][1]["tool_call_id"],
+        "history-call"
     );
 }
 
@@ -216,7 +216,7 @@ fn request_messages_encode_back_to_themselves() {
                 "extra_content": { "google": { "thought_signature": "opaque" } }
             }]
         },
-        { "role": "tool", "tool_call_id": "call_1", "name": "read_state", "content": "{\"hp\":3}", "note": "kept" },
+        { "role": "tool", "tool_call_id": "call_1", "content": "{\"hp\":3}", "note": "kept" },
         {
             "role": "assistant",
             "content": null,
@@ -226,7 +226,7 @@ fn request_messages_encode_back_to_themselves() {
                 "function": { "name": "read_state", "arguments": "{}" }
             }]
         },
-        { "role": "tool", "tool_call_id": "call_2", "name": "read_state", "content": "" }
+        { "role": "tool", "tool_call_id": "call_2", "content": "" }
     ]);
 
     let canonical = canonical_request_messages(messages.as_array().unwrap().clone()).unwrap();
@@ -635,7 +635,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
     let messages = dto.payload["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "tool");
-    assert_eq!(messages[0]["name"], "workspace_write_file");
+    assert_eq!(messages[0]["tool_call_id"], "call_1");
     assert_eq!(dto.payload["previous_response_id"], "resp_1");
     assert!(
         dto.payload

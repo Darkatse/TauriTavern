@@ -27,7 +27,7 @@ Gateway 只产出请求中间格式：原生内容全部交出，工具定义交
 PromptManager 的组装结果、Legacy Chat API 的消息等请求形状的消息，由转换器转为规范消息；已是规范形状的消息原样通过。请求参数中的 `tools` 同样转为规范工具。转换是 encode 的逆映射，转换后再编码得到原内容，只含一段文本的正文数组写回为字符串。
 
 - 工具调用与工具定义的身份是 `prompt:<名称>`，没有执行者。调用按这个名称重放，定义并入工具快照的规则见[工具](ToolSystem.md#身份与调用名称)。
-- 工具响应属于它之前同 ID 的最近一次调用；没有这样的调用时，属于它的 name 所指的 `prompt` 工具；两者都没有时报错。encode 按同一规则为 tool 消息命名。工具响应的正文只能是文本。
+- 工具响应属于它之前同 ID 的最近一次调用；没有这样的调用时，属于它的 name 所指的 `prompt` 工具；两者都没有时报错。encode 只给前面没有调用的 tool 消息写 name。工具响应的正文只能是文本。
 - `reasoning_content` 只要是字符串（包括空串）就是 Reasoning part，decode 也如此。`native` 的每个键是一个原生续接。
 - 工具定义只接受 function 工具，名称不能重复。name、description 与 parameters 是结构，function 的其余字段（如 `strict`）进入 `fields`。
 

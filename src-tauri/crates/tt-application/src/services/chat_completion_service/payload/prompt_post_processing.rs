@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use super::tool_calls::is_tool_role;
+
 const PROMPT_PLACEHOLDER: &str = "Let's get started.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +82,11 @@ impl PromptNames {
             .iter()
             .any(|name| !name.is_empty() && message.starts_with(&format!("{name}: ")))
     }
+}
+
+/// Tool names are protocol data, not speaker labels.
+pub(super) fn prefixes_speaker_name(role: &str) -> bool {
+    role != "system" && !is_tool_role(role)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -236,7 +243,7 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             content_text
         };
 
-        let mut content_text = if let Some(name) = name.filter(|_| role != "system") {
+        let mut content_text = if let Some(name) = name.filter(|_| prefixes_speaker_name(&role)) {
             let prefix = format!("{name}: ");
             if content_text.starts_with(&prefix) {
                 content_text
@@ -247,8 +254,9 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
             content_text
         };
 
+        let tool_message = is_tool_role(&role);
         let mut role = role;
-        if role == "tool" && !options.tools {
+        if tool_message && !options.tools {
             role = "user".to_string();
         }
 
@@ -265,11 +273,14 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
 
         message_object.insert("role".to_string(), Value::String(role));
         message_object.insert("content".to_string(), Value::String(content_text));
-        message_object.remove("name");
+        if !tool_message {
+            message_object.remove("name");
+        }
 
         if !options.tools {
             message_object.remove("tool_calls");
             message_object.remove("tool_call_id");
+            message_object.remove("name");
         }
 
         normalized.push(message);

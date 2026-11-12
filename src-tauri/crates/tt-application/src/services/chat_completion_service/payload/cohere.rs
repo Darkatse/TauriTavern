@@ -5,7 +5,7 @@ use crate::errors::ApplicationError;
 use super::content_parts::{
     InputPart, MediaSource, media_kind_in_value, parse_openai_chat_content,
 };
-use super::prompt_post_processing::PromptNames;
+use super::prompt_post_processing::{PromptNames, prefixes_speaker_name};
 use super::shared::insert_if_present;
 use super::shared::message_content_to_text;
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
@@ -358,7 +358,7 @@ fn strip_unsupported_names(messages: &mut [Value], names: &PromptNames) {
                     &prefix,
                 );
             }
-        } else if role != "system" {
+        } else if prefixes_speaker_name(&role) {
             let prefix = format!("{name}: ");
             if !content_text.starts_with(&prefix) {
                 prefix_content(
