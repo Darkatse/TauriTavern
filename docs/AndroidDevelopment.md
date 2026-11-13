@@ -19,6 +19,14 @@ Gradle 工程跟随 Tauri CLI 的 Android 模板，当前对齐 2.12.3：Gradle 
 
 清单中的 `adjustResize` 只供 androidx 在 API 26-29 上推导键盘 inset；布局不依赖系统缩放窗口。
 
+### 字号与显示大小
+
+`MainActivity` 在 WebView 创建、配置变化和恢复前台时将 `WebSettings.textZoom` 设为 100%。系统显示大小仍会改变网页的 CSS 视口。用户可以在「用户设置」中分别调整界面和聊天字号。
+
+支持应用快捷方式的启动器可通过长按应用图标打开「重置显示字号」。确认后，原生层等待前端载入设置和初始聊天，再通过宿主 API 恢复两项字号。设置保存成功后才提示已恢复。
+
+真机验证时用系统设置分别测试字体和显示大小的默认与最大档位。Debug 包可用 `adb logcat -s TauriTavernDisplay` 查看 Activity 实例、系统字体比例、densityDpi、textZoom 和 WebView 边界。
+
 ## 2. Android 资源访问语义差异（APK assets）
 
 ### 2.1 官方语义

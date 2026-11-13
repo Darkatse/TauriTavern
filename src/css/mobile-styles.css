@@ -23,10 +23,24 @@
         align-items: center;
     }
 
+    #send_form.compact #nonQRFormItems {
+        flex-wrap: wrap;
+    }
+
+    #send_form.compact #send_textarea {
+        order: 2;
+        flex-basis: 10ch;
+    }
+
+    #send_form.compact #rightSendForm {
+        justify-content: flex-end;
+        margin-inline-start: auto;
+    }
+
     #send_form.compact #leftSendForm,
     #send_form.compact #rightSendForm {
-        flex-wrap: nowrap;
-        width: unset;
+        width: auto;
+        max-width: 100%;
     }
 
     #sheldWidthToggleBlock {
@@ -205,6 +219,8 @@
         resize: none !important;
         top: var(--topBarBlockSize);
         max-height: calc(var(--doc-height) - var(--topBarBlockSize));
+        min-height: 0;
+        overflow-wrap: anywhere;
         border: 1px solid var(--SmartThemeBorderColor);
     }
 
@@ -223,6 +239,25 @@
         position: fixed;
         width: 100vw;
         width: 100dvw;
+    }
+
+    #top-settings-holder {
+        --topBarIconSize: clamp(20px, 7.5vw, 30px);
+    }
+
+    :root {
+        --topBarBlockSize: 44px;
+    }
+
+    #top-settings-holder > .drawer {
+        min-width: 0;
+    }
+
+    #top-settings-holder .drawer-icon {
+        max-width: 100%;
+        min-height: var(--topBarBlockSize);
+        padding-inline: 0;
+        align-content: center;
     }
 
     #bg1 {
@@ -512,7 +547,7 @@
 
     #leftSendForm,
     #rightSendForm {
-        width: 1.15em;
+        width: var(--bottomFormBlockSize);
         flex-wrap: wrap;
         height: unset;
     }

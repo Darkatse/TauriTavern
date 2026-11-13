@@ -1419,6 +1419,11 @@ type TauriTavernHostApi = {
     mcp?: TauriTavernMcpApi;
     skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;
+    display?: {
+        resetFontScales: () => Promise<void>;
+        getFontResetResult: () => 'pending' | 'saved' | 'failed' | null;
+        takeFontResetResult: () => 'saved' | 'failed' | null;
+    };
     dev?: TauriTavernDevApi;
     worldInfo?: TauriTavernWorldInfoApi;
     extension?: TauriTavernExtensionApi;

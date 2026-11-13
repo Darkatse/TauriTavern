@@ -26,6 +26,8 @@
 
 Zen 滑块创建和刷新时不写业务值。值不在档位上时显示真实值、位置取最近档位，用户拖动后才提交档位值。
 
+界面与聊天字号共用 `power_user` 设置和上述配对控件。数字框输入比例，旁边显示百分比。旧配置首次载入后，聊天字号沿用初始主题解析后的界面比例。主题可更新界面比例，聊天比例随个人设置保存。
+
 ## Select2
 
 名称与说明写在原生 select 上：label、`aria-labelledby` 或 `aria-label`，以及 `aria-describedby`。[Select2 补丁](../src/scripts/select2-accessibility.js) 把这些关系连同当前值接到实际获得焦点的元素上，并让脚本 click 走原有的选择路径；trusted 激活已经过 mousedown/mouseup，不重复处理。上游发布等价修复后删除补丁。
