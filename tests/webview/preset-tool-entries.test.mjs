@@ -26,7 +26,7 @@ const { macros, initRegisterMacros } = (await load('scripts/macros/macro-system.
 power_user.experimental_macro_engine = true;
 initRegisterMacros();
 script.changeMainAPI('openai');
-script.chat_metadata.variables = { quote: 'Say "hi"\nthen go', hp: '3', field: 'reasoning_content' };
+script.chat_metadata.variables = { quote: 'Say "hi"\nthen go', hp: '3', field: 'reasoning_content', macro: '{{getvar::hp}}' };
 
 // The read_state call costs more than the tight context below can hold.
 const ajax = window.jQuery.ajax;
@@ -65,16 +65,17 @@ const expectedCall = {
 };
 const expectedResult = { role: 'tool', content: 'hp: 3', tool_call_id: 'call_1' };
 
-function assemble({ entries, order, history = [{ role: 'user', content: 'Latest' }], maxContext = 4096, functionCalling = false }) {
+function assemble({ entries, order, history = [{ role: 'user', content: 'Latest' }], maxContext = 4096, functionCalling = false, systemPromptOverride = '' }) {
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'openai', openai_model: 'gpt-4o', function_calling: functionCalling,
         openai_max_context: maxContext, openai_max_tokens: 16, new_chat_prompt: '',
     });
+    settings.prompts = settings.prompts.filter(prompt => !entries.some(entry => entry.identifier === prompt.identifier));
     settings.prompts.push(...structuredClone(entries));
     settings.prompt_order = [{ character_id: 100001, order: order.map(identifier => ({ identifier, enabled: true })) }];
     return openai.assembleOpenAIChatCompletionPrompt({
         settings, macroContext: macros.captureContext(), agentMode: false,
-        promptInputs: { messages: structuredClone(history), messageExamples: [], extensionPrompts: {} },
+        promptInputs: { messages: structuredClone(history), messageExamples: [], extensionPrompts: {}, systemPromptOverride },
     });
 }
 
@@ -136,6 +137,19 @@ test('an entry the request cannot express stops assembly and names the entry', a
         await expect(assemble({ entries: [entry], order: ['main', 'chatHistory', 'broken'] }), JSON.stringify(broken))
             .rejects.toThrow('"Broken entry"');
     }
+});
+
+test('a character card override replaces the text of the entry and leaves its fields as they were', async () => {
+    const main = {
+        identifier: 'main', name: 'Main Prompt', system_prompt: true, role: 'system',
+        content: 'Main: {{getvar::hp}}', fields: { note: '{{getvar::macro}}', quoted: '{{original}}' },
+    };
+    const order = ['main', 'chatHistory'];
+    const [plain] = (await assemble({ entries: [main], order })).messages;
+    const [overridden] = (await assemble({ entries: [main], order, systemPromptOverride: 'Card. {{original}}' })).messages;
+
+    expect(plain).toEqual({ role: 'system', content: 'Main: 3', note: '{{getvar::hp}}', quoted: '{{original}}' });
+    expect(overridden).toEqual({ ...plain, content: 'Card. Main: 3' });
 });
 
 test('a preset definition replaces the registered tool of the same name', async () => {

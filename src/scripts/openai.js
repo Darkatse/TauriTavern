@@ -2382,25 +2382,15 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         else prompts.add(newPrompt);
     });
 
-    // Apply character-specific main prompt
-    const systemPrompt = prompts.get('main') ?? null;
-    const isSystemPromptDisabled = activePromptManager.isPromptDisabledForActiveCharacter('main');
-    if (systemPromptOverride && systemPrompt && systemPrompt.forbid_overrides !== true && !isSystemPromptDisabled) {
-        const mainOriginalContent = systemPrompt.content;
-        systemPrompt.content = systemPromptOverride;
-        const mainReplacement = activePromptManager.preparePrompt(systemPrompt, mainOriginalContent);
-        prompts.override(mainReplacement, prompts.index('main'));
-    }
-
-    // Apply character-specific jailbreak
-    const jailbreakPrompt = prompts.get('jailbreak') ?? null;
-    const isJailbreakPromptDisabled = activePromptManager.isPromptDisabledForActiveCharacter('jailbreak');
-    if (jailbreakPromptOverride && jailbreakPrompt && jailbreakPrompt.forbid_overrides !== true && !isJailbreakPromptDisabled) {
-        const jbOriginalContent = jailbreakPrompt.content;
-        jailbreakPrompt.content = jailbreakPromptOverride;
-        const jbReplacement = activePromptManager.preparePrompt(jailbreakPrompt, jbOriginalContent);
-        prompts.override(jbReplacement, prompts.index('jailbreak'));
-    }
+    // Re-evaluate raw fields, never expanded macro results; {{original}} applies only to content.
+    const applyCharacterOverride = (identifier, override) => {
+        const prompt = prompts.get(identifier);
+        if (!override || !prompt || prompt.forbid_overrides === true || activePromptManager.isPromptDisabledForActiveCharacter(identifier)) return;
+        const replacement = activePromptManager.preparePrompt({ ...activePromptManager.getPromptById(identifier), content: override }, prompt.content);
+        prompts.override(replacement, prompts.index(identifier));
+    };
+    applyCharacterOverride('main', systemPromptOverride);
+    applyCharacterOverride('jailbreak', jailbreakPromptOverride);
 
     return prompts;
 }

@@ -1516,9 +1516,7 @@ class PromptManager {
             else preparedPrompt.content = substitute(prompt.content);
         }
 
-        const fieldOptions = {};
-        if (typeof original === 'string') fieldOptions.original = original;
-        if (0 < groupMembers.length) fieldOptions.groupOverride = groupMembers.join(', ');
+        const fieldOptions = 0 < groupMembers.length ? { groupOverride: groupMembers.join(', ') } : {};
         preparedPrompt.fields = prepareEntryFields(prompt, text => substitute(text, fieldOptions));
 
         return preparedPrompt;

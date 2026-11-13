@@ -35,6 +35,8 @@ Prompt Manager 有三种工具条目：工具定义、工具调用与工具响�
 
 其余情况照常发送，由服务商判定。试运行中的错误显示在 Prompt Manager 顶部。
 
+角色卡覆盖 Main 或 Jailbreak 时只替换正文，`fields` 照常求值，`{{original}}` 只用于覆盖的正文。
+
 ## 位置与预算
 
 - 带 `fields` 的消息不参与合并或改写：In-chat 不与其他条目合并，合并 system 消息与 Moonshot 隐藏预填推理也跳过它们。
@@ -58,6 +60,6 @@ Prompt Manager 有三种工具条目：工具定义、工具调用与工具响�
 
 ## 修改入口
 
-- 条目求值与报错：[`prompt-entry-fields.js`](../../src/scripts/prompt-entry-fields.js)，由 [`PromptManager.js`](../../src/scripts/PromptManager.js) 的 `preparePrompt` 调用
+- 条目求值与报错：[`prompt-entry-fields.js`](../../src/scripts/prompt-entry-fields.js)，由 [`PromptManager.js`](../../src/scripts/PromptManager.js) 的 `preparePrompt` 调用；角色卡覆盖在 `openai.js` 的 `preparePromptsForChatCompletion`
 - 消息、注入与预算：[`openai.js`](../../src/scripts/openai.js) 的 `Message`、`populationInjectionPrompts`、`populateChatHistory`
 - 工具数据：`openai.js` 的 `createToolData`；交接在 [`script.js`](../../src/script.js) 的 `generate_data` 与 [`agent-prompt-snapshot.js`](../../src/tauri/main/api/agent-prompt-snapshot.js) 的 `createCurrentPromptSnapshotSeed`
