@@ -72,13 +72,21 @@ test('managed iframe slot: restores revoked blob source locally and releases its
     expect(iframe.src).not.toBe(sourceUrl);
     expect(await read(iframe.src)).toBe('<p>original source</p>');
     const ownedUrl = iframe.src;
-    slot.dehydrate('visibility');
-    slot.hydrate();
-    const restoredUrl = iframe.src;
-    expect(await read(restoredUrl)).toBe('<p>original source</p>');
-    if (restoredUrl !== ownedUrl) await expect(fetch(ownedUrl)).rejects.toThrow();
-    slot.dispose();
-    for (const url of new Set([ownedUrl, restoredUrl])) await expect(fetch(url)).rejects.toThrow();
+    const revoked = [];
+    const revokeObjectURL = URL.revokeObjectURL;
+    URL.revokeObjectURL = url => { revoked.push(url); revokeObjectURL.call(URL, url); };
+    try {
+        slot.dehydrate('visibility');
+        slot.hydrate();
+        const restoredUrl = iframe.src;
+        expect(await read(restoredUrl)).toBe('<p>original source</p>');
+        // Playwright's WebKit keeps a revoked blob URL fetchable, so assert the release itself.
+        if (restoredUrl !== ownedUrl) expect(revoked).toContain(ownedUrl);
+        slot.dispose();
+        for (const url of new Set([ownedUrl, restoredUrl])) expect(revoked).toContain(url);
+    } finally {
+        URL.revokeObjectURL = revokeObjectURL;
+    }
 });
 
 test('managed iframe slot: a captured replacement supersedes the parked element even if removed before recovery', () => {
