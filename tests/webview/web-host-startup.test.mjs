@@ -68,10 +68,18 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
                 expect(counter.getAttribute('aria-invalid')).toBe('true');
                 expect(styles.getPropertyValue('--chatFontScale')).toBe(initialUiScale);
 
-                const changed = new Promise(resolve => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
+                const changed = new Promise(resolve => {
+                    const onSaved = () => {
+                        if (readSettings().power_user.chat_font_scale !== 2.5) return;
+                        eventSource.removeListener(event_types.SETTINGS_UPDATED, onSaved);
+                        resolve();
+                    };
+                    eventSource.on(event_types.SETTINGS_UPDATED, onSaved);
+                });
                 counter.value = '2.5';
                 $(counter).trigger('change');
-                await Promise.race([changed, failed]);
+                const painted = new Promise(resolve => window.requestAnimationFrame(resolve));
+                await Promise.race([Promise.all([changed, painted]), failed]);
                 expect(styles.getPropertyValue('--chatFontScale')).toBe('2.5');
                 expect(styles.getPropertyValue('--fontScale')).toBe(initialUiScale);
                 expect(readSettings().power_user.chat_font_scale).toBe(2.5);
