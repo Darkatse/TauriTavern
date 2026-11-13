@@ -256,6 +256,23 @@ test('changing the kind of an entry keeps its text edits undoable and gives the 
     expect(field.value).toBe('Before');
 }));
 
+test('an entry form closed along with the other drawers stops rendering and resets', () => withEditors(async () => {
+    const popup = window.document.getElementById('completion_prompt_manager_popup');
+    const field = window.document.getElementById('completion_prompt_manager_popup_entry_form_prompt');
+    openai.promptManager.loadPromptIntoEditForm({ identifier: 'note', name: 'Note', role: 'system', content: 'Draft' });
+    openai.promptManager.showPopup();
+    await formEditor(field);
+
+    // Opening another drawer closes every open one.
+    const settings = window.document.querySelector('#ai-config-button .drawer-toggle');
+    await script.doNavbarIconClick.call(settings);
+    await Promise.all(popup.getAnimations().map(animation => animation.finished));
+    expect(window.getComputedStyle(popup).display).toBe('none');
+    expect(field.value).toBe('');
+    expect(popup.querySelector('.tt-codemirror-editor')).toBe(null);
+    await script.doNavbarIconClick.call(settings);
+}));
+
 test('a preset definition replaces the registered tool of the same name', async () => {
     const action = () => 'done';
     ToolManager.registerFunctionTool({ name: 'read_state', description: 'Registered.', parameters: { type: 'object', properties: {} }, action });

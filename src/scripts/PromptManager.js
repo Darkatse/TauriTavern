@@ -14,7 +14,7 @@ import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
 import { PromptEntryError, TOOL_DEFINITION_ROLE, isToolCallEntry, prepareEntryFields } from './prompt-entry-fields.js';
-import { isInlineDrawerOpen, setInlineDrawerOpen } from './drawers.js';
+import { isInlineDrawerOpen, isTopLevelDrawerOpen, setInlineDrawerOpen, setTopLevelDrawerOpen, subscribeDrawerState } from './drawers.js';
 import {
     assertPromptOrderReferences,
     isPromptManagerImportDataValid,
@@ -620,7 +620,6 @@ class PromptManager {
 
             this.detachPrompt(prompt, this.activeCharacter);
             this.hidePopup();
-            this.clearEditForm();
             this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
@@ -647,7 +646,6 @@ class PromptManager {
             this.log('Saved prompt: ' + promptId);
 
             this.hidePopup();
-            this.clearEditForm();
             this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
@@ -747,7 +745,6 @@ class PromptManager {
                     this.log('Deleted prompt: ' + prompt.identifier);
 
                     this.hidePopup();
-                    this.clearEditForm();
                     this.renderNowAndRefresh();
                     this.saveServiceSettings();
                 }
@@ -956,16 +953,18 @@ class PromptManager {
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save').addEventListener('click', this.handleSavePrompt);
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_reset').addEventListener('click', this.handleResetPrompt);
 
-        const closeAndClearPopup = () => {
-            this.hidePopup();
+        // The popup is a drawer, so the app also closes it when it closes every open drawer. However it closes, its
+        // forms reset, and they start that way.
+        const popup = this.#formElement('prompt_manager_popup');
+        const resetClosedPopup = () => {
+            if (isTopLevelDrawerOpen(popup)) return;
             this.clearEditForm();
             this.clearInspectForm();
         };
-
-        // Clear forms on closing the popup
-        document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_close').addEventListener('click', closeAndClearPopup);
-        document.getElementById(this.configuration.prefix + 'prompt_manager_popup_close_button').addEventListener('click', closeAndClearPopup);
-        closeAndClearPopup();
+        subscribeDrawerState(popup, resetClosedPopup);
+        resetClosedPopup();
+        this.#formElement('prompt_manager_popup_entry_form_close').addEventListener('click', () => this.hidePopup());
+        this.#formElement('prompt_manager_popup_close_button').addEventListener('click', () => this.hidePopup());
 
         // Re-render prompt manager on openai preset change
         eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, () => {
@@ -980,7 +979,6 @@ class PromptManager {
             this.updateQuickEdit('jailbreak', jailbreakPrompt);
 
             this.hidePopup();
-            this.clearEditForm();
             this.renderNowAndRefresh();
         });
 
@@ -2513,26 +2511,21 @@ class PromptManager {
     }
 
     /**
-     * Slides down the edit form and adds the class 'openDrawer' to the first element of '#openai_prompt_manager_popup'.
+     * Opens the popup on the given area, as a drawer.
      * @returns {void}
      */
     showPopup(area = 'edit') {
         const areaElement = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_' + area);
         areaElement.style.display = 'flex';
-
-        $('#' + this.configuration.prefix + 'prompt_manager_popup').first()
-            .slideDown(200, 'swing')
-            .addClass('openDrawer');
+        setTopLevelDrawerOpen(this.#formElement('prompt_manager_popup'), true);
     }
 
     /**
-     * Slides up the edit form and removes the class 'openDrawer' from the first element of '#openai_prompt_manager_popup'.
+     * Closes the popup, which resets its forms.
      * @returns {void}
      */
     hidePopup() {
-        $('#' + this.configuration.prefix + 'prompt_manager_popup').first()
-            .slideUp(200, 'swing')
-            .removeClass('openDrawer');
+        setTopLevelDrawerOpen(this.#formElement('prompt_manager_popup'), false);
     }
 
     /**
