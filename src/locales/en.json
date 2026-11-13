@@ -1,4 +1,11 @@
 {
+    "Interface font size": "Interface font size",
+    "Menus, settings, and message controls.": "Menus, settings, and message controls.",
+    "Chat font size": "Chat font size",
+    "Messages, reasoning, and text you type.": "Messages, reasoning, and text you type.",
+    "Restore default font sizes": "Restore default font sizes",
+    "Font sizes restored.": "Font sizes restored.",
+    "An invalid font size was restored to 100%.": "An invalid font size was restored to 100%.",
     "Time to First Token (TTFT)": "Time to First Token (TTFT)",
     "Generation Speed": "Generation Speed",
     "Prompt Cache Hit Rate": "Prompt Cache Hit Rate",

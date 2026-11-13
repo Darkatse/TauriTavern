@@ -1,6 +1,11 @@
 <resources>
     <string name="app_name">TauriTavern</string>
     <string name="main_activity_title">TauriTavern</string>
+    <string name="reset_display_fonts">Reset font sizes</string>
+    <string name="reset_display_fonts_confirmation">Restore the interface and chat font sizes to 100%?</string>
+    <string name="reset_display_fonts_pending">Font reset is pending. Return to TauriTavern to check again.</string>
+    <string name="reset_display_fonts_saved">Font sizes restored.</string>
+    <string name="reset_display_fonts_failed">Could not save the restored font sizes.</string>
     <string name="notification_channel_ai_generation_name">AI Generation</string>
     <string name="notification_channel_ai_generation_description">Keeps AI generation alive in background</string>
     <string name="notification_channel_ai_live_updates_name">AI Live Updates</string>

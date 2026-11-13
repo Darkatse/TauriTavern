@@ -1,4 +1,11 @@
 {
+    "Interface font size": "介面字級",
+    "Menus, settings, and message controls.": "用於選單、設定和訊息操作控制項。",
+    "Chat font size": "聊天字級",
+    "Messages, reasoning, and text you type.": "用於訊息正文、推理內容和聊天輸入文字。",
+    "Restore default font sizes": "還原預設字級",
+    "Font sizes restored.": "字級已還原。",
+    "An invalid font size was restored to 100%.": "偵測到無效字級，已還原為 100%。",
     "Chat could not be created.": "未能建立聊天。",
     "Chat could not be deleted.": "未能刪除聊天。",
     "Chat history could not be loaded.": "未能載入聊天記錄。",

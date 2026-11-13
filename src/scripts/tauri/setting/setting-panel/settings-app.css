@@ -5,10 +5,13 @@
     width: min(100%, 820px);
     color: var(--SmartThemeBodyColor);
     text-align: left;
+    overflow-wrap: anywhere;
+    container: tt-settings / inline-size;
 }
 
 .tt-settings-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
@@ -53,7 +56,7 @@
 
 .tt-settings-row {
     display: grid;
-    grid-template-columns: minmax(190px, 0.9fr) minmax(240px, 1.1fr);
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
     align-items: center;
     gap: 12px;
     min-height: 34px;
@@ -211,6 +214,7 @@
 
 .tt-settings-disclosure > summary {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
@@ -237,6 +241,7 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
+    max-width: 100%;
 }
 
 .tt-settings-summary-meta small {
@@ -334,9 +339,6 @@
 
 .tt-settings-wallpaper-label {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     text-align: left;
 }
 
@@ -423,5 +425,28 @@
 
     .tt-wallpaper-picker {
         grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    }
+}
+
+@container tt-settings (max-width: 32em) {
+    .tt-settings-row,
+    .tt-settings-path-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tt-settings-row:has(.tt-settings-switch) {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .tt-settings-control {
+        justify-content: flex-start;
+    }
+
+    .tt-settings-wallpaper-button {
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+    }
+
+    .tt-settings-wallpaper-swatch {
+        width: 100%;
     }
 }

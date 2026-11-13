@@ -355,6 +355,9 @@ export class Popup {
         this.cropImage = this.dlg.querySelector('.popup-crop-image');
 
         this.dlg.setAttribute('data-id', this.id);
+        if ([POPUP_TYPE.TEXT, POPUP_TYPE.CONFIRM, POPUP_TYPE.INPUT].includes(type)) {
+            this.dlg.classList.add('popup-form');
+        }
         if (wide) this.dlg.classList.add('wide_dialogue_popup');
         if (wider) this.dlg.classList.add('wider_dialogue_popup');
         if (large) this.dlg.classList.add('large_dialogue_popup');
@@ -578,6 +581,7 @@ export class Popup {
             }
             case POPUP_TYPE.DISPLAY: {
                 // Display hides OK and CANCEL and all main button controls
+                this.dlg.classList.add('popup-with-close');
                 this.buttonControls.style.display = 'none';
                 this.closeButton.style.display = 'block';
                 break;

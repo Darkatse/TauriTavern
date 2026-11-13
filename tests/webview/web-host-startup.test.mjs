@@ -14,6 +14,22 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
         const legacy = readSettings();
         const original = legacy.power_user;
         delete legacy.amount_gen;
+        if (identity === HOSTS.android) {
+            original.font_scale = 0.5;
+            original.theme_fallback = 'Legacy fractional font';
+            delete original.chat_font_scale;
+            const handle = fixture.backend.handle;
+            fixture.backend.handle = request => {
+                const response = handle(request);
+                if (request.url !== '/api/settings/get') return response;
+                const data = JSON.parse(response.body);
+                data.themes.push(
+                    { ...data.themes[0], name: 'Legacy fractional font', font_scale: 1.135 },
+                    { ...data.themes[0], name: 'Large interface', font_scale: 2 },
+                );
+                return { ...response, body: JSON.stringify(data) };
+            };
+        }
         fixture.backend.handle({ method: 'POST', url: '/api/settings/save', headers: {}, body: JSON.stringify(legacy) });
         const { errors, failed } = captureBrowserErrors(window);
         try {
@@ -37,6 +53,47 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             expect(saved.power_user.personas).toEqual(original.personas);
             expect(saved.power_user.persona_descriptions).toEqual(original.persona_descriptions);
             expect(errors).toEqual([]);
+            if (identity === HOSTS.android) {
+                const { document, jQuery: $ } = window;
+                const display = window.__TAURITAVERN__.api.display;
+                const styles = document.documentElement.style;
+                const counter = document.getElementById('chat_font_scale_counter');
+                expect(styles.getPropertyValue('--chatFontScale')).toBe(styles.getPropertyValue('--fontScale'));
+                const initialUiScale = styles.getPropertyValue('--fontScale');
+                expect(initialUiScale).toBe('1.135');
+                expect(Number(counter.value)).toBe(Number(initialUiScale));
+
+                counter.value = '3';
+                $(counter).trigger('change');
+                expect(counter.getAttribute('aria-invalid')).toBe('true');
+                expect(styles.getPropertyValue('--chatFontScale')).toBe(initialUiScale);
+
+                const changed = new Promise(resolve => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
+                counter.value = '2.5';
+                $(counter).trigger('change');
+                await Promise.race([changed, failed]);
+                expect(styles.getPropertyValue('--chatFontScale')).toBe('2.5');
+                expect(styles.getPropertyValue('--fontScale')).toBe(initialUiScale);
+                expect(readSettings().power_user.chat_font_scale).toBe(2.5);
+
+                $('#themes').val('Large interface').trigger('change');
+                expect(styles.getPropertyValue('--fontScale')).toBe('2');
+                expect(styles.getPropertyValue('--chatFontScale')).toBe('2.5');
+
+                const handle = fixture.backend.handle;
+                fixture.backend.handle = request => request.url === '/api/settings/save'
+                    ? { status: 500, headers: {}, body: 'Fixture save failure' }
+                    : handle(request);
+                await display.resetFontScales();
+                expect(display.takeFontResetResult()).toBe('failed');
+                expect(readSettings().power_user.chat_font_scale).toBe(2.5);
+                fixture.backend.handle = handle;
+                await display.resetFontScales();
+                expect(display.takeFontResetResult()).toBe('saved');
+                const restored = readSettings().power_user;
+                expect(restored.font_scale).toBe(1);
+                expect(restored.chat_font_scale).toBe(1);
+            }
         } finally {
             close();
         }
