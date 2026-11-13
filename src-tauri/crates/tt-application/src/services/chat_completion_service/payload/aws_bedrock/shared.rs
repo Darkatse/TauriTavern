@@ -15,12 +15,17 @@
 //! R1, ...) live in the matching submodule alongside their `build_*` entry
 //! point.
 
-use serde_json::{Value, json};
+use std::collections::HashMap;
+
+use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
 
 use super::super::content_parts::reject_media_for_text_only_provider;
 use super::super::shared::message_content_to_text;
+use super::super::tool_calls::{
+    answered_tool_name, extract_openai_tool_calls, message_tool_call_id,
+};
 
 /// Bedrock invoke path suffix — the body posts to
 /// `/model/{modelId}/invoke` and the streaming variant rewrites the tail to
@@ -36,15 +41,51 @@ pub(super) struct FlatMessage {
     pub text: String,
 }
 
+/// These models take no tool turns, so calls and results travel as text: a call reads as
+/// `name(arguments)` after the assistant's text, and a result as user text naming its tool.
+#[derive(Default)]
+struct ToolTurnText {
+    call_names: HashMap<String, String>,
+}
+
+impl ToolTurnText {
+    fn render(&mut self, role: &str, message: &Map<String, Value>) -> String {
+        let text = message_content_to_text(message.get("content"));
+        match role {
+            "assistant" => {
+                let mut lines = Vec::new();
+                if !text.is_empty() {
+                    lines.push(text);
+                }
+                for call in extract_openai_tool_calls(message.get("tool_calls")) {
+                    lines.push(format!(
+                        "{}({})",
+                        call.name,
+                        call.arguments.encode_for_replay()
+                    ));
+                    self.call_names.insert(call.id, call.name);
+                }
+                lines.join("\n")
+            }
+            "tool" | "function" if !text.is_empty() => {
+                let call_name = message_tool_call_id(message)
+                    .and_then(|id| self.call_names.get(&id).map(String::as_str));
+                match answered_tool_name(call_name, message) {
+                    Some(name) => format!("{name} returned:\n{text}"),
+                    None => format!("Tool returned:\n{text}"),
+                }
+            }
+            _ => text,
+        }
+    }
+}
+
 /// Flatten an OpenAI-style `messages` array into a `(system_text, [user/assistant turns])`
 /// pair. System messages are concatenated with `\n\n` and pulled out of the
 /// conversation list — every Bedrock non-Anthropic provider treats `system`
 /// as a separate top-level field (Nova `system`, Llama `<|start_header_id|>system`,
 /// Cohere `preamble`, AI21 `role:"system"`, DeepSeek prompt prefix, ...).
-///
-/// `tool` role messages are demoted to `user` text with a `[tool_result] ...`
-/// envelope. We could later add per-provider tool-call wiring, but for the
-/// initial multi-provider release we focus on plain chat.
+/// Tool calls and results become text (see `ToolTurnText`).
 pub(super) fn flatten_openai_messages(
     messages: Option<&Value>,
 ) -> Result<(Option<String>, Vec<FlatMessage>), ApplicationError> {
@@ -69,6 +110,7 @@ pub(super) fn flatten_openai_messages(
         return Ok((None, turns));
     };
 
+    let mut tool_turns = ToolTurnText::default();
     for entry in entries {
         let Some(message) = entry.as_object() else {
             continue;
@@ -80,17 +122,13 @@ pub(super) fn flatten_openai_messages(
             .unwrap_or("user")
             .trim()
             .to_lowercase();
-        let text = message_content_to_text(message.get("content"));
+        let text = tool_turns.render(&role, message);
         if text.is_empty() {
             continue;
         }
 
         match role.as_str() {
             "system" | "developer" => system_parts.push(text),
-            "tool" | "function" => turns.push(FlatMessage {
-                role: "user".to_string(),
-                text: format!("[tool_result] {text}"),
-            }),
             "assistant" => turns.push(FlatMessage {
                 role: "assistant".to_string(),
                 text,
@@ -117,8 +155,8 @@ pub(super) fn flatten_openai_messages(
 /// arrays (multimodal goes through the Converse API).
 ///
 /// Roles are folded to the OpenAI core set (`system`/`user`/`assistant`);
-/// `tool`/`function` are demoted to `user` so providers that don't grok the
-/// `tool` role (Mistral, AI21 Jamba on Bedrock, ...) don't reject the call.
+/// tool results become `user` text (see `ToolTurnText`) so providers that don't
+/// grok the `tool` role (Mistral, AI21 Jamba on Bedrock, ...) don't reject the call.
 pub(super) fn passthrough_chat_messages(
     messages: Option<&Value>,
 ) -> Result<Vec<Value>, ApplicationError> {
@@ -138,6 +176,7 @@ pub(super) fn passthrough_chat_messages(
         return Ok(out);
     };
 
+    let mut tool_turns = ToolTurnText::default();
     for entry in entries {
         let Some(message) = entry.as_object() else {
             continue;
@@ -148,16 +187,15 @@ pub(super) fn passthrough_chat_messages(
             .unwrap_or("user")
             .trim()
             .to_lowercase();
-        let role = match role.as_str() {
-            "system" | "developer" => "system",
-            "assistant" => "assistant",
-            "tool" | "function" => "user",
-            _ => "user",
-        };
-        let text = message_content_to_text(message.get("content"));
+        let text = tool_turns.render(&role, message);
         if text.is_empty() {
             continue;
         }
+        let role = match role.as_str() {
+            "system" | "developer" => "system",
+            "assistant" => "assistant",
+            _ => "user",
+        };
         out.push(json!({ "role": role, "content": text }));
     }
 
@@ -202,7 +240,7 @@ mod tests {
                 },
                 FlatMessage {
                     role: "user".to_string(),
-                    text: "[tool_result] tool result".to_string(),
+                    text: "Tool returned:\ntool result".to_string(),
                 },
             ]
         );
@@ -219,8 +257,46 @@ mod tests {
         assert_eq!(projected.len(), 3);
         assert_eq!(projected[0]["role"], "system");
         assert_eq!(projected[1]["role"], "user");
-        assert_eq!(projected[1]["content"], "tool output");
+        assert_eq!(projected[1]["content"], "Tool returned:\ntool output");
         assert_eq!(projected[2]["role"], "assistant");
+    }
+
+    #[test]
+    fn tool_turns_become_text_that_names_the_tool() {
+        let messages = json!([
+            { "role": "user", "content": "How is Mara?" },
+            { "role": "assistant", "content": "", "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": { "name": "read_state", "arguments": "{\"target\":\"Mara\"}" }
+            }] },
+            { "role": "tool", "tool_call_id": "call_1", "content": "hp: 3" },
+            { "role": "tool", "name": "roll", "content": "4" }
+        ]);
+        let expected = [
+            ("user", "How is Mara?"),
+            ("assistant", "read_state({\"target\":\"Mara\"})"),
+            ("user", "read_state returned:\nhp: 3"),
+            ("user", "roll returned:\n4"),
+        ];
+
+        let (_, turns) = flatten_openai_messages(Some(&messages)).expect("messages should flatten");
+        let flattened: Vec<_> = turns
+            .iter()
+            .map(|turn| (turn.role.as_str(), turn.text.as_str()))
+            .collect();
+        assert_eq!(flattened, expected);
+
+        let passed = passthrough_chat_messages(Some(&messages)).expect("messages should pass");
+        let passed: Vec<_> = passed
+            .iter()
+            .map(|message| {
+                (
+                    message["role"].as_str().unwrap(),
+                    message["content"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(passed, expected);
     }
 
     #[test]

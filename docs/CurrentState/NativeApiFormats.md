@@ -40,6 +40,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 
 - `tool_call_id` 是不透明字符串，原样传递与存储。
 - 调用与结果的配对由服务商判定。两种 Gemini 格式需要工具结果的名称：先取它所回应的调用的名称，再取消息的 `name`，都没有时报错。
+- 不接受工具回合的格式（Bedrock 上的非 Claude 模型）以文本携带：调用写成助手正文后的 `name(arguments)`，结果写成 user 文本并按同一规则注明工具名。
 - 消息的 `name` 在 user 与 assistant 上是说话人，Prompt Post-Processing 与 Cohere 把它写成正文前缀后删除；在 tool 消息上是工具名，不并入正文，后处理让它与 `tool_call_id` 一起保留或删除。
 - 工具定义的 `parameters` 是 JSON Schema。构造器把它写入本格式的 schema 字段，除个别来源已核实的约束外不做改写。function 的其余字段只有 OpenAI 兼容格式原样发送，其他格式只取自己支持的字段，例如 Responses 与 Claude 的 `strict`。
 - `native` 与 `signature` 是 TT 的扩展字段。`build_payload` 在 Prompt Post-Processing 与格式构造之前统一投影：`native` 只保留本次格式的键，不是对象时报错；`signature` 只保留给两种 Gemini 格式与 OpenRouter。

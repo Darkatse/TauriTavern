@@ -55,20 +55,27 @@ pub(super) fn message_tool_call_id(message: &Map<String, Value>) -> Option<Strin
     non_empty_string(message.get("tool_call_id"))
 }
 
+/// A tool result is named after the call it answers, then after its own `name`.
+pub(super) fn answered_tool_name(
+    call_name: Option<&str>,
+    message: &Map<String, Value>,
+) -> Option<String> {
+    call_name
+        .map(str::to_string)
+        .or_else(|| non_empty_string(message.get("name")))
+}
+
 pub(super) fn tool_response_name(
     format: &str,
     index: usize,
     call_name: Option<&str>,
     message: &Map<String, Value>,
 ) -> Result<String, ApplicationError> {
-    call_name
-        .map(str::to_string)
-        .or_else(|| non_empty_string(message.get("name")))
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "{format} tool message {index} answers no earlier call and has no name"
-            ))
-        })
+    answered_tool_name(call_name, message).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "{format} tool message {index} answers no earlier call and has no name"
+        ))
+    })
 }
 
 pub(super) fn message_tool_result_text(message: &Map<String, Value>) -> String {
