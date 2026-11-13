@@ -103,11 +103,11 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
     const wrapper = document.createElement('div');
     wrapper.className = 'tt-codemirror-editor';
     wrapper.style.flex = sourceStyle.flex;
+    wrapper.style.minHeight = sourceStyle.minHeight;
     wrapper.style.font = sourceStyle.font;
     wrapper.style.textAlign = sourceStyle.textAlign;
     wrapper.style.backgroundColor = sourceStyle.backgroundColor;
     wrapper.style.borderRadius = sourceStyle.borderRadius;
-    wrapper.style.resize = sourceStyle.resize;
     wrapper.style.width = '100%';
     wrapper.style.height = `${source.offsetHeight}px`;
     wrapper.style.overflow = 'hidden';
@@ -120,6 +120,7 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         ariaLabel: label,
         placeholder: source.placeholder,
         selection: focused ? { anchor, head } : undefined,
+        resize: sourceStyle.resize,
         onChange,
         phrases: {
             Undo: t`Undo`, Redo: t`Redo`, 'Copy all': t`Copy all`, 'Editor tools': t`Editor tools`,
@@ -194,7 +195,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
         return false;
     }
 
-    const { height } = editor.wrapper.style;
+    const { width, height, flex } = editor.wrapper.style;
     const host = document.createElement('div');
     host.className = 'height100p wide100p flex-container flexFlowColumn';
     host.append(editor.wrapper);
@@ -204,7 +205,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
     try {
         await callGenericPopup(host, POPUP_TYPE.TEXT, '', { label: getEditorName(source), wide: true, large: true, animation: 'none' });
     } finally {
-        editor.wrapper.style.height = height;
+        Object.assign(editor.wrapper.style, { width, height, flex });
         if (source.isConnected) {
             source.insertAdjacentElement('afterend', editor.wrapper);
             editor.requestMeasure();

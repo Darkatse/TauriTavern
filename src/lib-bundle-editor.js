@@ -1,6 +1,6 @@
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
-import { EditorView, highlightSpecialChars, keymap, placeholder, showPanel } from '@codemirror/view';
+import { EditorView, ViewPlugin, highlightSpecialChars, keymap, placeholder, showPanel } from '@codemirror/view';
 import { openSearchPanel, closeSearchPanel, searchPanelOpen, searchKeymap, search } from '@codemirror/search';
 import { createSearchPanel, editorIcon } from './editor-search-panel.js';
 
@@ -131,14 +131,74 @@ const theme = EditorView.theme({
         backgroundColor: 'color-mix(in srgb, var(--SmartThemeQuoteColor) 50%, transparent)',
         outline: '1px solid var(--SmartThemeQuoteColor)',
     },
+    '.cm-resize-handle': {
+        position: 'absolute',
+        right: '0',
+        bottom: '0',
+        zIndex: '1',
+        width: '14px',
+        height: '14px',
+        touchAction: 'none',
+        opacity: '0.45',
+        background: 'linear-gradient(135deg, transparent 52%, currentColor 52% 60%, transparent 60% 74%, currentColor 74% 82%, transparent 82%)',
+    },
 });
+
+/**
+ * CodeMirror covers WebKit's native resize grip; dragging must also disable flex sizing.
+ * @param {HTMLElement} host
+ * @param {string} resize The source's computed `resize`.
+ */
+function resizeHandle(host, resize) {
+    const vertical = ['both', 'vertical', 'block'].includes(resize);
+    const horizontal = ['both', 'horizontal', 'inline'].includes(resize);
+    if (!vertical && !horizontal) return [];
+    const cursor = vertical && horizontal ? 'nwse-resize' : vertical ? 'ns-resize' : 'ew-resize';
+    return ViewPlugin.define(view => {
+        const handle = document.createElement('div');
+        handle.className = 'cm-resize-handle';
+        handle.style.cursor = cursor;
+        handle.addEventListener('pointerdown', start => {
+            if (start.button !== 0) return;
+            start.preventDefault();
+            handle.setPointerCapture(start.pointerId);
+            // Convert viewport deltas to the host's unscaled dimensions.
+            const scale = host.getBoundingClientRect().height / host.offsetHeight;
+            const width = host.offsetWidth, height = host.offsetHeight;
+            let pointer = start;
+            let frame = 0;
+            let sized = false;
+            const apply = () => {
+                frame = 0;
+                if (!sized) host.style.flex = 'none';
+                sized = true;
+                if (vertical) host.style.height = `${height + (pointer.clientY - start.clientY) / scale}px`;
+                if (horizontal) host.style.width = `${width + (pointer.clientX - start.clientX) / scale}px`;
+            };
+            const move = event => {
+                pointer = event;
+                frame ||= requestAnimationFrame(apply);
+            };
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('lostpointercapture', () => {
+                handle.removeEventListener('pointermove', move);
+                if (frame) {
+                    cancelAnimationFrame(frame);
+                    apply();
+                }
+            }, { once: true });
+        });
+        view.dom.append(handle);
+        return { destroy: () => handle.remove() };
+    });
+}
 
 /**
  * Builds the editor on `host`. An isolated editor lives in a shadow root, so page selectors never match or
  * re-check its DOM. Raw text events end at the host; edits leave through `onChange`, and an open search
  * panel is reflected as `data-search-open` on the host.
  */
-export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined }) {
+export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined, resize = 'none' }) {
     const parent = isolated ? host.attachShadow({ mode: 'open' }) : host;
     for (const type of ['beforeinput', 'input']) parent.addEventListener(type, event => event.stopPropagation());
     const permissions = new Compartment();
@@ -201,6 +261,7 @@ export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel,
             EditorView.lineWrapping,
             placeholder(hint),
             EditorView.updateListener.of(update => update.docChanged && onChange?.()),
+            resizeHandle(host, resize),
             theme,
         ],
     });

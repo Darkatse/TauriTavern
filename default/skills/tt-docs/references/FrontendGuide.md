@@ -210,7 +210,8 @@ src/
 挂载与生命周期在 `src/scripts/tauri/codemirror-editor.js`，编辑器本体在按需加载的 `src/lib-bundle-editor.js`。设置关闭时保留原生 textarea。
 
 - 源 textarea 是唯一的值来源。编辑器通过 `onChange` 通知有改动，调用方需要文本时用 `flush()` 写回源 textarea；`flush({ input: true })` 会在源上派发 `input`，沿用 textarea 原有的处理链。
-- 外壳 `.tt-codemirror-editor` 接管源 textarea 的盒子，并继承其 `resize`。读取尺寸时不排版源文本，除非源的高度由内容决定（`field-sizing: content`）。挂载先等调用方当前的同步工作结束（例如抽屉显示出源 textarea），编辑器包加载后在下一帧之前完成，源 textarea 不会先单独渲染；编辑器在页面外建好，再一次性放入页面。全屏结束后恢复用户调整过的高度。
+- 外壳 `.tt-codemirror-editor` 接管源 textarea 的盒子（含 `flex` 与 `min-height`）。读取尺寸时不排版源文本，除非源的高度由内容决定（`field-sizing: content`）。挂载等调用方当前的同步工作结束后进行（例如抽屉显示出源 textarea）；编辑器包已加载时，挂载在下一帧之前完成：编辑器在页面外建好后一次性放入，源 textarea 不会单独渲染。全屏结束后恢复用户调整过的尺寸。
+- 源 textarea 可调整大小时，编辑器在右下角画自己的拖动块，按源的 `resize` 方向调整外壳，每帧最多写一次尺寸。外壳不用 CSS `resize`，因为 WebKit 中 CodeMirror 的定位层会挡住外壳的拖动角。拖动过的外壳退出 flex 伸缩，否则 flex 会忽略拖出的高度。
 - 编辑器 DOM 的位置随引擎而定，判断集中在 `codemirror-editor.js`。Chromium 宿主（Windows、Android、OpenHarmony）把它放在外壳的 open shadow root 中：Blink 每次 DOM 变化都会重查编辑器外围的 `:has()` 锚点，隔离后页面选择器既不匹配它，也不会因它重算样式。WebKit 宿主（macOS、iOS、Linux）把它留在页面中：在 WebKit 的 shadow root 里，替换一段延伸到最后一行的选区的编辑，会把页面内容拉进编辑器。页面 CSS 和脚本不依赖编辑器内部 DOM 是否可见。
 - 页面中的编辑器样式由 style-mod 写进 `<head>` 的一个 `<style>`。它原本每次挂载都重写这段文本，让整页重算样式；`patches/style-mod@4.1.3.patch` 在文本不变时跳过重写，升级 style-mod 时确认上游是否已经修好。
 - 原始 `input`/`beforeinput` 停在外壳；键盘与焦点事件照常冒泡，判断焦点时需要看进 shadow root（见 `isInputElementInFocus()`）。
