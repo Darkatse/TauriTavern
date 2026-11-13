@@ -26,7 +26,7 @@
     "test": "node --run test:perf && node --run test:contracts && node --run test:dom && node --run test:rust",
     "test:perf": "node tests/perf/run.mjs",
     "test:contracts": "node --test --test-timeout=60000 --test-force-exit \"tests/*.test.mjs\"",
-    "test:dom": "node --run web:build && rstest && rstest --browser.name webkit",
+    "test:dom": "node --run web:build && rstest && node scripts/run-webkit-pass.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-default-features --tests",
     "skills:tt-docs": "node scripts/builtin-skills/build-tt-docs.mjs",
     "web:build": "rspack build --config rspack.config.js --mode production",
