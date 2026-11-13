@@ -17,16 +17,28 @@ const EXAMPLE_DIALOGUES = [[{ content: 'example a' }], [{ content: 'example b' }
 
 /**
  * Assembles a prompt for a chat of `chatLength` messages that outgrows the context.
+ * @param {number} chatLength
+ * @param {number} [historyTrimStep] - Left out, as in settings saved before the option existed.
+ * @param {number} [noteDepth] - Injects a one-token note into the chat at this depth.
  * @returns {Promise<{ history: number[], examples: string[] }>} Chat message numbers sent, oldest first, and example texts sent.
  */
-async function assemble(chatLength, historyTrimStep) {
+async function assemble(chatLength, historyTrimStep, noteDepth) {
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'moonshot', moonshot_model: 'kimi-k3',
-        openai_max_context: 96, openai_max_tokens: 16, history_trim_step: historyTrimStep,
+        openai_max_context: 96, openai_max_tokens: 16,
+        ...(historyTrimStep === undefined ? {} : { history_trim_step: historyTrimStep }),
     });
+    const order = ['main', 'dialogueExamples', 'chatHistory'];
+    if (noteDepth !== undefined) {
+        settings.prompts.push({
+            identifier: 'note', name: 'Note', system_prompt: false, role: 'system', content: 'note',
+            injection_position: 1, injection_depth: noteDepth, injection_order: 100,
+        });
+        order.push('note');
+    }
     settings.prompt_order = [{
         character_id: 100001,
-        order: ['main', 'dialogueExamples', 'chatHistory'].map(identifier => ({ identifier, enabled: true })),
+        order: order.map(identifier => ({ identifier, enabled: true })),
     }];
     const chat = Array.from({ length: chatLength }, (_, number) => ({
         role: number % 2 ? 'assistant' : 'user', content: `message ${number}`, sourceCount: 1,
@@ -77,6 +89,26 @@ test('with a step, the history starts on a multiple of the step and stays there 
 test('the space a step frees is not handed to the sections filled after the history', async () => {
     for (const length of CHAT_LENGTHS) {
         expect((await assemble(length, 10)).examples).toEqual((await assemble(length, 0)).examples);
+    }
+});
+
+test('settings without a saved step trim in steps of 20', async () => {
+    for (const length of CHAT_LENGTHS) {
+        expect((await assemble(length)).history).toEqual((await assemble(length, 20)).history);
+    }
+});
+
+test('a note injected where the budget runs out does not empty the history', async () => {
+    const length = 230;
+    // The budget fits this many one-token messages; a note one message shallower is the last thing that fits.
+    const fits = (await assemble(length, 0)).history.length;
+    for (let depth = fits - 3; depth <= fits + 1; depth += 1) {
+        const natural = (await assemble(length, 0, depth)).history;
+        const { history } = await assemble(length, 20, depth);
+        expect(history.length).toBeGreaterThan(0);
+        expect(history.at(-1)).toBe(length - 1);
+        expect(history).toEqual(Array.from({ length: history.length }, (_, offset) => history[0] + offset));
+        expect(history[0] % 20 === 0 || history[0] === natural[0]).toBe(true);
     }
 });
 

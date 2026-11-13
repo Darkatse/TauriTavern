@@ -616,7 +616,7 @@ const default_settings = {
     stream_openai: false,
     openai_max_context: max_4k,
     openai_max_tokens: 300,
-    history_trim_step: 0,
+    history_trim_step: 20,
     ...chatCompletionDefaultPrompts,
     ...promptManagerDefaultPromptOrders,
     send_if_empty: '',
@@ -1676,6 +1676,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         recordPositions.set(chatPrompt, nextRecordPosition);
         nextRecordPosition += chatPrompt.sourceCount ?? 1;
     }
+    /** @returns {number|null} The chat record's position, or null for an injected prompt. */
+    const positionOf = chatPrompt => recordPositions.get(chatPrompt) ?? null;
 
     /** @type {IncludedHistoryGroup[]} What was inserted, newest first. */
     const included = [];
@@ -1692,7 +1694,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`));
             for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
             sourceCount += chatPrompt.sourceCount;
-            included.push({ position: recordPositions.get(chatPrompt), messages: group, sourceCount: chatPrompt.sourceCount });
+            included.push({ position: positionOf(chatPrompt), messages: group, sourceCount: chatPrompt.sourceCount });
             index += 1;
             continue;
         }
@@ -1824,7 +1826,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 chatCompletion.insertAtStart(chatMessage, 'chatHistory');
                 sourceCount += chatPrompt.sourceCount ?? 0;
                 included.push({
-                    position: recordPositions.get(chatPrompt),
+                    position: positionOf(chatPrompt),
                     messages: [chatMessage, ...toolResultMessages],
                     sourceCount: chatPrompt.sourceCount ?? 0,
                 });
@@ -1916,7 +1918,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 chatCompletion.insertAtStart(chatMessage, 'chatHistory');
                 sourceCount += promptSource.sourceCount ?? 0;
                 included.push({
-                    position: recordPositions.get(promptSource),
+                    position: positionOf(promptSource),
                     messages: [chatMessage],
                     sourceCount: promptSource.sourceCount ?? 0,
                 });

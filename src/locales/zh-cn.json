@@ -47,7 +47,7 @@
     "Generation Speed": "生成速度",
     "Prompt Cache Hit Rate": "缓存命中率",
     "History Trim Step (messages)": "历史裁剪步长（消息数）",
-    "history_trim_step_description": "聊天超出上下文时，按此数量成批移除较早的消息，使提示词开头在多次回复之间保持不变，提示词缓存得以持续生效。0 表示逐条移除。",
+    "history_trim_step_description": "聊天超出上下文时，按此数量成批移除较早的消息，使提示词开头在多次回复之间保持不变，提示词缓存得以持续生效。数值越大，缓存未命中越少，但最多可能少发送这么多条消息。默认 20；0 表示逐条移除。",
     "Time to first streamed result": "收到首个流式结果的延迟",
     "Average generation speed: locally counted tokens divided by total generation time": "平均生成速度：本地统计的词符数 ÷ 总生成时间",
     "Share of input tokens read from cache in the latest request, when reported by the provider": "最近一次请求中从缓存读取的输入词符占比，仅在服务商提供统计时显示",
