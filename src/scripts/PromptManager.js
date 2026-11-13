@@ -13,7 +13,8 @@ import { Popup } from './popup.js';
 import { t, translate } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { INJECTION_POSITION, getPromptInjectionPosition } from './prompt-injections.js';
-import { prepareEntryFields } from './prompt-entry-fields.js';
+import { PromptEntryError, TOOL_DEFINITION_ROLE, isToolCallEntry, prepareEntryFields } from './prompt-entry-fields.js';
+import { isInlineDrawerOpen, setInlineDrawerOpen } from './drawers.js';
 import {
     assertPromptOrderReferences,
     isPromptManagerImportDataValid,
@@ -320,6 +321,86 @@ function parseHtml(html) {
     return template.content;
 }
 
+/** UI-only role; stored as assistant + fields.tool_calls. */
+const TOOL_CALL_ROLE = 'tool_call';
+
+const PROMPT_ROLE_ICONS = {
+    assistant: { roleIcon: 'fa-robot', roleTitle: 'Prompt will be sent as Assistant' },
+    user: { roleIcon: 'fa-user', roleTitle: 'Prompt will be sent as User' },
+    [TOOL_CALL_ROLE]: { roleIcon: 'fa-screwdriver-wrench', roleTitle: 'Prompt will be sent as a tool call' },
+    tool: { roleIcon: 'fa-reply', roleTitle: 'Prompt will be sent as a tool result' },
+    [TOOL_DEFINITION_ROLE]: { roleIcon: 'fa-toolbox', roleTitle: 'Prompt will be sent as a tool definition' },
+};
+
+/** @param {Partial<Prompt>} prompt */
+function editorRole(prompt) {
+    return isToolCallEntry(prompt) ? TOOL_CALL_ROLE : prompt.role || 'system';
+}
+
+/** @param {string} role */
+function storedRole(role) {
+    return role === TOOL_CALL_ROLE ? 'assistant' : role;
+}
+
+/** @param {string} role */
+function fieldsKind(role) {
+    return ['system', 'user', 'assistant'].includes(role) ? 'message' : role;
+}
+
+/** @param {string} kind */
+function fieldsTemplate(kind) {
+    switch (kind) {
+        case TOOL_CALL_ROLE:
+            return { tool_calls: [{ id: `call_${uuidv4().slice(0, 8)}`, type: 'function', function: { name: '', arguments: {} } }] };
+        case 'tool':
+            return { tool_call_id: '' };
+        case TOOL_DEFINITION_ROLE:
+            return { name: '', parameters: { type: 'object', properties: {} } };
+        default:
+            return undefined;
+    }
+}
+
+/** @param {string} kind */
+function entryTextCopy(kind) {
+    switch (kind) {
+        case TOOL_CALL_ROLE:
+            return { label: t`Text before the call (optional)`, hint: '' };
+        case 'tool':
+            return { label: t`Tool result`, hint: t`Sent as content. Do not repeat it in the fields.` };
+        case TOOL_DEFINITION_ROLE:
+            return { label: t`Tool description`, hint: t`Sent as description. Do not repeat it in the fields.` };
+        default:
+            return { label: t`Prompt`, hint: '' };
+    }
+}
+
+/** @param {unknown} fields */
+function formatFields(fields) {
+    return fields === undefined || fields === null ? '' : JSON.stringify(fields, null, 2);
+}
+
+/**
+ * @param {string} text
+ * @throws {SyntaxError}
+ */
+function parseFields(text) {
+    return text.trim() ? JSON.parse(text) : undefined;
+}
+
+/**
+ * Invalid JSON stays editable; validation owns the error.
+ * @param {string} text
+ */
+function formatFieldsText(text) {
+    try {
+        return formatFields(parseFields(text));
+    } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return text;
+    }
+}
+
 class PromptManager {
     #isVisible = false;
     #previewPending = false;
@@ -334,6 +415,9 @@ class PromptManager {
     #visibilityObserver = null;
     /** The markup each rendered part was built from; a part is rebuilt only when its markup changes. */
     #renderedMarkup = new WeakMap();
+    /** Last accepted role, restored when a category change is cancelled. */
+    #editorRole = null;
+    #editingMarker = false;
 
     get promptSources() {
         return {
@@ -543,6 +627,8 @@ class PromptManager {
 
         // Save prompt edit form to settings and close form.
         this.handleSavePrompt = (event) => {
+            if (!this.#validateEntryFields()) return;
+
             const promptId = event.target.dataset.pmPrompt;
             const prompt = this.getPromptById(promptId);
 
@@ -594,7 +680,6 @@ class PromptManager {
             }
 
             const nameField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_name'));
-            const roleField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_role'));
             const promptField = /** @type {HTMLTextAreaElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_prompt'));
             const injectionPositionField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_position'));
             const injectionDepthField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_depth'));
@@ -603,17 +688,13 @@ class PromptManager {
             const attachRoleField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_role'));
             const attachIndexField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_index'));
             const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
-            const depthBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_depth_block'));
-            const orderBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_order_block'));
             const forbidOverridesField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_forbid_overrides'));
             const forbidOverridesBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_forbid_overrides_block'));
             const entrySourceBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source_block'));
             const entrySource = /** @type {HTMLSpanElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source'));
-            const attachBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_attach_block'));
             const injectionPosition = getPromptInjectionPosition(prompt);
 
             nameField.value = prompt.name;
-            roleField.value = 'system';
             promptField.value = prompt.content ?? '';
             injectionPositionField.value = injectionPosition.toString();
             injectionDepthField.value = (prompt.injection_depth ?? DEFAULT_DEPTH).toString();
@@ -622,9 +703,6 @@ class PromptManager {
                 option.selected = false;
             });
             injectionTriggerField.dispatchEvent(new Event('change', { bubbles: true }));
-            depthBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-            orderBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-            attachBlock.style.display = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
             attachRoleField.value = prompt.attach_role ?? 'user';
             attachIndexField.value = (prompt.attach_index ?? 1).toString();
             attachSideField.value = prompt.attach_side ?? 'end';
@@ -633,6 +711,7 @@ class PromptManager {
             promptField.disabled = prompt.marker ?? false;
             getMountedCodeMirrorEditor(promptField)?.reset();
             entrySourceBlock.style.display = isPulledPrompt ? '' : 'none';
+            this.#setEditorEntry('system', '');
 
             if (isPulledPrompt) {
                 const sourceName = this.promptSources[promptId];
@@ -869,6 +948,11 @@ class PromptManager {
         // Prepare prompt edit form buttons
         const injectionPositionField = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_position');
         injectionPositionField.addEventListener('change', event => this.handleInjectionPositionChange(event));
+        this.#formElement('prompt_manager_popup_entry_form_role').addEventListener('change', () => void this.#handleEditorRoleChange());
+        this.#formElement('prompt_manager_popup_entry_form_name').addEventListener('input', () => this.#validateEntryFields());
+        this.#formElement('prompt_manager_popup_entry_form_fields').addEventListener('input', () => this.#validateEntryFields());
+        this.#formElement('prompt_manager_popup_entry_form_tool_call_id').addEventListener('change', () => this.#answerToolCall());
+        this.#formElement('prompt_manager_popup_entry_fields_block').addEventListener('inline-drawer-toggle', () => this.#mountFieldsEditor());
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save').addEventListener('click', this.handleSavePrompt);
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_reset').addEventListener('click', this.handleResetPrompt);
 
@@ -1007,9 +1091,12 @@ class PromptManager {
         const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
 
         getMountedCodeMirrorEditor(promptField)?.flush();
+        const fields = parseFields(this.#readFieldsText());
         prompt.name = nameField.value;
-        prompt.role = roleField.value;
+        prompt.role = storedRole(roleField.value);
         prompt.content = promptField.value;
+        if (fields === undefined) delete prompt.fields;
+        else prompt.fields = fields;
         prompt.injection_position = Number(injectionPositionField.value);
         prompt.injection_depth = Number(injectionDepthField.value);
         prompt.injection_order = Number(injectionOrderField.value);
@@ -1591,19 +1678,15 @@ class PromptManager {
      */
     loadPromptIntoEditForm(prompt) {
         const nameField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_name'));
-        const roleField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_role'));
         const promptField = /** @type {HTMLTextAreaElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_prompt'));
         const injectionPositionField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_position'));
         const injectionDepthField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_depth'));
         const injectionOrderField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_order'));
         const injectionTriggerField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_trigger'));
-        const injectionDepthBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_depth_block'));
-        const injectionOrderBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_order_block'));
         const forbidOverridesField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_forbid_overrides'));
         const forbidOverridesBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_forbid_overrides_block'));
         const entrySourceBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source_block'));
         const entrySource = /** @type {HTMLSpanElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_source'));
-        const attachBlock = /** @type {HTMLDivElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_attach_block'));
         const attachRoleField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_role'));
         const attachIndexField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_index'));
         const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
@@ -1611,7 +1694,6 @@ class PromptManager {
         const injectionPosition = getPromptInjectionPosition(prompt);
 
         nameField.value = prompt.name ?? '';
-        roleField.value = prompt.role || 'system';
         promptField.value = prompt.content ?? '';
         promptField.disabled = prompt.marker ?? false;
         void mountCodeMirrorEditor(promptField).then(editor => editor?.reset());
@@ -1622,9 +1704,6 @@ class PromptManager {
             option.selected = Array.isArray(prompt.injection_trigger) && prompt.injection_trigger.includes(option.value);
         });
         injectionTriggerField.dispatchEvent(new Event('change', { bubbles: true }));
-        injectionDepthBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-        injectionOrderBlock.style.visibility = injectionPosition === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
-        attachBlock.style.display = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
         attachRoleField.value = prompt.attach_role ?? 'user';
         attachIndexField.value = (prompt.attach_index ?? 1).toString();
         attachSideField.value = prompt.attach_side ?? 'end';
@@ -1648,26 +1727,157 @@ class PromptManager {
 
         const savePromptButton = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save');
         savePromptButton.dataset.pmPrompt = prompt.identifier;
+
+        this.#editingMarker = Boolean(prompt.marker);
+        this.#setEditorEntry(editorRole(prompt), formatFields(prompt.fields));
     }
 
-    handleInjectionPositionChange(event) {
-        const injectionDepthBlock = document.getElementById(this.configuration.prefix + 'prompt_manager_depth_block');
-        const injectionOrderBlock = document.getElementById(this.configuration.prefix + 'prompt_manager_order_block');
-        const attachBlock = document.getElementById(this.configuration.prefix + 'prompt_manager_attach_block');
-        const injectionPosition = Number(event.target.value);
-        if (injectionPosition === INJECTION_POSITION.ABSOLUTE) {
-            injectionDepthBlock.style.visibility = 'visible';
-            injectionOrderBlock.style.visibility = 'visible';
-            attachBlock.style.display = 'none';
-        } else if (injectionPosition === INJECTION_POSITION.ATTACH_EXISTING) {
-            injectionDepthBlock.style.visibility = 'hidden';
-            injectionOrderBlock.style.visibility = 'hidden';
-            attachBlock.style.display = 'flex';
-        } else {
-            injectionDepthBlock.style.visibility = 'hidden';
-            injectionOrderBlock.style.visibility = 'hidden';
-            attachBlock.style.display = 'none';
+    handleInjectionPositionChange() {
+        this.#renderPositionControls();
+        this.#validateEntryFields();
+    }
+
+    /** @param {string} name */
+    #formElement(name) {
+        return document.getElementById(this.configuration.prefix + name);
+    }
+
+    /**
+     * @param {string} role
+     * @param {string} fieldsText
+     */
+    #setEditorEntry(role, fieldsText) {
+        const roleField = /** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_role'));
+        const fieldsBlock = this.#formElement('prompt_manager_popup_entry_fields_block');
+        // Markers supply content elsewhere; fields and tool roles do not apply.
+        for (const option of roleField.options) {
+            option.disabled = this.#editingMarker && fieldsKind(option.value) !== 'message';
         }
+        fieldsBlock.style.display = this.#editingMarker ? 'none' : '';
+        roleField.value = role;
+        this.#editorRole = roleField.value;
+        this.#writeFieldsText(fieldsText);
+        setInlineDrawerOpen(fieldsBlock, !this.#editingMarker && (fieldsKind(this.#editorRole) !== 'message' || fieldsText.trim() !== ''));
+        this.#renderEntryKind();
+        this.#validateEntryFields();
+    }
+
+    async #handleEditorRoleChange() {
+        const roleField = /** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_role'));
+        const role = roleField.value;
+        const kind = fieldsKind(role);
+        if (kind !== fieldsKind(this.#editorRole)) {
+            if (this.#readFieldsText().trim() && !await Popup.show.confirm(t`Replace the fields with a template for this role?`, null)) {
+                roleField.value = this.#editorRole;
+                return;
+            }
+            this.#writeFieldsText(formatFields(fieldsTemplate(kind)));
+            setInlineDrawerOpen(this.#formElement('prompt_manager_popup_entry_fields_block'), kind !== 'message');
+        }
+        this.#editorRole = role;
+        this.#renderEntryKind();
+        this.#validateEntryFields();
+    }
+
+    #renderEntryKind() {
+        const { label, hint } = entryTextCopy(fieldsKind(this.#editorRole));
+        this.#formElement('prompt_manager_popup_entry_form_prompt_label').textContent = label;
+        this.#formElement('prompt_manager_popup_entry_form_prompt_hint').textContent = hint;
+        // A mounted editor keeps a copy of the label as its name.
+        getMountedCodeMirrorEditor(/** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_prompt')))?.updateName();
+        this.#renderPositionControls();
+        this.#renderToolCallChoices();
+    }
+
+    #renderPositionControls() {
+        const definition = this.#editorRole === TOOL_DEFINITION_ROLE;
+        const position = Number(/** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_injection_position')).value);
+        const visibility = position === INJECTION_POSITION.ABSOLUTE ? 'visible' : 'hidden';
+        this.#formElement('prompt_manager_position_block').style.display = definition ? 'none' : '';
+        this.#formElement('prompt_manager_depth_block').style.visibility = visibility;
+        this.#formElement('prompt_manager_order_block').style.visibility = visibility;
+        this.#formElement('prompt_manager_attach_block').style.display = !definition && position === INJECTION_POSITION.ATTACH_EXISTING ? 'flex' : 'none';
+    }
+
+    #renderToolCallChoices() {
+        const picker = /** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_tool_call_id'));
+        const choices = this.#editorRole !== 'tool' ? [] : this.serviceSettings.prompts.filter(isToolCallEntry).flatMap(entry => entry.fields.tool_calls
+            .filter(call => typeof call?.id === 'string' && call.id)
+            .map(call => new Option([entry.name || entry.identifier, call.function?.name, call.id].filter(Boolean).join(' · '), call.id)));
+        picker.replaceChildren(picker.options[0], ...choices);
+        picker.style.display = choices.length ? '' : 'none';
+    }
+
+    #answerToolCall() {
+        const picker = /** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_tool_call_id'));
+        const callId = picker.value;
+        picker.value = '';
+        if (!callId) return;
+        this.#writeFieldsText(formatFields({ ...parseFields(this.#readFieldsText()), tool_call_id: callId }));
+        this.#validateEntryFields();
+    }
+
+    /**
+     * Validate structure without evaluating macros while editing.
+     * @returns {boolean}
+     */
+    #validateEntryFields() {
+        const picker = /** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_tool_call_id'));
+        let fields;
+        let error = '';
+        try {
+            fields = parseFields(this.#readFieldsText());
+        } catch (parseError) {
+            error = t`Fields are not valid JSON: ${parseError.message}`;
+        }
+        const pickerDisabled = Boolean(error) || (fields !== undefined && (typeof fields !== 'object' || fields === null || Array.isArray(fields)));
+        if (!error && !this.#editingMarker && this.#editorRole !== null) {
+            try {
+                prepareEntryFields({
+                    name: /** @type {HTMLInputElement} */ (this.#formElement('prompt_manager_popup_entry_form_name')).value,
+                    identifier: this.#formElement('prompt_manager_popup_entry_form_save').dataset.pmPrompt,
+                    role: storedRole(this.#editorRole),
+                    fields,
+                    injection_position: Number(/** @type {HTMLSelectElement} */ (this.#formElement('prompt_manager_popup_entry_form_injection_position')).value),
+                }, text => text);
+            } catch (entryError) {
+                if (!(entryError instanceof PromptEntryError)) throw entryError;
+                error = entryError.message;
+            }
+        }
+        // Avoid re-announcing unchanged errors in the live region.
+        const errorElement = this.#formElement('prompt_manager_popup_entry_form_fields_error');
+        const saveButton = this.#formElement('prompt_manager_popup_entry_form_save');
+        const blocked = String(Boolean(error));
+        if (errorElement.textContent !== error) errorElement.textContent = error;
+        if (saveButton.getAttribute('aria-disabled') !== blocked) {
+            saveButton.setAttribute('aria-disabled', blocked);
+            saveButton.classList.toggle('disabled', Boolean(error));
+        }
+        if (picker.disabled !== pickerDisabled) picker.disabled = pickerDisabled;
+        return !error;
+    }
+
+    #readFieldsText() {
+        const field = /** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_fields'));
+        getMountedCodeMirrorEditor(field)?.flush();
+        return field.value;
+    }
+
+    /** @param {string} text */
+    #writeFieldsText(text) {
+        const field = /** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_fields'));
+        field.value = text;
+        getMountedCodeMirrorEditor(field)?.reset();
+    }
+
+    #mountFieldsEditor() {
+        const field = /** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_fields'));
+        if (!isInlineDrawerOpen(this.#formElement('prompt_manager_popup_entry_fields_block')) || getMountedCodeMirrorEditor(field)) return;
+        void mountCodeMirrorEditor(field, {
+            onChange: () => this.#validateEntryFields(),
+            format: { label: t`Format JSON`, run: formatFieldsText },
+        });
     }
 
     /**
@@ -1757,6 +1967,13 @@ class PromptManager {
         entrySource.textContent = '';
 
         roleField.disabled = false;
+
+        const fieldsField = /** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_fields'));
+        getMountedCodeMirrorEditor(fieldsField)?.destroy();
+        fieldsField.value = '';
+        setInlineDrawerOpen(this.#formElement('prompt_manager_popup_entry_fields_block'), false);
+        this.#editorRole = null;
+        this.#editingMarker = false;
     }
 
     clearInspectForm() {
@@ -2026,7 +2243,8 @@ class PromptManager {
             const attachSideText = prompt.attach_side === 'start'
                 ? translate('Prepend')
                 : translate('Append');
-            const injectionPosition = getPromptInjectionPosition(prompt);
+            // Tool definitions have no message position.
+            const injectionPosition = prompt.role === TOOL_DEFINITION_ROLE ? INJECTION_POSITION.RELATIVE : getPromptInjectionPosition(prompt);
             const isMarkerPrompt = prompt.marker && injectionPosition === INJECTION_POSITION.RELATIVE;
             const isSystemPrompt = !prompt.marker && prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE && !prompt.forbid_overrides;
             const isImportantPrompt = !prompt.marker && prompt.system_prompt && injectionPosition === INJECTION_POSITION.RELATIVE && prompt.forbid_overrides;
@@ -2035,15 +2253,11 @@ class PromptManager {
             const isAttachedPrompt = injectionPosition === INJECTION_POSITION.ATTACH_EXISTING;
             const isOverriddenPrompt = Array.isArray(this.overriddenPrompts) && this.overriddenPrompts.includes(prompt.identifier);
             const importantClass = isImportantPrompt ? `${prefix}prompt_manager_important` : '';
-            const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : prompt.role;
+            const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : editorRole(prompt);
 
             //add role icons to the right of prompt name
-            const promptRoles = {
-                assistant: { roleIcon: 'fa-robot', roleTitle: 'Prompt will be sent as Assistant' },
-                user: { roleIcon: 'fa-user', roleTitle: 'Prompt will be sent as User' },
-            };
-            const roleIcon = promptRoles[iconLookup]?.roleIcon || '';
-            const roleTitle = promptRoles[iconLookup]?.roleTitle || '';
+            const roleIcon = PROMPT_ROLE_ICONS[iconLookup]?.roleIcon || '';
+            const roleTitle = roleIcon ? translate(PROMPT_ROLE_ICONS[iconLookup].roleTitle) : '';
 
             const rowStart = `<li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
                     <span class="drag-handle${dragHandleClass}">☰</span>

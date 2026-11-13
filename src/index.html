@@ -7664,7 +7664,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                     <form class="completion_prompt_manager_popup_entry_form">
                         <div class="completion_prompt_manager_popup_entry_form_control">
                             <div class="completion_prompt_manager_popup_header">
-                                <label for="completion_prompt_manager_popup_entry_form_prompt">
+                                <label>
                                     <span>Prompt List</span>
                                 </label>
                                 <a id="completion_prompt_manager_popup_close_button" title="close" data-i18n="[title]close" class="fa-solid fa-close menu_button"></a>
@@ -7695,6 +7695,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     <option data-i18n="System" value="system">System</option>
                                     <option data-i18n="User" value="user">User</option>
                                     <option data-i18n="AI Assistant" value="assistant">AI Assistant</option>
+                                    <option data-i18n="Tool call" value="tool_call">Tool call</option>
+                                    <option data-i18n="Tool response" value="tool">Tool response</option>
+                                    <option data-i18n="Tool definition" value="tool_definition">Tool definition</option>
                                 </select>
                                 <div class="text_muted" data-i18n="To whom this message will be attributed.">To whom this message will be attributed.</div>
                             </div>
@@ -7715,7 +7718,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 </div>
                             </div>
                         </div>
-                        <div class="flex-container gap10px">
+                        <div id="completion_prompt_manager_position_block" class="flex-container gap10px">
                             <div class="completion_prompt_manager_popup_entry_form_control flex1">
                                 <label for="completion_prompt_manager_popup_entry_form_injection_position">
                                     <span data-i18n="prompt_manager_position">Position</span>
@@ -7777,9 +7780,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <div class="flex-container alignItemsCenter" data-i18n="[external_piece_text]The content of this prompt is pulled from elsewhere and cannot be edited here." external_piece_text="The content of this prompt is pulled from elsewhere and cannot be edited here.">
                                 <div class="flex1">
                                     <label class="flex-container alignItemsBaseline" for="completion_prompt_manager_popup_entry_form_prompt">
-                                        <span data-i18n="Prompt">Prompt</span>
+                                        <span id="completion_prompt_manager_popup_entry_form_prompt_label">Prompt</span>
                                         <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="completion_prompt_manager_popup_entry_form_prompt" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
                                     </label>
+                                    <div id="completion_prompt_manager_popup_entry_form_prompt_hint" class="text_muted"></div>
                                 </div>
                                 <div id="completion_prompt_manager_forbid_overrides_block">
                                     <label class="checkbox_label" for="completion_prompt_manager_popup_entry_form_forbid_overrides" title="This prompt cannot be overridden by character cards, even if overrides are preferred." data-i18n="[title]This prompt cannot be overridden by character cards, even if overrides are preferred.">
@@ -7793,7 +7797,24 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <span>&nbsp;</span>
                                 <span id="completion_prompt_manager_popup_entry_source"></span>
                             </div>
-                            <textarea id="completion_prompt_manager_popup_entry_form_prompt" class="text_pole" name="prompt" data-macros data-macros-autocomplete="always" data-macros-autocomplete-style="expanded" placeholder="The prompt to be sent." data-i18n="[placeholder]The prompt to be sent."></textarea>
+                            <textarea id="completion_prompt_manager_popup_entry_form_prompt" class="text_pole" name="prompt" aria-describedby="completion_prompt_manager_popup_entry_form_prompt_hint" data-macros data-macros-autocomplete="always" data-macros-autocomplete-style="expanded" placeholder="The prompt to be sent." data-i18n="[placeholder]The prompt to be sent."></textarea>
+                        </div>
+                        <div id="completion_prompt_manager_popup_entry_fields_block" class="completion_prompt_manager_popup_entry_form_control inline-drawer">
+                            <div class="inline-drawer-toggle inline-drawer-header">
+                                <span data-i18n="Fields (JSON)">Fields (JSON)</span>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                            </div>
+                            <div class="inline-drawer-content">
+                                <div class="flex-container alignItemsBaseline">
+                                    <div id="completion_prompt_manager_popup_entry_form_fields_hint" class="flex1 text_muted" data-i18n="Sent with this entry. Macros work in keys and string values.">Sent with this entry. Macros work in keys and string values.</div>
+                                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="completion_prompt_manager_popup_entry_form_fields" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                </div>
+                                <select id="completion_prompt_manager_popup_entry_form_tool_call_id" class="text_pole" aria-label="Answer a call from this preset" data-i18n="[aria-label]Answer a call from this preset">
+                                    <option value="" data-i18n="Answer a call from this preset">Answer a call from this preset</option>
+                                </select>
+                                <textarea id="completion_prompt_manager_popup_entry_form_fields" class="text_pole monospace" name="fields" rows="8" spellcheck="false" aria-label="Fields (JSON)" data-i18n="[aria-label]Fields (JSON)" aria-describedby="completion_prompt_manager_popup_entry_form_fields_hint completion_prompt_manager_popup_entry_form_fields_error" data-macros data-macros-autocomplete-style="expanded"></textarea>
+                                <div id="completion_prompt_manager_popup_entry_form_fields_error" class="text_danger" aria-live="polite"></div>
+                            </div>
                         </div>
                         <div class="completion_prompt_manager_popup_entry_form_footer">
                             <a id="completion_prompt_manager_popup_entry_form_close" title="Close" data-i18n="[title]close" class="fa-solid fa-close menu_button"></a>

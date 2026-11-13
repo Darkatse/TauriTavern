@@ -19,6 +19,7 @@ let editorBundle = null;
  * @property {() => void} requestMeasure
  * @property {() => void} reset
  * @property {() => void} updateReadOnly
+ * @property {() => void} updateName
  * @property {(options?: { input?: boolean, selection?: boolean }) => boolean} flush
  * @property {() => void} destroy
  */
@@ -58,9 +59,9 @@ export function initializeCodeMirrorEditor(settings) {
 
 /**
  * @param {HTMLTextAreaElement} source
- * @param {{ onChange?: () => void, signal?: AbortSignal }} [options]
+ * @param {{ onChange?: () => void, signal?: AbortSignal, format?: { label: string, run: (text: string) => string } }} [options]
  */
-export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
+export async function mountCodeMirrorEditor(source, { onChange, signal, format } = {}) {
     if (signal?.aborted) return null;
     if (enabled === null) {
         throw new Error('CodeMirror editor is not initialized');
@@ -121,6 +122,7 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         placeholder: source.placeholder,
         selection: focused ? { anchor, head } : undefined,
         resize: sourceStyle.resize,
+        format,
         onChange,
         phrases: {
             Undo: t`Undo`, Redo: t`Redo`, 'Copy all': t`Copy all`, 'Editor tools': t`Editor tools`,
@@ -151,6 +153,9 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         requestMeasure: editor.requestMeasure,
         updateReadOnly() {
             editor.setReadOnly(source.disabled || source.readOnly);
+        },
+        updateName() {
+            editor.setAriaLabel(getEditorName(source));
         },
         reset() {
             editor.reset(source.value, source.disabled || source.readOnly);

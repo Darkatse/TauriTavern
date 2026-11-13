@@ -193,6 +193,15 @@ body>.completion_prompt_manager_prompt[data-pm-identifier]>:not(.completion_prom
     min-height: 200px;
 }
 
+#completion_prompt_manager_popup_entry_form_fields {
+    resize: vertical;
+}
+
+#completion_prompt_manager_popup_entry_form_prompt_hint:empty,
+#completion_prompt_manager_popup_entry_form_fields_error:empty {
+    display: none;
+}
+
 #completion_prompt_manager_popup .completion_prompt_manager_popup_entry .completion_prompt_manager_popup_entry_form_footer {
     display: flex;
     justify-content: space-between;

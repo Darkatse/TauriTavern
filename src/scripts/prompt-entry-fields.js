@@ -67,6 +67,14 @@ export function prepareEntryFields(prompt, substitute) {
 }
 
 /**
+ * @param {{ role?: string, fields?: unknown }} prompt
+ * @returns {boolean}
+ */
+export function isToolCallEntry(prompt) {
+    return prompt.role === 'assistant' && isPlainObject(prompt.fields) && Array.isArray(prompt.fields.tool_calls) && prompt.fields.tool_calls.length > 0;
+}
+
+/**
  * @param {{ content?: string, fields: Record<string, unknown> }} prompt Prepared entry.
  * @returns {{ type: 'function', function: Record<string, unknown> }}
  */

@@ -23,6 +23,8 @@ const openai = (await load('scripts/openai.js'));
 const { power_user } = (await load('scripts/power-user.js'));
 const { ToolManager } = (await load('scripts/tool-calling.js'));
 const { macros, initRegisterMacros } = (await load('scripts/macros/macro-system.js'));
+const codemirror = (await load('scripts/tauri/codemirror-editor.js'));
+const { getTauriTavernSettings } = (await load('tauri-bridge.js'));
 power_user.experimental_macro_engine = true;
 initRegisterMacros();
 script.changeMainAPI('openai');
@@ -151,6 +153,106 @@ test('a character card override replaces the text of the entry and leaves its fi
     expect(plain).toEqual({ role: 'system', content: 'Main: 3', note: '{{getvar::hp}}', quoted: '{{original}}' });
     expect(overridden).toEqual({ ...plain, content: 'Card. Main: 3' });
 });
+
+test('the editor saves the entries it opens unchanged and checks fields as the assembly does', () => {
+    const promptManager = openai.promptManager;
+    const form = id => window.document.getElementById(`completion_prompt_manager_popup_entry_form_${id}`);
+    const sent = prompt => ({ role: prompt.role, content: prompt.content, fields: prompt.fields });
+    const prompts = promptManager.serviceSettings.prompts;
+    prompts.push(...structuredClone([readStateTool, readStateCall]));
+    try {
+        for (const entry of [readStateTool, readStateCall, readStateResult]) {
+            const prompt = structuredClone(entry);
+            promptManager.loadPromptIntoEditForm(prompt);
+            promptManager.updatePromptWithPromptEditForm(prompt);
+            expect(sent(prompt)).toEqual(sent(entry));
+        }
+
+        const answer = { identifier: 'answer', name: 'Answer', role: 'system', content: 'hp: 3' };
+        promptManager.loadPromptIntoEditForm(answer);
+        form('role').value = 'tool';
+        form('role').dispatchEvent(new window.Event('change'));
+        expect(form('fields_error').textContent).toBe('Prompt "Answer": a tool response needs a tool_call_id.');
+        expect(form('save').getAttribute('aria-disabled')).toBe('true');
+
+        form('tool_call_id').value = 'call_1';
+        form('tool_call_id').dispatchEvent(new window.Event('change'));
+        expect(form('fields_error').textContent).toBe('');
+        promptManager.updatePromptWithPromptEditForm(answer);
+        expect(sent(answer)).toEqual({ role: 'tool', content: 'hp: 3', fields: { tool_call_id: 'call_1' } });
+    } finally {
+        promptManager.clearEditForm();
+        prompts.splice(-2);
+    }
+});
+
+async function withEditors(run) {
+    codemirror.initializeCodeMirrorEditor({ codemirror_editor_enabled: true });
+    try {
+        await run();
+    } finally {
+        openai.promptManager.clearEditForm();
+        codemirror.initializeCodeMirrorEditor(await getTauriTavernSettings());
+    }
+}
+
+/** The form mounts its own editors; wait for that one rather than mount another. */
+async function formEditor(field) {
+    let editor;
+    while (!(editor = codemirror.getMountedCodeMirrorEditor(field))) await new Promise(resolve => setTimeout(resolve, 0));
+    return editor;
+}
+
+const editorRoot = editor => editor.wrapper.shadowRoot ?? editor.wrapper;
+const press = (editor, label) => editorRoot(editor).querySelector(`button[aria-label="${label}"]`).click();
+
+test('the fields toolbar rewrites JSON as it will be stored, as one undo step', () => withEditors(async () => {
+    const field = window.document.getElementById('completion_prompt_manager_popup_entry_form_fields');
+    openai.promptManager.loadPromptIntoEditForm({ identifier: 'answer', name: 'Answer', role: 'tool', content: 'hp: 3', fields: { tool_call_id: 'call_1' } });
+    const editor = await formEditor(field);
+    const edit = text => {
+        field.value = text;
+        editor.reset();
+    };
+    const text = () => {
+        editor.flush();
+        return field.value;
+    };
+
+    edit('{"tool_call_id":"call_1"}');
+    press(editor, 'Format JSON');
+    expect(text()).toBe('{\n  "tool_call_id": "call_1"\n}');
+    press(editor, 'Undo');
+    expect(text()).toBe('{"tool_call_id":"call_1"}');
+
+    edit('{"tool_call_id":');
+    press(editor, 'Format JSON');
+    expect(text()).toBe('{"tool_call_id":');
+}));
+
+test('changing the kind of an entry keeps its text edits undoable and names the editor after the new label', () => withEditors(async () => {
+    const field = window.document.getElementById('completion_prompt_manager_popup_entry_form_prompt');
+    const role = window.document.getElementById('completion_prompt_manager_popup_entry_form_role');
+    openai.promptManager.loadPromptIntoEditForm({ identifier: 'note', name: 'Note', role: 'system', content: 'Before' });
+    const type = (editor, label, text) => {
+        const input = editorRoot(editor).querySelector(`input[aria-label="${label}"]`);
+        input.value = text;
+        input.dispatchEvent(new window.Event('input'));
+    };
+    const loaded = await formEditor(field);
+    press(loaded, 'Find and replace');
+    type(loaded, 'Find', 'Before');
+    type(loaded, 'Replace', 'After');
+    press(loaded, 'Replace all');
+
+    role.value = 'tool_call';
+    role.dispatchEvent(new window.Event('change'));
+    const editor = await formEditor(field);
+    expect(editorRoot(editor).querySelector('[role="textbox"]').getAttribute('aria-label')).toBe('Text before the call (optional)');
+    press(editor, 'Undo');
+    editor.flush();
+    expect(field.value).toBe('Before');
+}));
 
 test('a preset definition replaces the registered tool of the same name', async () => {
     const action = () => 'done';
