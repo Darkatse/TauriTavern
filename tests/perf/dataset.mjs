@@ -219,6 +219,25 @@ export function perfSettings() {
     // This user allowed Atlas's own regex and uses Code Render.
     settings.extension_settings.character_allowed_regex = ['Atlas.png'];
     settings.extension_settings.code_render = { enabled: true, replace_last_message_by_default: false };
+    // This user keeps a tool call and its result in the preset, switched off, so the prompt does not carry them. The
+    // order is the one the Prompt Manager saves for a new user, followed by the two entries.
+    const call = {
+        identifier: 'readStateCall', name: 'Read state', role: 'assistant', content: '', system_prompt: false, marker: false,
+        fields: { tool_calls: [{ id: 'call_read_state', type: 'function', function: { name: 'read_state', arguments: { target: '{{char}}' } } }] },
+    };
+    const result = {
+        identifier: 'readStateResult', name: 'State', role: 'tool', content: '{{getvar::state}}', system_prompt: false, marker: false,
+        fields: { tool_call_id: 'call_read_state' },
+    };
+    settings.oai_settings.prompts.push(call, result);
+    settings.oai_settings.prompt_order.push({
+        character_id: 100001,
+        order: [
+            'agentSystemPrompt', 'main', 'worldInfoBefore', 'personaDescription', 'charDescription', 'charPersonality', 'scenario',
+            'enhanceDefinitions', 'nsfw', 'worldInfoAfter', 'dialogueExamples', 'agentTask', 'chatHistory', 'jailbreak', 'agentResults',
+        ].map(identifier => ({ identifier, enabled: identifier !== 'enhanceDefinitions' }))
+            .concat({ identifier: call.identifier, enabled: false }, { identifier: result.identifier, enabled: false }),
+    });
     return settings;
 }
 
