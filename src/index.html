@@ -682,7 +682,8 @@ some text
                                         History Trim Step (messages)
                                     </span></div>
                                     <div class="wide100p">
-                                        <input type="number" id="history_trim_step" name="history_trim_step" class="text_pole" min="0" step="1" aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_description">
+                                        <input type="number" id="history_trim_step" name="history_trim_step" class="text_pole" min="0" step="1" required aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_description history_trim_step_error">
+                                        <small id="history_trim_step_error" class="range-input-error" role="status"></small>
                                     </div>
                                     <div class="toggle-description justifyLeft" id="history_trim_step_description">
                                         <span data-i18n="history_trim_step_description">

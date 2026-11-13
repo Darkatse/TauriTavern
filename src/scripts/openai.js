@@ -1522,6 +1522,16 @@ async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, dept
  */
 
 /**
+ * @param {unknown} step - The History Trim Step setting.
+ * @throws {Error} When it is not a whole number of messages, 0 or more.
+ */
+function assertHistoryTrimStep(step) {
+    if (!Number.isInteger(step) || /** @type {number} */ (step) < 0) {
+        throw new Error(`prompt_assembly.history_trim_step_invalid: History trim step must be a whole number of messages, 0 or more, got ${JSON.stringify(step)}`);
+    }
+}
+
+/**
  * Moves the start of a truncated chat history forward to the next multiple of `step` chat records.
  *
  * Filling the history newest first moves its start a message or two with every reply once the chat
@@ -1538,20 +1548,20 @@ async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, dept
  * @returns {number} Raw chat records removed.
  */
 function trimHistoryToStep(chatCompletion, included, step) {
-    if (!Number.isInteger(step) || step < 0) {
-        throw new Error(`prompt_assembly.history_trim_step_invalid: History trim step must be a whole number of messages, got ${step}`);
-    }
+    assertHistoryTrimStep(step);
     if (step <= 1) {
         return 0;
     }
 
     const records = included.filter(group => group.position !== null);
-    if (records.length === 0) {
+    // Empty chat messages are recorded but never inserted, so only sendable ones keep the history from being empty.
+    const sendableRecords = records.filter(group => group.messages.some(message => message.isSendable()));
+    if (sendableRecords.length === 0) {
         return 0;
     }
     const boundary = Math.ceil(records.at(-1).position / step) * step;
-    // Keep the budget's cut when moving it would leave no chat history at all.
-    if (boundary > records[0].position) {
+    // Keep the budget's cut when moving it would leave no chat history to send.
+    if (boundary > sendableRecords[0].position) {
         return 0;
     }
 
@@ -2706,6 +2716,8 @@ export async function assembleOpenAIChatCompletionPrompt({
     if (!promptInputs || typeof promptInputs !== 'object' || Array.isArray(promptInputs)) {
         throw new Error('prompt_assembly.inputs_required: Prompt assembly requires promptInputs');
     }
+    // Checked on every assembly, not only once the chat outgrows the context.
+    assertHistoryTrimStep(settings.history_trim_step);
 
     const normalizedGenerationType = String(generationType || promptInputs.type || 'normal').trim() || 'normal';
     const resolvedModel = String(model || getChatCompletionModel(settings) || '').trim();
@@ -9154,7 +9166,16 @@ export function initOpenAI() {
     });
 
     $('#history_trim_step').on('input', function () {
-        oai_settings.history_trim_step = Number($(this).val());
+        const input = /** @type {HTMLInputElement} */ (this);
+        // Only a whole number of 0 or more is saved; anything else is marked invalid and keeps the last good value.
+        const valid = input.validity.valid && Number.isInteger(input.valueAsNumber);
+        $('#history_trim_step_error').text(valid ? '' : input.validationMessage || t`Invalid value`);
+        if (!valid) {
+            input.setAttribute('aria-invalid', 'true');
+            return;
+        }
+        input.removeAttribute('aria-invalid');
+        oai_settings.history_trim_step = input.valueAsNumber;
         saveSettingsDebounced();
     });
 

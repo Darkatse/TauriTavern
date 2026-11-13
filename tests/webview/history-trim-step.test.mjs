@@ -20,9 +20,10 @@ const EXAMPLE_DIALOGUES = [[{ content: 'example a' }], [{ content: 'example b' }
  * @param {number} chatLength
  * @param {number} [historyTrimStep] - Left out, as in settings saved before the option existed.
  * @param {number} [noteDepth] - Injects a one-token note into the chat at this depth.
+ * @param {number[]} [emptyNumbers] - Chat messages left empty, which are never sent.
  * @returns {Promise<{ history: number[], examples: string[] }>} Chat message numbers sent, oldest first, and example texts sent.
  */
-async function assemble(chatLength, historyTrimStep, noteDepth) {
+async function assemble(chatLength, historyTrimStep, noteDepth, emptyNumbers = []) {
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'moonshot', moonshot_model: 'kimi-k3',
         openai_max_context: 96, openai_max_tokens: 16,
@@ -41,7 +42,7 @@ async function assemble(chatLength, historyTrimStep, noteDepth) {
         order: order.map(identifier => ({ identifier, enabled: true })),
     }];
     const chat = Array.from({ length: chatLength }, (_, number) => ({
-        role: number % 2 ? 'assistant' : 'user', content: `message ${number}`, sourceCount: 1,
+        role: number % 2 ? 'assistant' : 'user', content: emptyNumbers.includes(number) ? '' : `message ${number}`, sourceCount: 1,
     }));
     const { messages } = await openai.assembleOpenAIChatCompletionPrompt({
         settings, macroContext: macros.captureContext(), agentMode: false, generationType: 'normal',
@@ -112,7 +113,45 @@ test('a note injected where the budget runs out does not empty the history', asy
     }
 });
 
+test('an empty newest message does not let the step empty the history', async () => {
+    // A step larger than what fits puts the boundary on the newest message, 200, which is empty and never sent.
+    const length = 201;
+    const { history } = await assemble(length, 100, undefined, [length - 1]);
+    expect(history.length).toBeGreaterThan(0);
+    expect(history.at(-1)).toBe(length - 2);
+});
+
 test('a chat that fits the context is sent whole', async () => {
     const { history } = await assemble(12, 10);
     expect(history).toEqual(Array.from({ length: 12 }, (_, number) => number));
+});
+
+test('an invalid step stops assembly even when the chat fits the context', async () => {
+    for (const step of [1.5, -1, '20']) {
+        await expect(assemble(12, step)).rejects.toThrow('prompt_assembly.history_trim_step_invalid');
+    }
+});
+
+test('the field saves only a whole number of 0 or more', () => {
+    // The test host stops before app start attaches the Chat Completion settings handlers.
+    openai.initOpenAI();
+    const input = window.document.getElementById('history_trim_step');
+    const error = window.document.getElementById('history_trim_step_error');
+    const type = value => {
+        input.value = value;
+        window.jQuery(input).trigger('input');
+    };
+
+    type('30');
+    expect(openai.oai_settings.history_trim_step).toBe(30);
+    for (const value of ['1.5', '-1', '']) {
+        type(value);
+        expect(openai.oai_settings.history_trim_step).toBe(30);
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(error.textContent).not.toBe('');
+    }
+    type('20');
+    expect(openai.oai_settings.history_trim_step).toBe(20);
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    expect(error.textContent).toBe('');
 });
