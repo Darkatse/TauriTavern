@@ -209,7 +209,7 @@ src/
 
 挂载与生命周期在 `src/scripts/tauri/codemirror-editor.js`，编辑器本体在按需加载的 `src/lib-bundle-editor.js`。设置关闭时保留原生 textarea。
 
-- 源 textarea 是编辑器的事实来源：值、只读状态与名称（`getEditorName()` 从标签得出）都取自它。编辑器通过 `onChange` 通知改动，调用方需要文本时用 `flush()` 写回源 textarea，`flush({ input: true })` 还会在源上派发 `input`，沿用原有的处理链。源的 `disabled`/`readOnly` 或标签改变后，调用方用 `updateReadOnly()` / `updateName()` 原位更新。
+- 源 textarea 是编辑器的事实来源：值、只读状态与名称（`getEditorName()` 从标签得出）都取自它；描述直接引用源的 `aria-describedby` 元素（element reflection 可以跨出 shadow root），随这些元素的文字变化。编辑器通过 `onChange` 通知改动，调用方需要文本时用 `flush()` 写回源 textarea，`flush({ input: true })` 还会在源上派发 `input`，沿用原有的处理链。源的 `disabled`/`readOnly` 或标签改变后，调用方用 `updateReadOnly()` / `updateName()` 原位更新。
 - 外壳 `.tt-codemirror-editor` 接管源 textarea 的盒子（含 `flex` 与 `min-height`）。读取尺寸时不排版源文本，除非源的高度由内容决定（`field-sizing: content`）。挂载等调用方当前的同步工作结束后进行（例如抽屉显示出源 textarea）；编辑器包已加载时，挂载在下一帧之前完成：编辑器在页面外建好后一次性放入，源 textarea 不会单独渲染。全屏结束后恢复用户调整过的尺寸。
 - 源 textarea 可调整大小时，编辑器在右下角画自己的拖动块，按源的 `resize` 方向调整外壳，每帧最多写一次尺寸。外壳不用 CSS `resize`，因为 WebKit 中 CodeMirror 的定位层会挡住外壳的拖动角。拖动过的外壳退出 flex 伸缩，否则 flex 会忽略拖出的高度。
 - 编辑器 DOM 的位置随引擎而定，判断集中在 `codemirror-editor.js`。Chromium 宿主（Windows、Android、OpenHarmony）把它放在外壳的 open shadow root 中：Blink 每次 DOM 变化都会重查编辑器外围的 `:has()` 锚点，隔离后页面选择器既不匹配它，也不会因它重算样式。WebKit 宿主（macOS、iOS、Linux）把它留在页面中：在 WebKit 的 shadow root 里，替换一段延伸到最后一行的选区的编辑，会把页面内容拉进编辑器。页面 CSS 和脚本不依赖编辑器内部 DOM 是否可见。

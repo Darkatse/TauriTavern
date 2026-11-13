@@ -230,7 +230,7 @@ test('the fields toolbar rewrites JSON as it will be stored, as one undo step', 
     expect(text()).toBe('{"tool_call_id":');
 }));
 
-test('changing the kind of an entry keeps its text edits undoable and names the editor after the new label', () => withEditors(async () => {
+test('changing the kind of an entry keeps its text edits undoable and gives the editor the new label and hint', () => withEditors(async () => {
     const field = window.document.getElementById('completion_prompt_manager_popup_entry_form_prompt');
     const role = window.document.getElementById('completion_prompt_manager_popup_entry_form_role');
     openai.promptManager.loadPromptIntoEditForm({ identifier: 'note', name: 'Note', role: 'system', content: 'Before' });
@@ -245,10 +245,12 @@ test('changing the kind of an entry keeps its text edits undoable and names the 
     type(loaded, 'Replace', 'After');
     press(loaded, 'Replace all');
 
-    role.value = 'tool_call';
+    role.value = 'tool';
     role.dispatchEvent(new window.Event('change'));
     const editor = await formEditor(field);
-    expect(editorRoot(editor).querySelector('[role="textbox"]').getAttribute('aria-label')).toBe('Text before the call (optional)');
+    const textbox = editorRoot(editor).querySelector('[role="textbox"]');
+    expect(textbox.getAttribute('aria-label')).toBe('Tool result');
+    expect(textbox.ariaDescribedByElements.map(element => element.textContent)).toEqual(['Sent as content. Do not repeat it in the fields.']);
     press(editor, 'Undo');
     editor.flush();
     expect(field.value).toBe('Before');

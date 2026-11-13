@@ -119,6 +119,7 @@ export async function mountCodeMirrorEditor(source, { onChange, signal, format }
         doc: source.value,
         readOnly: source.disabled || source.readOnly,
         ariaLabel: label,
+        describedBy: source.ariaDescribedByElements,
         placeholder: source.placeholder,
         selection: focused ? { anchor, head } : undefined,
         resize: sourceStyle.resize,

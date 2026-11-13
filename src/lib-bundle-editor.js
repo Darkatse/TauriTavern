@@ -199,7 +199,7 @@ function resizeHandle(host, resize) {
  * panel is reflected as `data-search-open` on the host.
  * Formatting is isolated from adjacent edits in undo history.
  */
-export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined, resize = 'none', format = null }) {
+export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, describedBy = null, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined, resize = 'none', format = null }) {
     const parent = isolated ? host.attachShadow({ mode: 'open' }) : host;
     for (const type of ['beforeinput', 'input']) parent.addEventListener(type, event => event.stopPropagation());
     const permissions = new Compartment();
@@ -279,6 +279,8 @@ export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel,
     });
 
     const view = new EditorView({ state: createState(doc, readOnly, selection), parent });
+    // Element references, unlike IDs, reach out of a shadow root, and read the elements' current text.
+    if (describedBy) view.contentDOM.ariaDescribedByElements = describedBy;
 
     return {
         getValue: () => view.state.doc.toString(),
