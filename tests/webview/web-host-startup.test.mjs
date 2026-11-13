@@ -55,6 +55,8 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             expect(errors).toEqual([]);
             if (identity === HOSTS.android) {
                 const { document, jQuery: $ } = window;
+                // installAndroidFontResetApi() runs after the initial chat load, which can follow the waits above.
+                await expect.poll(() => window.__TAURITAVERN__?.api?.display).toBeDefined();
                 const display = window.__TAURITAVERN__.api.display;
                 const styles = document.documentElement.style;
                 const counter = document.getElementById('chat_font_scale_counter');
