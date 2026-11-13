@@ -1,8 +1,11 @@
-//! Process work counters that depend on the code and data, not on machine speed. Each platform reports what it
-//! counts exactly: Linux and Windows the bytes and calls of reads and writes, macOS retired instructions. Linux
-//! instructions come from callgrind, which splits its dumps at `tt_perf_step_boundary`.
+//! Process work counters that depend on the code and data, not on machine speed. Every platform counts the
+//! allocations the code asks for and their bytes; each also reports what its system counts exactly: Linux and Windows
+//! the bytes and calls of reads and writes, macOS retired instructions. Linux instructions come from callgrind, which
+//! splits its dumps at `tt_perf_step_boundary`.
 
 use std::collections::BTreeMap;
+
+use super::allocator;
 
 pub type Counters = BTreeMap<&'static str, u64>;
 
@@ -19,8 +22,16 @@ pub extern "C" fn tt_perf_step_boundary() {
     std::hint::black_box(());
 }
 
-#[cfg(target_os = "linux")]
+/// The counters now. The allocations come first, so building the snapshot counts the same in every step.
 pub fn snapshot() -> Result<Snapshot, String> {
+    let requests = allocator::requests();
+    let mut snapshot = system()?;
+    snapshot.counters.extend(requests);
+    Ok(snapshot)
+}
+
+#[cfg(target_os = "linux")]
+fn system() -> Result<Snapshot, String> {
     use std::io::Read;
     // The kernel renders the values before it counts the read that returns them; one read keeps that cost exact.
     let mut text = [0u8; 512];
@@ -55,7 +66,7 @@ pub fn snapshot() -> Result<Snapshot, String> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn snapshot() -> Result<Snapshot, String> {
+fn system() -> Result<Snapshot, String> {
     #[repr(C)]
     struct RusageInfoV4 {
         uuid: [u8; 16],
@@ -83,7 +94,7 @@ pub fn snapshot() -> Result<Snapshot, String> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn snapshot() -> Result<Snapshot, String> {
+fn system() -> Result<Snapshot, String> {
     #[repr(C)]
     #[derive(Default)]
     struct IoCounters {

@@ -1,6 +1,6 @@
 # 性能基线
 
-`pnpm run check` 在 Linux 上计量一组固定场景里前端与 Rust 后端各做了多少工作，并与记录比较。计的是工作量（样式重算、布局、宿主流量、内存分配、指令数与 I/O），不是耗时；计数设在生产代码绕不开的边界上：渲染引擎、宿主调用、JS 堆与进程。代码在 `tests/perf/` 与 host crate 的 `src/perf.rs`、`src/perf/`。
+`pnpm run check` 在 Linux 上计量一组固定场景里前端与 Rust 后端各做了多少工作，并与记录比较。计的是工作量（样式重算、布局、宿主流量、内存分配、指令数与 I/O），不是耗时；计数设在生产代码绕不开的边界上：渲染引擎、宿主调用、JS 堆、分配器与进程。代码在 `tests/perf/` 与 host crate 的 `src/perf.rs`、`src/perf/`。
 
 ## 比较方式
 
@@ -16,6 +16,8 @@ CI 只比较 Linux。
 ## 失败时
 
 先确认变化来自本次改动。有意的变化在 Linux 上用 `pnpm run test:perf -- --update` 重新记录；不在 Linux 上开发时，Linux CI 失败日志末尾给出完整测量，可直接提交为 `tests/perf/baseline.json`。基线随提交评审。升级 `playwright`（即更换 Chromium）或 Rust 版本后也要重新记录。
+
+记录机器的字体须与 CI 相同：CI 没有 Noto Sans，应用字体与 `sans-serif` 都落到 DejaVu Sans。装有 Noto Sans 的 Linux 用排除该字族的 `FONTCONFIG_FILE`，并设 `LANG=C.UTF-8`，否则布局计数不同。
 
 ## 场景与数据
 
@@ -63,15 +65,17 @@ CI 只比较 Linux。
 - `app/startup` 从后端启动之前开始计，包括启动记录、启动配置、应用状态与默认内容的初始化。
 - 宿主签发的值（会话 id、修订号、读取器）取自重放时的实际结果。插件、网络、通知与回调页面的命令不重放。
 
-每个步骤都计结果字节，此外：
+每个步骤都计结果字节与分配。tt-perf 运行在自己的全局分配器上（`src/perf/allocator.rs`），系统分配器包在几个固定名字的函数后，由它们记下分配与重新分配的次数和请求的字节数。此外：
 
 | 平台 | 计数 |
 | --- | --- |
-| Linux | `/proc/self/io` 的读写字节与次数；callgrind 指令数 |
+| Linux | `/proc/self/io` 的读写字节与次数；callgrind 指令数，不含分配器内部 |
 | macOS | 进程指令数 |
 | Windows | I/O 字节与次数 |
 
-系统计数取自原生重放：Linux 的读写精确，重放一次；macOS 与 Windows 的计数还含系统替进程做的工作，取三次运行的最小值。Linux 的指令数另由 callgrind 重放一次。
+分配与系统计数取自原生重放：Linux 的读写精确，重放一次；macOS 与 Windows 的计数还含系统替进程做的工作，取三次运行的最小值。Linux 的指令数另由 callgrind 重放一次。
+
+分配器内部的工作取决于此前整个进程留下的堆，而不是当前步骤：线程交错与哈希种子每次重放都不同，前面步骤的改动也会把整理空闲内存的开销移到后面的步骤。所以指令数不含这些函数内部，步骤向分配器要了什么由分配次数与字节数计。
 
 新步骤用到还没重放过的命令时，重放会报出命令名。把它加入 `src/perf/environment.rs` 的命令表；接收 `Webview` 的命令写成对 `R: Runtime` 泛型。
 
@@ -82,4 +86,5 @@ CI 只比较 Linux。
 - 测量页不接管 Worker 与 iframe 内的定时器和动画，经它们延后的工作不计入。
 - JS-Slash-Runner 不在测量内。
 - 后端不计插件命令（如经 `plugin:fs` 读取聊天文件）与网络。
+- 系统库自己的分配（如打开目录时的缓冲）不经 tt-perf 的分配器，不计入分配，其分配器开销仍在 Linux 的指令数里。
 - 启动时第一次目录扫描会查询 CPU 配额，Linux 上要读 cgroup 的 `cpu.max`，`app/startup` 的读次数因此随机器的 cgroup 层级差几次。

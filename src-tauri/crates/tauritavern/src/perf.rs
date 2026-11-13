@@ -1,8 +1,11 @@
 //! Replays the frontend perf suite's host calls through the command layer on Tauri's mock runtime and reports what
 //! each measured step cost: `prepare` replays the previous launch over the data, and `measure` the rest.
 
+mod allocator;
 mod counters;
 mod environment;
+
+pub use allocator::Allocator;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;

@@ -3,6 +3,8 @@
 // directory: caches record the files' change times, which a copy would renew. OS counters come from native runs.
 // Linux's are exact; elsewhere they also take in work the system does for the process, which only ever adds, so the
 // least of three runs counts. Callgrind instructions come from a separate run, which keeps Valgrind's I/O out.
+// They leave out the work inside tt-perf's allocator, which depends on the heap the whole process has left so far
+// rather than on the step; every platform counts the step's allocations instead.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -55,8 +57,37 @@ function addInstructions(steps, boundaries, work) {
     if (dumps.length < boundaries.length) throw new Error(`callgrind wrote ${dumps.length} dumps for ${boundaries.length} boundaries`);
     boundaries.forEach(({ step, edge }, index) => {
         if (edge !== 'end') return;
-        const summary = readFileSync(path.join(work, dumps[index]), 'utf8').match(/^(?:summary|totals): (\d+)/m);
-        if (!summary) throw new Error(`${dumps[index]} has no instruction total`);
-        steps[step].instructions = Number(summary[1]);
+        steps[step].instructions = instructionsOutsideAllocator(readFileSync(path.join(work, dumps[index]), 'utf8'), dumps[index]);
     });
+}
+
+/** The functions src/perf/allocator.rs puts the system allocator behind. */
+const allocator = new Set(['tt_perf_alloc', 'tt_perf_alloc_zeroed', 'tt_perf_realloc', 'tt_perf_dealloc']);
+
+/**
+ * A dump's instructions less the calls into the allocator. A call is a `calls=` line followed by the call's position
+ * and inclusive cost; a function name is written once as `(id) name` and then as `(id)`.
+ */
+function instructionsOutsideAllocator(dump, name) {
+    const names = new Map();
+    let total, inside = 0, callee, call = false;
+    for (const line of dump.split('\n')) {
+        if (call) {
+            if (allocator.has(callee)) inside += Number(line.split(' ')[1]);
+            call = false;
+            continue;
+        }
+        const named = line.match(/^(c?)fn=\((\d+)\)(?: (.*))?$/);
+        if (named) {
+            const [, isCallee, id, given] = named;
+            if (given !== undefined) names.set(id, given);
+            if (isCallee) callee = names.get(id);
+        } else if (line.startsWith('calls=')) {
+            call = true;
+        } else if (/^(?:summary|totals): /.test(line)) {
+            total = Number(line.split(' ')[1]);
+        }
+    }
+    if (total === undefined) throw new Error(`${name} has no instruction total`);
+    return total - inside;
 }
