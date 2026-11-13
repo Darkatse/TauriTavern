@@ -2,6 +2,8 @@
     "Time to First Token (TTFT)": "Time to First Token (TTFT)",
     "Generation Speed": "Generation Speed",
     "Prompt Cache Hit Rate": "Prompt Cache Hit Rate",
+    "History Trim Step (messages)": "History Trim Step (messages)",
+    "history_trim_step_description": "When a chat is longer than the context, drop older messages in blocks of this many, so the start of the prompt stays the same across replies and prompt caching keeps working. 0 drops them one at a time.",
     "Time to first streamed result": "Time to first streamed result",
     "Average generation speed: locally counted tokens divided by total generation time": "Average generation speed: locally counted tokens divided by total generation time",
     "Share of input tokens read from cache in the latest request, when reported by the provider": "Share of input tokens read from cache in the latest request, when reported by the provider",

@@ -678,6 +678,19 @@ some text
                                     </div>
                                 </div>
                                 <div class="range-block">
+                                    <div class="range-block-title"><span data-i18n="History Trim Step (messages)" id="history_trim_step_label">
+                                        History Trim Step (messages)
+                                    </span></div>
+                                    <div class="wide100p">
+                                        <input type="number" id="history_trim_step" name="history_trim_step" class="text_pole" min="0" step="1" aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_description">
+                                    </div>
+                                    <div class="toggle-description justifyLeft" id="history_trim_step_description">
+                                        <span data-i18n="history_trim_step_description">
+                                            When a chat is longer than the context, drop older messages in blocks of this many, so the start of the prompt stays the same across replies and prompt caching keeps working. 0 drops them one at a time.
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="range-block">
                                     <div class="range-block-title"><span data-i18n="Max Response Length (tokens)" id="openai_max_tokens_label">
                                         Max Response Length (tokens)
                                     </span></div>
