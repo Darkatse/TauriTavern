@@ -40,7 +40,7 @@ Gateway 与 payload 构建器共同完成协议转换：
 | 协议 | 工具结果图片 |
 | --- | --- |
 | OpenAI 兼容 Chat Completions | tool 消息保留文字；纯图片结果使用 `(see attached image)`。一组相邻 tool 消息结束后，追加 user 消息，文字为 `Attached image(s) from tool result:`，后接该组图片。 |
-| Claude Messages（含 Bedrock、Vertex、Custom 与 OpenCode） | `tool_result.content` 使用文字与 base64 图片块数组，文字不加工具名前缀。当前请求没有工具定义时，历史工具结果转为保留图片的 user 内容块。 |
+| Claude Messages（含 Bedrock、Vertex、Custom 与 OpenCode） | `tool_result.content` 使用文字与 base64 图片块数组，文字不加工具名前缀。 |
 | OpenAI Responses | `function_call_output.output` 使用 `input_text` 与 `input_image` 数组。 |
 | Gemini 3 及之后 | 图片放在 `functionResponse.parts` 的 `inlineData` 中。 |
 | Gemini 2.5 等早期模型 | 函数结果不变；结果组结束后追加 user content，文字为 `Tool result image:`，后接 `inlineData` 图片。 |

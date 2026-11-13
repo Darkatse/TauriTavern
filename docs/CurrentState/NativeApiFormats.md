@@ -72,6 +72,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 
 ### Claude Messages
 
+- 工具调用与结果总是编码为 `tool_use` 与 `tool_result`，与请求是否带工具定义无关。
 - Custom Claude Messages 默认不发送 `anthropic-beta`。显式开启 prompt caching 或快速模式时补充对应 header；prompt caching 还需满足 TT 的缓存策略。
 - `enable_web_search` 在直连与 Custom 中加入 `web_search_20250305` 工具。`server_tool_use` 与 `web_search_tool_result` 留在原生内容中，不投影为本地工具调用。Vertex 与 Bedrock 上的 Claude 不使用该设置。
 - 图片：data URL 转为 base64 source；直连与 Custom 的远端 URL 转为 url source。Bedrock 只接受 base64，无法保真的输入报错。`input_image.file_id` 不转换为 Files API 引用。

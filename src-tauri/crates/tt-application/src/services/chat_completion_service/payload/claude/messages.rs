@@ -20,7 +20,6 @@ const CLAUDE_EMPTY_TEXT_PLACEHOLDER: &str = "\u{200b}";
 pub(super) fn convert_messages(
     messages: Option<&Value>,
     use_system_prompt: bool,
-    use_tools: bool,
 ) -> Result<(Vec<Value>, Vec<Value>), ApplicationError> {
     let mut converted = Vec::new();
     let mut system_parts: Vec<Value> = Vec::new();
@@ -129,15 +128,13 @@ pub(super) fn convert_messages(
                     }
                     native_content
                 } else if !tool_calls.is_empty() {
-                    let mut blocks =
-                        convert_message_content_to_claude_blocks(message.get("content"), name)?;
-                    if use_tools {
-                        blocks.extend(convert_openai_tool_calls_to_claude_blocks(&tool_calls));
-                    } else {
-                        blocks.extend(tool_calls.iter().map(|call| {
-                            normalize_claude_text_block(&call.arguments.encode_for_replay())
-                        }));
-                    }
+                    // The calls keep the turn non-empty, so text before them is sent only when written.
+                    let mut blocks = match message.get("content") {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(Value::String(text)) if text.is_empty() => Vec::new(),
+                        content => convert_message_content_to_claude_blocks(content, name)?,
+                    };
+                    blocks.extend(convert_openai_tool_calls_to_claude_blocks(&tool_calls));
                     blocks
                 } else {
                     convert_message_content_to_claude_blocks(message.get("content"), name)?
@@ -151,7 +148,7 @@ pub(super) fn convert_messages(
                 }
             }
             "tool" => {
-                if use_tools && let Some(tool_use_id) = message_tool_call_id(message) {
+                if let Some(tool_use_id) = message_tool_call_id(message) {
                     converted.push(json!({
                         "role": "user",
                         "content": [{

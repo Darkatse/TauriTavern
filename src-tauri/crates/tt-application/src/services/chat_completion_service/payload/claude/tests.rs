@@ -722,28 +722,29 @@ fn claude_json_output_coexists_with_thinking_and_tools() {
 }
 
 #[test]
-fn tool_result_images_are_preserved() {
+fn tool_turns_do_not_depend_on_tool_definitions() {
     let payload = json!({"model":"claude-sonnet-4-5", "tools":[{"type":"function","function":{"name":"capture","parameters":{"type":"object"}}}],
             "messages":[
                 {"role":"user","content":"capture"},
-                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
                 {"role":"tool","tool_call_id":"call_1","name":"capture","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
             ]}).as_object().unwrap().clone();
-    let expected = json!([{"type":"text","text":"screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]);
-    for use_tools in [true, false] {
+    let expected = json!([
+        {"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"capture","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":[
+            {"type":"text","text":"screen"},
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}
+        ]}]}
+    ]);
+    for with_tools in [true, false] {
         let mut payload = payload.clone();
-        if !use_tools {
+        if !with_tools {
             payload.remove("tools");
         }
         let (_, upstream) = build(payload).unwrap();
-        let message = upstream["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(message["role"], "user");
-        let content = if use_tools {
-            assert_eq!(message["content"][0]["type"], "tool_result");
-            &message["content"][0]["content"]
-        } else {
-            &message["content"]
-        };
-        assert_eq!(content, &expected);
+        assert_eq!(
+            upstream["messages"].as_array().unwrap()[1..],
+            expected.as_array().unwrap()[..]
+        );
     }
 }
