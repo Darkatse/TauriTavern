@@ -145,6 +145,23 @@ const theme = EditorView.theme({
 });
 
 /**
+ * Points the content at the source's description elements. Element references, unlike IDs, reach out of a shadow
+ * root and read the elements' current text. Plugins are built before CodeMirror observes its content, so the
+ * attribute the reference writes is never read back as an edit; a rebuilt state finds the references in place.
+ * @param {readonly Element[] | null} elements
+ */
+function description(elements) {
+    if (!elements?.length) return [];
+    return ViewPlugin.define(view => {
+        const current = view.contentDOM.ariaDescribedByElements;
+        if (current?.length !== elements.length || elements.some((element, index) => current[index] !== element)) {
+            view.contentDOM.ariaDescribedByElements = elements;
+        }
+        return {};
+    });
+}
+
+/**
  * CodeMirror covers WebKit's native resize grip; dragging must also disable flex sizing.
  * @param {HTMLElement} host
  * @param {string} resize The source's computed `resize`.
@@ -274,13 +291,12 @@ export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel,
             placeholder(hint),
             EditorView.updateListener.of(update => update.docChanged && onChange?.()),
             resizeHandle(host, resize),
+            description(describedBy),
             theme,
         ],
     });
 
     const view = new EditorView({ state: createState(doc, readOnly, selection), parent });
-    // Element references, unlike IDs, reach out of a shadow root, and read the elements' current text.
-    if (describedBy) view.contentDOM.ariaDescribedByElements = describedBy;
 
     return {
         getValue: () => view.state.doc.toString(),

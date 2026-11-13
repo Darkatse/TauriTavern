@@ -1781,8 +1781,10 @@ class PromptManager {
 
     #renderEntryKind() {
         const { label, hint } = entryTextCopy(fieldsKind(this.#editorRole));
-        this.#formElement('prompt_manager_popup_entry_form_prompt_label').textContent = label;
-        this.#formElement('prompt_manager_popup_entry_form_prompt_hint').textContent = hint;
+        const labelElement = this.#formElement('prompt_manager_popup_entry_form_prompt_label');
+        const hintElement = this.#formElement('prompt_manager_popup_entry_form_prompt_hint');
+        if (labelElement.textContent !== label) labelElement.textContent = label;
+        if (hintElement.textContent !== hint) hintElement.textContent = hint;
         // A mounted editor keeps a copy of the label as its name.
         getMountedCodeMirrorEditor(/** @type {HTMLTextAreaElement} */ (this.#formElement('prompt_manager_popup_entry_form_prompt')))?.updateName();
         this.#renderPositionControls();
@@ -1804,7 +1806,8 @@ class PromptManager {
         const choices = this.#editorRole !== 'tool' ? [] : this.serviceSettings.prompts.filter(isToolCallEntry).flatMap(entry => entry.fields.tool_calls
             .filter(call => typeof call?.id === 'string' && call.id)
             .map(call => new Option([entry.name || entry.identifier, call.function?.name, call.id].filter(Boolean).join(' · '), call.id)));
-        picker.replaceChildren(picker.options[0], ...choices);
+        // Replacing even the same options restyles the form, so an empty picker is left as it is.
+        if (choices.length || picker.options.length > 1) picker.replaceChildren(picker.options[0], ...choices);
         picker.style.display = choices.length ? '' : 'none';
     }
 
