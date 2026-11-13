@@ -90,6 +90,7 @@ test('selectors reach a replaced region beyond pagination without choosing hidde
 
     const save = screen.getByRole('button', { name: 'Save' });
     save.onclick = () => { clicks++; save.textContent = 'Saved'; };
+    save.scrollIntoView();
     interact({ action: 'click', selector: '.phone button' }, observation);
     expect(save.textContent).toBe('Saved');
     expect(clicks).toBe(1);
