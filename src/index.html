@@ -5383,13 +5383,24 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     <input class="neo-range-input" type="number" min="25" max="100" step="1" data-for="chat_width_slider" id="chat_width_slider_counter">
                                 </div>
 
-                                <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
-                                    <small>
-                                        <span data-i18n="Font Scale">Font Scale</span>
-                                        <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Font size" title="Font size"></div>
-                                    </small>
-                                    <input class="neo-range-slider" type="range" id="font_scale" name="font_scale" min="0.5" max="1.5" step="0.01">
-                                    <input class="neo-range-input" type="number" min="0.5" max="1.5" step="0.01" data-for="font_scale" id="font_scale_counter">
+                                <div class="tt-font-scale-control alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                    <label id="font_scale_label" for="font_scale" data-i18n="Interface font size">Interface font size</label>
+                                    <small id="font_scale_help" data-i18n="Menus, settings, and message controls.">Menus, settings, and message controls.</small>
+                                    <input class="neo-range-slider" type="range" id="font_scale" name="font_scale" min="0.5" max="2" step="any" aria-describedby="font_scale_help">
+                                    <div class="flex-container alignitemscenter">
+                                        <input class="neo-range-input" type="number" min="0.5" max="2" step="any" data-for="font_scale" id="font_scale_counter" aria-labelledby="font_scale_label" aria-describedby="font_scale_help font_scale_percent">
+                                        <span id="font_scale_percent">100%</span>
+                                    </div>
+                                </div>
+
+                                <div class="tt-font-scale-control alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                    <label id="chat_font_scale_label" for="chat_font_scale" data-i18n="Chat font size">Chat font size</label>
+                                    <small id="chat_font_scale_help" data-i18n="Messages, reasoning, and text you type.">Messages, reasoning, and text you type.</small>
+                                    <input class="neo-range-slider" type="range" id="chat_font_scale" name="chat_font_scale" min="0.5" max="2.5" step="any" aria-describedby="chat_font_scale_help">
+                                    <div class="flex-container alignitemscenter">
+                                        <input class="neo-range-input" type="number" min="0.5" max="2.5" step="any" data-for="chat_font_scale" id="chat_font_scale_counter" aria-labelledby="chat_font_scale_label" aria-describedby="chat_font_scale_help chat_font_scale_percent">
+                                        <span id="chat_font_scale_percent">100%</span>
+                                    </div>
                                 </div>
 
                                 <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
@@ -5411,6 +5422,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 </div>
                             </div>
                             <hr>
+                            <button type="button" id="reset_font_scales" class="menu_button" data-i18n="Restore default font sizes">Restore default font sizes</button>
                             <div name="themeToggles">
                                 <!-- <h4 data-i18n="Theme Toggles">Theme Toggles</h4> -->
 

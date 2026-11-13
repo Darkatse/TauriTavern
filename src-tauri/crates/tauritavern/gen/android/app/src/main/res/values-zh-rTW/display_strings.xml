@@ -1,0 +1,7 @@
+<resources>
+    <string name="reset_display_fonts">重設顯示字級</string>
+    <string name="reset_display_fonts_confirmation">將介面和聊天字級還原為 100%？</string>
+    <string name="reset_display_fonts_pending">字級還原等待處理，請返回 TauriTavern 查看結果。</string>
+    <string name="reset_display_fonts_saved">字級已還原。</string>
+    <string name="reset_display_fonts_failed">無法儲存還原後的字級。</string>
+</resources>

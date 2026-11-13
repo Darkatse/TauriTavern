@@ -17,9 +17,11 @@ dialog {
     display: flex;
     flex-direction: column;
 
-    max-height: calc(100dvh - 2em);
-    max-width: calc(100dvw - 2em);
-    min-height: fit-content;
+    max-height: calc(100vh - 16px);
+    max-height: calc(var(--doc-height) - 16px);
+    max-width: calc(100vw - 16px);
+    max-width: calc(100dvw - 16px);
+    min-height: 0;
 
     /* Overflow visible so elements (like toasts) can appear outside of the dialog. '.popup-body' is hiding overflow for the real content. */
     overflow: visible;
@@ -52,6 +54,7 @@ dialog {
     overflow: hidden;
     width: min(100%, 100vw);
     height: 100%;
+    min-height: 0;
     padding: 1px;
 }
 
@@ -64,6 +67,19 @@ dialog {
     padding: 0 8px;
     overflow: hidden;
     flex-grow: 1;
+    min-height: 0;
+}
+
+.popup.popup-form .popup-body,
+.popup.vertical_scrolling_dialogue_popup .popup-body {
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+}
+
+.popup.popup-form:not(.vertical_scrolling_dialogue_popup) .popup-content,
+.popup .popup-input,
+.popup .popup-inputs {
+    flex-shrink: 0;
 }
 
 .popup .popup-content h3:first-child {
@@ -73,6 +89,7 @@ dialog {
 
 .popup.vertical_scrolling_dialogue_popup .popup-content {
     overflow-y: auto;
+    min-height: 4em;
 }
 
 .popup.horizontal_scrolling_dialogue_popup .popup-content {
@@ -172,7 +189,11 @@ body.no-blur .popup[open]::backdrop {
     margin-top: 10px;
     display: flex;
     align-self: center;
-    gap: 20px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
+    gap: 4px 12px;
 }
 
 .menu_button.menu_button_default {
@@ -190,6 +211,7 @@ body.no-blur .popup[open]::backdrop {
 .popup-controls .menu_button {
     /* Popup buttons should not scale to smallest size, otherwise they will always break to multiline if multiple words */
     width: unset;
+    min-height: 44px;
 
     /* Fix weird animation issue with fonts on brightness filter */
     backface-visibility: hidden;
@@ -205,10 +227,10 @@ body.no-blur .popup[open]::backdrop {
     background: none;
     border: 0;
     position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 24px;
-    height: 24px;
+    top: 4px;
+    right: 4px;
+    width: 44px;
+    height: 44px;
     font-size: 20px;
     padding: 2px 3px 3px 2px;
 
@@ -216,6 +238,10 @@ body.no-blur .popup[open]::backdrop {
 
     /* Fix weird animation issue with font-scaling during popup open */
     backface-visibility: hidden;
+}
+
+.popup.popup-with-close .popup-body {
+    padding-top: 44px;
 }
 
 @media screen and (max-width: 1000px) {
@@ -250,6 +276,15 @@ body.no-blur .popup[open]::backdrop {
         overflow-y: auto;
         overscroll-behavior-y: contain;
         -webkit-overflow-scrolling: touch;
+    }
+
+    body .popup.tt-tauritavern-panel-popup.vertical_scrolling_dialogue_popup .popup-content {
+        min-height: 4em;
+        overscroll-behavior-y: auto;
+    }
+
+    body .popup.tt-tauritavern-panel-popup.popup-with-close .popup-body {
+        padding-top: 52px;
     }
 
     body .popup.tt-tauritavern-panel-popup .popup-controls {

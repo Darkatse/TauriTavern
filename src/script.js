@@ -176,6 +176,8 @@ import {
 import {
     collapseNewlines,
     loadPowerUserSettings,
+    finishLegacyFontScaleMigration,
+    installAndroidFontResetApi,
     playMessageSound,
     fixMarkdown,
     MARKDOWN_FIX_PAIRS,
@@ -836,7 +838,7 @@ export const saveCharacterDebounced = debounce(() => $('#create_button').trigger
 let sessionStateFlushPromise = null;
 let sessionFlushStartedWithChatSave = false;
 
-function flushPendingSettingsSave(force = false) {
+export function flushPendingSettingsSave(force = false) {
     if (!settingsSavePending && !force) {
         return settingsSavePromise;
     }
@@ -1328,6 +1330,12 @@ async function firstLoadInit() {
         await eventSource.emit(event_types.APP_INITIALIZED);
         await fixViewport();
         await eventSource.emit(event_types.APP_READY);
+        void initialChatLoad.then(() => {
+            finishLegacyFontScaleMigration();
+            if (hostPlatform() === 'android') {
+                installAndroidFontResetApi();
+            }
+        });
 
         startupStatus.remove();
         perfMark('tt:startup:ready');
@@ -9599,6 +9607,7 @@ export async function getSettings(initLoaderHandle = null) {
         throw error;
     });
     await applySettingsSnapshot(data, initLoaderHandle);
+    finishLegacyFontScaleMigration();
 }
 
 //MARK: saveSettings()

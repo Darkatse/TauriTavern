@@ -94,6 +94,9 @@
     /*base variable calculated in rems*/
     --fontScale: 1;
     --mainFontSize: calc(var(--fontScale) * 15px);
+    --tt-ui-font-size: var(--mainFontSize);
+    --chatFontScale: 1;
+    --tt-chat-font-size: calc(var(--chatFontScale) * 15px);
     --mainFontFamily: "Noto Sans", sans-serif;
     --monoFontFamily: 'Noto Sans Mono', 'Courier New', Consolas, monospace;
 
@@ -104,14 +107,13 @@
     --shadowWidth: 2;
 
     /* Send form variables */
-    --bottomFormBlockPadding: calc(var(--mainFontSize) / 2.5);
-    --bottomFormIconSize: calc(var(--mainFontSize) * 1.9);
-    --bottomFormBlockSize: calc(var(--bottomFormIconSize) + var(--bottomFormBlockPadding));
+    --bottomFormIconSize: 28.5px;
+    --bottomFormBlockSize: 44px;
 
     /*Top Bar Scaling Variables*/
-    --topBarIconSize: calc(var(--mainFontSize) * 2);
+    --topBarIconSize: 30px;
     --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
-    --topBarBlockPadding: calc(var(--mainFontSize) / 3);
+    --topBarBlockPadding: 5px;
     --top-settings-holder-max-z-index: 4005;
 
     /* Top drawers unfold from the top bar; a host drawer bar slides them in from its edge. */
@@ -383,6 +385,10 @@ input[type='checkbox']:focus-visible {
 
 .mes_text table,
 .mes_reasoning table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
     border-spacing: 0;
     border-collapse: collapse;
     margin-bottom: 10px;
@@ -616,8 +622,7 @@ input[type='checkbox']:focus-visible {
     padding: 1em;
 }
 
-.mes_text img:not(.mes_img),
-.mes_reasoning img:not(.mes_img) {
+:is(.mes_text, .mes_reasoning) :is(img:not(.mes_img), video, canvas, iframe) {
     max-width: 100%;
     max-height: var(--doc-height);
 }
@@ -778,6 +783,10 @@ code {
     /* max-width: calc(100dvw - 95px); */
     line-height: var(--mainFontSize);
     color: var(--white70a);
+}
+
+:is(.mes_text, .mes_reasoning) pre code {
+    white-space: pre;
 }
 
 kbd {
@@ -990,6 +999,7 @@ body .panelControlBar {
 #rightSendForm {
     display: flex;
     flex-wrap: wrap;
+    min-width: 0;
 }
 
 #leftSendForm {
@@ -1038,8 +1048,10 @@ body .panelControlBar {
 #send_form .mes_stop {
     display: none;
     order: 2;
-    padding-right: 2px;
-    place-self: center;
+    width: var(--bottomFormBlockSize);
+    height: var(--bottomFormBlockSize);
+    align-content: center;
+    text-align: center;
     cursor: pointer;
     transition: var(--animation-duration-2x);
     opacity: 0.7;
@@ -1623,8 +1635,10 @@ body.hideAllSwipeButtons :is(.swipe_left, .swipe_right),
 
 .mes_text,
 .mes_reasoning {
+    --mainFontSize: var(--tt-chat-font-size);
+    font-size: var(--mainFontSize);
     font-weight: 500;
-    line-height: calc(var(--mainFontSize) + .5rem);
+    line-height: 1.55;
     max-width: 100%;
     overflow-wrap: anywhere;
 }
@@ -1684,8 +1698,10 @@ button {
 }
 
 #send_textarea {
-    min-height: calc(var(--bottomFormBlockSize) + 2px);
-    height: calc(var(--bottomFormBlockSize) + 2px);
+    --tt-send-textarea-height: max(var(--bottomFormBlockSize), calc(var(--tt-chat-font-size) * 1.2 + 12px + var(--progWidth)));
+    min-width: 0;
+    min-height: var(--tt-send-textarea-height);
+    height: var(--tt-send-textarea-height);
     max-height: 50vh;
     max-height: 50dvh;
     word-wrap: break-word;
@@ -1696,7 +1712,8 @@ button {
     box-shadow: none;
     padding: 6px;
     font-family: var(--mainFontFamily);
-    line-height: calc(var(--mainFontSize) * 1.2);
+    font-size: var(--tt-chat-font-size);
+    line-height: 1.2;
     margin: 0;
     text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
     flex: 1;
@@ -1905,10 +1922,16 @@ button {
     border-radius: 0;
     box-shadow: none;
     background-color: transparent;
+    font-size: var(--tt-chat-font-size);
     line-height: 1.35;
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+}
+
+.tt-chat-input-editor .tt-codemirror-editor {
+    font-size: var(--tt-chat-font-size) !important; /* Override the initial source font snapshot. */
+    min-height: 0;
 }
 
 .tt-chat-input-editor .tt-chat-input-editor__textarea:focus-visible {
@@ -2984,6 +3007,8 @@ textarea::placeholder {
     font-family: var(--mainFontFamily);
     padding: 3px 5px;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     margin: 5px 0;
     height: fit-content;
 }
@@ -4039,7 +4064,7 @@ grammarly-extension {
     /* FIXME: Chrome 129 broke max-height for aspect-ratio sized elements */
     /* aspect-ratio: 1 / 1; */
     /* width: unset !important; */
-    min-width: var(--sheldWidth);
+    min-width: min(var(--sheldWidth), calc(100vw - 16px));
 }
 
 .wider_dialogue_popup {
@@ -4149,6 +4174,11 @@ grammarly-extension {
     border-radius: 5px;
     padding: 3px 5px;
     width: fit-content;
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
     cursor: pointer;
     margin: 5px 0;
     transition: var(--animation-duration-2x);
@@ -4156,6 +4186,11 @@ grammarly-extension {
     align-items: center;
     justify-content: center;
     text-align: center;
+}
+
+.menu_button.api_button,
+#reset_font_scales {
+    min-height: 44px;
 }
 
 .menu_button.fa-fw {
@@ -4537,6 +4572,17 @@ input[type='checkbox'].del_checkbox {
     width: 100%;
 }
 
+.tt-font-scale-control {
+    min-width: 0;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.tt-font-scale-control .neo-range-input {
+    flex: 1;
+    min-width: 0;
+}
+
 .range-input-description,
 .range-input-error {
     display: block;
@@ -4885,11 +4931,12 @@ input[type="range"]::-webkit-slider-thumb {
 
 .reasoning_edit_textarea,
 .edit_textarea {
+    font-size: var(--tt-chat-font-size);
     padding: 5px;
     margin: 0;
     outline: none;
     background-color: var(--black50a);
-    line-height: calc(var(--mainFontSize) + .25rem);
+    line-height: 1.35;
     max-height: 75vh;
     max-height: 75dvh;
     field-sizing: content;
@@ -5686,6 +5733,10 @@ body:not(.caption) .mes_img_caption {
     padding: 0;
 }
 
+.popup:has(.img_enlarged.zoomed).large_dialogue_popup .popup-body {
+    padding-top: 0;
+}
+
 .popup:has(.img_enlarged.zoomed).large_dialogue_popup .img_enlarged_container pre {
     display: none;
 }
@@ -5832,6 +5883,7 @@ body:not(.caption) .mes_img_caption {
     right: 0;
     height: 22px;
     width: 22px;
+    font-size: var(--tt-ui-font-size);
     margin: 4px;
     opacity: 0.4;
     display: flex;
