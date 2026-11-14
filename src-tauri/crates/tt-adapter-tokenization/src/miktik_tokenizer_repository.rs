@@ -513,10 +513,20 @@ impl MiktikTokenizerRepository {
         })
     }
 
-    /// Forgets a tokenizer whose artifact holds a definition MikTik cannot read, so that the next
-    /// preparation compiles it again.
-    fn discard(&self, model: &Model) {
-        self.write_states().remove(model.id());
+    /// Forgets `tokenizer`, whose artifact holds a definition MikTik cannot read, and removes the
+    /// artifact, so that the next preparation compiles it again. A tokenizer that is no longer the
+    /// model's is left alone: the model is prepared again only once it holds no ready tokenizer,
+    /// so under the write lock its artifact is still the one `tokenizer` was loaded from.
+    fn discard(&self, tokenizer: &Arc<Tokenizer>) {
+        let model = tokenizer.model();
+        let mut states = self.write_states();
+        if !matches!(
+            states.get(model.id()),
+            Some(TokenizerState::Ready(current)) if Arc::ptr_eq(current, tokenizer)
+        ) {
+            return;
+        }
+        states.remove(model.id());
         let Some(source) = Self::source(model) else {
             return;
         };
@@ -537,11 +547,11 @@ impl MiktikTokenizerRepository {
     fn exact_error(
         &self,
         action: &str,
-        tokenizer: &Tokenizer,
+        tokenizer: &Arc<Tokenizer>,
         error: TokenizerError,
     ) -> DomainError {
         if matches!(error, TokenizerError::Artifact(_)) {
-            self.discard(tokenizer.model());
+            self.discard(tokenizer);
         }
         tokenizer_error(action, tokenizer.model().id(), error)
     }
@@ -1041,6 +1051,28 @@ mod tests {
             exact.is_err(),
             "exact methods need the model's own tokenizer"
         );
+    }
+
+    #[tokio::test]
+    async fn a_late_error_of_a_replaced_tokenizer_keeps_its_replacement() {
+        let cache_dir = unique_temp_cache_dir();
+        let repository = prepared(&cache_dir, &["claude"]).await;
+        let artifact = cache_dir
+            .join("compiled")
+            .join(format!("v{}", miktik::ARTIFACT_VERSION))
+            .join("claude-claude.json.mtk");
+
+        let replaced = repository.exact("claude").unwrap();
+        repository.discard(&replaced);
+        repository.ensure_model_ready("claude").await.unwrap();
+        let replacement = repository.exact("claude").unwrap();
+        repository.discard(&replaced);
+        let current = repository.exact("claude");
+        let artifact_kept = artifact.exists();
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+        assert!(Arc::ptr_eq(&current.unwrap(), &replacement));
+        assert!(artifact_kept);
     }
 
     #[tokio::test]
