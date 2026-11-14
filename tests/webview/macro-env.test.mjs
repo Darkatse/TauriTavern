@@ -138,3 +138,8 @@ test('explicit evaluations retain captured names and reset per-text fields', () 
     }
 });
 
+test('text without a macro still passes through the processors around the parser', () => {
+    const context = macros.captureContext();
+    expect(macros.evaluateWithContext('a \\{ b \\}', context)).toBe('a { b }');
+    expect(macros.evaluateWithContext('<USER> waves', context)).toBe(`${context.names.user} waves`);
+});
