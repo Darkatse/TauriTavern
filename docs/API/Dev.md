@@ -48,7 +48,8 @@ type FrontendLogEntry = {
 - 调用方不应再自行读写相关 `localStorage` key。
 - `unsubscribe` 可安全重复调用。
 - 页面开始卸载（非 bfcache 的 `pagehide`）后，宿主不再捕获日志，订阅者也不会在页面销毁过程中被调用。
-- 为避免 DEBUG/INFO 噪声挤掉关键告警，宿主按级别独立保留：`debug` 400 条、`info` 300 条、`warn`+`error` 共 100 条。
+- 为避免 DEBUG/INFO 噪声挤掉关键告警，宿主按级别独立保留：`debug` 400 条、`info` 300 条、`warn`+`error` 共 100 条。保留区比三者之和多出 100 条时修剪一次，所以 `list()` 可能多返回至多 100 条较早的条目。
+- 订阅者在每条日志写入时同步调用，开启 console capture 后一次提示词组装可能写入上千条。处理器只做常数时间的工作，界面更新按帧合并。
 - `message` 是用于 UI 展示的 **preview**：可能被截断；对象参数会被摘要化。需要完整请求/响应体请使用 `llmApiLogs.getRaw()` 或导出日志。
 
 ## 2. `backendLogs`
