@@ -5358,14 +5358,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/kitoken/kitoken-0.11.0.crate",
-        "sha256": "e4663da0884a672d8705d339aad6367006e88df910bee436afdfbc898b2c7847",
-        "dest": "cargo/vendor/kitoken-0.11.0"
+        "url": "https://static.crates.io/crates/kitoken/kitoken-0.11.1.crate",
+        "sha256": "565c2307dd823f1be3e97c8902aa57e61841f93317c5215395d097629a516a2b",
+        "dest": "cargo/vendor/kitoken-0.11.1"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"e4663da0884a672d8705d339aad6367006e88df910bee436afdfbc898b2c7847\", \"files\": {}}",
-        "dest": "cargo/vendor/kitoken-0.11.0",
+        "contents": "{\"package\": \"565c2307dd823f1be3e97c8902aa57e61841f93317c5215395d097629a516a2b\", \"files\": {}}",
+        "dest": "cargo/vendor/kitoken-0.11.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -5878,14 +5878,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/miktik/miktik-0.4.3.crate",
-        "sha256": "01e181235417370181be4d2570356a5f408364802e49e582bfb2d49109c55598",
-        "dest": "cargo/vendor/miktik-0.4.3"
+        "url": "https://static.crates.io/crates/miktik/miktik-0.5.2.crate",
+        "sha256": "ae9f5490cbc8fe19c96cc821a629e49bbea06a7d7c7cbdd4e4750a5b5f21a505",
+        "dest": "cargo/vendor/miktik-0.5.2"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"01e181235417370181be4d2570356a5f408364802e49e582bfb2d49109c55598\", \"files\": {}}",
-        "dest": "cargo/vendor/miktik-0.4.3",
+        "contents": "{\"package\": \"ae9f5490cbc8fe19c96cc821a629e49bbea06a7d7c7cbdd4e4750a5b5f21a505\", \"files\": {}}",
+        "dest": "cargo/vendor/miktik-0.5.2",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10033,19 +10033,6 @@
         "type": "inline",
         "contents": "{\"package\": \"b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52\", \"files\": {}}",
         "dest": "cargo/vendor/tiff-0.11.3",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tiktoken-rs/tiktoken-rs-0.12.0.crate",
-        "sha256": "027853bbf8c7763b77c5c595f1c271c7d536ced7d6f83452911b944621e57fc2",
-        "dest": "cargo/vendor/tiktoken-rs-0.12.0"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"027853bbf8c7763b77c5c595f1c271c7d536ced7d6f83452911b944621e57fc2\", \"files\": {}}",
-        "dest": "cargo/vendor/tiktoken-rs-0.12.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
