@@ -10,7 +10,7 @@ use crate::dto::tokenization_dto::{
 use crate::errors::ApplicationError;
 use serde_json::Value;
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
 const REPLACEMENT_CHARACTER: &str = "\u{fffd}";
 
@@ -32,7 +32,10 @@ impl TokenizationService {
         let OpenAiTokenCountBatchRequestDto { model, requests } = dto;
         self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let token_counts = self
+        let Estimated {
+            value: token_counts,
+            fallback,
+        } = self
             .blocking("Token count batch", move |repository| {
                 let requests: Vec<&[Value]> = requests
                     .iter()
@@ -42,7 +45,10 @@ impl TokenizationService {
             })
             .await?;
 
-        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
+        Ok(OpenAiTokenCountBatchResponseDto {
+            token_counts,
+            fallback,
+        })
     }
 
     pub async fn count_openai_token_prefixes(
@@ -57,13 +63,19 @@ impl TokenizationService {
         } = dto;
         self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let token_counts = self
+        let Estimated {
+            value: token_counts,
+            fallback,
+        } = self
             .blocking("Token prefix count", move |repository| {
                 repository.estimate_text_prefixes(&model, &base, &suffixes, stop_at)
             })
             .await?;
 
-        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
+        Ok(OpenAiTokenCountBatchResponseDto {
+            token_counts,
+            fallback,
+        })
     }
 
     pub async fn count_text_tokens(
@@ -73,13 +85,16 @@ impl TokenizationService {
         let TextTokenCountRequestDto { model, text } = dto;
         self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let count = self
+        let Estimated {
+            value: count,
+            fallback,
+        } = self
             .blocking("Text token count", move |repository| {
                 repository.estimate_text(&model, &text)
             })
             .await?;
 
-        Ok(TextTokenCountResponseDto { count })
+        Ok(TextTokenCountResponseDto { count, fallback })
     }
 
     pub async fn encode_tokens(
@@ -253,11 +268,15 @@ mod tests {
             &self,
             _model: &str,
             _requests: &[&[Value]],
-        ) -> Result<Vec<usize>, DomainError> {
+        ) -> Result<Estimated<Vec<usize>>, DomainError> {
             unreachable!("token chunk tests do not count messages")
         }
 
-        fn estimate_text(&self, _model: &str, _text: &str) -> Result<usize, DomainError> {
+        fn estimate_text(
+            &self,
+            _model: &str,
+            _text: &str,
+        ) -> Result<Estimated<usize>, DomainError> {
             unreachable!("token chunk tests do not count text")
         }
 
@@ -267,7 +286,7 @@ mod tests {
             _base: &str,
             _suffixes: &[String],
             _stop_at: Option<usize>,
-        ) -> Result<Vec<usize>, DomainError> {
+        ) -> Result<Estimated<Vec<usize>>, DomainError> {
             unreachable!("token chunk tests do not count prefixes")
         }
     }

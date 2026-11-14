@@ -10,6 +10,7 @@ await tokenizers.initTokenizers();
 
 // Buckets outlive the page, so every run counts its own texts.
 const nonce = window.crypto.randomUUID();
+let fallback = false;
 let counted = [];
 const ajax = window.jQuery.ajax;
 window.jQuery.ajax = options => {
@@ -18,7 +19,7 @@ window.jQuery.ajax = options => {
     }
     const messages = JSON.parse(options.data);
     counted.push(...messages.map(message => message.content.slice(nonce.length + 1)));
-    return Promise.resolve({ token_counts: messages.map(() => 5) });
+    return Promise.resolve({ token_counts: messages.map(() => 5), fallback });
 };
 
 /** Counts the texts in the chat in use, and returns the texts the backend counted. */
@@ -37,4 +38,13 @@ test('a chat left keeps the counts it used', async () => {
     expect(await count('three')).toEqual(['three']);
     await leaveChat();
     expect(await count('one', 'two', 'three')).toEqual(['two']);
+});
+
+test('fallback counts are counted again', async () => {
+    fallback = true;
+    expect(await count('four')).toEqual(['four']);
+    expect(await count('four')).toEqual(['four']);
+    fallback = false;
+    expect(await count('four')).toEqual(['four']);
+    expect(await count('four')).toEqual([]);
 });

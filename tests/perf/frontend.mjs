@@ -292,7 +292,7 @@ const { session, messages, runs } = data.assistant;
 const nativeOnly = {
     // A user on the latest release.
     check_for_update: ({ channel }) => ({ has_update: false, current_version: '2.3.0', channel, release_token: null, latest_release: null }),
-    count_openai_tokens_batch: ({ dto }) => ({ token_counts: dto.requests.map(request => Math.ceil(JSON.stringify(request.messages).length / 4)) }),
+    count_openai_tokens_batch: ({ dto }) => ({ token_counts: dto.requests.map(request => Math.ceil(JSON.stringify(request.messages).length / 4)), fallback: false }),
     load_agent_session_profile: () => ({ profile: null }),
     list_agent_sessions: () => ({ sessions: [session], activeRuns: [] }),
     read_agent_session({ dto }) {

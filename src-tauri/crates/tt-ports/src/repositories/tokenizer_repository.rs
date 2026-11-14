@@ -3,6 +3,15 @@ use serde_json::Value;
 
 use tt_domain::errors::DomainError;
 
+/// Estimates, and whether the fallback tokenizer made them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Estimated<T> {
+    pub value: T,
+    /// The model's own tokenizer could not be downloaded, so the fallback tokenizer estimated in
+    /// its place. Estimates for the model may differ once it downloads.
+    pub fallback: bool,
+}
+
 /// Tokenizers by model name. Counts are estimates; `encode` and `decode` are exact.
 ///
 /// The other methods use the tokenizer that `ensure_model_ready` prepared for the name.
@@ -22,10 +31,10 @@ pub trait TokenizerRepository: Send + Sync {
         &self,
         model: &str,
         requests: &[&[Value]],
-    ) -> Result<Vec<usize>, DomainError>;
+    ) -> Result<Estimated<Vec<usize>>, DomainError>;
 
     /// Estimates plain text, without message framing.
-    fn estimate_text(&self, model: &str, text: &str) -> Result<usize, DomainError>;
+    fn estimate_text(&self, model: &str, text: &str) -> Result<Estimated<usize>, DomainError>;
 
     /// Estimates `base` followed by each prefix of `suffixes`, as a message of only that content.
     /// Empty text is zero. Once an estimate reaches `stop_at`, the remaining entries repeat it.
@@ -35,5 +44,5 @@ pub trait TokenizerRepository: Send + Sync {
         base: &str,
         suffixes: &[String],
         stop_at: Option<usize>,
-    ) -> Result<Vec<usize>, DomainError>;
+    ) -> Result<Estimated<Vec<usize>>, DomainError>;
 }

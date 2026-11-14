@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
 // The bundled sources and their origins are listed in resources/tokenizers/NOTICE.md.
 const CLAUDE_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.gz");
@@ -286,21 +286,36 @@ impl MiktikTokenizerRepository {
         }
     }
 
-    /// The tokenizer that estimates for the name: the model's own, or the fallback tokenizer while
+    /// Estimates with the tokenizer for the name: the model's own, or the fallback tokenizer while
     /// the model's source cannot be downloaded.
-    fn estimating(&self, name: &str) -> Result<Arc<Tokenizer>, DomainError> {
+    fn estimate_with<T>(
+        &self,
+        name: &str,
+        estimate: impl FnOnce(&Tokenizer) -> T,
+    ) -> Result<Estimated<T>, DomainError> {
         let model = Self::resolve(name);
-        let states = self.read_states();
-        let id = match states.get(model.id()) {
-            Some(TokenizerState::Unavailable { .. }) => Self::fallback().id(),
-            _ => model.id(),
+        let (tokenizer, fallback) = {
+            let states = self.read_states();
+            let fallback = matches!(
+                states.get(model.id()),
+                Some(TokenizerState::Unavailable { .. })
+            );
+            let id = if fallback {
+                Self::fallback().id()
+            } else {
+                model.id()
+            };
+            let Some(TokenizerState::Ready(tokenizer)) = states.get(id) else {
+                return Err(DomainError::InternalError(format!(
+                    "The tokenizer for '{id}' is not prepared"
+                )));
+            };
+            (Arc::clone(tokenizer), fallback)
         };
-        match states.get(id) {
-            Some(TokenizerState::Ready(tokenizer)) => Ok(Arc::clone(tokenizer)),
-            _ => Err(DomainError::InternalError(format!(
-                "The tokenizer for '{id}' is not prepared"
-            ))),
-        }
+        Ok(Estimated {
+            value: estimate(&tokenizer),
+            fallback,
+        })
     }
 
     /// The model's own tokenizer, which exact methods need.
@@ -620,26 +635,27 @@ impl TokenizerRepository for MiktikTokenizerRepository {
         &self,
         model: &str,
         requests: &[&[Value]],
-    ) -> Result<Vec<usize>, DomainError> {
-        let tokenizer = self.estimating(model)?;
-        let estimate = |text: &str| tokenizer.estimate_tokens(text);
-        Ok(match MessageFraming::of(tokenizer.model()) {
-            Some(framing) => requests
-                .iter()
-                .map(|messages| framing.total(messages, estimate))
-                .collect(),
-            None => {
-                let mut text = String::new();
-                requests
+    ) -> Result<Estimated<Vec<usize>>, DomainError> {
+        self.estimate_with(model, |tokenizer| {
+            let estimate = |text: &str| tokenizer.estimate_tokens(text);
+            match MessageFraming::of(tokenizer.model()) {
+                Some(framing) => requests
                     .iter()
-                    .map(|messages| estimate(message_values_text(messages, &mut text)))
-                    .collect()
+                    .map(|messages| framing.total(messages, estimate))
+                    .collect(),
+                None => {
+                    let mut text = String::new();
+                    requests
+                        .iter()
+                        .map(|messages| estimate(message_values_text(messages, &mut text)))
+                        .collect()
+                }
             }
         })
     }
 
-    fn estimate_text(&self, model: &str, text: &str) -> Result<usize, DomainError> {
-        Ok(self.estimating(model)?.estimate_tokens(text))
+    fn estimate_text(&self, model: &str, text: &str) -> Result<Estimated<usize>, DomainError> {
+        self.estimate_with(model, |tokenizer| tokenizer.estimate_tokens(text))
     }
 
     fn estimate_text_prefixes(
@@ -648,38 +664,39 @@ impl TokenizerRepository for MiktikTokenizerRepository {
         base: &str,
         suffixes: &[String],
         stop_at: Option<usize>,
-    ) -> Result<Vec<usize>, DomainError> {
-        let tokenizer = self.estimating(model)?;
-        let framing_tokens =
-            MessageFraming::of(tokenizer.model()).map_or(0, |framing| framing.content_message());
+    ) -> Result<Estimated<Vec<usize>>, DomainError> {
+        self.estimate_with(model, |tokenizer| {
+            let framing_tokens = MessageFraming::of(tokenizer.model())
+                .map_or(0, |framing| framing.content_message());
 
-        // Empty text has no message around it, as the frontend counts it.
-        let empty_prefixes = if base.is_empty() {
-            suffixes
-                .iter()
-                .take_while(|suffix| suffix.is_empty())
-                .count()
-        } else {
-            0
-        };
-        let mut estimates = vec![0; empty_prefixes];
-        if empty_prefixes == suffixes.len() || (empty_prefixes > 0 && stop_at == Some(0)) {
-            estimates.resize(suffixes.len(), 0);
-            return Ok(estimates);
-        }
+            // Empty text has no message around it, as the frontend counts it.
+            let empty_prefixes = if base.is_empty() {
+                suffixes
+                    .iter()
+                    .take_while(|suffix| suffix.is_empty())
+                    .count()
+            } else {
+                0
+            };
+            let mut estimates = vec![0; empty_prefixes];
+            if empty_prefixes == suffixes.len() || (empty_prefixes > 0 && stop_at == Some(0)) {
+                estimates.resize(suffixes.len(), 0);
+                return estimates;
+            }
 
-        let content_stop_at = stop_at.map(|limit| limit.saturating_sub(framing_tokens));
-        estimates.extend(
-            tokenizer
-                .estimate_cumulative_token_counts(
-                    base,
-                    &suffixes[empty_prefixes..],
-                    content_stop_at,
-                )
-                .into_iter()
-                .map(|estimate| estimate + framing_tokens),
-        );
-        Ok(estimates)
+            let content_stop_at = stop_at.map(|limit| limit.saturating_sub(framing_tokens));
+            estimates.extend(
+                tokenizer
+                    .estimate_cumulative_token_counts(
+                        base,
+                        &suffixes[empty_prefixes..],
+                        content_stop_at,
+                    )
+                    .into_iter()
+                    .map(|estimate| estimate + framing_tokens),
+            );
+            estimates
+        })
     }
 }
 
@@ -923,12 +940,16 @@ mod tests {
         let estimates = names.map(|name| {
             repository
                 .estimate_messages(name, &[&messages])
-                .expect("prepared tokenizer should estimate")[0]
+                .expect("prepared tokenizer should estimate")
         });
 
         let _ = std::fs::remove_dir_all(cache_dir);
-        assert!(estimates.iter().all(|&estimate| estimate > 0));
+        assert!(estimates.iter().all(|estimate| estimate.value[0] > 0));
         assert_eq!(estimates[7], estimates[8], "unknown names use o200k");
+        assert!(
+            estimates.iter().all(|estimate| !estimate.fallback),
+            "o200k is the tokenizer of unknown names, not a fallback"
+        );
     }
 
     #[tokio::test]
@@ -984,7 +1005,7 @@ mod tests {
         let text = "Artifacts load in milliseconds.\n世界设定 🙂\n";
         let models = ["gpt-4o", "claude"];
         let compiled = prepared(&cache_dir, &models).await;
-        let estimates = models.map(|model| compiled.estimate_text(model, text).unwrap());
+        let estimates = models.map(|model| compiled.estimate_text(model, text).unwrap().value);
         let ids = models.map(|model| compiled.encode(model, text).unwrap());
 
         let artifact_dir = cache_dir
@@ -1008,7 +1029,8 @@ mod tests {
         std::fs::write(&claude_artifact, b"not an artifact").unwrap();
 
         let loaded = prepared(&cache_dir, &models).await;
-        let reloaded_estimates = models.map(|model| loaded.estimate_text(model, text).unwrap());
+        let reloaded_estimates =
+            models.map(|model| loaded.estimate_text(model, text).unwrap().value);
         let reloaded_ids = models.map(|model| loaded.encode(model, text).unwrap());
         let rebuilt = std::fs::read(&claude_artifact).unwrap();
         let mut kept = std::fs::read_dir(&artifact_dir)
@@ -1046,7 +1068,12 @@ mod tests {
         let exact = repository.encode("llama3", text);
 
         let _ = std::fs::remove_dir_all(cache_dir);
-        assert_eq!(estimate, fallback);
+        assert_eq!(estimate.value, fallback.value);
+        assert!(
+            estimate.fallback,
+            "an estimate of the fallback tokenizer says so"
+        );
+        assert!(!fallback.fallback);
         assert!(
             exact.is_err(),
             "exact methods need the model's own tokenizer"
@@ -1083,8 +1110,12 @@ mod tests {
 
         let legacy = repository
             .estimate_messages("gpt-3.5-turbo-0301", &[&messages])
-            .unwrap()[0];
-        let modern = repository.estimate_messages("gpt-4", &[&messages]).unwrap()[0];
+            .unwrap()
+            .value[0];
+        let modern = repository
+            .estimate_messages("gpt-4", &[&messages])
+            .unwrap()
+            .value[0];
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(legacy, modern + 8);
@@ -1133,12 +1164,14 @@ mod tests {
                         }
                         repository
                             .estimate_messages(model, &[&[json!({ "content": content })]])
-                            .unwrap()[0]
+                            .unwrap()
+                            .value[0]
                     })
                     .collect::<Vec<_>>();
                 let actual = repository
                     .estimate_text_prefixes(model, &base, &suffixes, None)
-                    .unwrap();
+                    .unwrap()
+                    .value;
                 assert_eq!(actual, expected, "prefix estimates changed for {model}");
 
                 let stop_at = expected[20];
@@ -1148,7 +1181,8 @@ mod tests {
                 assert_eq!(
                     repository
                         .estimate_text_prefixes(model, &base, &suffixes, Some(stop_at))
-                        .unwrap(),
+                        .unwrap()
+                        .value,
                     stopped,
                     "prefix estimates did not stop for {model}"
                 );

@@ -320,7 +320,8 @@ function readCachedCount(state, key) {
 }
 
 /**
- * Keeps a count the key's tokenizer made.
+ * Keeps a count the key's tokenizer made. Fallback counts are not kept, since the next count may
+ * differ.
  * @param {TokenCacheState} state
  * @param {string} key
  * @param {number} count
@@ -557,13 +558,20 @@ function currentRemoteTokenizerAPI() {
 }
 
 /**
+ * A text's count, and whether a fallback made it in place of the tokenizer: a guesstimate or
+ * another tokenizer after the tokenizer failed, or the backend's fallback tokenizer while the
+ * model's own cannot be downloaded.
+ * @typedef {{ count: number, fallback: boolean }} TextTokenCount
+ */
+
+/**
  * Calls the underlying tokenizer model to the token count for a string.
  * @param {number} type Tokenizer type.
  * @param {string} str String to tokenize.
- * @returns {number} Token count.
+ * @returns {TextTokenCount} Token count.
  */
 function callTokenizer(type, str) {
-    if (type === tokenizers.NONE) return guesstimate(str);
+    if (type === tokenizers.NONE) return { count: guesstimate(str), fallback: false };
 
     switch (type) {
         case tokenizers.API_CURRENT:
@@ -576,7 +584,7 @@ function callTokenizer(type, str) {
             const endpointUrl = TOKENIZER_URLS[type]?.count;
             if (!endpointUrl) {
                 console.warn('Unknown tokenizer type', type);
-                return apiFailureTokenCount(str);
+                return { count: apiFailureTokenCount(str), fallback: true };
             }
             return countTokensFromServer(endpointUrl, str);
         }
@@ -587,12 +595,12 @@ function callTokenizer(type, str) {
  * Calls the underlying tokenizer model to the token count for a string.
  * @param {number} type Tokenizer type.
  * @param {string} str String to tokenize.
- * @returns {Promise<number>} Token count.
+ * @returns {Promise<TextTokenCount>} Token count.
  */
 function callTokenizerAsync(type, str) {
     return new Promise(resolve => {
         if (type === tokenizers.NONE) {
-            return resolve(guesstimate(str));
+            return resolve({ count: guesstimate(str), fallback: false });
         }
 
         switch (type) {
@@ -606,7 +614,7 @@ function callTokenizerAsync(type, str) {
                 const endpointUrl = TOKENIZER_URLS[type]?.count;
                 if (!endpointUrl) {
                     console.warn('Unknown tokenizer type', type);
-                    return resolve(apiFailureTokenCount(str));
+                    return resolve({ count: apiFailureTokenCount(str), fallback: true });
                 }
                 return countTokensFromServer(endpointUrl, str, resolve);
             }
@@ -659,14 +667,17 @@ export async function getTokenCountAsync(str, padding = undefined) {
         return cachedCount;
     }
 
-    const result = (await callTokenizerAsync(tokenizerType, str)) + padding;
+    const { count, fallback } = await callTokenizerAsync(tokenizerType, str);
+    const result = count + padding;
 
     if (isNaN(result)) {
         console.warn('Token count calculation returned NaN');
         return 0;
     }
 
-    rememberCount(cacheState, cacheKey, result);
+    if (!fallback) {
+        rememberCount(cacheState, cacheKey, result);
+    }
     return result;
 }
 
@@ -715,14 +726,17 @@ export function getTokenCount(str, padding = undefined) {
         return cachedCount;
     }
 
-    const result = callTokenizer(tokenizerType, str) + padding;
+    const { count, fallback } = callTokenizer(tokenizerType, str);
+    const result = count + padding;
 
     if (isNaN(result)) {
         console.warn('Token count calculation returned NaN');
         return 0;
     }
 
-    rememberCount(cacheState, cacheKey, result);
+    if (!fallback) {
+        rememberCount(cacheState, cacheKey, result);
+    }
     return result;
 }
 
@@ -876,6 +890,34 @@ function guesstimateOpenAiMessageTokenCount(message) {
 }
 
 /**
+ * The counts of the messages the cache missed, from a count-batch response or, without a valid
+ * response, guesstimated. Keeps the counts the model's own tokenizer made.
+ * @param {TokenCacheState} cacheState
+ * @param {object[]} misses Messages the cache missed.
+ * @param {string[]} missKeys Their cache keys.
+ * @param {any} data The response, or null when the request failed.
+ * @returns {number[]} Counts in the order of `misses`.
+ */
+function settleMessageTokenCounts(cacheState, misses, missKeys, data) {
+    const valid = Array.isArray(data?.token_counts)
+        && data.token_counts.length === misses.length
+        && data.token_counts.every(Number.isFinite);
+    if (data && !valid) {
+        console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
+    }
+
+    return misses.map((message, index) => {
+        if (!valid) {
+            return guesstimateOpenAiMessageTokenCount(message);
+        }
+        if (data.fallback === false) {
+            rememberCount(cacheState, missKeys[index], data.token_counts[index]);
+        }
+        return data.token_counts[index];
+    });
+}
+
+/**
  * @param {any[] | Object} messages
  * @deprecated Use countTokensOpenAIAsync instead.
  */
@@ -926,25 +968,7 @@ export function countTokensOpenAI(messages, full = false) {
             },
         });
 
-        const tokenCounts = Array.isArray(batchResult?.token_counts)
-            && batchResult.token_counts.length === cacheMisses.length
-            && batchResult.token_counts.every(Number.isFinite)
-            ? batchResult.token_counts
-            : null;
-        if (batchResult && !tokenCounts) {
-            console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
-        }
-
-        for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            const count = tokenCounts
-                ? tokenCounts[i]
-                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-
-            counts.push(count);
-            if (tokenCounts) {
-                rememberCount(cacheState, cacheMissKeys[i], count);
-            }
-        }
+        counts.push(...settleMessageTokenCounts(cacheState, cacheMisses, cacheMissKeys, batchResult));
     }
 
     return getOpenAIConversationTokenCount(counts, full);
@@ -1001,10 +1025,10 @@ export async function countOpenAIMessageTokensBatchAsync(messages, settings = nu
     }
 
     if (cacheMisses.length) {
-        let tokenCounts = null;
+        let data = null;
 
         try {
-            const data = await jQuery.ajax({
+            data = await jQuery.ajax({
                 async: true,
                 type: 'POST',
                 url: tokenizerEndpoint,
@@ -1012,60 +1036,55 @@ export async function countOpenAIMessageTokensBatchAsync(messages, settings = nu
                 dataType: 'json',
                 contentType: 'application/json',
             });
-
-            if (Array.isArray(data?.token_counts)
-                && data.token_counts.length === cacheMisses.length
-                && data.token_counts.every(Number.isFinite)) {
-                tokenCounts = data.token_counts;
-            } else {
-                console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
-            }
         } catch (error) {
             console.warn('OpenAI token count batch request failed, using guesstimate fallback:', error);
         }
 
-        for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            const count = tokenCounts
-                ? tokenCounts[i]
-                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-
-            counts[cacheMissIndices[i]] = count;
-            if (tokenCounts) {
-                rememberCount(cacheState, cacheMissKeys[i], count);
-            }
-        }
+        settleMessageTokenCounts(cacheState, cacheMisses, cacheMissKeys, data)
+            .forEach((count, index) => {
+                counts[cacheMissIndices[index]] = count;
+            });
     }
 
     return counts;
 }
 
 /**
- * Count tokens using the server API.
- * @param {string} endpoint API endpoint.
- * @param {string} str String to tokenize.
- * @param {function} [resolve] Promise resolve function.s
- * @returns {number} Token count.
+ * The count of a count-text response. Without a valid response, the tokenizer failed and a
+ * fallback counts the text.
+ * @param {any} data The response, or null when the request failed.
+ * @param {string} str The text.
+ * @param {function} [resolve] Resolves the count, when counting asynchronously.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function settleTokenCount(data, str, resolve) {
     if (!data?.error && typeof data?.count === 'number') {
-        resolve?.(data.count);
-        return data.count;
+        const result = { count: data.count, fallback: data.fallback !== false };
+        resolve?.(result);
+        return result;
     }
 
     if (typeof resolve === 'function') {
-        void apiFailureTokenCountAsync(str).then(resolve, error => {
+        void apiFailureTokenCountAsync(str).then(count => resolve({ count, fallback: true }), error => {
             console.warn('Tokenizer fallback failed, using guesstimate:', error);
-            resolve(guesstimate(str));
+            resolve({ count: guesstimate(str), fallback: true });
         });
-        return 0;
+        return null;
     }
 
-    return apiFailureTokenCount(str);
+    return { count: apiFailureTokenCount(str), fallback: true };
 }
 
+/**
+ * Count tokens using the server API.
+ * @param {string} endpoint API endpoint.
+ * @param {string} str String to tokenize.
+ * @param {function} [resolve] Promise resolve function.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
+ */
 function countTokensFromServer(endpoint, str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
@@ -1089,11 +1108,11 @@ function countTokensFromServer(endpoint, str, resolve) {
  * Count tokens using the AI provider's API.
  * @param {string} str String to tokenize.
  * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function countTokensFromKoboldAPI(str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
@@ -1131,11 +1150,11 @@ function getTextgenAPITokenizationParams(str) {
  * Count tokens using the AI provider's API.
  * @param {string} str String to tokenize.
  * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function countTokensFromTextgenAPI(str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
