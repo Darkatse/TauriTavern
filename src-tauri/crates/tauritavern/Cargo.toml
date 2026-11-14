@@ -58,6 +58,7 @@ mime_guess = "2.0.5"
 filetime = "0.2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 dunce = "1"
+rayon = "1.10"
 tt-domain = { path = "../tt-domain" }
 tt-contracts = { path = "../tt-contracts" }
 tt-ports = { path = "../tt-ports" }
@@ -84,6 +85,9 @@ ttsync-core = { workspace = true }
 [dev-dependencies]
 tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Cargo dependency selection cannot see tauri-build's desktop/mobile cfg aliases.
 [target.'cfg(any(target_os = "macos", windows, all(target_os = "linux", not(target_env = "ohos"))))'.dependencies]

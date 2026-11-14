@@ -774,7 +774,7 @@ export function getTokenizerModel(settings = null) {
     const deepseekTokenizer = 'deepseek';
 
     if (oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI) {
-        return oai_settings.azure_openai_model || turboTokenizer;
+        return oai_settings.azure_openai_model || gpt4oTokenizer;
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
@@ -786,7 +786,7 @@ export function getTokenizerModel(settings = null) {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
-        return turboTokenizer;
+        return gpt4oTokenizer;
     }
 
     // And for OpenRouter (if not a site model, then it's impossible to determine the tokenizer)
@@ -996,8 +996,8 @@ export function getTokenizerModel(settings = null) {
         }
     }
 
-    // Default to Turbo 3.5
-    return turboTokenizer;
+    // A source that does not name its tokenizer counts with o200k.
+    return gpt4oTokenizer;
 }
 
 export async function warmTokenizerCache() {
@@ -1006,6 +1006,7 @@ export async function warmTokenizerCache() {
     }
 
     try {
+        // An empty batch counts nothing; it prepares the model's tokenizer before the first count.
         await jQuery.ajax({
             async: true,
             type: 'POST',

@@ -65,7 +65,7 @@ TauriTavern 将 SillyTavern 前端移植到 Tauri v2 原生应用中，当前已
 | `tracing` / `tracing-subscriber` / `tracing-appender` | 后端日志、过滤、rolling file、Dev observability |
 | `thiserror` | 分层错误类型 |
 | `async-trait` | repository / gateway async trait |
-| `miktik` | tokenizer 计数与编解码 |
+| `miktik` | token 估算（计数一律用估算）与精确编解码；分词器编译产物缓存在 `_cache/tokenizers` |
 | `image` / `mime_guess` | 角色卡、媒体、图片 metadata |
 | `zip` / `tar` / `flate2` / `async-compression` | skill、archive、Dev bundle、压缩数据处理 |
 | `axum` / `axum-server` / `ttsync-*` | LAN Sync / TT-Sync v2 |

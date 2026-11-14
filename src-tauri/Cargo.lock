@@ -4716,20 +4716,22 @@ dependencies = [
 
 [[package]]
 name = "kitoken"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4663da0884a672d8705d339aad6367006e88df910bee436afdfbc898b2c7847"
+checksum = "565c2307dd823f1be3e97c8902aa57e61841f93317c5215395d097629a516a2b"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bstr",
  "derive_more",
  "fancy-regex 0.18.0",
  "hashbrown 0.17.1",
+ "itertools 0.15.0",
  "log",
  "memchr",
  "multiversion",
  "once_cell",
  "orx-priority-queue",
+ "postcard",
  "regex-automata",
  "regex-syntax",
  "sentencepiece-model",
@@ -5087,13 +5089,15 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01e181235417370181be4d2570356a5f408364802e49e582bfb2d49109c55598"
+checksum = "bdf5accbde179b2df3bce1af399f2c745e85d4298ebeff829a6062fb29479f34"
 dependencies = [
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
  "kitoken",
+ "rayon",
  "thiserror 2.0.20",
- "tiktoken-rs",
 ]
 
 [[package]]
@@ -8626,6 +8630,7 @@ dependencies = [
  "dunce",
  "filetime",
  "image",
+ "libc",
  "mime_guess",
  "objc2",
  "objc2-background-tasks",
@@ -8634,6 +8639,7 @@ dependencies = [
  "objc2-uniform-type-identifiers",
  "percent-encoding",
  "qrcode",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",
@@ -8691,7 +8697,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -8773,21 +8779,6 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
-]
-
-[[package]]
-name = "tiktoken-rs"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027853bbf8c7763b77c5c595f1c271c7d536ced7d6f83452911b944621e57fc2"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bstr",
- "fancy-regex 0.17.0",
- "lazy_static",
- "regex",
- "rustc-hash",
 ]
 
 [[package]]
@@ -9470,6 +9461,7 @@ dependencies = [
  "miktik",
  "serde_json",
  "tokio",
+ "tracing",
  "tt-adapter-http",
  "tt-domain",
  "tt-ports",

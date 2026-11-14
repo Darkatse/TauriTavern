@@ -194,6 +194,7 @@ src-tauri/crates/tauritavern/src/
 
 `app/host/*` 是 Tauri shell：
 
+- 先按设备的 CPU 总数设定 rayon 全局线程池。
 - 安装 plugin。
 - 决议 runtime paths。
 - 初始化 logging、HTTP pool、bundled templates、host resource service。
