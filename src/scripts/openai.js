@@ -80,7 +80,8 @@ import {
     textValueMatcher,
     uuidv4,
 } from './utils.js';
-import { countTokensOpenAIAsync, getTokenizerModel } from './tokenizers.js';
+import { countOpenAIMessageTokensBatchAsync, getTokenizerModel } from './tokenizers.js';
+import { getOpenAIConversationTokenCount } from './util/openai-token-count.js';
 import { isMobile } from './RossAscends-mods.js';
 import { saveLogprobsForActiveMessage } from './logprobs.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -1266,9 +1267,10 @@ function createHeadlessChatCompletionPromptManager(settings, {
     assemblyPromptManager.activeCharacter = { id: configuration.promptOrder.dummyId };
     assemblyPromptManager.saveServiceSettings = () => Promise.resolve();
     assemblyPromptManager.tryGenerate = () => Promise.resolve();
+    // The Agent runtime counts a session's context itself; here its messages count nothing.
     assemblyPromptManager.tokenHandler = new TokenHandler(contextKind === 'session'
-        ? async () => 0
-        : (messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
+        ? async messages => messages.map(() => 0)
+        : messages => countOpenAIMessageTokensBatchAsync(messages, serviceSettings));
     assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content ?? '', options, {
         macroContext,
     });
@@ -1541,21 +1543,16 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
 
     chatCompletion.add(new MessageCollection('chatHistory'), prompts.index('chatHistory'));
 
-    // Reserve budget for new chat message
     const newChat = isGroup ? settings.new_group_chat_prompt : settings.new_chat_prompt;
-    const newChatMessage = await Message.createAsync('system', substitutePromptParams(newChat, {}, assemblyRuntime), 'newMainChat', assemblyTokenHandler);
-    chatCompletion.reserveBudget(newChatMessage);
+    const newChatMessage = new Message('system', substitutePromptParams(newChat, {}, assemblyRuntime), 'newMainChat');
 
-    // Reserve budget for group nudge
     let groupNudgeMessage = null;
     const noGroupNudgeTypes = ['impersonate'];
     const groupNudgePrompt = getRelativePromptById(prompts, 'groupNudge');
     if (isGroup && groupNudgePrompt && !noGroupNudgeTypes.includes(type)) {
-        groupNudgeMessage = await Message.fromPromptAsync(groupNudgePrompt, assemblyTokenHandler);
-        chatCompletion.reserveBudget(groupNudgeMessage);
+        groupNudgeMessage = Message.fromPrompt(groupNudgePrompt);
     }
 
-    // Reserve budget for continue nudge
     let continueMessageCollection = null;
     if (type === 'continue' && cyclePrompt && !settings.continue_prefill) {
         const promptObject = {
@@ -1571,20 +1568,33 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         if (continueMessageIndex >= 0) {
             const continueMessage = messages.splice(continueMessageIndex, 1)[0];
             const prompt = new Prompt(continueMessage);
-            const chatMessage = await Message.fromPromptAsync(activePromptManager.preparePrompt(prompt), assemblyTokenHandler);
-            continueMessageCollection.add(chatMessage);
+            continueMessageCollection.add(Message.fromPrompt(activePromptManager.preparePrompt(prompt)));
         }
         const continueNudgePrompt = new Prompt(promptObject);
         const preparedNudgePrompt = activePromptManager.preparePrompt(continueNudgePrompt);
-        const continueNudgeMessage = await Message.fromPromptAsync(preparedNudgePrompt, assemblyTokenHandler);
-        continueMessageCollection.add(continueNudgeMessage);
-        chatCompletion.reserveBudget(continueMessageCollection);
+        continueMessageCollection.add(Message.fromPrompt(preparedNudgePrompt));
     }
 
     const lastChatPrompt = messages[messages.length - 1];
-    const message = await Message.createAsync('user', settings.send_if_empty, 'emptyUserMessageReplacement', assemblyTokenHandler);
-    if (lastChatPrompt && lastChatPrompt.role === 'assistant' && settings.send_if_empty && chatCompletion.canAfford(message)) {
-        chatCompletion.insert(message, 'chatHistory');
+    const emptyUserMessage = new Message('user', settings.send_if_empty, 'emptyUserMessageReplacement');
+    await Message.countAllAsync([
+        newChatMessage,
+        groupNudgeMessage,
+        ...(continueMessageCollection?.collection ?? []),
+        emptyUserMessage,
+    ].filter(Boolean), assemblyTokenHandler);
+
+    // Reserve budget for the new chat message, the group nudge and the continue nudge
+    chatCompletion.reserveBudget(newChatMessage);
+    if (groupNudgeMessage) {
+        chatCompletion.reserveBudget(groupNudgeMessage);
+    }
+    if (continueMessageCollection) {
+        chatCompletion.reserveBudget(continueMessageCollection);
+    }
+
+    if (lastChatPrompt && lastChatPrompt.role === 'assistant' && settings.send_if_empty && chatCompletion.canAfford(emptyUserMessage)) {
+        chatCompletion.insert(emptyUserMessage, 'chatHistory');
     }
 
     const imageInlining = isImageInliningSupported(settings);
@@ -1605,10 +1615,25 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         : tool_reasoning_modes.DISABLED;
     const includeToolReasoning = toolReasoningMode !== tool_reasoning_modes.DISABLED;
     const lastUserIdx = messages.findLastIndex(x => x.role === 'user');
+    const namesInCompletion = activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION;
 
-    // Insert chat messages as long as there is budget available
+    /**
+     * Builds a chat history message without counting it, named when names go in the completion.
+     * @param {Prompt} prompt Chat history prompt
+     * @returns {Message} The message
+     */
+    const buildHistoryMessage = (prompt) => {
+        const chatMessage = Message.fromPrompt(activePromptManager.preparePrompt(prompt));
+        if (namesInCompletion && prompt.name) {
+            chatMessage.name = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
+        }
+        return chatMessage;
+    };
+
+    // Insert chat messages as long as there is budget available. They are counted a chunk at a time, each chunk twice
+    // the last: a long history takes a few requests, and at most the last chunk is counted past the budget.
     const chatPool = [...messages].reverse();
-    const tokenPrefetchChunkSize = 12;
+    let chunkSize = 12;
     for (let index = 0; index < chatPool.length;) {
         const chatPrompt = chatPool[index];
 
@@ -1627,7 +1652,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             for (; chatPool[index]?.injectionGroup === chatPrompt.injectionGroup; index += 1) {
                 entries.push(chatPool[index]);
             }
-            const group = await Promise.all(entries.map(entry => Message.fromPromptAsync(entry, assemblyTokenHandler)));
+            const group = entries.map(entry => Message.fromPrompt(entry));
+            await Message.countAllAsync(group, assemblyTokenHandler);
             if (!chatCompletion.canAffordAll(group)) {
                 break;
             }
@@ -1639,12 +1665,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             // We do not want to mutate the prompt
             const prompt = new Prompt(chatPrompt);
             prompt.identifier = `chatHistory-${messages.length - index}`;
-            const chatMessage = await Message.fromPromptAsync(activePromptManager.preparePrompt(prompt), assemblyTokenHandler);
-
-            if (activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
-                const messageName = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
-                await chatMessage.setName(messageName, assemblyTokenHandler);
-            }
+            const chatMessage = buildHistoryMessage(prompt);
 
             /**
              * Inline a media attachment into the chat message.
@@ -1719,9 +1740,12 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 }
                 return clone;
             });
-            const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result, invocation.id, assemblyTokenHandler)));
+            const toolResultMessages = invocations.slice().reverse().map((invocation) => new Message('tool', invocation.result, invocation.id));
             chatMessage.reasoningContent = chatPrompt.reasoningContent ?? null;
-            await chatMessage.setToolCalls(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler);
+            await Promise.all([
+                chatMessage.setToolCalls(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler),
+                Message.countAllAsync(toolResultMessages, assemblyTokenHandler),
+            ]);
             if (includeSignature && chatPrompt.signature) {
                 chatMessage.signature = chatPrompt.signature;
             }
@@ -1754,7 +1778,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         }
 
         const batch = [];
-        for (; index < chatPool.length && batch.length < tokenPrefetchChunkSize; index += 1) {
+        for (; index < chatPool.length && batch.length < chunkSize; index += 1) {
             const candidate = chatPool[index];
             if (Array.isArray(candidate.invocations) || Array.isArray(candidate.agentMessages) || candidate.injectionGroup !== undefined) {
                 break;
@@ -1762,31 +1786,13 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
 
             const prompt = new Prompt(candidate);
             prompt.identifier = `chatHistory-${messages.length - index}`;
-            batch.push({ chatPrompt: candidate, prompt, preparedPrompt: activePromptManager.preparePrompt(prompt) });
+            batch.push({ chatPrompt: candidate, chatMessage: buildHistoryMessage(prompt) });
         }
-
-        const batchMessages = await Promise.all(batch.map((item) => Message.fromPromptAsync(item.preparedPrompt, assemblyTokenHandler)));
-
-        if (activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION) {
-            const nameUpdates = [];
-            for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
-                const prompt = batch[batchIndex].prompt;
-                if (!prompt.name) {
-                    continue;
-                }
-
-                const messageName = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
-                nameUpdates.push(batchMessages[batchIndex].setName(messageName, assemblyTokenHandler));
-            }
-
-            await Promise.all(nameUpdates);
-        }
+        chunkSize *= 2;
+        await Message.countAllAsync(batch.map(item => item.chatMessage), assemblyTokenHandler);
 
         let outOfBudget = false;
-        for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
-            const { chatPrompt: promptSource, prompt } = batch[batchIndex];
-            const chatMessage = batchMessages[batchIndex];
-
+        for (const { chatPrompt: promptSource, chatMessage } of batch) {
             /**
              * Inline a media attachment into the chat message.
              * @param {MediaAttachment} media - The media attachment to inline.
@@ -1879,22 +1885,15 @@ async function populateDialogueExamples(prompts, chatCompletion, messageExamples
 
     chatCompletion.add(new MessageCollection('dialogueExamples'), prompts.index('dialogueExamples'));
     if (Array.isArray(messageExamples) && messageExamples.length) {
-            const newExampleChat = await Message.createAsync('system', substitutePromptParams(settings.new_example_chat_prompt, {}, assemblyRuntime), 'newChat', assemblyTokenHandler);
-        for (const dialogue of [...messageExamples]) {
-            const dialogueIndex = messageExamples.indexOf(dialogue);
-            const chatMessages = [];
+        const newExampleChat = new Message('system', substitutePromptParams(settings.new_example_chat_prompt, {}, assemblyRuntime), 'newChat');
+        const dialogues = messageExamples.map((dialogue, dialogueIndex) => dialogue.map((prompt, promptIndex) => {
+            const chatMessage = new Message('system', prompt.content || '', `dialogueExamples ${dialogueIndex}-${promptIndex}`);
+            chatMessage.name = prompt.name;
+            return chatMessage;
+        }));
+        await Message.countAllAsync([newExampleChat, ...dialogues.flat()], assemblyTokenHandler);
 
-            for (let promptIndex = 0; promptIndex < dialogue.length; promptIndex++) {
-                const prompt = dialogue[promptIndex];
-                const role = 'system';
-                const content = prompt.content || '';
-                const identifier = `dialogueExamples ${dialogueIndex}-${promptIndex}`;
-
-                const chatMessage = await Message.createAsync(role, content, identifier, assemblyTokenHandler);
-                await chatMessage.setName(prompt.name, assemblyTokenHandler);
-                chatMessages.push(chatMessage);
-            }
-
+        for (const chatMessages of dialogues) {
             if (!chatCompletion.canAffordAll([newExampleChat, ...chatMessages])) {
                 break;
             }
@@ -2060,28 +2059,35 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
     const toolDefinitions = takeToolDefinitions(prompts);
 
-    // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
-    const addToChatCompletion = async (source, target = null) => {
-        // We need the prompts array to determine a position for the source.
-        if (false === prompts.has(source)) return;
+    /**
+     * Adds prompts that already exist within the prompt collection to the completion, in order, counted together.
+     * @param {string[]} sources Prompt identifiers
+     */
+    const addToChatCompletion = async (sources) => {
+        const entries = [];
+        for (const source of sources) {
+            // We need the prompts array to determine a position for the source.
+            if (false === prompts.has(source)) continue;
 
-        if (activePromptManager.isPromptDisabledForActiveCharacter(source) && source !== 'main') {
-            activePromptManager.log(`Skipping prompt ${source} because it is disabled`);
-            return;
+            if (activePromptManager.isPromptDisabledForActiveCharacter(source) && source !== 'main') {
+                activePromptManager.log(`Skipping prompt ${source} because it is disabled`);
+                continue;
+            }
+
+            const prompt = prompts.get(source);
+
+            if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
+                activePromptManager.log(`Skipping prompt ${source} because it is not a relative prompt`);
+                continue;
+            }
+
+            entries.push({ source, message: Message.fromPrompt(prompt) });
         }
 
-        const prompt = prompts.get(source);
-
-        if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
-            activePromptManager.log(`Skipping prompt ${source} because it is not a relative prompt`);
-            return;
+        await Message.countAllAsync(entries.map(entry => entry.message), assemblyTokenHandler);
+        for (const { source, message } of entries) {
+            chatCompletion.add(new MessageCollection(source, message), prompts.index(source));
         }
-
-        const index = target ? prompts.index(target) : prompts.index(source);
-        const collection = new MessageCollection(source);
-        const message = await Message.fromPromptAsync(prompt, assemblyTokenHandler);
-        collection.add(message);
-        chatCompletion.add(collection, index);
     };
 
     chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
@@ -2089,26 +2095,24 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     await populateAgentTaskPrompt(prompts, chatCompletion, agentMode, agentTaskPrompt, assemblyRuntime);
 
     // Character and world information
-    await addToChatCompletion('worldInfoBefore');
-    await addToChatCompletion('main');
-    await addToChatCompletion('worldInfoAfter');
-    await addToChatCompletion('charDescription');
-    await addToChatCompletion('charPersonality');
-    await addToChatCompletion('scenario');
-    await addToChatCompletion('personaDescription');
+    await addToChatCompletion(['worldInfoBefore', 'main', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'personaDescription']);
 
     // Collection of control prompts that will always be positioned last
     chatCompletion.setOverriddenPrompts(prompts.overriddenPrompts);
     const controlPrompts = new MessageCollection('controlPrompts');
 
     const impersonatePrompt = getRelativePromptById(prompts, 'impersonate');
-    const impersonateMessage = impersonatePrompt ? await Message.fromPromptAsync(impersonatePrompt, assemblyTokenHandler) : null;
+    const impersonateMessage = impersonatePrompt ? Message.fromPrompt(impersonatePrompt) : null;
+    const quietPromptEntry = getRelativePromptById(prompts, 'quietPrompt');
+    const quietPromptMessage = quietPromptEntry ? Message.fromPrompt(quietPromptEntry) : null;
+    // Exact edits need the saved text, without prompt regex or macro expansion.
+    const quietToolMessage = quietToolRequest ? new Message('user', quietToolRequest.prompt, 'quietToolRequest') : null;
+    await Message.countAllAsync([impersonateMessage, quietPromptMessage, quietToolMessage].filter(Boolean), assemblyTokenHandler);
+
     if (type === 'impersonate' && impersonateMessage) controlPrompts.add(impersonateMessage);
 
     // Add quiet prompt to control prompts
     // This should always be last, even in control prompts. Add all further control prompts BEFORE this prompt
-    const quietPromptEntry = getRelativePromptById(prompts, 'quietPrompt');
-    const quietPromptMessage = quietPromptEntry ? await Message.fromPromptAsync(quietPromptEntry, assemblyTokenHandler) : null;
     if (quietPromptMessage && quietPromptMessage.content) {
         if (isImageInliningSupported(settings) && quietImage) {
             await quietPromptMessage.addImage(quietImage, settings);
@@ -2117,35 +2121,41 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         controlPrompts.add(quietPromptMessage);
     }
 
-    if (quietToolRequest) {
-        // Exact edits need the saved text, without prompt regex or macro expansion.
-        controlPrompts.add(await Message.createAsync('user', quietToolRequest.prompt, 'quietToolRequest', assemblyTokenHandler));
+    if (quietToolMessage) {
+        controlPrompts.add(quietToolMessage);
     }
     chatCompletion.reserveBudget(controlPrompts);
 
-    // Add ordered system and user prompts
+    // Add ordered system and user prompts, the enhance definition instruction and the bias
     const systemPrompts = ['nsfw', 'jailbreak'];
     const { userRelativePromptIds, absolutePrompts, attachedPrompts } = getPromptInjectionGroups(prompts);
+    await addToChatCompletion([
+        ...systemPrompts,
+        ...userRelativePromptIds,
+        'enhanceDefinitions',
+        ...(bias && bias.trim().length ? ['bias'] : []),
+    ]);
 
-    for (const identifier of [...systemPrompts, ...userRelativePromptIds]) {
-        await addToChatCompletion(identifier);
-    }
+    const knownPrompts = [
+        'summary',
+        'authorsNote',
+        'vectorsMemory',
+        'vectorsDataBank',
+        'smartContext',
+    ];
 
-    // Add enhance definition instruction
-    if (prompts.has('enhanceDefinitions')) await addToChatCompletion('enhanceDefinitions');
+    // Known relative extension prompts, then the other relative extension prompts
+    const mainInjections = [
+        ...knownPrompts.filter(key => prompts.has(key)).map(key => prompts.get(key)).filter(prompt => prompt.position),
+        ...prompts.collection.filter(p => p.extension && p.position),
+    ].filter(prompt => isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE));
 
-    // Bias
-    if (bias && bias.trim().length) await addToChatCompletion('bias');
-
-    const injectToMain = async (/** @type {Prompt} */ prompt, /** @type {string|number} */ position) => {
-        if (!isPromptInjectionPosition(prompt, INJECTION_POSITION.RELATIVE)) {
-            return;
-        }
-
-        if (chatCompletion.has('main')) {
-            const message = await Message.fromPromptAsync(prompt, assemblyTokenHandler);
-            chatCompletion.insert(message, 'main', position);
-        } else {
+    if (chatCompletion.has('main')) {
+        const injections = mainInjections.map(prompt => Message.fromPrompt(prompt));
+        await Message.countAllAsync(injections, assemblyTokenHandler);
+        injections.forEach((message, index) => chatCompletion.insert(message, 'main', mainInjections[index].position));
+    } else {
+        for (const prompt of mainInjections) {
             // Convert the relative prompt to an injection and place it relative to main prompt
             // Keeping prompts in the same order bucket will squash them together during in-chat injection
             const indexOfMain = absolutePrompts.findIndex(p => p.identifier === 'main');
@@ -2156,33 +2166,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
                 promptCopy.injection_position = main.injection_position;
                 promptCopy.injection_depth = main.injection_depth;
                 promptCopy.injection_order = main.injection_order;
-                const newIndex = position === 'end' ? indexOfMain + 1 : indexOfMain;
+                const newIndex = prompt.position === 'end' ? indexOfMain + 1 : indexOfMain;
                 absolutePrompts.splice(newIndex, 0, promptCopy);
             }
         }
-    };
-
-    const knownPrompts = [
-        'summary',
-        'authorsNote',
-        'vectorsMemory',
-        'vectorsDataBank',
-        'smartContext',
-    ];
-
-    // Known relative extension prompts
-    for (const key of knownPrompts) {
-        if (prompts.has(key)) {
-            const prompt = prompts.get(key);
-            if (prompt.position) {
-                await injectToMain(prompt, prompt.position);
-            }
-        }
-    }
-
-    // Other relative extension prompts
-    for (const prompt of prompts.collection.filter(p => p.extension && p.position)) {
-        await injectToMain(prompt, prompt.position);
     }
 
     // Pre-allocation of tokens for tool data
@@ -2208,8 +2195,11 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         const namesInCompletion = settings.names_behavior === character_names_behavior.COMPLETION;
         const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substitutePromptParams(settings.assistant_prefill, {}, assemblyRuntime) : '';
         const messageContent = [assistantPrefill, chatMessage.content].filter(x => x).join('\n\n');
-        const continueMessage = await Message.createAsync(chatMessage.role, messageContent, 'continuePrefill', assemblyTokenHandler);
-        chatMessage.name && namesInCompletion && await continueMessage.setName(activePromptManager.sanitizeName(chatMessage.name), assemblyTokenHandler);
+        const continueMessage = new Message(chatMessage.role, messageContent, 'continuePrefill');
+        if (chatMessage.name && namesInCompletion) {
+            continueMessage.name = activePromptManager.sanitizeName(chatMessage.name);
+        }
+        await Message.countAllAsync([continueMessage], assemblyTokenHandler);
         controlPrompts.add(continueMessage);
         chatCompletion.reserveBudget(continueMessage);
     }
@@ -5076,10 +5066,11 @@ async function calculateLogitBias() {
 
 class TokenHandler {
     /**
-     * @param {(messages: object[] | object, full?: boolean) => Promise<number>} countTokenAsyncFn Function to count tokens
+     * @param {(messages: object[]) => Promise<number[]>} countMessagesAsync Counts each message apart from the others,
+     * all in one request, in order.
      */
-    constructor(countTokenAsyncFn) {
-        this.countTokenAsyncFn = countTokenAsyncFn;
+    constructor(countMessagesAsync) {
+        this.countMessagesAsync = countMessagesAsync;
         this.counts = {
             'start_chat': 0,
             'prompt': 0,
@@ -5109,17 +5100,28 @@ class TokenHandler {
     }
 
     /**
-     * Count tokens for a message or messages.
+     * Count tokens for a message or messages, as one conversation.
      * @param {object|any[]} messages Messages to count tokens for
      * @param {boolean} [full] Count full tokens
      * @param {string} [type] Identifier for the token count
      * @returns {Promise<number>} The token count
      */
     async countAsync(messages, full, type) {
-        const token_count = await this.countTokenAsyncFn(messages, full);
+        const counts = await this.countMessagesAsync(Array.isArray(messages) ? messages : [messages]);
+        const token_count = getOpenAIConversationTokenCount(counts, full);
         this.counts[type] += token_count;
 
         return token_count;
+    }
+
+    /**
+     * Counts each message as `countAsync` counts it alone, all in one request.
+     * @param {object[]} messages Messages to count
+     * @returns {Promise<number[]>} Each message's token count, in order
+     */
+    async countEachAsync(messages) {
+        const counts = await this.countMessagesAsync(messages);
+        return counts.map(count => getOpenAIConversationTokenCount([count]));
     }
 
     getTokensForIdentifier(identifier) {
@@ -5136,7 +5138,7 @@ class TokenHandler {
 }
 
 
-const tokenHandler = new TokenHandler(countTokensOpenAIAsync);
+const tokenHandler = new TokenHandler(countOpenAIMessageTokensBatchAsync);
 
 // Thrown by ChatCompletion when a requested prompt couldn't be found.
 class IdentifierNotFoundError extends Error {
@@ -5198,7 +5200,7 @@ class Message {
      * @param {string} role - The role of the entity creating the message.
      * @param {string} content - The actual content of the message.
      * @param {string} identifier - A unique identifier for the message.
-     * @private Don't use this constructor directly. Use createAsync instead.
+     * @private Builds the message without counting it: use createAsync, or count built messages with countAllAsync.
      */
     constructor(role, content, identifier) {
         this.identifier = identifier;
@@ -5222,12 +5224,53 @@ class Message {
      */
     static async createAsync(role, content, identifier, messageTokenHandler = tokenHandler) {
         const message = new Message(role, content, identifier);
-
-        if (typeof message.content === 'string' && message.content.length > 0) {
-            message.tokens = await messageTokenHandler.countAsync({ role: message.role, content: message.content });
-        }
-
+        await Message.countAllAsync([message], messageTokenHandler);
         return message;
+    }
+
+    /**
+     * Counts the tokens of messages built without counting, all in one request. Messages with nothing to count keep
+     * their tokens.
+     * @param {Message[]} messages Messages to count
+     * @param {TokenHandler} messageTokenHandler Token handler for the active prompt assembly runtime.
+     * @returns {Promise<void>}
+     */
+    static async countAllAsync(messages, messageTokenHandler = tokenHandler) {
+        const counted = messages.filter(message => message.#hasTokens());
+        const tokens = await messageTokenHandler.countEachAsync(counted.map(message => message.#countedMessage()));
+        counted.forEach((message, index) => {
+            message.tokens = tokens[index];
+        });
+    }
+
+    /**
+     * Whether the message has anything its tokens count: fields, a name, tool calls or text.
+     * @returns {boolean}
+     */
+    #hasTokens() {
+        return Boolean(this.fields || this.name || this.tool_calls)
+            || (typeof this.content === 'string' && this.content.length > 0);
+    }
+
+    /**
+     * The chat message the message's tokens count. Tool calls carry their reasoning; media are counted where they
+     * are added.
+     * @returns {object}
+     */
+    #countedMessage() {
+        if (this.fields) {
+            return this.toChatMessage();
+        }
+        return {
+            role: this.role,
+            content: this.content,
+            ...(this.name ? { name: this.name } : {}),
+            ...(this.tool_calls ? {
+                tool_calls: JSON.stringify(this.tool_calls),
+                ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+                ...(this.reasoningContent ? { reasoning_content: this.reasoningContent } : {}),
+            } : {}),
+        };
     }
 
     static fromAgentMessage(agentMessage, identifier) {
@@ -5284,14 +5327,7 @@ class Message {
         }));
         const fallbackReasoning = invocations.find(i => typeof i.reasoning === 'string' && i.reasoning.length > 0)?.reasoning || null;
         this.reasoning = includeReasoning ? fallbackReasoning : null;
-        this.tokens = await messageTokenHandler.countAsync({
-            role: this.role,
-            content: this.content,
-            ...(this.name ? { name: this.name } : {}),
-            tool_calls: JSON.stringify(this.tool_calls),
-            ...(this.reasoning ? { reasoning: this.reasoning } : {}),
-            ...(this.reasoningContent ? { reasoning_content: this.reasoningContent } : {}),
-        });
+        await Message.countAllAsync([this], messageTokenHandler);
     }
 
     /**
@@ -5301,7 +5337,7 @@ class Message {
      */
     async setName(name, messageTokenHandler = tokenHandler) {
         this.name = name;
-        this.tokens = await messageTokenHandler.countAsync({ role: this.role, content: this.content, name: this.name });
+        await Message.countAllAsync([this], messageTokenHandler);
     }
 
     /**
@@ -5493,12 +5529,21 @@ class Message {
      * @returns {Promise<Message>} A new instance of Message.
      */
     static async fromPromptAsync(prompt, messageTokenHandler = tokenHandler) {
-        if (!prompt.fields) {
-            return Message.createAsync(prompt.role, prompt.content, prompt.identifier, messageTokenHandler);
-        }
+        const message = Message.fromPrompt(prompt);
+        await Message.countAllAsync([message], messageTokenHandler);
+        return message;
+    }
+
+    /**
+     * Builds a message from a prompt without counting it.
+     * @param {Object} prompt - The prompt object.
+     * @returns {Message} A new instance of Message.
+     */
+    static fromPrompt(prompt) {
         const message = new Message(prompt.role, prompt.content, prompt.identifier);
-        message.fields = prompt.fields;
-        message.tokens = await messageTokenHandler.countAsync(message.toChatMessage());
+        if (prompt.fields) {
+            message.fields = prompt.fields;
+        }
         return message;
     }
 
@@ -5623,6 +5668,7 @@ export class ChatCompletion {
 
         let lastMessage = null;
         let squashedMessages = [];
+        const merged = new Set();
 
         for (let message of this.messages.collection) {
             // Force exclude empty messages
@@ -5637,7 +5683,7 @@ export class ChatCompletion {
             if (shouldSquash(message)) {
                 if (lastMessage && shouldSquash(lastMessage)) {
                     lastMessage.content += '\n' + message.content;
-                    lastMessage.tokens = await messageTokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
+                    merged.add(lastMessage);
                 }
                 else {
                     squashedMessages.push(message);
@@ -5650,6 +5696,7 @@ export class ChatCompletion {
             }
         }
 
+        await Message.countAllAsync([...merged], messageTokenHandler);
         this.messages.collection = squashedMessages;
     }
 

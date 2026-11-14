@@ -911,7 +911,7 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
  * @param {ChatCompletionSettings|null} settings Optional model settings.
  * @returns {Promise<number[]>} Per-message token counts.
  */
-async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
+export async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
     const model = getTokenizerModel(settings);
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());

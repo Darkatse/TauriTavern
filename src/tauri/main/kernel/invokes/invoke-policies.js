@@ -34,16 +34,6 @@ const PROVIDER_METADATA_TIMEOUT_MS = 35_000;
  * @typedef {Partial<Record<TauriInvokeCommand, InvokePolicy>> & Record<string, InvokePolicy>} HostInvokePolicies
  */
 
-/**
- * @param {any} args
- * @returns {string}
- */
-function tokenCountKey(args) {
-    const dto = args?.dto ?? args ?? {};
-    const json = JSON.stringify(dto);
-    return fnv1a32(json);
-}
-
 /** @param {any} args */
 function exactTokenizerRequestKey(args) {
     const dto = args?.dto ?? args ?? {};
@@ -82,20 +72,6 @@ export function createHostInvokePolicies() {
             key: () => 'singleton',
             cacheTtlMs: 5_000,
             cacheLimit: 1,
-        },
-        count_openai_tokens_batch: {
-            kind: 'dedupe',
-            maxConcurrent: 1,
-            cacheTtlMs: 2_000,
-            cacheLimit: 50,
-            key: tokenCountKey,
-        },
-        count_text_tokens: {
-            kind: 'dedupe',
-            maxConcurrent: 1,
-            cacheTtlMs: 2_000,
-            cacheLimit: 50,
-            key: tokenCountKey,
         },
         count_openai_token_prefixes: {
             kind: 'dedupe',
