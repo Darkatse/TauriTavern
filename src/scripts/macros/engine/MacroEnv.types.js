@@ -70,7 +70,7 @@
 /**
  * @typedef {Pick<typeof import('../../power-user.js').power_user,
  * 'instruct' | 'sysprompt' | 'context' | 'reasoning' | 'prefer_character_prompt' |
- * 'collapse_newlines' | 'pin_examples' | 'custom_stopping_strings' | 'custom_stopping_strings_macro'> &
+ * 'collapse_newlines' | 'pin_examples' | 'history_trim_step' | 'custom_stopping_strings' | 'custom_stopping_strings_macro'> &
  * { isGroup: boolean, groupNames: string[], groupNamesNotMuted: string[] }} MacroSettings
  */
 

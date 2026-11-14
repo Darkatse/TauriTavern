@@ -1513,6 +1513,84 @@ async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, dept
 }
 
 /**
+ * @typedef {object} IncludedHistoryGroup
+ * @property {number|null} position - Position of the chat record from the start of the chat; null for injected prompts.
+ * @property {Message[]} messages - The messages inserted for it.
+ * @property {number} sourceCount - Raw chat records it represents.
+ */
+
+/**
+ * Reads History Trim Step from User Settings, or from the context captured for this assembly.
+ * @param {ReturnType<typeof getPromptAssemblyRuntime>} assemblyRuntime
+ * @returns {unknown} The setting, unchecked.
+ */
+function getHistoryTrimStep(assemblyRuntime) {
+    return assemblyRuntime.macroContext
+        ? assemblyRuntime.macroContext.settings.history_trim_step
+        : power_user.history_trim_step;
+}
+
+/**
+ * @param {unknown} step - The History Trim Step setting.
+ * @throws {Error} When it is not a whole number of messages, 0 or more.
+ */
+function assertHistoryTrimStep(step) {
+    if (!Number.isInteger(step) || /** @type {number} */ (step) < 0) {
+        throw new Error(`prompt_assembly.history_trim_step_invalid: History trim step must be a whole number of messages, 0 or more, got ${JSON.stringify(step)}`);
+    }
+}
+
+/**
+ * Moves the start of a truncated chat history forward to the next multiple of `step` chat records.
+ *
+ * Filling the history newest first moves its start a message or two with every reply once the chat
+ * outgrows the context, which changes the beginning of the prompt and defeats provider prompt caching.
+ * Cutting only at fixed positions keeps the start the same for every reply until the chat grows by
+ * another step. Positions count from the start of the chat, so the cut does not depend on earlier requests.
+ *
+ * The tokens freed stay reserved: handing them to later prompt sections, such as dialogue examples,
+ * would change those sections from one reply to the next and move the prompt start anyway.
+ *
+ * @param {ChatCompletion} chatCompletion - The completion holding the inserted history.
+ * @param {IncludedHistoryGroup[]} included - What was inserted, newest first.
+ * @param {number} step - Chat records per step, already checked; 0 or 1 keeps the cut where the budget put it.
+ * @returns {number} Raw chat records removed.
+ */
+function trimHistoryToStep(chatCompletion, included, step) {
+    if (step <= 1) {
+        return 0;
+    }
+
+    const records = included.filter(group => group.position !== null);
+    // Empty chat messages are recorded but never inserted, so only sendable ones keep the history from being empty.
+    const sendableRecords = records.filter(group => group.messages.some(message => message.isSendable()));
+    if (sendableRecords.length === 0) {
+        return 0;
+    }
+    const boundary = Math.ceil(records.at(-1).position / step) * step;
+    // Keep the budget's cut when moving it would leave no chat history to send.
+    if (boundary > sendableRecords[0].position) {
+        return 0;
+    }
+
+    let removedRecords = 0;
+    let freedTokens = 0;
+    for (let index = included.length - 1; index >= 0; index -= 1) {
+        const group = included[index];
+        if (group.position !== null && group.position >= boundary) {
+            break;
+        }
+        for (const message of group.messages) {
+            freedTokens += chatCompletion.removeFrom('chatHistory', message);
+        }
+        removedRecords += group.sourceCount;
+    }
+
+    chatCompletion.reserveBudget(freedTokens);
+    return removedRecords;
+}
+
+/**
  * Populates the chat history of the conversation.
  * @param {object[]} messages - Array containing all messages.
  * @param {import('./PromptManager').PromptCollection} prompts - Map object containing all prompts where the key is the prompt identifier and the value is the prompt object.
@@ -1529,6 +1607,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const isGroup = assemblyRuntime.contextKind === 'chat' && (assemblyRuntime.macroContext
         ? assemblyRuntime.macroContext.settings.isGroup
         : Boolean(selected_group));
+    const historyTrimStep = /** @type {number} */ (getHistoryTrimStep(assemblyRuntime));
 
     if (!prompts.has('chatHistory')) {
         if (assemblyRuntime.contextKind === 'session') {
@@ -1606,6 +1685,23 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const includeToolReasoning = toolReasoningMode !== tool_reasoning_modes.DISABLED;
     const lastUserIdx = messages.findLastIndex(x => x.role === 'user');
 
+    // Where each chat record sits, counted from the start of the chat. Injected prompts have no position.
+    const recordPositions = new Map();
+    let nextRecordPosition = 0;
+    for (const chatPrompt of messages) {
+        if (!chatPrompt || chatPrompt.injected) {
+            continue;
+        }
+        recordPositions.set(chatPrompt, nextRecordPosition);
+        nextRecordPosition += chatPrompt.sourceCount ?? 1;
+    }
+    /** @returns {number|null} The chat record's position, or null for an injected prompt. */
+    const positionOf = chatPrompt => recordPositions.get(chatPrompt) ?? null;
+
+    /** @type {IncludedHistoryGroup[]} What was inserted, newest first. */
+    const included = [];
+    let historyTruncated = false;
+
     // Insert chat messages as long as there is budget available
     const chatPool = [...messages].reverse();
     const tokenPrefetchChunkSize = 12;
@@ -1617,6 +1713,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`));
             for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
             sourceCount += chatPrompt.sourceCount;
+            included.push({ position: positionOf(chatPrompt), messages: group, sourceCount: chatPrompt.sourceCount });
             index += 1;
             continue;
         }
@@ -1629,9 +1726,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             }
             const group = await Promise.all(entries.map(entry => Message.fromPromptAsync(entry, assemblyTokenHandler)));
             if (!chatCompletion.canAffordAll(group)) {
+                historyTruncated = true;
                 break;
             }
             for (const message of group) chatCompletion.insertAtStart(message, 'chatHistory');
+            included.push({ position: null, messages: group, sourceCount: 0 });
             continue;
         }
 
@@ -1745,7 +1844,13 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 }
                 chatCompletion.insertAtStart(chatMessage, 'chatHistory');
                 sourceCount += chatPrompt.sourceCount ?? 0;
+                included.push({
+                    position: positionOf(chatPrompt),
+                    messages: [chatMessage, ...toolResultMessages],
+                    sourceCount: chatPrompt.sourceCount ?? 0,
+                });
             } else {
+                historyTruncated = true;
                 break;
             }
 
@@ -1831,6 +1936,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (chatCompletion.canAfford(chatMessage)) {
                 chatCompletion.insertAtStart(chatMessage, 'chatHistory');
                 sourceCount += promptSource.sourceCount ?? 0;
+                included.push({
+                    position: positionOf(promptSource),
+                    messages: [chatMessage],
+                    sourceCount: promptSource.sourceCount ?? 0,
+                });
             } else {
                 outOfBudget = true;
                 break;
@@ -1838,8 +1948,13 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         }
 
         if (outOfBudget) {
+            historyTruncated = true;
             break;
         }
+    }
+
+    if (historyTruncated) {
+        sourceCount -= trimHistoryToStep(chatCompletion, included, historyTrimStep);
     }
 
     // Insert and free new chat
@@ -2464,6 +2579,10 @@ export async function prepareOpenAIMessages({
     // Without a character selected, there is no way to accurately calculate tokens
     if (!activePromptManager.activeCharacter && dryRun) return [null, false];
 
+    // Checked before the catch below, which logs unexpected errors and still sends the prompt,
+    // and on every assembly, not only once the chat outgrows the context.
+    assertHistoryTrimStep(getHistoryTrimStep(assemblyRuntime));
+
     // Errors belong to the current assembly, not to its UI refresh.
     activePromptManager.error = null;
 
@@ -2610,7 +2729,6 @@ export async function assembleOpenAIChatCompletionPrompt({
     if (!promptInputs || typeof promptInputs !== 'object' || Array.isArray(promptInputs)) {
         throw new Error('prompt_assembly.inputs_required: Prompt assembly requires promptInputs');
     }
-
     const normalizedGenerationType = String(generationType || promptInputs.type || 'normal').trim() || 'normal';
     const resolvedModel = String(model || getChatCompletionModel(settings) || '').trim();
     if (!resolvedModel) {
@@ -5772,6 +5890,32 @@ export class ChatCompletion {
         this.increaseTokenBudgetBy(message.getTokens());
 
         this.log(`Removed ${message.identifier} from ${identifier}. Remaining tokens: ${this.tokenBudget}`);
+    }
+
+    /**
+     * Removes a message that was inserted into the collection and returns its tokens to the budget.
+     * Messages that were not sendable were never inserted, so there is nothing to remove for them.
+     *
+     * @param {string} identifier - The identifier of the collection the message was inserted into.
+     * @param {Message} message - The inserted message.
+     * @returns {number} The tokens returned to the budget.
+     */
+    removeFrom(identifier, message) {
+        if (!message.isSendable()) {
+            return 0;
+        }
+
+        const collection = this.messages.collection[this.findMessageIndex(identifier)].collection;
+        const index = collection.indexOf(message);
+        if (index === -1) {
+            throw new Error(`Message ${message.identifier} is not in ${identifier}`);
+        }
+
+        collection.splice(index, 1);
+        this.increaseTokenBudgetBy(message.getTokens());
+
+        this.log(`Removed ${message.identifier} from ${identifier}. Remaining tokens: ${this.tokenBudget}`);
+        return message.getTokens();
     }
 
     /**

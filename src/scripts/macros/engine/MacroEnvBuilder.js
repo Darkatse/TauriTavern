@@ -54,6 +54,7 @@ function readSettings() {
         prefer_character_prompt: power_user.prefer_character_prompt,
         collapse_newlines: power_user.collapse_newlines,
         pin_examples: power_user.pin_examples,
+        history_trim_step: power_user.history_trim_step,
         custom_stopping_strings: power_user.custom_stopping_strings,
         custom_stopping_strings_macro: power_user.custom_stopping_strings_macro,
         isGroup: Boolean(selected_group),
