@@ -4,29 +4,29 @@
 
 > 完整的分阶段启动（Shell/Core/Full/APP_READY）链路请看：`docs/CurrentState/StartupOptimization.md`。
 
-## TokenCache（Chat Completions）避免 cold-start whole-load
+## TokenCache（Chat Completions）按聊天分桶
 
 ### 解决的问题
 
-历史实现会在 `initTokenizers()` 中把 IndexedDB 里的 `tokenCache`（整库大对象）一次性读入 JS 内存，导致移动端冷启动常驻集膨胀。
+计数缓存省掉重新计数：长聊天打开时重新计数要数秒，载入一个桶只要几毫秒。缓存不能整库常驻内存，也不能随聊天历史无限增长。
 
 ### 当前实现（契约）
 
-- **存储分区**：不再使用整库 key `tokenCache`，改为按 chat 分区持久化 `tokenCache:${chatId}`。
-- **启动不加载**：`loadTokenCache()` 只做 legacy key 清理（删除 `tokenCache`），不再读取整库对象。
-- **只常驻当前桶**：内存只持有“当前 chat 的一个桶”（`tokenCacheState`），切换 chat 会重置到新桶并按需懒加载。
-- **事件语义一致**：
-  - `CHAT_CHANGED`：预热当前 chat 桶（懒加载触发点）
-  - `CHAT_DELETED` / `GROUP_CHAT_DELETED`：删除对应 `tokenCache:${chatId}`，避免磁盘堆积
-- **写回策略**：`saveTokenCache()` 仅 flush 当前 chat 桶（dirty 才写回），不再整库写回。
+- **按聊天分桶**：每个聊天一个桶 `tokenCache:${版本}:${chatId}`（localforage 实例 `SillyTavern_ChatCompletions`）。键的计法改变时升版本，启动后空闲时删除其他版本的桶。
+- **只常驻正在使用的桶**：`CHAT_CHANGED` 换到新聊天的桶，第一次计数前载入。
+- **桶只写本次用到的计数**：自载入以来读到或算出的计数。只属于旧消息、旧滑动、旧模型的计数在下一次写入时离开桶，桶的大小以一段会话用到的计数为界。
+- **有新计数时写入**：离开聊天、保存聊天、应用转入后台或退出（生命周期 flush `token-cache`）。
+- **桶的载入、写入与删除按发出的顺序进行**，桶是最后一次操作留下的样子。
+- **随聊天删除**：`CHAT_DELETED` / `GROUP_CHAT_DELETED` 删除聊天的桶；`CHAT_RENAMED` 删除旧名字的桶，聊天在新名字下重新计数。
 
 ### 兼容性边界
 
-- cache 是性能优化，不影响 token 计数正确性；升级后旧整库缓存会被清理，短期缓存会重新变冷（可接受的 tradeoff）。
+- 缓存只影响性能：键是模型与内容的哈希，任何桶都不会给出错误的计数。
+- 上游导出的 `saveTokenCache()` 写入正在使用的桶。
 
 ### 关键代码位置
 
-- `src/scripts/tokenizers.js`：`loadTokenCache()` / `saveTokenCache()` / `resetTokenCache()` / `tokenCacheState` / `initTokenizers()` 事件挂载
+- `src/scripts/tokenizers.js`：`TokenCacheState`、`readCachedCount` / `rememberCount`、`writeTokenCache`、`removeTokenCache`、`initTokenizers()` 的事件与生命周期挂载
 
 ---
 

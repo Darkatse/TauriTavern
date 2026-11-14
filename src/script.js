@@ -332,7 +332,7 @@ import {
     getInstructMacroValues,
 } from './scripts/instruct-mode.js';
 import { initLocales, t, translate } from './scripts/i18n.js';
-import { captureTokenCacheSaveState, getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, warmTokenizerCache } from './scripts/tokenizers.js';
+import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, warmTokenizerCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
     primeUserAvatarsSnapshot,
@@ -11157,20 +11157,16 @@ export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTA
         ? saveGroupChat(selected_group, true, false, commitReason)
         : saveChat({ commitReason });
 
-    // Keep prompt/token persistence serialized with chat writes to avoid
+    // Keep itemized prompt persistence serialized with chat writes to avoid
     // chat switches corrupting per-chat IndexedDB state.
     const chatId = getCurrentChatId();
-    const tokenCacheSaveState = captureTokenCacheSaveState(chatId);
     const itemizedPromptsSnapshot = captureItemizedPromptsSaveSnapshot(chatId);
-    const postSavePromise = enqueueChatSave(async () => {
-        await saveTokenCache(tokenCacheSaveState);
-        await saveItemizedPrompts(chatId, {
-            entriesSnapshot: itemizedPromptsSnapshot,
-            cloneFromActive: false,
-        });
-    });
+    const postSavePromise = enqueueChatSave(() => saveItemizedPrompts(chatId, {
+        entriesSnapshot: itemizedPromptsSnapshot,
+        cloneFromActive: false,
+    }));
 
-    await Promise.all([savePromise, postSavePromise]);
+    await Promise.all([savePromise, postSavePromise, saveTokenCache()]);
 }
 
 /**
