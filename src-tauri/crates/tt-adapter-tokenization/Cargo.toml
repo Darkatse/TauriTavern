@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 flate2 = "1.1.9"
-miktik = { version = "0.5.1", default-features = false, features = ["full", "parallel"] }
+miktik = { version = "0.5.2", default-features = false, features = ["full", "parallel"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "rt", "sync"] }

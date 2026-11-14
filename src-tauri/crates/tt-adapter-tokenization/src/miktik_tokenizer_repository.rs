@@ -51,6 +51,10 @@ const FALLBACK_TOKENIZER: &str = "gpt-4o";
 /// How long estimates use the fallback tokenizer after a source could not be downloaded, before
 /// the next preparation downloads it again.
 const DOWNLOAD_RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
+/// The tokens SillyTavern's message count adds for the reply to every request, whatever the
+/// model's own reply primer: its frontend takes two of them off each message it counts on its own,
+/// so a message counts its framing and one token more.
+const SILLYTAVERN_REPLY_TOKENS: usize = 3;
 /// The bytes of segment text whose estimates each tokenizer keeps.
 const SEGMENT_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -172,8 +176,8 @@ impl MiktikTokenizerRepository {
         let (name, origin) = match id {
             "claude" => bundled("claude.json", CLAUDE_JSON_GZIP),
             "deepseek" => bundled("deepseek.json", DEEPSEEK_JSON_GZIP),
-            "gemma" => bundled("gemma3.model", GEMMA3_MODEL_GZIP),
-            "kimi" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_GZIP),
+            "gemini" | "gemma" => bundled("gemma3.model", GEMMA3_MODEL_GZIP),
+            "kimi" | "kimi-k3" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_GZIP),
             "qwen2" => bundled("qwen2.json", QWEN2_JSON_GZIP),
             "qwen3.5" => bundled("qwen3.5.json", QWEN3_5_JSON_GZIP),
             "glm" => bundled("glm.json", GLM_JSON_GZIP),
@@ -669,9 +673,9 @@ impl TokenizerRepository for MiktikTokenizerRepository {
     }
 }
 
-/// SillyTavern's count of OpenAI-style message JSON, for models whose chat format frames each
-/// message: every message adds a fixed number of tokens and the tokens of each of its values, a
-/// `name` key adjusts that, and the reply adds a fixed number.
+/// SillyTavern's count of OpenAI-style message JSON, for models whose provider frames each
+/// message: every message adds the model's framing and the tokens of each of its values, a `name`
+/// key adjusts that, and the reply adds SillyTavern's tokens.
 struct MessageFraming {
     per_message: usize,
     per_name: isize,
@@ -681,21 +685,17 @@ struct MessageFraming {
 impl MessageFraming {
     /// `None` when only message content counts.
     fn of(model: &Model) -> Option<Self> {
-        match model.framing() {
-            Framing::ContentOnly => None,
-            // This snapshot counts a name in place of the role, and since 2023-10 adds up to nine
-            // tokens to every request.
-            Framing::ChatMl { .. } if model.id() == "gpt-3.5-turbo-0301" => Some(Self {
-                per_message: 4,
-                per_name: -1,
-                per_reply: 3 + 9,
-            }),
-            Framing::ChatMl { .. } => Some(Self {
-                per_message: 3,
-                per_name: 1,
-                per_reply: 3,
-            }),
-        }
+        let Framing::ChatMl { per_message, .. } = model.framing() else {
+            return None;
+        };
+        // This snapshot counts a name in place of the role, and since 2023-10 adds up to nine
+        // tokens to every request.
+        let legacy = model.id() == "gpt-3.5-turbo-0301";
+        Some(Self {
+            per_message,
+            per_name: if legacy { -1 } else { 1 },
+            per_reply: SILLYTAVERN_REPLY_TOKENS + if legacy { 9 } else { 0 },
+        })
     }
 
     fn total(&self, messages: &[Value], estimate: impl Fn(&str) -> usize) -> usize {

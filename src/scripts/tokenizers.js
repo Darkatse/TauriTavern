@@ -159,8 +159,9 @@ const TOKENIZER_URLS = {
 
 const textEncoder = new TextEncoder();
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
-// Counts made with the old role wrappers are not reusable under the 1.19 rules.
-const TOKEN_CACHE_PREFIX = 'tokenCache:v2:';
+// Counts are kept per chat under this prefix. Raise its version whenever a key could count
+// differently, so that the obsolete buckets are removed.
+const TOKEN_CACHE_PREFIX = 'tokenCache:v3:';
 
 let tokenCacheState = {
     chatId: 'undefined',
