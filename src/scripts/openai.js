@@ -552,7 +552,6 @@ export const settingsToUpdate = {
     workers_ai_account_id: ['#workers_ai_account_id', 'workers_ai_account_id', false, true],
     openai_max_context: ['#openai_max_context', 'openai_max_context', false, false],
     openai_max_tokens: ['#openai_max_tokens', 'openai_max_tokens', false, false],
-    history_trim_step: ['#history_trim_step', 'history_trim_step', false, false],
     names_behavior: ['#names_behavior', 'names_behavior', false, false],
     send_if_empty: ['#send_if_empty_textarea', 'send_if_empty', false, false],
     impersonation_prompt: ['#impersonation_prompt_textarea', 'impersonation_prompt', false, false],
@@ -616,7 +615,6 @@ const default_settings = {
     stream_openai: false,
     openai_max_context: max_4k,
     openai_max_tokens: 300,
-    history_trim_step: 20,
     ...chatCompletionDefaultPrompts,
     ...promptManagerDefaultPromptOrders,
     send_if_empty: '',
@@ -1522,6 +1520,17 @@ async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, dept
  */
 
 /**
+ * Reads History Trim Step from User Settings, or from the context captured for this assembly.
+ * @param {ReturnType<typeof getPromptAssemblyRuntime>} assemblyRuntime
+ * @returns {unknown} The setting, unchecked.
+ */
+function getHistoryTrimStep(assemblyRuntime) {
+    return assemblyRuntime.macroContext
+        ? assemblyRuntime.macroContext.settings.history_trim_step
+        : power_user.history_trim_step;
+}
+
+/**
  * @param {unknown} step - The History Trim Step setting.
  * @throws {Error} When it is not a whole number of messages, 0 or more.
  */
@@ -1544,11 +1553,10 @@ function assertHistoryTrimStep(step) {
  *
  * @param {ChatCompletion} chatCompletion - The completion holding the inserted history.
  * @param {IncludedHistoryGroup[]} included - What was inserted, newest first.
- * @param {number} step - Chat records per step; 0 or 1 keeps the cut where the budget put it.
+ * @param {number} step - Chat records per step, already checked; 0 or 1 keeps the cut where the budget put it.
  * @returns {number} Raw chat records removed.
  */
 function trimHistoryToStep(chatCompletion, included, step) {
-    assertHistoryTrimStep(step);
     if (step <= 1) {
         return 0;
     }
@@ -1599,6 +1607,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const isGroup = assemblyRuntime.contextKind === 'chat' && (assemblyRuntime.macroContext
         ? assemblyRuntime.macroContext.settings.isGroup
         : Boolean(selected_group));
+    const historyTrimStep = /** @type {number} */ (getHistoryTrimStep(assemblyRuntime));
 
     if (!prompts.has('chatHistory')) {
         if (assemblyRuntime.contextKind === 'session') {
@@ -1945,7 +1954,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     }
 
     if (historyTruncated) {
-        sourceCount -= trimHistoryToStep(chatCompletion, included, settings.history_trim_step);
+        sourceCount -= trimHistoryToStep(chatCompletion, included, historyTrimStep);
     }
 
     // Insert and free new chat
@@ -2570,6 +2579,10 @@ export async function prepareOpenAIMessages({
     // Without a character selected, there is no way to accurately calculate tokens
     if (!activePromptManager.activeCharacter && dryRun) return [null, false];
 
+    // Checked before the catch below, which logs unexpected errors and still sends the prompt,
+    // and on every assembly, not only once the chat outgrows the context.
+    assertHistoryTrimStep(getHistoryTrimStep(assemblyRuntime));
+
     // Errors belong to the current assembly, not to its UI refresh.
     activePromptManager.error = null;
 
@@ -2716,9 +2729,6 @@ export async function assembleOpenAIChatCompletionPrompt({
     if (!promptInputs || typeof promptInputs !== 'object' || Array.isArray(promptInputs)) {
         throw new Error('prompt_assembly.inputs_required: Prompt assembly requires promptInputs');
     }
-    // Checked on every assembly, not only once the chat outgrows the context.
-    assertHistoryTrimStep(settings.history_trim_step);
-
     const normalizedGenerationType = String(generationType || promptInputs.type || 'normal').trim() || 'normal';
     const resolvedModel = String(model || getChatCompletionModel(settings) || '').trim();
     if (!resolvedModel) {
@@ -9162,20 +9172,6 @@ export function initOpenAI() {
         calculateOpenRouterCost();
         calculateElectronHubCost();
         calculateChutesCost();
-        saveSettingsDebounced();
-    });
-
-    $('#history_trim_step').on('input', function () {
-        const input = /** @type {HTMLInputElement} */ (this);
-        // Only a whole number of 0 or more is saved; anything else is marked invalid and keeps the last good value.
-        const valid = input.validity.valid && Number.isInteger(input.valueAsNumber);
-        $('#history_trim_step_error').text(valid ? '' : input.validationMessage || t`Invalid value`);
-        if (!valid) {
-            input.setAttribute('aria-invalid', 'true');
-            return;
-        }
-        input.removeAttribute('aria-invalid');
-        oai_settings.history_trim_step = input.valueAsNumber;
         saveSettingsDebounced();
     });
 

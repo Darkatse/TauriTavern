@@ -64,6 +64,8 @@ export function createMacroContextFromSnapshot(snapshot, workingInputs) {
     const { characterTemplates, character, builtins, variableValues, ...facts } = saved;
     return {
         ...facts,
+        // Runs captured before History Trim Step existed trimmed their history one message at a time.
+        settings: { history_trim_step: 0, ...facts.settings },
         character: characterTemplates,
         variables: snapshot.variables,
         extensionPrompts: workingInputs.extensionPrompts,

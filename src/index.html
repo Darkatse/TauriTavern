@@ -678,20 +678,6 @@ some text
                                     </div>
                                 </div>
                                 <div class="range-block">
-                                    <div class="range-block-title"><span data-i18n="History Trim Step (messages)" id="history_trim_step_label">
-                                        History Trim Step (messages)
-                                    </span></div>
-                                    <div class="wide100p">
-                                        <input type="number" id="history_trim_step" name="history_trim_step" class="text_pole" min="0" step="1" required aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_description history_trim_step_error">
-                                        <small id="history_trim_step_error" class="range-input-error" role="status"></small>
-                                    </div>
-                                    <div class="toggle-description justifyLeft" id="history_trim_step_description">
-                                        <span data-i18n="history_trim_step_description">
-                                            When a chat is longer than the context, drop older messages in blocks of this many, so the start of the prompt stays the same across replies and prompt caching keeps working. A larger step misses the cache less often but can send up to that many fewer messages. Default 20; 0 drops them one at a time.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block">
                                     <div class="range-block-title"><span data-i18n="Max Response Length (tokens)" id="openai_max_tokens_label">
                                         Max Response Length (tokens)
                                     </span></div>
@@ -5588,6 +5574,15 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <div id="settings_snapshots_button" class="menu_button whitespacenowrap">
                                     <small data-i18n="Settings Snapshots">Settings Snapshots</small>
                                 </div>
+                            </div>
+                            <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                <small>
+                                    <span data-i18n="History Trim Step (messages)" id="history_trim_step_label">History Trim Step (messages)</span>
+                                    <div class="fa-solid fa-circle-info opacity50p" id="history_trim_step_info" data-i18n="[title]history_trim_step_description" title="Chat Completion only. When a chat is longer than the context, drop older messages in blocks of this many, so the start of the prompt stays the same across replies and prompt caching keeps working. A larger step misses the cache less often but can send up to that many fewer messages. Default 20; 0 drops them one at a time."></div>
+                                </small>
+                                <input class="neo-range-slider" type="range" id="history_trim_step" name="history_trim_step" min="0" max="100" step="1" aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_info history_trim_step_hint">
+                                <input class="neo-range-input" type="number" min="0" max="100" step="1" data-for="history_trim_step" id="history_trim_step_counter" aria-labelledby="history_trim_step_label" aria-describedby="history_trim_step_info history_trim_step_hint">
+                                <small data-i18n="(0 = Off)" id="history_trim_step_hint">(0 = Off)</small>
                             </div>
                             <label id="smooth_streaming_control" class="checkbox_label" for="smooth_streaming">
                                 <input id="smooth_streaming" type="checkbox" />

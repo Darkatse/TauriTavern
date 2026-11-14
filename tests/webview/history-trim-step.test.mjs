@@ -6,7 +6,9 @@ const { window, load, startHost } = await createFrontend();
 await startHost();
 await load('script.js');
 const openai = await load('scripts/openai.js');
+const { power_user } = await load('scripts/power-user.js');
 const { macros, initRegisterMacros } = await load('scripts/macros/macro-system.js');
+const { createMacroContextFromSnapshot, updateFrozenMacroContext } = await load('scripts/tauritavern/agent/frozen-run-input-snapshot.js');
 initRegisterMacros();
 const ajax = window.jQuery.ajax;
 window.jQuery.ajax = options => options.url?.startsWith('/api/tokenizers/openai/count-batch')
@@ -16,18 +18,41 @@ window.jQuery.ajax = options => options.url?.startsWith('/api/tokenizers/openai/
 const EXAMPLE_DIALOGUES = [[{ content: 'example a' }], [{ content: 'example b' }], [{ content: 'example c' }]];
 
 /**
+ * Captures the generation context with History Trim Step set in User Settings.
+ * @param {unknown} [historyTrimStep] - Left out, as in User Settings saved before the option existed.
+ */
+function captureWithStep(historyTrimStep) {
+    const saved = power_user.history_trim_step;
+    if (historyTrimStep !== undefined) {
+        power_user.history_trim_step = historyTrimStep;
+    }
+    try {
+        return macros.captureContext();
+    } finally {
+        power_user.history_trim_step = saved;
+    }
+}
+
+/** Rebuilds the context of an Agent Run saved before History Trim Step existed. */
+function rebuildRunSavedBeforeTheStep() {
+    const snapshot = updateFrozenMacroContext({}, macros.captureContext());
+    delete snapshot.macroContext.settings.history_trim_step;
+    return createMacroContextFromSnapshot(snapshot, { extensionPrompts: {} });
+}
+
+/**
  * Assembles a prompt for a chat of `chatLength` messages that outgrows the context.
  * @param {number} chatLength
- * @param {number} [historyTrimStep] - Left out, as in settings saved before the option existed.
+ * @param {unknown} [historyTrimStep] - The User Settings step; left out, the saved default.
  * @param {number} [noteDepth] - Injects a one-token note into the chat at this depth.
  * @param {number[]} [emptyNumbers] - Chat messages left empty, which are never sent.
+ * @param {object} [macroContext] - The generation context, captured with `historyTrimStep` unless given.
  * @returns {Promise<{ history: number[], examples: string[] }>} Chat message numbers sent, oldest first, and example texts sent.
  */
-async function assemble(chatLength, historyTrimStep, noteDepth, emptyNumbers = []) {
+async function assemble(chatLength, historyTrimStep, noteDepth, emptyNumbers = [], macroContext = captureWithStep(historyTrimStep)) {
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'moonshot', moonshot_model: 'kimi-k3',
         openai_max_context: 96, openai_max_tokens: 16,
-        ...(historyTrimStep === undefined ? {} : { history_trim_step: historyTrimStep }),
     });
     const order = ['main', 'dialogueExamples', 'chatHistory'];
     if (noteDepth !== undefined) {
@@ -45,7 +70,7 @@ async function assemble(chatLength, historyTrimStep, noteDepth, emptyNumbers = [
         role: number % 2 ? 'assistant' : 'user', content: emptyNumbers.includes(number) ? '' : `message ${number}`, sourceCount: 1,
     }));
     const { messages } = await openai.assembleOpenAIChatCompletionPrompt({
-        settings, macroContext: macros.captureContext(), agentMode: false, generationType: 'normal',
+        settings, macroContext, agentMode: false, generationType: 'normal',
         // Prompt assembly receives the chat newest first.
         promptInputs: { messages: chat.reverse(), messageExamples: EXAMPLE_DIALOGUES, extensionPrompts: {} },
     });
@@ -93,9 +118,16 @@ test('the space a step frees is not handed to the sections filled after the hist
     }
 });
 
-test('settings without a saved step trim in steps of 20', async () => {
+test('User Settings without a saved step trim in steps of 20', async () => {
     for (const length of CHAT_LENGTHS) {
         expect((await assemble(length)).history).toEqual((await assemble(length, 20)).history);
+    }
+});
+
+test('an Agent Run saved before the step existed is rebuilt with the history it had, trimmed one message at a time', async () => {
+    for (const length of CHAT_LENGTHS) {
+        const { history } = await assemble(length, undefined, undefined, [], rebuildRunSavedBeforeTheStep());
+        expect(history).toEqual((await assemble(length, 0)).history);
     }
 });
 
@@ -130,28 +162,4 @@ test('an invalid step stops assembly even when the chat fits the context', async
     for (const step of [1.5, -1, '20']) {
         await expect(assemble(12, step)).rejects.toThrow('prompt_assembly.history_trim_step_invalid');
     }
-});
-
-test('the field saves only a whole number of 0 or more', () => {
-    // The test host stops before app start attaches the Chat Completion settings handlers.
-    openai.initOpenAI();
-    const input = window.document.getElementById('history_trim_step');
-    const error = window.document.getElementById('history_trim_step_error');
-    const type = value => {
-        input.value = value;
-        window.jQuery(input).trigger('input');
-    };
-
-    type('30');
-    expect(openai.oai_settings.history_trim_step).toBe(30);
-    for (const value of ['1.5', '-1', '']) {
-        type(value);
-        expect(openai.oai_settings.history_trim_step).toBe(30);
-        expect(input.getAttribute('aria-invalid')).toBe('true');
-        expect(error.textContent).not.toBe('');
-    }
-    type('20');
-    expect(openai.oai_settings.history_trim_step).toBe(20);
-    expect(input.hasAttribute('aria-invalid')).toBe(false);
-    expect(error.textContent).toBe('');
 });
