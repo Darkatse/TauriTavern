@@ -70,27 +70,27 @@ const TOKENIZER_URLS = {
     [tokenizers.GPT2]: {
         encode: '/api/tokenizers/gpt2/encode',
         decode: '/api/tokenizers/gpt2/decode',
-        count: '/api/tokenizers/gpt2/encode',
+        count: '/api/tokenizers/gpt2/count-text',
     },
     [tokenizers.OPENAI]: {
         encode: '/api/tokenizers/openai/encode',
         decode: '/api/tokenizers/openai/decode',
-        count: '/api/tokenizers/openai/encode',
+        count: '/api/tokenizers/openai/count-text',
     },
     [tokenizers.LLAMA]: {
         encode: '/api/tokenizers/llama/encode',
         decode: '/api/tokenizers/llama/decode',
-        count: '/api/tokenizers/llama/encode',
+        count: '/api/tokenizers/llama/count-text',
     },
     [tokenizers.NERD]: {
         encode: '/api/tokenizers/nerdstash/encode',
         decode: '/api/tokenizers/nerdstash/decode',
-        count: '/api/tokenizers/nerdstash/encode',
+        count: '/api/tokenizers/nerdstash/count-text',
     },
     [tokenizers.NERD2]: {
         encode: '/api/tokenizers/nerdstash_v2/encode',
         decode: '/api/tokenizers/nerdstash_v2/decode',
-        count: '/api/tokenizers/nerdstash_v2/encode',
+        count: '/api/tokenizers/nerdstash_v2/count-text',
     },
     [tokenizers.API_KOBOLD]: {
         count: '/api/tokenizers/remote/kobold/count',
@@ -99,57 +99,57 @@ const TOKENIZER_URLS = {
     [tokenizers.MISTRAL]: {
         encode: '/api/tokenizers/mistral/encode',
         decode: '/api/tokenizers/mistral/decode',
-        count: '/api/tokenizers/mistral/encode',
+        count: '/api/tokenizers/mistral/count-text',
     },
     [tokenizers.YI]: {
         encode: '/api/tokenizers/yi/encode',
         decode: '/api/tokenizers/yi/decode',
-        count: '/api/tokenizers/yi/encode',
+        count: '/api/tokenizers/yi/count-text',
     },
     [tokenizers.CLAUDE]: {
         encode: '/api/tokenizers/claude/encode',
         decode: '/api/tokenizers/claude/decode',
-        count: '/api/tokenizers/claude/encode',
+        count: '/api/tokenizers/claude/count-text',
     },
     [tokenizers.LLAMA3]: {
         encode: '/api/tokenizers/llama3/encode',
         decode: '/api/tokenizers/llama3/decode',
-        count: '/api/tokenizers/llama3/encode',
+        count: '/api/tokenizers/llama3/count-text',
     },
     [tokenizers.GEMMA]: {
         encode: '/api/tokenizers/gemma/encode',
         decode: '/api/tokenizers/gemma/decode',
-        count: '/api/tokenizers/gemma/encode',
+        count: '/api/tokenizers/gemma/count-text',
     },
     [tokenizers.JAMBA]: {
         encode: '/api/tokenizers/jamba/encode',
         decode: '/api/tokenizers/jamba/decode',
-        count: '/api/tokenizers/jamba/encode',
+        count: '/api/tokenizers/jamba/count-text',
     },
     [tokenizers.QWEN2]: {
         encode: '/api/tokenizers/qwen2/encode',
         decode: '/api/tokenizers/qwen2/decode',
-        count: '/api/tokenizers/qwen2/encode',
+        count: '/api/tokenizers/qwen2/count-text',
     },
     [tokenizers.COMMAND_R]: {
         encode: '/api/tokenizers/command-r/encode',
         decode: '/api/tokenizers/command-r/decode',
-        count: '/api/tokenizers/command-r/encode',
+        count: '/api/tokenizers/command-r/count-text',
     },
     [tokenizers.COMMAND_A]: {
         encode: '/api/tokenizers/command-a/encode',
         decode: '/api/tokenizers/command-a/decode',
-        count: '/api/tokenizers/command-a/encode',
+        count: '/api/tokenizers/command-a/count-text',
     },
     [tokenizers.NEMO]: {
         encode: '/api/tokenizers/nemo/encode',
         decode: '/api/tokenizers/nemo/decode',
-        count: '/api/tokenizers/nemo/encode',
+        count: '/api/tokenizers/nemo/count-text',
     },
     [tokenizers.DEEPSEEK]: {
         encode: '/api/tokenizers/deepseek/encode',
         decode: '/api/tokenizers/deepseek/decode',
-        count: '/api/tokenizers/deepseek/encode',
+        count: '/api/tokenizers/deepseek/count-text',
     },
     [tokenizers.API_TEXTGENERATIONWEBUI]: {
         encode: '/api/tokenizers/remote/textgenerationwebui/encode',

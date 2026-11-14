@@ -6,9 +6,10 @@ use crate::dto::tokenization_dto::{
     DecodeTokensRequestDto, DecodeTokensResponseDto, EncodeTokensRequestDto,
     EncodeTokensResponseDto, LogitBiasEntryDto, OpenAiLogitBiasRequestDto,
     OpenAiLogitBiasResponseDto, OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto,
-    OpenAiTokenPrefixCountRequestDto,
+    OpenAiTokenPrefixCountRequestDto, TextTokenCountRequestDto, TextTokenCountResponseDto,
 };
 use crate::errors::ApplicationError;
+use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
 const DEFAULT_MODEL: &str = "gpt-4o";
@@ -29,31 +30,18 @@ impl TokenizationService {
         &self,
         dto: OpenAiTokenCountBatchRequestDto,
     ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
-            .await?;
+        let model = self.normalize_model(&dto.model).into_owned();
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
-        let model = model.into_owned();
         let requests = dto.requests;
-
-        let token_counts = tokio::task::spawn_blocking(move || {
-            let mut token_counts = Vec::with_capacity(requests.len());
-
-            for request in requests {
-                let token_count = tokenizer_repository
-                    .count_messages(&model, &request.messages)
-                    .map_err(ApplicationError::from)?;
-                token_counts.push(token_count);
-            }
-
-            Ok::<_, ApplicationError>(token_counts)
-        })
-        .await
-        .map_err(|error| {
-            ApplicationError::InternalError(format!("Token count batch task failed: {error}"))
-        })??;
+        let token_counts = self
+            .count_blocking("Token count batch", move |repository| {
+                requests
+                    .iter()
+                    .map(|request| repository.count_messages(&model, &request.messages))
+                    .collect()
+            })
+            .await?;
 
         Ok(OpenAiTokenCountBatchResponseDto { token_counts })
     }
@@ -62,28 +50,54 @@ impl TokenizationService {
         &self,
         dto: OpenAiTokenPrefixCountRequestDto,
     ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
+        let model = self.normalize_model(&dto.model).into_owned();
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
+
+        let OpenAiTokenPrefixCountRequestDto {
+            base,
+            suffixes,
+            stop_at,
+            ..
+        } = dto;
+        let token_counts = self
+            .count_blocking("Token prefix count", move |repository| {
+                repository.count_text_prefixes(&model, &base, &suffixes, stop_at)
+            })
             .await?;
 
-        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
-        let model = model.into_owned();
-        let base = dto.base;
-        let suffixes = dto.suffixes;
-        let stop_at = dto.stop_at;
-
-        let token_counts = tokio::task::spawn_blocking(move || {
-            tokenizer_repository
-                .count_text_prefixes(&model, &base, &suffixes, stop_at)
-                .map_err(ApplicationError::from)
-        })
-        .await
-        .map_err(|error| {
-            ApplicationError::InternalError(format!("Token prefix count task failed: {error}"))
-        })??;
-
         Ok(OpenAiTokenCountBatchResponseDto { token_counts })
+    }
+
+    pub async fn count_text_tokens(
+        &self,
+        dto: TextTokenCountRequestDto,
+    ) -> Result<TextTokenCountResponseDto, ApplicationError> {
+        let model = self.normalize_model(&dto.model).into_owned();
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
+
+        let text = dto.text;
+        let count = self
+            .count_blocking("Text token count", move |repository| {
+                repository.count_text(&model, &text)
+            })
+            .await?;
+
+        Ok(TextTokenCountResponseDto { count })
+    }
+
+    /// Counts off the async runtime: long texts take milliseconds.
+    async fn count_blocking<T: Send + 'static>(
+        &self,
+        task: &'static str,
+        count: impl FnOnce(&dyn TokenizerRepository) -> Result<T, DomainError> + Send + 'static,
+    ) -> Result<T, ApplicationError> {
+        let repository = Arc::clone(&self.tokenizer_repository);
+        tokio::task::spawn_blocking(move || count(repository.as_ref()))
+            .await
+            .map_err(|error| {
+                ApplicationError::InternalError(format!("{task} task failed: {error}"))
+            })?
+            .map_err(ApplicationError::from)
     }
 
     pub async fn encode_tokens(
@@ -216,7 +230,6 @@ impl TokenizationService {
 mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
-    use tt_domain::errors::DomainError;
 
     use super::*;
 
@@ -250,6 +263,10 @@ mod tests {
 
         fn count_messages(&self, _model: &str, _messages: &[Value]) -> Result<usize, DomainError> {
             unreachable!("token chunk tests do not count messages")
+        }
+
+        fn count_text(&self, _model: &str, _text: &str) -> Result<usize, DomainError> {
+            unreachable!("token chunk tests do not count text")
         }
     }
 

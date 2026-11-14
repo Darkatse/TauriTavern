@@ -13,6 +13,9 @@ pub trait TokenizerRepository: Send + Sync {
 
     fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError>;
 
+    /// Counts plain text, without message framing.
+    fn count_text(&self, model: &str, text: &str) -> Result<usize, DomainError>;
+
     /// Counts or estimates cumulative text prefixes as content-only messages.
     /// Empty text counts as zero. `stop_at` uses these same caller-visible counts;
     /// after reaching it, remaining entries repeat the terminal count.

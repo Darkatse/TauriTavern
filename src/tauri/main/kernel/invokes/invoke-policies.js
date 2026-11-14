@@ -38,7 +38,7 @@ const PROVIDER_METADATA_TIMEOUT_MS = 35_000;
  * @param {any} args
  * @returns {string}
  */
-function countOpenAiTokensBatchKey(args) {
+function tokenCountKey(args) {
     const dto = args?.dto ?? args ?? {};
     const json = JSON.stringify(dto);
     return fnv1a32(json);
@@ -88,7 +88,14 @@ export function createHostInvokePolicies() {
             maxConcurrent: 1,
             cacheTtlMs: 2_000,
             cacheLimit: 50,
-            key: countOpenAiTokensBatchKey,
+            key: tokenCountKey,
+        },
+        count_text_tokens: {
+            kind: 'dedupe',
+            maxConcurrent: 1,
+            cacheTtlMs: 2_000,
+            cacheLimit: 50,
+            key: tokenCountKey,
         },
         count_openai_token_prefixes: {
             kind: 'dedupe',

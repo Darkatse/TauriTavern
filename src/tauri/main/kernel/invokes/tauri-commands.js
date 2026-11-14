@@ -26,6 +26,7 @@ export {};
  *   | 'cancel_mcp_test_call'
  *   | 'count_openai_token_prefixes'
  *   | 'count_openai_tokens_batch'
+ *   | 'count_text_tokens'
  *   | 'assign_images_to_metadata_folder'
  *   | 'create_character'
  *   | 'create_character_with_avatar'

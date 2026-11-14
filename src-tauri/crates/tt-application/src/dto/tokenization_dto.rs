@@ -36,6 +36,19 @@ pub struct OpenAiTokenPrefixCountRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TextTokenCountRequestDto {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TextTokenCountResponseDto {
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EncodeTokensRequestDto {
     #[serde(default)]
     pub model: String,

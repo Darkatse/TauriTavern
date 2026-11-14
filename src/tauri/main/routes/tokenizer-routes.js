@@ -24,15 +24,39 @@ function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+/** The text of a `{ text }` body, or null when the body has another shape. */
+function textOf(body) {
+    const payload = asObject(body);
+    if (!payload || (payload.text !== undefined && typeof payload.text !== 'string')) {
+        return null;
+    }
+    return payload.text ?? '';
+}
+
 function registerCodecRoutes(router, context, jsonResponse, basePath, resolveModel) {
+    router.post(`${basePath}/count-text`, async ({ body, url }) => {
+        const text = textOf(body);
+        if (text === null) {
+            return jsonResponse({ error: 'Tokenizer count body must contain text as a string' }, 400);
+        }
+
+        const model = resolveModel(url);
+        try {
+            return jsonResponse(await context.safeInvoke('count_text_tokens', { dto: { model, text } }));
+        } catch (error) {
+            console.warn(`Failed to count tokens with '${model}':`, error);
+            return jsonResponse({ error: getErrorMessage(error) }, 500);
+        }
+    });
+
     router.post(`${basePath}/encode`, async ({ body, url }) => {
-        const payload = asObject(body);
-        if (!payload || (payload.text !== undefined && typeof payload.text !== 'string')) {
+        const text = textOf(body);
+        if (text === null) {
             return jsonResponse({ error: 'Tokenizer encode body must contain text as a string' }, 400);
         }
 
         const model = resolveModel(url);
-        const dto = { model, text: payload.text ?? '' };
+        const dto = { model, text };
 
         try {
             return jsonResponse(await context.safeInvoke('encode_tokens', { dto }));

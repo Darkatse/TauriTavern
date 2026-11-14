@@ -532,6 +532,13 @@ impl TokenizerRepository for MiktikTokenizerRepository {
         self.count_openai_messages(canonical, messages)
     }
 
+    fn count_text(&self, model: &str, text: &str) -> Result<usize, DomainError> {
+        let canonical = Self::canonical_model(model);
+        self.registry
+            .count_tokens_canonical(canonical, text)
+            .map_err(|error| Self::map_tokenizer_error("count text", canonical, error))
+    }
+
     fn count_text_prefixes(
         &self,
         model: &str,
