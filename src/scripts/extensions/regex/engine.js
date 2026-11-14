@@ -391,13 +391,27 @@ function isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt,
     return Array.isArray(script.placement) && script.placement.includes(placement);
 }
 
-function getApplicableRegexScripts(placement, { isMarkdown, isPrompt, isEdit, depth } = {}) {
-    if (extension_settings.disabledExtensions.includes('regex') || placement === undefined) {
+/**
+ * The scripts allowed to run: none while the regex extension is disabled.
+ * @returns {RegexScript[]}
+ */
+function getAllowedRegexScripts() {
+    return extension_settings.disabledExtensions.includes('regex') ? [] : getRegexScripts({ allowedOnly: true });
+}
+
+/**
+ * The allowed scripts that apply to a string at the placement.
+ * @param {RegexScript[]} allowedScripts From getAllowedRegexScripts.
+ * @param {regex_placement} placement
+ * @param {RegexParams} params
+ * @returns {RegexScript[]}
+ */
+function getApplicableRegexScripts(allowedScripts, placement, { isMarkdown, isPrompt, isEdit, depth } = {}) {
+    if (placement === undefined) {
         return [];
     }
 
-    return getRegexScripts({ allowedOnly: true })
-        .filter(script => isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt, isEdit, depth }));
+    return allowedScripts.filter(script => isRegexScriptActiveForParams(script, { placement, isMarkdown, isPrompt, isEdit, depth }));
 }
 
 function hasSubstituteParamToken(value) {
@@ -476,15 +490,12 @@ export function getRegexedString(rawString, placement, { characterOverride, isMa
         return '';
     }
 
-    let finalString = rawString;
-    if (extension_settings.disabledExtensions.includes('regex') || !rawString || placement === undefined) {
-        return finalString;
+    if (!rawString) {
+        return rawString;
     }
 
-    const scripts = getApplicableRegexScripts(placement, { isMarkdown, isPrompt, isEdit, depth });
-    finalString = runRegexScripts(scripts, finalString, { characterOverride });
-
-    return finalString;
+    const scripts = getApplicableRegexScripts(getAllowedRegexScripts(), placement, { isMarkdown, isPrompt, isEdit, depth });
+    return runRegexScripts(scripts, rawString, { characterOverride });
 }
 
 /**
@@ -499,6 +510,8 @@ export async function getRegexedStringBatchAsync(items) {
     const workerIndexes = [];
     // Shared across tasks so the structured clone carries each script once.
     const portableScripts = new Map();
+    // The loop below does not yield, so the allowed scripts are the same for every item.
+    const allowedScripts = getAllowedRegexScripts();
 
     for (const [index, item] of items.entries()) {
         const rawString = item?.rawString;
@@ -511,12 +524,12 @@ export async function getRegexedStringBatchAsync(items) {
             continue;
         }
 
-        if (!rawString || extension_settings.disabledExtensions.includes('regex') || placement === undefined) {
+        if (!rawString) {
             results[index] = rawString;
             continue;
         }
 
-        const scripts = getApplicableRegexScripts(placement, params);
+        const scripts = getApplicableRegexScripts(allowedScripts, placement, params);
         if (scripts.length === 0) {
             results[index] = rawString;
             continue;
