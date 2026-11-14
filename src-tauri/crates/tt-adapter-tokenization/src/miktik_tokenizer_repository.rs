@@ -589,12 +589,25 @@ impl TokenizerRepository for MiktikTokenizerRepository {
             .map_err(|error| self.exact_error("decode token ids", &tokenizer, error))
     }
 
-    fn estimate_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
+    fn estimate_messages(
+        &self,
+        model: &str,
+        requests: &[&[Value]],
+    ) -> Result<Vec<usize>, DomainError> {
         let tokenizer = self.estimating(model)?;
         let estimate = |text: &str| tokenizer.estimate_tokens(text);
         Ok(match MessageFraming::of(tokenizer.model()) {
-            Some(framing) => framing.total(messages, estimate),
-            None => estimate(&message_values_text(messages)),
+            Some(framing) => requests
+                .iter()
+                .map(|messages| framing.total(messages, estimate))
+                .collect(),
+            None => {
+                let mut text = String::new();
+                requests
+                    .iter()
+                    .map(|messages| estimate(message_values_text(messages, &mut text)))
+                    .collect()
+            }
         })
     }
 
@@ -704,16 +717,23 @@ fn value_text(value: &Value) -> Cow<'_, str> {
     }
 }
 
-/// The values of every message, as one text.
-fn message_values_text(messages: &[Value]) -> String {
-    let mut values = Vec::new();
+/// The values of every message, as one text written into `text`.
+fn message_values_text<'a>(messages: &[Value], text: &'a mut String) -> &'a str {
+    text.clear();
+    let mut first = true;
+    let mut push = |value: &Value| {
+        if !std::mem::take(&mut first) {
+            text.push_str("\n\n");
+        }
+        text.push_str(&value_text(value));
+    };
     for message in messages {
         match message {
-            Value::Object(map) => values.extend(map.values().map(value_text)),
-            _ => values.push(value_text(message)),
+            Value::Object(map) => map.values().for_each(&mut push),
+            _ => push(message),
         }
     }
-    values.join("\n\n")
+    text
 }
 
 /// The artifact of `model`'s tokenizer, from `source` or, for a built-in encoding, from MikTik.
@@ -877,8 +897,8 @@ mod tests {
 
         let estimates = names.map(|name| {
             repository
-                .estimate_messages(name, &messages)
-                .expect("prepared tokenizer should estimate")
+                .estimate_messages(name, &[&messages])
+                .expect("prepared tokenizer should estimate")[0]
         });
 
         let _ = std::fs::remove_dir_all(cache_dir);
@@ -1015,9 +1035,9 @@ mod tests {
         let messages = [json!({"role": "user", "name": "Alice", "content": "hello"})];
 
         let legacy = repository
-            .estimate_messages("gpt-3.5-turbo-0301", &messages)
-            .unwrap();
-        let modern = repository.estimate_messages("gpt-4", &messages).unwrap();
+            .estimate_messages("gpt-3.5-turbo-0301", &[&messages])
+            .unwrap()[0];
+        let modern = repository.estimate_messages("gpt-4", &[&messages]).unwrap()[0];
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(legacy, modern + 8);
@@ -1065,8 +1085,8 @@ mod tests {
                             return 0;
                         }
                         repository
-                            .estimate_messages(model, &[json!({ "content": content })])
-                            .unwrap()
+                            .estimate_messages(model, &[&[json!({ "content": content })]])
+                            .unwrap()[0]
                     })
                     .collect::<Vec<_>>();
                 let actual = repository

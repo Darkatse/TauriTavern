@@ -8,6 +8,7 @@ use crate::dto::tokenization_dto::{
     OpenAiTokenPrefixCountRequestDto, TextTokenCountRequestDto, TextTokenCountResponseDto,
 };
 use crate::errors::ApplicationError;
+use serde_json::Value;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
@@ -33,10 +34,11 @@ impl TokenizationService {
 
         let token_counts = self
             .blocking("Token count batch", move |repository| {
-                requests
+                let requests: Vec<&[Value]> = requests
                     .iter()
-                    .map(|request| repository.estimate_messages(&model, &request.messages))
-                    .collect()
+                    .map(|request| request.messages.as_slice())
+                    .collect();
+                repository.estimate_messages(&model, &requests)
             })
             .await?;
 
@@ -216,7 +218,6 @@ fn parse_inline_token_ids(text: &str) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use serde_json::Value;
 
     use super::*;
 
@@ -251,8 +252,8 @@ mod tests {
         fn estimate_messages(
             &self,
             _model: &str,
-            _messages: &[Value],
-        ) -> Result<usize, DomainError> {
+            _requests: &[&[Value]],
+        ) -> Result<Vec<usize>, DomainError> {
             unreachable!("token chunk tests do not count messages")
         }
 

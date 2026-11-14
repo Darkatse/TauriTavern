@@ -16,8 +16,13 @@ pub trait TokenizerRepository: Send + Sync {
 
     fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError>;
 
-    /// Estimates OpenAI-style messages, with the tokens that frame each message and the reply.
-    fn estimate_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError>;
+    /// Estimates each request, a list of OpenAI-style messages, with the tokens that frame each
+    /// message and the reply.
+    fn estimate_messages(
+        &self,
+        model: &str,
+        requests: &[&[Value]],
+    ) -> Result<Vec<usize>, DomainError>;
 
     /// Estimates plain text, without message framing.
     fn estimate_text(&self, model: &str, text: &str) -> Result<usize, DomainError>;
