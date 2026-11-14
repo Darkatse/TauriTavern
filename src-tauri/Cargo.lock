@@ -5089,9 +5089,9 @@ dependencies = [
 
 [[package]]
 name = "miktik"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdf5accbde179b2df3bce1af399f2c745e85d4298ebeff829a6062fb29479f34"
+checksum = "af9e13159d14535a8543569b43772bdd1e462e953254379604d206c942264000"
 dependencies = [
  "foldhash 0.2.0",
  "hashbrown 0.17.1",

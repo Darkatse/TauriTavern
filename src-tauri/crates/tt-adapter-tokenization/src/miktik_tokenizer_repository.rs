@@ -17,14 +17,17 @@ use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
-// The bundled sources are the files MikTik's `scripts/fetch-test-assets.sh` pins, gzip-compressed.
+// The bundled sources and their origins are listed in resources/tokenizers/NOTICE.md.
 const CLAUDE_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.gz");
 const DEEPSEEK_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
 const GEMMA3_MODEL_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/gemma3.model.gz");
+const GLM_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/glm.json.gz");
 const KIMI_TIKTOKEN_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/kimi.tiktoken.gz");
 const QWEN2_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/qwen2.json.gz");
+const QWEN3_5_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/qwen3.5.json.gz");
 
-// Downloaded sources are pinned to a commit and checked against their SHA-256.
+// Downloaded sources are checked against their SHA-256, and their URLs name a commit where the host
+// has one.
 macro_rules! sillytavern {
     ($file:literal) => {
         concat!(
@@ -172,6 +175,16 @@ impl MiktikTokenizerRepository {
             "gemma" => bundled("gemma3.model", GEMMA3_MODEL_GZIP),
             "kimi" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_GZIP),
             "qwen2" => bundled("qwen2.json", QWEN2_JSON_GZIP),
+            "qwen3.5" => bundled("qwen3.5.json", QWEN3_5_JSON_GZIP),
+            "glm" => bundled("glm.json", GLM_JSON_GZIP),
+            // Downloaded rather than bundled, so that TauriTavern does not redistribute it under
+            // MiniMax's license. ModelScope is reachable where Hugging Face is not.
+            "minimax" => remote(
+                "minimax.json",
+                "https://modelscope.cn/models/MiniMax/MiniMax-M3/resolve/master/tokenizer.json",
+                ResourceCompression::None,
+                "bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e",
+            ),
             "llama3" => remote(
                 "llama3.json",
                 sillytavern!("llama3.json"),
@@ -889,6 +902,8 @@ mod tests {
             "gemini-2.0-flash",
             "kimi-k3",
             "qwen-plus",
+            "qwen3.6-plus",
+            "glm-5.3",
             "my-local-model",
             "gpt-4o",
         ];
@@ -903,7 +918,7 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert!(estimates.iter().all(|&estimate| estimate > 0));
-        assert_eq!(estimates[5], estimates[6], "unknown names use o200k");
+        assert_eq!(estimates[7], estimates[8], "unknown names use o200k");
     }
 
     #[tokio::test]
