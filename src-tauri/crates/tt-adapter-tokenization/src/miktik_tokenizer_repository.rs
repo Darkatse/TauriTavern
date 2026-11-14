@@ -3,28 +3,51 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use miktik::{
     ARTIFACT_VERSION, Framing, Model, Source, Tokenizer, TokenizerError, TokenizerRegistry,
 };
 use serde_json::Value;
-use tokio::sync::Mutex;
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, OnceCell};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
-const CLAUDE_JSON_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/claude.json.gz");
-const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
-const GEMMA3_MODEL_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/gemma3.model.gz");
+// The bundled sources are the files MikTik's `scripts/fetch-test-assets.sh` pins, gzip-compressed.
+const CLAUDE_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.gz");
+const DEEPSEEK_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
+const GEMMA3_MODEL_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/gemma3.model.gz");
+const KIMI_TIKTOKEN_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/kimi.tiktoken.gz");
+const QWEN2_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/qwen2.json.gz");
 
-/// The tokenizer for names MikTik resolves to no model.
-const UNKNOWN_MODEL_TOKENIZER: &str = "gpt-4o";
+// Downloaded sources are pinned to a commit and checked against their SHA-256.
+macro_rules! sillytavern {
+    ($file:literal) => {
+        concat!(
+            "https://raw.githubusercontent.com/SillyTavern/SillyTavern/7e8663cd9c184a550b37238218bdd32c6efc68e9/src/tokenizers/",
+            $file
+        )
+    };
+}
+macro_rules! sillytavern_tokenizers {
+    ($file:literal) => {
+        concat!(
+            "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/",
+            $file
+        )
+    };
+}
+
+/// Counts names MikTik resolves to no model, and estimates for models whose source cannot be
+/// downloaded.
+const FALLBACK_TOKENIZER: &str = "gpt-4o";
+/// How long estimates use the fallback tokenizer after a source could not be downloaded, before
+/// the next preparation downloads it again.
+const DOWNLOAD_RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
 /// The bytes of segment text whose estimates each tokenizer keeps.
 const SEGMENT_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -38,15 +61,14 @@ enum ResourceCompression {
 enum SourceOrigin {
     /// An OpenAI encoding built into MikTik.
     Builtin,
-    /// Bytes built into TauriTavern.
-    Bundled {
-        bytes: &'static [u8],
-        compression: ResourceCompression,
-    },
+    /// Gzip-compressed bytes built into TauriTavern.
+    Bundled(&'static [u8]),
     /// A file downloaded on first use and kept in the cache directory under the source's name.
+    /// `sha256` is the hash of the file after decompression.
     Remote {
         url: &'static str,
         compression: ResourceCompression,
+        sha256: &'static str,
     },
 }
 
@@ -59,6 +81,29 @@ struct TokenizerSource {
     origin: SourceOrigin,
 }
 
+enum TokenizerState {
+    Ready(Arc<Tokenizer>),
+    /// The source could not be downloaded: until `retry_at`, estimates use the fallback tokenizer
+    /// and exact methods fail with `error`.
+    Unavailable {
+        error: String,
+        retry_at: Instant,
+    },
+}
+
+/// Why a tokenizer could not be prepared.
+enum PrepareError {
+    /// Its source could not be downloaded, or arrived with another SHA-256.
+    Download(DomainError),
+    Other(DomainError),
+}
+
+impl From<DomainError> for PrepareError {
+    fn from(error: DomainError) -> Self {
+        Self::Other(error)
+    }
+}
+
 /// Tokenizers from MikTik, kept as artifacts in the cache directory.
 ///
 /// A model's tokenizer is compiled from its source once, written as an artifact, and loaded from
@@ -67,10 +112,12 @@ struct TokenizerSource {
 pub struct MiktikTokenizerRepository {
     cache_dir: PathBuf,
     http_clients: Arc<HttpClientPool>,
-    /// The prepared tokenizers by model id.
-    tokenizers: RwLock<HashMap<&'static str, Arc<Tokenizer>>>,
-    /// Held while preparing a tokenizer; true once the cache was swept of stale files.
-    preparation: Mutex<bool>,
+    /// Each model's tokenizer by model id, once its preparation finished.
+    states: RwLock<HashMap<&'static str, TokenizerState>>,
+    /// One lock per model id, held while that model's tokenizer is prepared.
+    preparing: HashMap<&'static str, Mutex<()>>,
+    /// Set once stale files were removed from the cache, before the first preparation.
+    swept: OnceCell<()>,
 }
 
 impl MiktikTokenizerRepository {
@@ -78,15 +125,22 @@ impl MiktikTokenizerRepository {
         Self {
             cache_dir,
             http_clients,
-            tokenizers: RwLock::new(HashMap::new()),
-            preparation: Mutex::new(false),
+            states: RwLock::new(HashMap::new()),
+            preparing: Model::all()
+                .iter()
+                .map(|model| (model.id(), Mutex::new(())))
+                .collect(),
+            swept: OnceCell::new(),
         }
     }
 
     fn resolve(name: &str) -> &'static Model {
-        Model::resolve(name)
-            .or_else(|| Model::resolve(UNKNOWN_MODEL_TOKENIZER))
-            .expect("the tokenizer for unknown names is a row of MikTik's model table")
+        Model::resolve(name).unwrap_or_else(Self::fallback)
+    }
+
+    fn fallback() -> &'static Model {
+        Model::resolve(FALLBACK_TOKENIZER)
+            .expect("the fallback tokenizer is a row of MikTik's model table")
     }
 
     fn source(model: &Model) -> Option<TokenizerSource> {
@@ -101,111 +155,82 @@ impl MiktikTokenizerRepository {
     }
 
     fn registered_source(id: &str) -> Option<TokenizerSource> {
+        let bundled = |name, bytes| (name, SourceOrigin::Bundled(bytes));
+        let remote = |name, url, compression, sha256| {
+            (
+                name,
+                SourceOrigin::Remote {
+                    url,
+                    compression,
+                    sha256,
+                },
+            )
+        };
         let (name, origin) = match id {
-            "claude" => (
-                "claude.json",
-                SourceOrigin::Bundled {
-                    bytes: CLAUDE_JSON_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            ),
-            "deepseek" => (
-                "deepseek.json",
-                SourceOrigin::Bundled {
-                    bytes: DEEPSEEK_JSON_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            ),
-            "gemma" => (
-                "gemma3.model",
-                SourceOrigin::Bundled {
-                    bytes: GEMMA3_MODEL_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            ),
-            "kimi" => (
-                "kimi.tiktoken",
-                SourceOrigin::Remote {
-                    url: "https://huggingface.co/moonshotai/Kimi-K2-Instruct/resolve/main/tiktoken.model",
-                    compression: ResourceCompression::None,
-                },
-            ),
-            "llama3" => (
+            "claude" => bundled("claude.json", CLAUDE_JSON_GZIP),
+            "deepseek" => bundled("deepseek.json", DEEPSEEK_JSON_GZIP),
+            "gemma" => bundled("gemma3.model", GEMMA3_MODEL_GZIP),
+            "kimi" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_GZIP),
+            "qwen2" => bundled("qwen2.json", QWEN2_JSON_GZIP),
+            "llama3" => remote(
                 "llama3.json",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama3.json",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("llama3.json"),
+                ResourceCompression::None,
+                "7a413fb6f10a3e285a400d7cc9b8959c32116caf81ba8a60a4ec26b9aca2bd25",
             ),
-            "llama" => (
+            "llama" => remote(
                 "llama.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("llama.model"),
+                ResourceCompression::None,
+                "9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347",
             ),
-            "mistral" => (
+            "mistral" => remote(
                 "mistral.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/mistral.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("mistral.model"),
+                ResourceCompression::None,
+                "dadfd56d766715c61d2ef780a525ab43b8e6da4de6865bda3d95fdef5e134055",
             ),
-            "yi" => (
+            "yi" => remote(
                 "yi.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/yi.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("yi.model"),
+                ResourceCompression::None,
+                "386c49cf943d71aa110361135338c50e38beeff0a66593480421f37b319e1a39",
             ),
-            "jamba" => (
+            "jamba" => remote(
                 "jamba.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/jamba.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("jamba.model"),
+                ResourceCompression::None,
+                "8b0df4fb43262c452ef37061951a06df4c63ca191d02a60ea08f14428af24376",
             ),
-            "nerdstash" => (
+            "nerdstash" => remote(
                 "nerdstash.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("nerdstash.model"),
+                ResourceCompression::None,
+                "578fa0ed4d6dbee435f21d7f7a741506d09cdd93cce241008abf725407cbdb41",
             ),
-            "nerdstash_v2" => (
+            "nerdstash_v2" => remote(
                 "nerdstash_v2.model",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash_v2.model",
-                    compression: ResourceCompression::None,
-                },
+                sillytavern!("nerdstash_v2.model"),
+                ResourceCompression::None,
+                "005ad680b10f1abd406bdb0ca9c6a5d83fc1f6e0a855bdd1942c1ceab1fb47ab",
             ),
-            "command-r" => (
+            "command-r" => remote(
                 "command-r.json",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-r.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
+                sillytavern_tokenizers!("command-r.json.gz"),
+                ResourceCompression::Gzip,
+                "23cf885a64b0f790f8da6ee36a47eef6005c9231287ee1ad22463a34d7b092d2",
             ),
-            "command-a" => (
+            "command-a" => remote(
                 "command-a.json",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-a.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
+                sillytavern_tokenizers!("command-a.json.gz"),
+                ResourceCompression::Gzip,
+                "c6a9a15bf2175a05fcbe58f1242678bba7d2afcef1138a54983bcbd1745e5d12",
             ),
-            "qwen2" => (
-                "qwen2.json",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/qwen2.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
-            ),
-            "nemo" => (
+            "nemo" => remote(
                 "nemo.json",
-                SourceOrigin::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
+                sillytavern_tokenizers!("nemo.json.gz"),
+                ResourceCompression::Gzip,
+                "d27c2739d2d9ad785baa78f62ed23e79984246cb3e29c25d6cb5f43d9d00a6a9",
             ),
             _ => return None,
         };
@@ -219,29 +244,64 @@ impl MiktikTokenizerRepository {
             .join(format!("{}-{}.mtk", model.id(), source.name))
     }
 
-    /// The prepared tokenizer of the model the name resolves to.
-    fn tokenizer(&self, name: &str) -> Result<Arc<Tokenizer>, DomainError> {
-        let id = Self::resolve(name).id();
-        self.read_tokenizers().get(id).cloned().ok_or_else(|| {
-            DomainError::InternalError(format!("The tokenizer for '{id}' is not prepared"))
-        })
-    }
-
-    fn read_tokenizers(&self) -> RwLockReadGuard<'_, HashMap<&'static str, Arc<Tokenizer>>> {
+    fn read_states(&self) -> RwLockReadGuard<'_, HashMap<&'static str, TokenizerState>> {
         // Entries are only inserted or removed whole, so the map is valid after a panic.
-        self.tokenizers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.states.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn write_tokenizers(&self) -> RwLockWriteGuard<'_, HashMap<&'static str, Arc<Tokenizer>>> {
-        self.tokenizers
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn write_states(&self) -> RwLockWriteGuard<'_, HashMap<&'static str, TokenizerState>> {
+        self.states.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether estimates for `model` need no preparation now.
+    fn is_settled(&self, model: &Model) -> bool {
+        let states = self.read_states();
+        match states.get(model.id()) {
+            Some(TokenizerState::Ready(_)) => true,
+            Some(TokenizerState::Unavailable { retry_at, .. }) => {
+                Instant::now() < *retry_at
+                    && matches!(
+                        states.get(Self::fallback().id()),
+                        Some(TokenizerState::Ready(_))
+                    )
+            }
+            None => false,
+        }
+    }
+
+    /// The tokenizer that estimates for the name: the model's own, or the fallback tokenizer while
+    /// the model's source cannot be downloaded.
+    fn estimating(&self, name: &str) -> Result<Arc<Tokenizer>, DomainError> {
+        let model = Self::resolve(name);
+        let states = self.read_states();
+        let id = match states.get(model.id()) {
+            Some(TokenizerState::Unavailable { .. }) => Self::fallback().id(),
+            _ => model.id(),
+        };
+        match states.get(id) {
+            Some(TokenizerState::Ready(tokenizer)) => Ok(Arc::clone(tokenizer)),
+            _ => Err(DomainError::InternalError(format!(
+                "The tokenizer for '{id}' is not prepared"
+            ))),
+        }
+    }
+
+    /// The model's own tokenizer, which exact methods need.
+    fn exact(&self, name: &str) -> Result<Arc<Tokenizer>, DomainError> {
+        let id = Self::resolve(name).id();
+        match self.read_states().get(id) {
+            Some(TokenizerState::Ready(tokenizer)) => Ok(Arc::clone(tokenizer)),
+            Some(TokenizerState::Unavailable { error, .. }) => Err(DomainError::InternalError(
+                format!("The tokenizer for '{id}' is unavailable: {error}"),
+            )),
+            None => Err(DomainError::InternalError(format!(
+                "The tokenizer for '{id}' is not prepared"
+            ))),
+        }
     }
 
     /// Loads the model's artifact, compiling it first when there is none or it does not load.
-    async fn prepare(&self, model: &'static Model) -> Result<Arc<Tokenizer>, DomainError> {
+    async fn prepare(&self, model: &'static Model) -> Result<Arc<Tokenizer>, PrepareError> {
         let id = model.id();
         let source = Self::source(model).ok_or_else(|| {
             DomainError::NotFound(format!("No tokenizer source is known for '{id}'"))
@@ -264,71 +324,87 @@ impl MiktikTokenizerRepository {
                 return Err(DomainError::InternalError(format!(
                     "Failed to read tokenizer artifact '{}': {error}",
                     artifact_path.display()
-                )));
+                ))
+                .into());
             }
         }
 
-        let artifact = self.compile(model, source).await?;
+        let source_bytes = match source.origin {
+            SourceOrigin::Builtin => None,
+            SourceOrigin::Bundled(bytes) => Some(
+                blocking("Tokenizer source", move || {
+                    decompress(bytes, ResourceCompression::Gzip, source.name)
+                })
+                .await??,
+            ),
+            SourceOrigin::Remote {
+                url,
+                compression,
+                sha256,
+            } => Some(
+                self.remote_source(source.name, url, compression, sha256)
+                    .await?,
+            ),
+        };
+        let artifact = blocking("Tokenizer compile", move || {
+            build_artifact(model, source_bytes)
+        })
+        .await??;
         self.write_bytes(&artifact_path, &artifact).await?;
-        blocking("Tokenizer load", move || load(model, artifact))
+        let tokenizer = blocking("Tokenizer load", move || load(model, artifact))
             .await?
-            .map_err(|error| tokenizer_error("load the compiled tokenizer", id, error))
+            .map_err(|error| tokenizer_error("load the compiled tokenizer", id, error))?;
+        Ok(tokenizer)
     }
 
-    /// The artifact of the model's tokenizer, converted from its source.
-    async fn compile(
+    /// A downloaded source: the copy in the cache, or a new download when there is none or its
+    /// SHA-256 differs.
+    async fn remote_source(
         &self,
-        model: &'static Model,
-        source: TokenizerSource,
-    ) -> Result<Vec<u8>, DomainError> {
-        let (url, compression) = match source.origin {
-            SourceOrigin::Builtin => {
-                return blocking("Tokenizer compile", move || build_artifact(model, None)).await?;
-            }
-            SourceOrigin::Bundled { bytes, compression } => {
-                return blocking("Tokenizer compile", move || {
-                    let source_bytes = decompress(bytes, compression, source.name)?;
-                    build_artifact(model, Some(source_bytes))
-                })
-                .await?;
-            }
-            SourceOrigin::Remote { url, compression } => (url, compression),
-        };
-
-        let cached_path = self.cache_dir.join(source.name);
-        match tokio::fs::read(&cached_path).await {
-            Ok(cached) => {
-                match blocking("Tokenizer compile", move || {
-                    build_artifact(model, Some(cached))
-                })
-                .await?
-                {
-                    Ok(artifact) => return Ok(artifact),
-                    Err(error) => {
-                        tracing::warn!(
-                            model = model.id(),
-                            %error,
-                            "Downloading again a tokenizer source that does not convert"
-                        );
-                    }
+        name: &'static str,
+        url: &'static str,
+        compression: ResourceCompression,
+        sha256: &'static str,
+    ) -> Result<Vec<u8>, PrepareError> {
+        let path = self.cache_dir.join(name);
+        let cached_path = path.clone();
+        let cached = blocking("Tokenizer source", move || {
+            match std::fs::read(&cached_path) {
+                Ok(bytes) if sha256_hex(&bytes) == sha256 => Ok(Some(bytes)),
+                Ok(_) => {
+                    tracing::warn!(
+                        path = %cached_path.display(),
+                        "Downloading again a tokenizer source whose SHA-256 changed"
+                    );
+                    Ok(None)
                 }
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(DomainError::InternalError(format!(
                     "Failed to read tokenizer source '{}': {error}",
                     cached_path.display()
-                )));
+                ))),
             }
+        })
+        .await??;
+        if let Some(bytes) = cached {
+            return Ok(bytes);
         }
 
-        let payload = self.download(url).await?;
-        let source_bytes = decompress(&payload, compression, url)?;
-        self.write_bytes(&cached_path, &source_bytes).await?;
-        blocking("Tokenizer compile", move || {
-            build_artifact(model, Some(source_bytes))
+        let payload = self.download(url).await.map_err(PrepareError::Download)?;
+        let bytes = blocking("Tokenizer source", move || {
+            let bytes = decompress(&payload, compression, url)?;
+            let actual = sha256_hex(&bytes);
+            if actual != sha256 {
+                return Err(DomainError::InternalError(format!(
+                    "Tokenizer source '{url}' has SHA-256 {actual}, expected {sha256}"
+                )));
+            }
+            Ok(bytes)
         })
         .await?
+        .map_err(PrepareError::Download)?;
+        self.write_bytes(&path, &bytes).await?;
+        Ok(bytes)
     }
 
     async fn download(&self, url: &str) -> Result<Vec<u8>, DomainError> {
@@ -423,7 +499,7 @@ impl MiktikTokenizerRepository {
     /// Forgets a tokenizer whose artifact holds a definition MikTik cannot read, so that the next
     /// preparation compiles it again.
     fn discard(&self, model: &Model) {
-        self.write_tokenizers().remove(model.id());
+        self.write_states().remove(model.id());
         let Some(source) = Self::source(model) else {
             return;
         };
@@ -458,42 +534,63 @@ impl MiktikTokenizerRepository {
 impl TokenizerRepository for MiktikTokenizerRepository {
     async fn ensure_model_ready(&self, name: &str) -> Result<(), DomainError> {
         let model = Self::resolve(name);
-        if self.read_tokenizers().contains_key(model.id()) {
+        if self.is_settled(model) {
             return Ok(());
         }
 
-        let mut swept = self.preparation.lock().await;
-        if !*swept {
-            if let Err(error) = self.remove_stale_files().await {
-                tracing::warn!(%error, "Tokenizer cache keeps stale files");
+        self.swept
+            .get_or_init(|| async {
+                if let Err(error) = self.remove_stale_files().await {
+                    tracing::warn!(%error, "Tokenizer cache keeps stale files");
+                }
+            })
+            .await;
+        let _preparing = self.preparing[model.id()].lock().await;
+        if self.is_settled(model) {
+            return Ok(());
+        }
+
+        match self.prepare(model).await {
+            Ok(tokenizer) => {
+                self.write_states()
+                    .insert(model.id(), TokenizerState::Ready(tokenizer));
+                Ok(())
             }
-            *swept = true;
+            Err(PrepareError::Download(error)) => {
+                tracing::warn!(
+                    model = model.id(),
+                    %error,
+                    "Estimating with the fallback tokenizer until the tokenizer source downloads"
+                );
+                self.write_states().insert(
+                    model.id(),
+                    TokenizerState::Unavailable {
+                        error: error.to_string(),
+                        retry_at: Instant::now() + DOWNLOAD_RETRY_AFTER,
+                    },
+                );
+                self.ensure_model_ready(FALLBACK_TOKENIZER).await
+            }
+            Err(PrepareError::Other(error)) => Err(error),
         }
-        if self.read_tokenizers().contains_key(model.id()) {
-            return Ok(());
-        }
-
-        let tokenizer = self.prepare(model).await?;
-        self.write_tokenizers().insert(model.id(), tokenizer);
-        Ok(())
     }
 
     fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
-        let tokenizer = self.tokenizer(model)?;
+        let tokenizer = self.exact(model)?;
         tokenizer
             .encode(text)
             .map_err(|error| self.exact_error("encode text", &tokenizer, error))
     }
 
     fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
-        let tokenizer = self.tokenizer(model)?;
+        let tokenizer = self.exact(model)?;
         tokenizer
             .decode(token_ids)
             .map_err(|error| self.exact_error("decode token ids", &tokenizer, error))
     }
 
     fn estimate_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
-        let tokenizer = self.tokenizer(model)?;
+        let tokenizer = self.estimating(model)?;
         let estimate = |text: &str| tokenizer.estimate_tokens(text);
         Ok(match MessageFraming::of(tokenizer.model()) {
             Some(framing) => framing.total(messages, estimate),
@@ -502,7 +599,7 @@ impl TokenizerRepository for MiktikTokenizerRepository {
     }
 
     fn estimate_text(&self, model: &str, text: &str) -> Result<usize, DomainError> {
-        Ok(self.tokenizer(model)?.estimate_tokens(text))
+        Ok(self.estimating(model)?.estimate_tokens(text))
     }
 
     fn estimate_text_prefixes(
@@ -512,7 +609,7 @@ impl TokenizerRepository for MiktikTokenizerRepository {
         suffixes: &[String],
         stop_at: Option<usize>,
     ) -> Result<Vec<usize>, DomainError> {
-        let tokenizer = self.tokenizer(model)?;
+        let tokenizer = self.estimating(model)?;
         let framing_tokens =
             MessageFraming::of(tokenizer.model()).map_or(0, |framing| framing.content_message());
 
@@ -684,6 +781,13 @@ fn remove_unused(dir: &Path, used: &HashSet<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Runs CPU-bound work off the async runtime.
 async fn blocking<T: Send + 'static>(
     task: &'static str,
@@ -763,7 +867,9 @@ mod tests {
             "claude-3-7-sonnet",
             "deepseek-chat",
             "gemini-2.0-flash",
-            "glm-5",
+            "kimi-k3",
+            "qwen-plus",
+            "my-local-model",
             "gpt-4o",
         ];
         let repository = prepared(&cache_dir, &names).await;
@@ -777,7 +883,7 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(cache_dir);
         assert!(estimates.iter().all(|&estimate| estimate > 0));
-        assert_eq!(estimates[3], estimates[4], "unknown names use o200k");
+        assert_eq!(estimates[5], estimates[6], "unknown names use o200k");
     }
 
     #[tokio::test]
@@ -847,6 +953,7 @@ mod tests {
                 .join("claude-claude.json.mtk"),
             artifact_dir.join("gemma-gemma.model.mtk"),
             cache_dir.join("gemma.model"),
+            cache_dir.join("kimi.tiktoken"),
             cache_dir.join(".claude.json.1.2.tmp"),
         ];
         for path in &stale {
@@ -875,6 +982,30 @@ mod tests {
         );
         assert_eq!(kept, ["claude-claude.json.mtk", "gpt-4o-o200k_base.mtk"]);
         assert_eq!(stale_left, 0);
+    }
+
+    #[tokio::test]
+    async fn sources_that_cannot_download_estimate_with_the_fallback_until_they_do() {
+        let cache_dir = unique_temp_cache_dir();
+        let http_clients = Arc::new(HttpClientPool::new(TEST_USER_AGENT));
+        http_clients.block_requests_for_invalid_proxy();
+        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), http_clients);
+        let text = "A source that cannot download.\n下载不了的源。";
+
+        repository
+            .ensure_model_ready("llama3")
+            .await
+            .expect("an undownloadable source should not fail estimates");
+        let estimate = repository.estimate_text("llama3", text).unwrap();
+        let fallback = repository.estimate_text("gpt-4o", text).unwrap();
+        let exact = repository.encode("llama3", text);
+
+        let _ = std::fs::remove_dir_all(cache_dir);
+        assert_eq!(estimate, fallback);
+        assert!(
+            exact.is_err(),
+            "exact methods need the model's own tokenizer"
+        );
     }
 
     #[tokio::test]
