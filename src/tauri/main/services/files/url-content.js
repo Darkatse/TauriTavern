@@ -32,14 +32,15 @@ export function expectCharacter(content) {
 
 /**
  * Returns the bytes whole, not streamed: a caller's `blob()` on a streamed body pages to disk in Chromium.
- * @param {Pick<TauriMainContext, 'adoptStagedFile' | 'createReadableFileStream'>} files
+ * @param {Pick<TauriMainContext, 'safeInvoke' | 'adoptStagedFile' | 'createByteStream'>} host
  * @param {StagedUrlContent} content
  * @returns {Promise<{ bytes: ArrayBuffer; type: string }>}
  */
-export async function takeUrlContent({ adoptStagedFile, createReadableFileStream }, { path }) {
+export async function takeUrlContent({ safeInvoke, adoptStagedFile, createByteStream }, { path }) {
     const staged = adoptStagedFile(path);
     try {
-        const bytes = await streamResponse(await createReadableFileStream(path)).arrayBuffer();
+        const rid = await safeInvoke('open_staged_file', { path });
+        const bytes = await streamResponse(createByteStream(rid)).arrayBuffer();
         const format = /** @type {'png' | 'json'} */ (path.slice(path.lastIndexOf('.') + 1));
         return { bytes, type: CONTENT_TYPES[format] };
     } finally {

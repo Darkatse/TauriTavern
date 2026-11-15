@@ -174,7 +174,7 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 - `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport。
 - `src/scripts/tauri/chat/jsonl.js`：同步 JSON 记录快照、字节分帧与 JSONL 读取。
 - `src/scripts/tauri/chat/commit.js`：快照捕获时机、IPC 会话、ACK 校验与提交错误分类。
-- `src/tauri/main/services/files/readable-file-stream-service.js`：宿主字节资源的 pull stream。
+- `src/tauri/main/services/files/byte-stream-service.js`：宿主字节资源的 pull stream。
 - `src/tauri/main/api/chat.js`：扩展历史分页 API 与 `windowInfo()`。
 
 Rust：

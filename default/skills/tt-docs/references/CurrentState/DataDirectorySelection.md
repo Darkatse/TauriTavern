@@ -39,7 +39,6 @@
 
 - `src-tauri/crates/tauritavern/src/lib.rs` 在 `setup` 早期调用 `resolve_runtime_paths(...)`
 - `RuntimePaths` 一旦确定，就被作为 managed state 注入并用于：
-  - plugin-fs runtime scope
   - Host Resource Service 的用户资源与第三方扩展目录
   - 数据归档目录
   - 后端初始化

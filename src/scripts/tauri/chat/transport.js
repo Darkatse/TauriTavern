@@ -4,12 +4,12 @@ import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../../../tauri/main/services/files/byte-stream-service.js';
 import { commitChatMetadata, commitChatPayload } from './commit.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 import { loadColdChatPayload } from './cold-swipes.js';
 
-const { createByteStream } = createReadableFileStreamService({ invoke });
+const { createByteStream } = createByteStreamService({ invoke });
 
 export const CHAT_COMMIT_REASON = Object.freeze({
     MUTATION: 'mutation',

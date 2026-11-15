@@ -30,10 +30,13 @@ test('both content import routes return the host-staged content as SillyTavern d
         registerContentRoutes(router, {
             safeInvoke: async (command, args) => {
                 calls.push({ command, args });
-                return staged;
+                return command === 'open_staged_file' ? 9 : staged;
             },
             adoptStagedFile: filePath => ({ filePath, cleanup: async () => { discarded.push(filePath); } }),
-            createReadableFileStream: async () => new Blob([body]).stream(),
+            createByteStream: rid => {
+                assert.equal(rid, 9);
+                return new Blob([body]).stream();
+            },
         });
 
         const response = await router.handle({
@@ -48,10 +51,10 @@ test('both content import routes return the host-staged content as SillyTavern d
         assert.equal(response.headers.get('Content-Disposition'), disposition, path);
         assert.equal(response.headers.get('X-Custom-Content-Type'), staged.kind, path);
         assert.equal(await response.text(), body, path);
-        assert.deepEqual(calls, [{
-            command: 'stage_content_from_url',
-            args: { url, locale: getSillyTavernLocale() },
-        }], path);
+        assert.deepEqual(calls, [
+            { command: 'stage_content_from_url', args: { url, locale: getSillyTavernLocale() } },
+            { command: 'open_staged_file', args: { path: staged.path } },
+        ], path);
         assert.deepEqual(discarded, [staged.path], path);
     }
 });

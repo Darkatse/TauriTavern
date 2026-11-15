@@ -4,7 +4,7 @@
 
 `custom_url`、`reverse_proxy` 与 CORS 代理 `/proxy/<URL>` 是必要的 SillyTavern 兼容能力，也是 WebView 中第三方扩展能够控制的网络出口。TauriTavern 对每个用户配置端点要求一次 Rust 原生 dialog 授权；公网、局域网、loopback、LAN hostname 与代理软件 Fake IP 使用同一规则。内置 provider 端点不需要授权。
 
-本机制不识别扩展身份。扩展可以触发 dialog，但不能替用户确认；用户授权后，同一 WebView 内的代码都能使用该端点。更细的 WebView/native capability 边界另行设计。
+本机制不识别扩展身份。扩展可以触发 dialog，但不能替用户确认；用户授权后，同一 WebView 内的代码都能使用该端点。WebView 的原生能力边界见 [FrontendGuide §2.2](../FrontendGuide.md#22-原生能力)。
 
 ## 授权与传输
 

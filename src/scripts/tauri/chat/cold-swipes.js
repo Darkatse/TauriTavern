@@ -1,8 +1,8 @@
 import { invoke } from '../../../tauri-bridge.js';
-import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../../../tauri/main/services/files/byte-stream-service.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 
-const { createByteStream } = createReadableFileStreamService({ invoke });
+const { createByteStream } = createByteStreamService({ invoke });
 const pendingSources = new WeakMap();
 let currentSource;
 let enabled = false;

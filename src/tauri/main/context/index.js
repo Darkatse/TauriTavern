@@ -5,7 +5,7 @@ import { createCharacterService } from '../services/characters/character-service
 import { createCharacterFormService } from '../services/characters/character-form-service.js';
 import { createCharacterCreateService } from '../services/characters/character-create-service.js';
 import { createUploadService } from '../services/uploads/upload-service.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
 import { installLifecycleFlushHandlers, registerLifecycleFlushHandler } from '../services/lifecycle/lifecycle-flush-service.js';
 import { createHostInvokePolicies } from '../kernel/invokes/invoke-policies.js';
 import { installAssetPathHelpers } from './asset-path-helpers.js';
@@ -39,7 +39,7 @@ export function createTauriMainContext({ invoke }) {
         safeInvoke: invokeService.safeInvoke,
         invoke,
     });
-    const readableFileStreamService = createReadableFileStreamService({ invoke });
+    const byteStreamService = createByteStreamService({ invoke });
     const characterCreateService = createCharacterCreateService({
         safeInvoke: invokeService.safeInvoke,
         materializeUploadFile: uploadService.materializeUploadFile,
@@ -91,7 +91,7 @@ export function createTauriMainContext({ invoke }) {
         uploadAvatarFromForm: characterFormService.uploadAvatarFromForm,
         materializeUploadFile: uploadService.materializeUploadFile,
         adoptStagedFile: uploadService.adoptStagedFile,
-        createChatBackupDownloadStream: readableFileStreamService.createChatBackupDownloadStream,
-        createReadableFileStream: readableFileStreamService.createReadableFileStream,
+        createChatBackupDownloadStream: byteStreamService.createChatBackupDownloadStream,
+        createByteStream: byteStreamService.createByteStream,
     };
 }

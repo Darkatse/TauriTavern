@@ -4,7 +4,7 @@ import { decodeBase64ToBytes, encodeBytesToBase64 } from '../binary-utils.js';
 import { streamResponse } from '../http-utils.js';
 import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 import { commitBytes } from '../services/files/byte-commit.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
 
 /** @param {unknown} value @param {string} label */
 function requireNonEmptyString(value, label) {
@@ -56,7 +56,7 @@ async function readJson(stream) {
 
 /** @param {{ safeInvoke: Function; invokeTransport: Function }} deps */
 function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
-    const { createByteStream } = createReadableFileStreamService({ invoke: invokeTransport });
+    const { createByteStream } = createByteStreamService({ invoke: invokeTransport });
 
     async function openEntry(entry, kind) {
         const opened = await invokeTransport('open_extension_store_entry', { ...entry, kind });

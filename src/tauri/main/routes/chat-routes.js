@@ -9,13 +9,13 @@ import { resolveRouteCharacterId } from './character-route-utils.js';
 import { registerChatImportRoutes } from './chat-import-routes.js';
 import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
 import { streamResponse } from '../http-utils.js';
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
     registerChatImportRoutes(router, context, { jsonResponse });
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
-    const { createByteStream } = createReadableFileStreamService({
+    const { createByteStream } = createByteStreamService({
         invoke: (...args) => context.invokeTransport(...args),
     });
 

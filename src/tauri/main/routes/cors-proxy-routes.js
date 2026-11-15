@@ -1,7 +1,7 @@
 import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { streamResponse, textResponse, toRequest } from '../http-utils.js';
 import { encodeIpcByteBody } from '../services/files/ipc-byte-body.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
 
 const REQUEST_HEADER = 'cors-proxy-request';
 
@@ -10,7 +10,7 @@ const REQUEST_HEADER = 'cors-proxy-request';
  * Both `'/proxy/' + url` and `'/proxy/' + encodeURIComponent(url)` name the same target.
  */
 export function registerCorsProxyRoutes(router, context) {
-    const { createByteStream } = createReadableFileStreamService({
+    const { createByteStream } = createByteStreamService({
         invoke: (...args) => context.invokeTransport(...args),
     });
 

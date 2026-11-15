@@ -10,12 +10,10 @@ use std::sync::Arc;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
 use tauri::Manager;
-use tauri_plugin_fs::FsExt;
 use tt_adapter_media::{FilesystemHostResourceStore, FilesystemUserMediaStore};
 use tt_application::services::bundled_template_service::BundledTemplateService;
 use tt_application::services::host_resource_service::HostResourceService;
 use tt_application::services::user_media_service::UserMediaService;
-use tt_domain::errors::DomainError;
 use tt_domain::models::settings::TauriTavernSettings;
 
 pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri::AppHandle) {
@@ -27,20 +25,8 @@ pub(super) fn install_bundled_templates(app: &mut tauri::App, app_handle: &tauri
 
 pub(super) fn install_runtime_resources(
     app: &mut tauri::App,
-    app_handle: &tauri::AppHandle,
     runtime_paths: &RuntimePaths,
-) -> Result<Arc<HostResourceService>, DomainError> {
-    // Static scopes cannot cover portable or migrated data roots.
-    app_handle
-        .fs_scope()
-        .allow_directory(&runtime_paths.data_root, true)
-        .map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to extend filesystem scope for data root {}: {error}",
-                runtime_paths.data_root.display()
-            ))
-        })?;
-
+) -> Arc<HostResourceService> {
     // HostResourceService must be managed before the main window is created:
     // both production web resource interception and dev `tt-ext` serving read
     // the same state. Backend initialization applies the persisted settings;
@@ -65,5 +51,5 @@ pub(super) fn install_runtime_resources(
     ));
     app.manage(Arc::new(UserMediaService::new(user_media_store)));
 
-    Ok(host_resource_service)
+    host_resource_service
 }

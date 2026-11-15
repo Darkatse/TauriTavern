@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, ResourceId, State, Webview, WebviewWindow};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use super::byte_reader_commands::ByteResource;
 use crate::app::AppState;
-use crate::infrastructure::staging::{create_staged_file, discard, validate_staged_path};
+use crate::infrastructure::staging::{self, create_staged_file, discard, validate_staged_path};
 use crate::platform::ipc::{SMALL_ASSET_UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_BYTES};
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -19,6 +20,7 @@ use tt_application::services::external_import_service::ContentKind;
 const DEFAULT_KIND: &str = "generic";
 const HEADER_FILE_PATH: &str = "file-path";
 const HEADER_OFFSET: &str = "offset";
+const READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct StageFileBeginDto {
@@ -233,6 +235,18 @@ async fn stage_content(
         tracing::warn!(%cleanup_error, "Failed to discard incomplete content download");
     }
     result
+}
+
+#[tauri::command]
+pub async fn open_staged_file(
+    app: AppHandle,
+    webview: Webview,
+    path: String,
+) -> Result<ResourceId, CommandError> {
+    let reader = staging::open_staged_file(&app, &path).await?;
+    Ok(webview
+        .resources_table()
+        .add(ByteResource::new(reader, READ_CHUNK_BYTES)))
 }
 
 #[tauri::command]

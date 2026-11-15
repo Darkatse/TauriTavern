@@ -56,6 +56,8 @@
 
 TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中”。应用模块只通过 `tauri-bridge.js` 使用原生能力，能力缺失时由 bridge 在调用处报错。可选插件由对应 service 判断是否可用，例如扫码的 `canScanQrCode()`。唯一例外是 Rust 在 document-start 注入的 Android 语音脚本，见[系统 TTS](CurrentState/TTS.md#接入位置)。`__TAURI_RUNNING__` 只是对外标记，内部不读取。`check:frontend` 检查这条边界。
 
+页面里的代码，包括第三方扩展和同源 iframe 中的卡片脚本，共用同一组原生能力，宿主不区分调用者。因此页面不持有文件系统能力：capability 不授予 `fs:*` 与 `dialog:*`，也不启用 asset 协议。宿主文件只以命令交出的字节资源到达页面，交出什么由命令决定，页面经 `read_bytes` 读取（`services/files/byte-stream-service.js`）。页面交给宿主的文件路径只能是暂存路径，选取面板由宿主打开，见[文件传输](CurrentState/FileTransfer.md#3-暂存)。
+
 ## 3. 目录结构（前端集成相关）
 
 ```text

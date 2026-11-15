@@ -70,6 +70,6 @@ export {};
  *   materializeUploadFile: MaterializeUploadFileFn;
  *   adoptStagedFile: AdoptStagedFileFn;
  *   createChatBackupDownloadStream: (name: string) => Promise<ReadableStream<Uint8Array>>;
- *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
+ *   createByteStream: (rid: number) => ReadableStream<Uint8Array>;
  * }} TauriMainContext
  */

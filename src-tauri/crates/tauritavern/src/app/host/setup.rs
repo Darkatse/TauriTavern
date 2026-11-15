@@ -60,8 +60,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
 
     // 4. Resource state must be managed before the first webview can request
     // browser-visible assets.
-    let host_resource_service =
-        super::resources::install_runtime_resources(app, &app_handle, &runtime_paths)?;
+    let host_resource_service = super::resources::install_runtime_resources(app, &runtime_paths);
     let _main_window = super::window::create_main_window(app, host_resource_service)?;
 
     #[cfg(all(desktop, not(windows)))]

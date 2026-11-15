@@ -8,9 +8,12 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tt_domain::errors::DomainError;
+use tt_ports::byte_reader::ByteReader;
 
 const STAGING_ROOT_NAME: &str = "tauritavern-staging";
 const PAGE_AREA: &str = "page";
@@ -133,6 +136,32 @@ async fn resolve_in_area(area: &Path, requested: &str) -> Result<PathBuf, Domain
         ));
     }
     Ok(requested)
+}
+
+/// Opens a file the page names for the page to read.
+pub async fn open_staged_file(
+    app: &AppHandle,
+    file_path: &str,
+) -> Result<Box<dyn ByteReader>, DomainError> {
+    let path = validate_staged_path(app, file_path).await?;
+    let file = fs::File::open(&path).await.map_err(|error| {
+        DomainError::file_io("Open staged file", path.display().to_string(), error)
+    })?;
+    Ok(Box::new(StagedFileReader { file, path }))
+}
+
+struct StagedFileReader {
+    file: fs::File,
+    path: PathBuf,
+}
+
+#[async_trait]
+impl ByteReader for StagedFileReader {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
+        self.file.read(buffer).await.map_err(|error| {
+            DomainError::file_io("Read staged file", self.path.display().to_string(), error)
+        })
+    }
 }
 
 /// Removes a staged file or directory; one already gone counts as removed.
