@@ -36,7 +36,7 @@ Delivery       当前 Tauri/Wry/IPC 入口能承载的响应形式
 - MIME、长度、mtime、opaque source revision；
 - 持有已打开 handle 的一次性 body reader。
 
-这样 local/global extension 与 original/generated thumbnail 不会在 metadata 和 body read 之间重新选择。HEAD 或 304 直接丢弃 body reader，不读取正文；原子替换路径后，已打开 handle 仍对应此前生成的 metadata。正文读取以 open 时长度为硬上界，并在读取后复核 handle 的长度与 mtime；共享数据目录中的外部原地写入或 Android replace fallback 若与读取并发，会 fail-fast，而不会组合旧 validator 与新正文。
+这样 local/global extension 与 original/generated thumbnail 不会在 metadata 和 body read 之间重新选择。HEAD 或 304 直接丢弃 body reader，不读取正文；原子替换路径后，已打开 handle 仍对应此前生成的 metadata。正文以 open 时的长度为上界，交出最后一段字节前复核 handle 的长度与 mtime，整段读取与流式交付（§6）都是如此；共享数据目录中的外部原地写入或 Android replace fallback 若与读取并发，会 fail-fast，而不会组合旧 validator 与新正文。
 
 HTTP request/response 直接使用 `http` crate 类型。旧的字符串 status/header DTO 已删除；Tauri presentation 只负责 origin gate、delivery capability 和 response header 合并。
 
@@ -131,7 +131,9 @@ Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。
 
 不得用 204、空 200 或 Wry patch 模拟 Android 304。
 
-Android background video 的现有二次 Range workaround 保持：非零 Range 返回 206 和对应 range headers，但提供完整文件 stream，让 WebView 自己应用 Range。
+Wry 会把 Android 响应的正文整段复制进容量有限的 Java 堆，因此 Android 上的 Wry 交付以流传送正文：service 交出正文流（`HostResourceResponseBody::Stream`），presentation 把流的编号与长度写入 `x-tauritavern-body-stream`，`HostResourceBodyStream.kt` 经 JNI 按块读取，正文对象关闭或被回收时释放该流。IPC、其他平台、错误响应和 `ttCompat=layer` 的正文都在内存中交付。
+
+Android 背景视频的非零起点 Range 见 [MediaAssetContract §4](MediaAssetContract.md#4-android-背景视频的-range)。
 
 Wry 的 Android custom-protocol 响应默认使用 `Cache-Control: no-store`。本地 `RustWebViewClient` 只在响应没有任何大小写形式的 `Cache-Control` 时应用该默认值，因此 transport 不会覆盖 Host Resource 的 `private, no-cache`，错误响应仍保持 `no-store`。
 

@@ -1,3 +1,4 @@
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
@@ -5,9 +6,11 @@ use std::time::{Duration, UNIX_EPOCH};
 use http::{Method, Request};
 use tt_contracts::range::ByteRange;
 use tt_ports::host_resource::{
-    HostResourceBody, HostResourceSourceMetadata, HostResourceSourceRevision,
-    HostResourceStoreError, OpenedHostResource,
+    HostResourceBody, HostResourceBodyReader, HostResourceSourceMetadata,
+    HostResourceSourceRevision, HostResourceStoreError, OpenedHostResource,
 };
+
+use super::{HostResourceResponse, HostResourceResponseBody};
 
 struct BytesBody {
     bytes: Vec<u8>,
@@ -15,12 +18,24 @@ struct BytesBody {
 }
 
 impl HostResourceBody for BytesBody {
-    fn read(self: Box<Self>, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError> {
+    fn into_reader(
+        self: Box<Self>,
+        range: Option<ByteRange>,
+    ) -> Result<Box<dyn HostResourceBodyReader>, HostResourceStoreError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        Ok(match range {
+        let bytes = match range {
             Some(range) => self.bytes[range.start() as usize..=range.end() as usize].to_vec(),
             None => self.bytes,
-        })
+        };
+        Ok(Box::new(BytesReader(Cursor::new(bytes))))
+    }
+}
+
+struct BytesReader(Cursor<Vec<u8>>);
+
+impl HostResourceBodyReader for BytesReader {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, HostResourceStoreError> {
+        Ok(self.0.read(buffer).expect("in-memory read"))
     }
 }
 
@@ -49,4 +64,11 @@ pub(super) fn request(method: Method, uri: &str) -> Request<Vec<u8>> {
         .uri(uri)
         .body(Vec::new())
         .expect("request")
+}
+
+pub(super) fn body_bytes(response: &HostResourceResponse) -> &[u8] {
+    match response.body() {
+        HostResourceResponseBody::Bytes(bytes) => bytes,
+        HostResourceResponseBody::Stream(_) => panic!("the body was streamed"),
+    }
 }

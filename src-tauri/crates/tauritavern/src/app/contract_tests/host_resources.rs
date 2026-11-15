@@ -12,11 +12,19 @@ use tt_adapter_media::FilesystemHostResourceStore;
 
 use super::temp_root;
 use tt_application::services::host_resource_service::{
-    HostResourceDeliveryCapabilities, HostResourceService,
+    HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody,
+    HostResourceService,
 };
 
 const DELIVERY: HostResourceDeliveryCapabilities =
     HostResourceDeliveryCapabilities::new(true, false);
+
+fn body_bytes(response: &HostResourceResponse) -> &[u8] {
+    match response.body() {
+        HostResourceResponseBody::Bytes(bytes) => bytes,
+        HostResourceResponseBody::Stream(_) => panic!("the body was streamed"),
+    }
+}
 
 #[tokio::test]
 async fn filesystem_host_resources_serve_background_video_range() {
@@ -45,7 +53,7 @@ async fn filesystem_host_resources_serve_background_video_range() {
         .expect("serve background range");
 
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-    assert_eq!(response.body(), b"bc");
+    assert_eq!(body_bytes(&response), b"bc");
     assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
     assert_eq!(response.headers()[CONTENT_LENGTH], "2");
     assert_eq!(response.headers()[ACCEPT_RANGES], "bytes");
@@ -93,7 +101,7 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
         .expect("serve thumbnail");
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.body(), b"gif");
+    assert_eq!(body_bytes(&response), b"gif");
     assert_eq!(response.headers()[CONTENT_TYPE], "image/gif");
 }
 
@@ -127,7 +135,7 @@ async fn filesystem_host_resources_generate_required_static_animated_preview() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CONTENT_TYPE], "image/jpeg");
-    assert!(response.body().starts_with(&[0xff, 0xd8]));
+    assert!(body_bytes(&response).starts_with(&[0xff, 0xd8]));
     assert_eq!(response.headers()[CACHE_CONTROL], "private, no-cache");
     assert!(response.headers().contains_key(ETAG));
 }

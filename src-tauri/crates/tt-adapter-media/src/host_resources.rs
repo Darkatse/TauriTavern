@@ -14,7 +14,7 @@ use tt_contracts::range::ByteRange;
 use tt_domain::errors::DomainError;
 use tt_domain::models::user_directory::UserDirectory;
 use tt_ports::host_resource::{
-    HostResourceAssetStore, HostResourceBody, HostResourceSourceMetadata,
+    HostResourceAssetStore, HostResourceBody, HostResourceBodyReader, HostResourceSourceMetadata,
     HostResourceSourceRequest, HostResourceSourceRevision, HostResourceStoreError,
     OpenedHostResource, ThumbnailAssetRequest, ThumbnailKind, ThumbnailSelection, UserCssStore,
 };
@@ -97,32 +97,56 @@ impl FileHostResourceBody {
 }
 
 impl HostResourceBody for FileHostResourceBody {
-    fn read(
+    fn into_reader(
         mut self: Box<Self>,
         range: Option<ByteRange>,
-    ) -> Result<Vec<u8>, HostResourceStoreError> {
-        let Some(range) = range else {
-            let mut bytes = Vec::new();
-            (&mut self.file)
-                .take(self.content_length.saturating_add(1))
-                .read_to_end(&mut bytes)
-                .map_err(|error| io_error(&self.path, error, "read"))?;
-            self.ensure_source_unchanged()?;
-            return Ok(bytes);
-        };
-
-        let range_len = usize::try_from(range.byte_len())
-            .map_err(|_| HostResourceStoreError::internal("Range is too large to serve"))?;
+    ) -> Result<Box<dyn HostResourceBodyReader>, HostResourceStoreError> {
+        let (start, remaining) = range.map_or((0, self.content_length), |range| {
+            (range.start(), range.byte_len())
+        });
         self.file
-            .seek(std::io::SeekFrom::Start(range.start()))
+            .seek(std::io::SeekFrom::Start(start))
             .map_err(|error| io_error(&self.path, error, "seek"))?;
+        if remaining == 0 {
+            self.ensure_source_unchanged()?;
+        }
+        Ok(Box::new(FileHostResourceReader {
+            body: *self,
+            remaining,
+        }))
+    }
+}
 
-        let mut bytes = vec![0u8; range_len];
-        self.file
-            .read_exact(&mut bytes)
-            .map_err(|error| io_error(&self.path, error, "read range"))?;
-        self.ensure_source_unchanged()?;
-        Ok(bytes)
+struct FileHostResourceReader {
+    body: FileHostResourceBody,
+    remaining: u64,
+}
+
+impl HostResourceBodyReader for FileHostResourceReader {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, HostResourceStoreError> {
+        if self.remaining == 0 || buffer.is_empty() {
+            return Ok(0);
+        }
+        let limit = (buffer.len() as u64).min(self.remaining) as usize;
+        let count = loop {
+            match self.body.file.read(&mut buffer[..limit]) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                result => {
+                    break result.map_err(|error| io_error(&self.body.path, error, "read"))?;
+                }
+            }
+        };
+        if count == 0 {
+            return Err(HostResourceStoreError::internal(format!(
+                "Host resource changed while being read: {}",
+                self.body.path.display()
+            )));
+        }
+        self.remaining -= count as u64;
+        if self.remaining == 0 {
+            self.body.ensure_source_unchanged()?;
+        }
+        Ok(count)
     }
 }
 
@@ -717,8 +741,9 @@ mod tests {
             .write_all(b"new content that must not be read")
             .expect("grow file");
 
-        let error = Box::new(body)
-            .read(None)
+        let mut reader = Box::new(body).into_reader(None).expect("reader");
+        let error = reader
+            .read(&mut [0; 64])
             .expect_err("in-place growth must fail");
 
         assert!(matches!(error, HostResourceStoreError::Internal(_)));

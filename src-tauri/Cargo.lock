@@ -8630,6 +8630,7 @@ dependencies = [
  "dunce",
  "filetime",
  "image",
+ "jni 0.21.1",
  "libc",
  "mime_guess",
  "objc2",

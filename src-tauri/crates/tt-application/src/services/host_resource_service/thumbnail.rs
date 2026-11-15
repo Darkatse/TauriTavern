@@ -83,12 +83,12 @@ pub(super) fn serve_thumbnail(
         RetrievalDecision::Full | RetrievalDecision::Continue => {}
     }
 
-    let bytes = match opened.read(None) {
-        Ok(bytes) => bytes,
+    let body = match response::body(opened, None, delivery) {
+        Ok(body) => body,
         Err(error) => return response::store_error(error, "Not Found"),
     };
     tracing::debug!("Thumbnail hit: type={} file={}", thumbnail_type, file);
-    response::ok(&metadata, bytes)
+    response::ok(&metadata, body)
 }
 
 fn parse_thumbnail_kind(value: &str) -> Option<ThumbnailKind> {

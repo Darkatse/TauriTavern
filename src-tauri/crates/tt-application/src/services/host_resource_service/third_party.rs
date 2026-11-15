@@ -1,6 +1,6 @@
 use super::css_compat::{contains_layer_keyword, flatten_css_layers};
 use super::response::{self, RepresentationMetadata, RetrievalDecision};
-use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
+use super::{HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody};
 use crate::client_asset_paths::{ThirdPartyPathError, parse_third_party_asset_request_path};
 use http::{Method, Request, StatusCode};
 use tt_ports::host_resource::{
@@ -79,12 +79,19 @@ pub(super) fn serve_third_party_asset(
         RetrievalDecision::Full | RetrievalDecision::Continue => {}
     }
 
-    let bytes = match opened.read(None) {
-        Ok(bytes) if should_apply_layer_compat && contains_layer_keyword(&bytes) => {
-            flatten_css_layers(&bytes)
+    let body = if should_apply_layer_compat {
+        match opened.read(None) {
+            Ok(bytes) if contains_layer_keyword(&bytes) => {
+                HostResourceResponseBody::Bytes(flatten_css_layers(&bytes))
+            }
+            Ok(bytes) => HostResourceResponseBody::Bytes(bytes),
+            Err(error) => return store_error_response(error),
         }
-        Ok(bytes) => bytes,
-        Err(error) => return store_error_response(error),
+    } else {
+        match response::body(opened, None, delivery) {
+            Ok(body) => body,
+            Err(error) => return store_error_response(error),
+        }
     };
 
     tracing::debug!(
@@ -92,7 +99,7 @@ pub(super) fn serve_third_party_asset(
         parsed.extension_folder,
         parsed.relative_path_display
     );
-    response::ok(&metadata, bytes)
+    response::ok(&metadata, body)
 }
 
 fn should_apply_third_party_layer_compat(request: &Request<Vec<u8>>) -> bool {
@@ -220,7 +227,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(
-            !String::from_utf8(response.into_body())
+            !std::str::from_utf8(test_support::body_bytes(&response))
                 .expect("utf8")
                 .contains("@layer")
         );

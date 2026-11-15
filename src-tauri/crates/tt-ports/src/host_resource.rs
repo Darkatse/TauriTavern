@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -83,7 +84,40 @@ impl HostResourceStoreError {
 }
 
 pub trait HostResourceBody: Send {
-    fn read(self: Box<Self>, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError>;
+    fn into_reader(
+        self: Box<Self>,
+        range: Option<ByteRange>,
+    ) -> Result<Box<dyn HostResourceBodyReader>, HostResourceStoreError>;
+}
+
+/// Reject source changes before returning the final bytes.
+pub trait HostResourceBodyReader: Send {
+    /// Returns 0 for EOF or an empty buffer.
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, HostResourceStoreError>;
+}
+
+pub struct HostResourceStream {
+    length: u64,
+    reader: Box<dyn HostResourceBodyReader>,
+}
+
+impl HostResourceStream {
+    pub fn length(&self) -> u64 {
+        self.length
+    }
+
+    pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, HostResourceStoreError> {
+        self.reader.read(buffer)
+    }
+}
+
+impl fmt::Debug for HostResourceStream {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostResourceStream")
+            .field("length", &self.length)
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct OpenedHostResource {
@@ -96,16 +130,34 @@ impl OpenedHostResource {
         Self { metadata, body }
     }
 
-    pub fn read(self, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError> {
-        let expected_len = range
+    pub fn stream(
+        self,
+        range: Option<ByteRange>,
+    ) -> Result<HostResourceStream, HostResourceStoreError> {
+        let length = range
             .map(|range| range.byte_len())
             .unwrap_or(self.metadata.content_length);
-        let bytes = self.body.read(range)?;
-        if bytes.len() as u64 != expected_len {
-            return Err(HostResourceStoreError::internal(format!(
-                "Host resource changed while being read: expected {expected_len} bytes, read {}",
-                bytes.len()
-            )));
+        Ok(HostResourceStream {
+            length,
+            reader: self.body.into_reader(range)?,
+        })
+    }
+
+    pub fn read(self, range: Option<ByteRange>) -> Result<Vec<u8>, HostResourceStoreError> {
+        let mut stream = self.stream(range)?;
+        let length = usize::try_from(stream.length)
+            .map_err(|_| HostResourceStoreError::internal("Host resource is too large to read"))?;
+        let mut bytes = vec![0; length];
+        let mut filled = 0;
+        while filled < length {
+            match stream.read(&mut bytes[filled..])? {
+                0 => {
+                    return Err(HostResourceStoreError::internal(format!(
+                        "Host resource ended after {filled} of {length} bytes"
+                    )));
+                }
+                count => filled += count,
+            }
         }
         Ok(bytes)
     }

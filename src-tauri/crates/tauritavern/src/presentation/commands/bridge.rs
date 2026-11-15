@@ -108,6 +108,9 @@ pub fn read_dev_web_resource(
     let request = build_dev_web_resource_request(request)?;
     let response = serve_dev_ipc_resource_from_app(&app, &request);
     let (parts, body) = response.into_parts();
+    let body = body
+        .into_bytes()
+        .expect("only the Android Wry delivery streams bodies");
     let headers = parts
         .headers
         .iter()

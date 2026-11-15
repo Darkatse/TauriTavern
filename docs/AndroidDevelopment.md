@@ -312,7 +312,7 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 `generated/*` 只是一份可重建的构建输出。项目实际维护的 Wry 分叉只有 generated 目录外、同 package 同类名的两个文件，Gradle 排除对应 generated 类以避免重复编译：
 
 - `RustWebChromeClient.kt`：fullscreen 转发与 JSONL MIME 补充；Activity result 与权限 launcher 归上游 `WryActivity`，本类只调用其接口；
-- `RustWebViewClient.kt`：拦截失败日志与错误响应，以及 Host Resource 显式缓存策略优先级。
+- `RustWebViewClient.kt`：拦截失败日志与错误响应、Host Resource 显式缓存策略优先级，以及 Host Resource 正文流（`HostResourceBodyStream.kt`）。
 
 两个文件头必须记录当前 Wry baseline。升级 Wry 时逐文件与锁文件解析到的 upstream 模板比较；缺少显式 `Cache-Control` 的自定义协议响应采用 Wry 的 `no-store` 默认值，Host Resource 已明确返回的 `private, no-cache` 或错误 `no-store` 不得被 transport 层覆盖。删除 generated 目录后，debug 与 minified release 构建都必须能够从零重建。
 
@@ -329,19 +329,7 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
   - 早期出现 `416 Range Not Satisfiable` 或某个 `Range: bytes=...-` 请求被快速 canceled；
   - `<video>` 长时间停留在 `readyState=HAVE_NOTHING`，无法触发 `loadedmetadata`。
 
-根因（运行时语义差异）：
-
-- Android WebView 在 `shouldInterceptRequest` 的资源拦截链路中，会对“拦截返回的响应流”再次应用请求 Range 语义。
-- 若宿主已经按 Range 做了 seek/slice（返回已经截取过的 bytes），WebView 的二次 Range 会把非 0 起点范围再次应用到截取后的流上，导致不可满足（历史上表现为 `416` / canceled）。
-
-当前已落地 workaround（仅背景视频）：
-
-- 实现：`src-tauri/crates/tt-application/src/services/host_resource_service/user_data.rs`
-- 策略：对 Android + `/backgrounds/*` + `video/*` + `Range start != 0`：
-  - 返回 `206` + 正确 `Content-Range/Content-Length`
-  - body 提供完整文件 bytes，让 WebView 自己在流上执行 Range（skip）
-
-更多细节与全平台媒体契约见：`docs/CurrentState/MediaAssetContract.md`。
+根因是 Android WebView 会对拦截返回的正文再应用一次 Range。宿主的处理见 [MediaAssetContract §4](CurrentState/MediaAssetContract.md#4-android-背景视频的-range)。
 
 ---
 

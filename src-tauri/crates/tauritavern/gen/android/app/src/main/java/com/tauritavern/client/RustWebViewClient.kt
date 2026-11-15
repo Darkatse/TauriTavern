@@ -1,6 +1,7 @@
 // Local override of Wry's generated RustWebViewClient.
 // Baseline: wry 0.57.0. Local deltas: intercept failure response,
-// and preserving an explicit host Cache-Control policy.
+// preserving an explicit host Cache-Control policy, and streaming
+// host resource bodies (HostResourceBodyStream).
 
 // Copyright 2020-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
@@ -51,6 +52,7 @@ class RustWebViewClient(webView: RustWebView, context: Context): WebViewClient()
             val requestUrl = request.url.toString()
             val response = try {
                 Rust.handleRequest(rustWebView.id, request, rustWebView.isDocumentStartScriptEnabled)
+                    .also(HostResourceBodyStream::attach)
             } catch (throwable: Throwable) {
                 logInterceptFailure(requestUrl, throwable)
                 buildErrorResponse(throwable)

@@ -17,17 +17,44 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use http::header::{HeaderName, HeaderValue};
 use http::{Method, Request, Response, StatusCode};
 use route_classifier::{HostResourceRoute, classify_host_resource_route};
-use tt_ports::host_resource::HostResourceAssetStore;
+use tt_ports::host_resource::{HostResourceAssetStore, HostResourceStream};
 
 static NEXT_TRACE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const TAURITAVERN_TRACE_ID: HeaderName = HeaderName::from_static("x-tauritavern-trace-id");
 
-pub type HostResourceResponse = Response<Vec<u8>>;
+pub type HostResourceResponse = Response<HostResourceResponseBody>;
+
+#[derive(Debug)]
+pub enum HostResourceResponseBody {
+    Bytes(Vec<u8>),
+    Stream(HostResourceStream),
+}
+
+impl HostResourceResponseBody {
+    pub fn len(&self) -> u64 {
+        match self {
+            Self::Bytes(bytes) => bytes.len() as u64,
+            Self::Stream(stream) => stream.length(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn into_bytes(self) -> Option<Vec<u8>> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes),
+            Self::Stream(_) => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostResourceDeliveryCapabilities {
     supports_not_modified: bool,
     webview_reapplies_range_semantics: bool,
+    streams_bodies: bool,
     max_third_party_asset_bytes: Option<u64>,
 }
 
@@ -36,13 +63,23 @@ impl HostResourceDeliveryCapabilities {
         Self {
             supports_not_modified,
             webview_reapplies_range_semantics,
+            streams_bodies: false,
             max_third_party_asset_bytes: None,
         }
+    }
+
+    pub const fn with_streamed_bodies(mut self) -> Self {
+        self.streams_bodies = true;
+        self
     }
 
     pub const fn with_max_third_party_asset_bytes(mut self, bytes: u64) -> Self {
         self.max_third_party_asset_bytes = Some(bytes);
         self
+    }
+
+    pub const fn streams_bodies(self) -> bool {
+        self.streams_bodies
     }
 
     const fn supports_not_modified(self) -> bool {
@@ -126,7 +163,7 @@ fn finalize_response(
     mut response: HostResourceResponse,
 ) -> HostResourceResponse {
     if request.method() == Method::HEAD {
-        response.body_mut().clear();
+        *response.body_mut() = HostResourceResponseBody::Bytes(Vec::new());
     }
     response.headers_mut().insert(
         TAURITAVERN_TRACE_ID,
@@ -200,9 +237,9 @@ mod tests {
         let third_party_response = service.try_serve(&third_party, delivery).expect("served");
         let user_data_response = service.try_serve(&user_data, delivery).expect("served");
 
-        assert_eq!(user_css_response.body(), b"css");
-        assert_eq!(third_party_response.body(), b"third");
-        assert_eq!(user_data_response.body(), b"data");
+        assert_eq!(test_support::body_bytes(&user_css_response), b"css");
+        assert_eq!(test_support::body_bytes(&third_party_response), b"third");
+        assert_eq!(test_support::body_bytes(&user_data_response), b"data");
         assert!(
             user_css_response.headers()[&TAURITAVERN_TRACE_ID]
                 .to_str()

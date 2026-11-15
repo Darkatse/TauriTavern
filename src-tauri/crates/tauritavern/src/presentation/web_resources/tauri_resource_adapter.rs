@@ -14,7 +14,8 @@ use tauri::http::header::{
     CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_LOCATION,
 };
 use tt_application::services::host_resource_service::{
-    HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceService,
+    HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody,
+    HostResourceService,
 };
 
 const WRY_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(false);
@@ -23,7 +24,10 @@ const DEV_IPC_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(tru
 
 const fn resource_delivery(over_ipc: bool) -> HostResourceDeliveryCapabilities {
     let delivery = match HOST_IDENTITY.platform {
-        HostPlatform::Android => HostResourceDeliveryCapabilities::new(false, !over_ipc),
+        HostPlatform::Android if over_ipc => HostResourceDeliveryCapabilities::new(false, false),
+        HostPlatform::Android => {
+            HostResourceDeliveryCapabilities::new(false, true).with_streamed_bodies()
+        }
         HostPlatform::Windows
         | HostPlatform::Macos
         | HostPlatform::Linux
@@ -31,8 +35,10 @@ const fn resource_delivery(over_ipc: bool) -> HostResourceDeliveryCapabilities {
         | HostPlatform::Ohos => HostResourceDeliveryCapabilities::new(true, false),
     };
     match HOST_IDENTITY.kind {
-        HostKind::Mobile => delivery.with_max_third_party_asset_bytes(32 * 1024 * 1024),
-        HostKind::Desktop => delivery,
+        HostKind::Mobile if !delivery.streams_bodies() => {
+            delivery.with_max_third_party_asset_bytes(32 * 1024 * 1024)
+        }
+        HostKind::Mobile | HostKind::Desktop => delivery,
     }
 }
 
@@ -99,7 +105,17 @@ pub(crate) fn apply_host_resource_response(
     clear_replaced_host_resource_headers(response);
     response.headers_mut().extend(parts.headers);
 
-    *response.body_mut() = Cow::Owned(body);
+    *response.body_mut() = match body {
+        HostResourceResponseBody::Bytes(bytes) => Cow::Owned(bytes),
+        #[cfg(target_os = "android")]
+        HostResourceResponseBody::Stream(stream) => {
+            super::android_body_stream::hand_over(response, stream)
+        }
+        #[cfg(not(target_os = "android"))]
+        HostResourceResponseBody::Stream(_) => {
+            unreachable!("only the Android Wry delivery streams bodies")
+        }
+    };
 }
 
 fn clear_replaced_host_resource_headers(response: &mut tauri::http::Response<Cow<'static, [u8]>>) {
@@ -213,7 +229,8 @@ mod tests {
 
     #[test]
     fn apply_host_response_applies_status_headers_and_body() {
-        let mut host_response = HostResourceResponse::new(b"ab".to_vec());
+        let mut host_response =
+            HostResourceResponse::new(HostResourceResponseBody::Bytes(b"ab".to_vec()));
         *host_response.status_mut() = StatusCode::PARTIAL_CONTENT;
         host_response
             .headers_mut()
@@ -245,7 +262,8 @@ mod tests {
 
     #[test]
     fn apply_host_response_removes_stale_entity_headers() {
-        let mut host_response = HostResourceResponse::new(b"ab".to_vec());
+        let mut host_response =
+            HostResourceResponse::new(HostResourceResponseBody::Bytes(b"ab".to_vec()));
         host_response
             .headers_mut()
             .insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));

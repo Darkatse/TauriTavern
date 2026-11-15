@@ -2,12 +2,13 @@ use super::range::{RangeHeaderError, parse_single_range_header};
 use super::response::{self, RepresentationMetadata, RetrievalDecision};
 use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 use crate::client_asset_paths::{
-    UserDataAssetKind, UserDataPathError, parse_user_data_asset_request_path,
+    UserDataAssetKind, UserDataAssetRequestPath, UserDataPathError,
+    parse_user_data_asset_request_path,
 };
 use http::header::RANGE;
 use http::{Method, Request, StatusCode};
 use tt_ports::host_resource::{
-    HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError,
+    HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
 };
 
 const USER_DATA_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
@@ -57,7 +58,7 @@ pub(super) fn serve_user_data_asset(
             return response::with_accept_ranges(response::head(&metadata));
         }
         RetrievalDecision::Full => {
-            return read_full_response(opened, &metadata);
+            return full_response(&parsed, opened, &metadata, delivery);
         }
         RetrievalDecision::Continue => {}
     }
@@ -75,7 +76,7 @@ pub(super) fn serve_user_data_asset(
             );
         }
         if !response::if_range_allows_range(request, &metadata) {
-            return read_full_response(opened, &metadata);
+            return full_response(&parsed, opened, &metadata, delivery);
         }
 
         let header_value = match range_header.to_str() {
@@ -96,11 +97,11 @@ pub(super) fn serve_user_data_asset(
         };
 
         if webview_reapplies_background_video_range && range.start() != 0 {
-            return match opened.read(None) {
-                Ok(bytes) => {
+            return match response::body(opened, None, delivery) {
+                Ok(body) => {
                     let response = response::partial(
                         &metadata,
-                        bytes,
+                        body,
                         format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
                         range.byte_len(),
                     );
@@ -114,18 +115,11 @@ pub(super) fn serve_user_data_asset(
             };
         }
 
-        if usize::try_from(range.byte_len()).is_err() {
-            return response::with_accept_ranges(response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Range is too large to serve",
-            ));
-        }
-
-        return match opened.read(Some(range)) {
-            Ok(bytes) => {
+        return match response::body(opened, Some(range), delivery) {
+            Ok(body) => {
                 let response = response::partial(
                     &metadata,
-                    bytes,
+                    body,
                     format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
                     range.byte_len(),
                 );
@@ -141,25 +135,24 @@ pub(super) fn serve_user_data_asset(
         };
     }
 
-    match opened.read(None) {
-        Ok(bytes) => {
+    full_response(&parsed, opened, &metadata, delivery)
+}
+
+fn full_response(
+    parsed: &UserDataAssetRequestPath,
+    opened: OpenedHostResource,
+    metadata: &RepresentationMetadata,
+    delivery: HostResourceDeliveryCapabilities,
+) -> HostResourceResponse {
+    match response::body(opened, None, delivery) {
+        Ok(body) => {
             tracing::debug!(
                 "User data asset hit: {:?}/{}",
                 parsed.kind,
                 parsed.relative_path_display
             );
-            response::with_accept_ranges(response::ok(&metadata, bytes))
+            response::with_accept_ranges(response::ok(metadata, body))
         }
-        Err(error) => response::with_accept_ranges(store_error_response(error)),
-    }
-}
-
-fn read_full_response(
-    opened: tt_ports::host_resource::OpenedHostResource,
-    metadata: &RepresentationMetadata,
-) -> HostResourceResponse {
-    match opened.read(None) {
-        Ok(bytes) => response::with_accept_ranges(response::ok(metadata, bytes)),
         Err(error) => response::with_accept_ranges(store_error_response(error)),
     }
 }
@@ -227,7 +220,7 @@ mod tests {
         );
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.body(), b"bc");
+        assert_eq!(test_support::body_bytes(&response), b"bc");
         assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
     }
 
@@ -265,7 +258,7 @@ mod tests {
         );
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.body(), b"abcd");
+        assert_eq!(test_support::body_bytes(&response), b"abcd");
         assert_eq!(response.headers()[CONTENT_LENGTH], "2");
     }
 
@@ -292,7 +285,7 @@ mod tests {
         );
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.body(), b"abcd");
+        assert_eq!(test_support::body_bytes(&response), b"abcd");
     }
 
     #[test]
