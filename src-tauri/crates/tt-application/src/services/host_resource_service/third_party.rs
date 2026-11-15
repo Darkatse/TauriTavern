@@ -162,7 +162,7 @@ mod tests {
         let store = Store {
             reads: reads.clone(),
         };
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
         let path = "/scripts/extensions/third-party/mobile/style.css";
         let head =
             serve_third_party_asset(&store, &test_support::request(Method::HEAD, path), delivery);
@@ -186,7 +186,7 @@ mod tests {
         let store = Store {
             reads: Arc::clone(&reads),
         };
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
         let raw = serve_third_party_asset(
             &store,
             &test_support::request(
@@ -222,7 +222,7 @@ mod tests {
                 Method::GET,
                 "/scripts/extensions/third-party/mobile/style.css?ttCompat=layer",
             ),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);

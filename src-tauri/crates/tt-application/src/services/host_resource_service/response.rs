@@ -385,7 +385,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::NotModified
         );
@@ -393,7 +393,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(false, false)
+                HostResourceDeliveryCapabilities::new(false)
             ),
             RetrievalDecision::Full
         );
@@ -411,7 +411,7 @@ mod tests {
                 decide_retrieval(
                     &request(&[("if-none-match", condition)]),
                     &metadata,
-                    HostResourceDeliveryCapabilities::new(true, false)
+                    HostResourceDeliveryCapabilities::new(true)
                 ),
                 RetrievalDecision::NotModified
             );
@@ -430,7 +430,7 @@ mod tests {
             decide_retrieval(
                 &request(&[("if-modified-since", last_modified)]),
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::NotModified
         );
@@ -458,7 +458,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::Continue
         );

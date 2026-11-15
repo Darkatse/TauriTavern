@@ -16,8 +16,7 @@ use tt_application::services::host_resource_service::{
     HostResourceService,
 };
 
-const DELIVERY: HostResourceDeliveryCapabilities =
-    HostResourceDeliveryCapabilities::new(true, false);
+const DELIVERY: HostResourceDeliveryCapabilities = HostResourceDeliveryCapabilities::new(true);
 
 fn body_bytes(response: &HostResourceResponse) -> &[u8] {
     match response.body() {

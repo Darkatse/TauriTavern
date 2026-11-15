@@ -2,8 +2,7 @@ use super::range::{RangeHeaderError, parse_single_range_header};
 use super::response::{self, RepresentationMetadata, RetrievalDecision};
 use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 use crate::client_asset_paths::{
-    UserDataAssetKind, UserDataAssetRequestPath, UserDataPathError,
-    parse_user_data_asset_request_path,
+    UserDataAssetRequestPath, UserDataPathError, parse_user_data_asset_request_path,
 };
 use http::header::RANGE;
 use http::{Method, Request, StatusCode};
@@ -63,10 +62,6 @@ pub(super) fn serve_user_data_asset(
         RetrievalDecision::Continue => {}
     }
 
-    let webview_reapplies_background_video_range = delivery.webview_reapplies_range_semantics()
-        && parsed.kind == UserDataAssetKind::Background
-        && opened.metadata.content_type.starts_with("video/");
-
     let mut range_headers = request.headers().get_all(RANGE).iter();
     if let Some(range_header) = range_headers.next() {
         if range_headers.next().is_some() {
@@ -95,25 +90,6 @@ pub(super) fn serve_user_data_asset(
                 return response::range_not_satisfiable("Range not satisfiable", total_size);
             }
         };
-
-        if webview_reapplies_background_video_range && range.start() != 0 {
-            return match response::body(opened, None, delivery) {
-                Ok(body) => {
-                    let response = response::partial(
-                        &metadata,
-                        body,
-                        format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
-                        range.byte_len(),
-                    );
-                    tracing::debug!(
-                        "User data asset Android video range workaround hit: {}",
-                        parsed.relative_path_display
-                    );
-                    response::with_accept_ranges(response)
-                }
-                Err(error) => response::with_accept_ranges(store_error_response(error)),
-            };
-        }
 
         return match response::body(opened, Some(range), delivery) {
             Ok(body) => {
@@ -166,7 +142,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use http::header::{CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
+    use http::header::{CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
     use tt_ports::host_resource::{
         HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
     };
@@ -181,20 +157,12 @@ mod tests {
     impl HostResourceAssetStore for Store {
         fn open(
             &self,
-            request: HostResourceSourceRequest<'_>,
+            _request: HostResourceSourceRequest<'_>,
         ) -> Result<OpenedHostResource, HostResourceStoreError> {
             self.opens.fetch_add(1, Ordering::Relaxed);
-            let HostResourceSourceRequest::UserData { kind, .. } = request else {
-                unreachable!()
-            };
-            let mime_type = if kind == UserDataAssetKind::Background {
-                "video/mp4"
-            } else {
-                "application/octet-stream"
-            };
             Ok(test_support::opened(
                 b"abcd",
-                mime_type,
+                "video/mp4",
                 Arc::new(AtomicUsize::new(0)),
             ))
         }
@@ -216,7 +184,7 @@ mod tests {
         let response = serve_user_data_asset(
             &store(),
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
@@ -237,29 +205,11 @@ mod tests {
         let response = serve_user_data_asset(
             &store(),
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(response.headers()[CONTENT_RANGE], "bytes */4");
-    }
-
-    #[test]
-    fn android_background_video_range_returns_full_body_with_range_headers() {
-        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
-        request
-            .headers_mut()
-            .insert(RANGE, "bytes=1-2".parse().expect("range"));
-
-        let response = serve_user_data_asset(
-            &store(),
-            &request,
-            HostResourceDeliveryCapabilities::new(false, true),
-        );
-
-        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(test_support::body_bytes(&response), b"abcd");
-        assert_eq!(response.headers()[CONTENT_LENGTH], "2");
     }
 
     #[test]
@@ -268,7 +218,7 @@ mod tests {
         let first = serve_user_data_asset(
             &store,
             &test_support::request(Method::GET, "/backgrounds/a.mp4"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
         let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
         request
@@ -281,7 +231,7 @@ mod tests {
         let response = serve_user_data_asset(
             &store,
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -294,7 +244,7 @@ mod tests {
         let response = serve_user_data_asset(
             &store,
             &test_support::request(Method::GET, "/backgrounds/%2Fbad.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);

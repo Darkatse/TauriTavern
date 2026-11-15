@@ -260,7 +260,7 @@ mod tests {
                 &store,
                 true,
                 &test_support::request(Method::GET, uri),
-                HostResourceDeliveryCapabilities::new(true, false),
+                HostResourceDeliveryCapabilities::new(true),
             );
             assert_eq!(response.status(), StatusCode::OK);
         }
@@ -290,7 +290,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::GET, "/thumbnail?type=bg&file=nested%2Fbad.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -305,7 +305,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::GET, "/thumbnail?type=bg&file=a.gif&static=true"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -330,7 +330,7 @@ mod tests {
                 Method::GET,
                 "/thumbnail?type=persona&file=a.gif&static=true",
             ),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -345,7 +345,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::HEAD, "/thumbnail?type=avatar&file=a.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);

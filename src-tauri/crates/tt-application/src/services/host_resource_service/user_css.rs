@@ -85,7 +85,7 @@ mod tests {
             missing: false,
             reads: Arc::clone(&reads),
         };
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
 
         let get = serve_user_css(
             &store,
@@ -105,7 +105,7 @@ mod tests {
         let full_fallback = serve_user_css(
             &store,
             &conditional,
-            HostResourceDeliveryCapabilities::new(false, false),
+            HostResourceDeliveryCapabilities::new(false),
         );
 
         assert_eq!(get.status(), StatusCode::OK);
@@ -130,7 +130,7 @@ mod tests {
         let response = serve_user_css(
             &store,
             &test_support::request(Method::GET, "/css/user.css"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);

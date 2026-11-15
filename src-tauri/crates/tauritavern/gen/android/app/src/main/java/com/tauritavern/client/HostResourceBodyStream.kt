@@ -14,7 +14,6 @@ internal object HostResourceBodyStream {
     }
 
     @JvmStatic external fun read(id: Long, buffer: ByteArray, offset: Int, length: Int): Int
-    @JvmStatic external fun skip(id: Long, count: Long): Long
     @JvmStatic external fun close(id: Long)
 
     private class Body(private val id: Long, private var remaining: Long) : InputStream() {
@@ -30,13 +29,6 @@ internal object HostResourceBodyStream {
             if (count <= 0) throw IOException("Host resource ended $remaining bytes early")
             remaining -= count
             return count
-        }
-
-        override fun skip(count: Long): Long {
-            if (count <= 0L) return 0
-            val skipped = HostResourceBodyStream.skip(id, minOf(count, remaining))
-            remaining -= skipped
-            return skipped
         }
 
         override fun available(): Int = minOf(remaining, Int.MAX_VALUE.toLong()).toInt()

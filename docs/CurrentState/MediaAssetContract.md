@@ -60,15 +60,7 @@
 
 ---
 
-## 4. Android 背景视频的 Range
-
-Android WebView 会对 `shouldInterceptRequest` 返回的正文再应用一次请求的 Range。正文若已按 Range 截取，非零起点的请求会被再跳过一次，`<video>` 停在 `HAVE_NOTHING`。
-
-因此在 Android 上，`/backgrounds/*` 的 `video/*` 遇到非零起点的 Range 时，返回 206 和与请求一致的 `Content-Range`、`Content-Length`，正文是从头开始的完整文件流，由 WebView 跳到起点。跳过的字节仍从文件读出后丢弃，文件不会整段读入内存。
-
----
-
-## 5. 回归与诊断要点
+## 4. 回归与诊断要点
 
 最小回归探针（桌面/移动均适用）：
 
@@ -76,7 +68,7 @@ Android WebView 会对 `shouldInterceptRequest` 返回的正文再应用一次�
 
 Android 端额外关注：
 
-- 对 `Range: bytes=131072-` 等非 0 起点 Range，应依然返回 `206` 且包含 `Content-Range`
+- 对 `Range: bytes=131072-` 等非 0 起点 Range，应依然返回 `206` 且包含 `Content-Range`，正文从起点开始（WebView 的二次跳过见 [AndroidDevelopment §9](../AndroidDevelopment.md#9-android-webview-的-range-二次跳过)）
 - 若 `<video>` 长时间停留在 `readyState=HAVE_NOTHING`，优先排查 Range 契约是否被破坏（`206`、`Content-Range`、以及是否出现快速 canceled）
 
 当需要确认媒体编码兼容性（解码层问题）：

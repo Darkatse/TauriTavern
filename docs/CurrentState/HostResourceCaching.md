@@ -139,8 +139,6 @@ Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。
 
 Wry 会把 Android 响应的正文整段复制进容量有限的 Java 堆，因此 Android 上的 Wry 交付以流传送正文：service 交出正文流（`HostResourceResponseBody::Stream`），presentation 把流的编号与长度写入 `x-tauritavern-body-stream`，`HostResourceBodyStream.kt` 经 JNI 按块读取，正文对象关闭或被回收时释放该流。IPC、其他平台、错误响应和 `ttCompat=layer` 的正文都在内存中交付。
 
-Android 背景视频的非零起点 Range 见 [MediaAssetContract §4](MediaAssetContract.md#4-android-背景视频的-range)。
-
 Wry 的 Android custom-protocol 响应默认使用 `Cache-Control: no-store`。本地 `RustWebViewClient` 只在响应没有任何大小写形式的 `Cache-Control` 时应用该默认值，因此 transport 不会覆盖 Host Resource 的 `private, no-cache`，错误响应仍保持 `no-store`。
 
 ## 7. Origin 与开发态
@@ -157,7 +155,7 @@ Tauri 在该回调之前先读内嵌前端资源，缺失的路径回退到 inde
 
 开发态 `tt-ext` 是独立注册的 trusted scheme。Production `tauri` protocol 与 dev `tt-ext` 都由 Wry 交付，因此共享同一个 delivery capability。直接 `fetch(tt-ext)` 时保留 `Request.cache` 和 `Range`；所有入口都保留 Host Resource 使用的 `Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 请求语义。`tt-ext` 对跨源 fetch 显式暴露响应头，避免 ETag、Range metadata 和 trace header 被 CORS 过滤。
 
-跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200；IPC 不启用仅属于 Wry Android 的二次 Range workaround。204/205/304 在 JavaScript `Response` 中统一使用 null body。当前契约不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
+跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200。204/205/304 在 JavaScript `Response` 中统一使用 null body。当前契约不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
 
 ## 8. 持续开发约束
 

@@ -53,16 +53,14 @@ impl HostResourceResponseBody {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostResourceDeliveryCapabilities {
     supports_not_modified: bool,
-    webview_reapplies_range_semantics: bool,
     streams_bodies: bool,
     max_third_party_asset_bytes: Option<u64>,
 }
 
 impl HostResourceDeliveryCapabilities {
-    pub const fn new(supports_not_modified: bool, webview_reapplies_range_semantics: bool) -> Self {
+    pub const fn new(supports_not_modified: bool) -> Self {
         Self {
             supports_not_modified,
-            webview_reapplies_range_semantics,
             streams_bodies: false,
             max_third_party_asset_bytes: None,
         }
@@ -84,10 +82,6 @@ impl HostResourceDeliveryCapabilities {
 
     const fn supports_not_modified(self) -> bool {
         self.supports_not_modified
-    }
-
-    const fn webview_reapplies_range_semantics(self) -> bool {
-        self.webview_reapplies_range_semantics
     }
 }
 
@@ -231,7 +225,7 @@ mod tests {
     #[test]
     fn facade_dispatches_known_routes_and_ignores_frontend_assets() {
         let service = HostResourceService::new(false, Arc::new(Store::default()));
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
         let user_css = test_support::request(Method::GET, "/css/user.css");
         let third_party =
             test_support::request(Method::GET, "/scripts/extensions/third-party/mobile/app.js");
@@ -271,7 +265,7 @@ mod tests {
             .uri("/thumbnail?type=avatar&file=a.png")
             .body(Vec::new())
             .expect("request");
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
 
         service.try_serve(&avatar, delivery).expect("served");
         service.set_avatar_persona_original_images_enabled(true);
@@ -297,7 +291,7 @@ mod tests {
     #[test]
     fn head_never_returns_an_error_body() {
         let service = HostResourceService::new(false, Arc::new(Store::default()));
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
         let invalid_thumbnail = test_support::request(Method::HEAD, "/thumbnail");
         let unknown = test_support::request(Method::HEAD, "/index.html");
 

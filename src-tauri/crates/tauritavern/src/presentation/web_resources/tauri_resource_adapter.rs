@@ -25,15 +25,15 @@ const DEV_IPC_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(tru
 
 const fn resource_delivery(over_ipc: bool) -> HostResourceDeliveryCapabilities {
     let delivery = match HOST_IDENTITY.platform {
-        HostPlatform::Android if over_ipc => HostResourceDeliveryCapabilities::new(false, false),
+        HostPlatform::Android if over_ipc => HostResourceDeliveryCapabilities::new(false),
         HostPlatform::Android => {
-            HostResourceDeliveryCapabilities::new(false, true).with_streamed_bodies()
+            HostResourceDeliveryCapabilities::new(false).with_streamed_bodies()
         }
         HostPlatform::Windows
         | HostPlatform::Macos
         | HostPlatform::Linux
         | HostPlatform::Ios
-        | HostPlatform::Ohos => HostResourceDeliveryCapabilities::new(true, false),
+        | HostPlatform::Ohos => HostResourceDeliveryCapabilities::new(true),
     };
     match HOST_IDENTITY.kind {
         HostKind::Mobile if !delivery.streams_bodies() => {

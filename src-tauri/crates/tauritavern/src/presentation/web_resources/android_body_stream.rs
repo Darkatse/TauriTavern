@@ -13,7 +13,6 @@ use tauri::http::HeaderValue;
 use tt_ports::host_resource::{HostResourceStoreError, HostResourceStream};
 
 const BODY_STREAM_HEADER: &str = "x-tauritavern-body-stream";
-const SKIP_CHUNK_BYTES: usize = 64 * 1024;
 
 type SharedStream = Arc<Mutex<HostResourceStream>>;
 
@@ -82,35 +81,6 @@ pub extern "system" fn Java_com_tauritavern_client_HostResourceBodyStream_read(
             env.set_byte_array_region(&buffer, offset, bytes)
                 .map_err(|error| error.to_string())?;
             Ok(count as jint)
-        });
-    result.unwrap_or_else(|message| {
-        throw_io_error(&mut env, message);
-        -1
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_tauritavern_client_HostResourceBodyStream_skip(
-    mut env: JNIEnv,
-    _class: JClass,
-    id: jlong,
-    count: jlong,
-) -> jlong {
-    let result = u64::try_from(count)
-        .map_err(|_| format!("Invalid host resource skip count: {count}"))
-        .and_then(|wanted| {
-            with_stream(id, |stream| {
-                let mut chunk = vec![0u8; SKIP_CHUNK_BYTES];
-                let mut skipped = 0;
-                while skipped < wanted {
-                    let limit = (wanted - skipped).min(SKIP_CHUNK_BYTES as u64) as usize;
-                    match stream.read(&mut chunk[..limit])? {
-                        0 => break,
-                        read => skipped += read as u64,
-                    }
-                }
-                Ok(skipped as jlong)
-            })
         });
     result.unwrap_or_else(|message| {
         throw_io_error(&mut env, message);
