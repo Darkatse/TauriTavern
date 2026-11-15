@@ -97,7 +97,7 @@ export function getBarcodeScanner() {
     return getTauri()?.barcodeScanner;
 }
 
-export const convertFileSrc = (path, protocol = 'asset') => {
+export const convertFileSrc = (path, protocol) => {
     const fn = getTauri()?.core?.convertFileSrc;
     if (typeof fn !== 'function') {
         throw new Error('Tauri convertFileSrc is unavailable');

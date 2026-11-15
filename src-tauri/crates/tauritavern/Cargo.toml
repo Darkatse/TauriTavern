@@ -31,7 +31,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dependencies]
-tauri = { version = "2.12.3", features = ["protocol-asset"] }
+tauri = { version = "2.12.3", features = [] }
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-fs = "2.7.0"
 tauri-plugin-notification = "2.6.0"

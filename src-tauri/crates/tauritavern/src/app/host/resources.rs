@@ -30,19 +30,7 @@ pub(super) fn install_runtime_resources(
     app_handle: &tauri::AppHandle,
     runtime_paths: &RuntimePaths,
 ) -> Result<Arc<HostResourceService>, DomainError> {
-    // Static scopes cannot cover portable or migrated data roots. Publish the
-    // resolved root to both browser assets and FileHandle transports.
-    if let Err(error) = app_handle
-        .asset_protocol_scope()
-        .allow_directory(&runtime_paths.data_root, true)
-    {
-        tracing::warn!(
-            "Failed to extend asset protocol scope for {:?}: {}",
-            runtime_paths.data_root,
-            error
-        );
-    }
-
+    // Static scopes cannot cover portable or migrated data roots.
     app_handle
         .fs_scope()
         .allow_directory(&runtime_paths.data_root, true)

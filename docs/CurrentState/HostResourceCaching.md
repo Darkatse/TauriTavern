@@ -165,7 +165,7 @@ Tauri 在该回调之前先读内嵌前端资源，缺失的路径回退到 inde
 - thumbnail recipe 或单文件缓存格式发生任何可观察变化时必须升级 generator schema；JPEG COM identity 与 generated Host revision 必须继续使用同一身份；
 - data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；Host Resource Service 是 WebView 可见表示的新鲜度权威，这不是采用 immutable 前的临时 fallback；
 - 不为 mutable Host Resource 建 mutation revision registry 或 `immutable` URL。data root 允许外部/symlink writer；fresh immutable hit 会绕过 Host Resource，令外部变化无法被发现；
-- 第一方普通 browser resource 不得通过 Tauri asset protocol、base64 read command 或 server-thumbnail Blob cache 绕过本服务；
+- 第一方普通 browser resource 不得通过 base64 read command 或 server-thumbnail Blob cache 绕过本服务；
 - mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后通过稳定 URL 的真实 consumer demand 刷新表示，需要绕过 WebView 已存响应时使用 `Request.cache = "reload"`，不得用随机 query 伪造 revision；刷新不是 commit 的组成部分；
 - frontend 仅保留有独立派生职责的 background preview cache；Host background 记录必须绑定当前 raw ETag 与 preview recipe；
 - WebView synthetic response cache 只是优化，不能成为业务正确性的前提；

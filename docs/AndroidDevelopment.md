@@ -111,13 +111,7 @@ https://v2.tauri.app/develop/resources/#android
 
 - `src-tauri/crates/tauritavern/src/app.rs` 的 `resolve_data_root` / `resolve_log_root` 已改为依赖 `resolve_app_data_dir`
 
-### 4.3 资源协议访问权限
-
-- `src-tauri/crates/tauritavern/src/lib.rs` 在 setup 阶段对 `data_root` 执行：
-  - `asset_protocol_scope().allow_directory(&data_root, true)`
-- 目的：允许 WebView 通过 asset 协议访问用户数据文件，避免前端资源加载 403。
-
-### 4.4 前端接入点
+### 4.3 前端接入点
 
 - `src/scripts/templates.js`：内置模板走 `invoke('read_frontend_template')`
 - `src/css/mobile-styles.css` + `src/style.css`：按已经避让的浏览器视口排版，`--doc-height` 为静态 CSS 别名
