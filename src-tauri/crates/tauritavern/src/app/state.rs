@@ -17,6 +17,7 @@ use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
+use tt_application::services::cors_proxy_service::CorsProxyService;
 use tt_application::services::data_archive_service::DataArchiveService;
 use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
@@ -113,6 +114,7 @@ pub(crate) struct AppServices {
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
     pub(crate) searxng_search_service: Arc<SearxngSearchService>,
+    pub(crate) cors_proxy_service: Arc<CorsProxyService>,
     pub(crate) vector_service: Arc<VectorService>,
     pub(crate) tokenization_service: Arc<TokenizationService>,
     pub(crate) stable_diffusion_service: Arc<StableDiffusionService>,

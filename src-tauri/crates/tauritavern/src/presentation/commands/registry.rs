@@ -393,6 +393,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::cancel_chat_completion_generation,
         // SearXNG compatibility search
         super::searxng_search_commands::search_searxng,
+        // CORS proxy compatibility
+        super::cors_proxy_commands::send_cors_proxy_request,
         // Stable diffusion (local chain) commands
         super::stable_diffusion_commands::sd_handle,
         super::stable_diffusion_commands::cancel_sd_request,

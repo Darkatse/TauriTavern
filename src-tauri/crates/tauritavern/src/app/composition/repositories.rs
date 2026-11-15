@@ -13,9 +13,9 @@ use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
 };
 use tt_adapter_provider_http::{
-    HttpChatCompletionRepository, HttpEmbeddingRepository, HttpProviderMetadataRepository,
-    HttpSearxngSearchRepository, HttpStableDiffusionRepository, HttpTranslateRepository,
-    HttpTtsRepository,
+    HttpChatCompletionRepository, HttpCorsProxyRepository, HttpEmbeddingRepository,
+    HttpProviderMetadataRepository, HttpSearxngSearchRepository, HttpStableDiffusionRepository,
+    HttpTranslateRepository, HttpTtsRepository,
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
@@ -47,6 +47,7 @@ use tt_ports::repositories::chat_commit_repository::ChatCommitRepository;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::content_repository::ContentRepository;
+use tt_ports::repositories::cors_proxy_repository::CorsProxyRepository;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
 use tt_ports::repositories::grant_repository::GrantRepository;
@@ -122,6 +123,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) provider_metadata_repository:
         Arc<dyn ProviderMetadataRepository>,
     pub(in crate::app::composition) searxng_search_repository: Arc<dyn SearxngSearchRepository>,
+    pub(in crate::app::composition) cors_proxy_repository: Arc<dyn CorsProxyRepository>,
     pub(in crate::app::composition) tokenizer_repository: Arc<dyn TokenizerRepository>,
     pub(in crate::app::composition) stable_diffusion_repository: Arc<dyn StableDiffusionRepository>,
     pub(in crate::app::composition) translate_repository: Arc<dyn TranslateRepository>,
@@ -349,6 +351,8 @@ pub(super) async fn build(
     );
     let searxng_search_repository: Arc<dyn SearxngSearchRepository> =
         Arc::new(HttpSearxngSearchRepository::new(http_client_pool.clone()));
+    let cors_proxy_repository: Arc<dyn CorsProxyRepository> =
+        Arc::new(HttpCorsProxyRepository::new(http_client_pool.clone()));
 
     let tokenizer_cache_dir = data_root.join("_cache").join("tokenizers");
     let tokenizer_repository: Arc<dyn TokenizerRepository> = Arc::new(
@@ -426,6 +430,7 @@ pub(super) async fn build(
         chat_completion_repository,
         provider_metadata_repository,
         searxng_search_repository,
+        cors_proxy_repository,
         tokenizer_repository,
         stable_diffusion_repository,
         translate_repository,

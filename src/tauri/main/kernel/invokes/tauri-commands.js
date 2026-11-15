@@ -244,6 +244,7 @@ export {};
  *   | 'search_character_chat_messages'
  *   | 'search_group_chat_messages'
  *   | 'search_searxng'
+ *   | 'send_cors_proxy_request'
  *   | 'begin_world_info_commit'
  *   | 'append_world_info_commit_chunk'
  *   | 'finish_world_info_commit'

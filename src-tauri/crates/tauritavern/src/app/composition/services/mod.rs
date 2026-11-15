@@ -23,6 +23,7 @@ use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
+use tt_application::services::cors_proxy_service::CorsProxyService;
 use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
@@ -152,6 +153,9 @@ pub(super) async fn build(
     ));
     let searxng_search_service = Arc::new(SearxngSearchService::new(
         repositories.searxng_search_repository.clone(),
+    ));
+    let cors_proxy_service = Arc::new(CorsProxyService::new(
+        repositories.cors_proxy_repository.clone(),
     ));
     let vector_service = Arc::new(VectorService::new(
         repositories.vector_repository.clone(),
@@ -307,6 +311,7 @@ pub(super) async fn build(
         mcp_service,
         provider_metadata_service,
         searxng_search_service,
+        cors_proxy_service,
         vector_service,
         tokenization_service,
         stable_diffusion_service,

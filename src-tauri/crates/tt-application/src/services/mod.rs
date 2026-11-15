@@ -23,6 +23,7 @@ mod chat_file_validation;
 pub mod chat_history_coordinator;
 pub mod chat_service;
 pub mod content_service;
+pub mod cors_proxy_service;
 pub mod data_archive_service;
 pub mod data_change_reconciler;
 pub mod database_service;

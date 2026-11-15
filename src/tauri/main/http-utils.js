@@ -98,7 +98,24 @@ export async function getMethod(input, init) {
     return getMethodHint(input, init);
 }
 
+/**
+ * The standard request a native fetch would send: forbidden headers dropped, Content-Type derived from the body.
+ * @param {URL} url
+ * @param {RequestInfo | URL} input
+ * @param {RequestInit} init
+ */
+export function toRequest(url, input, init) {
+    return new Request(isRequestLike(input) ? input : url, init);
+}
+
+/**
+ * Reads a routed request body as its route declares: `json` parses it like Express's JSON and urlencoded
+ * parsers, `text` keeps the text, and `none` leaves the request to the route.
+ */
 export async function readRequestBody(input, init, mode = 'json') {
+    if (mode === 'none') {
+        return null;
+    }
     const decode = text => mode === 'text' ? text : parseMaybeJson(text);
     let rawBody;
 

@@ -81,7 +81,7 @@ src-tauri/
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
 | `tt-adapter-external-import` | 导入下载（逐跳检查来源、大小上限）与内容站点的地址和响应格式 |
 | `tt-adapter-mcp` | RMCP client、协议版本策略与 Streamable HTTP lifecycle、tools/list pagination 与 tool validation |
-| `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
+| `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata、CORS 代理的 HTTP repository |
 | `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
 | `tt-adapter-vector` | Vector 的 ACID 本地索引与本地 embedding runtime；不承载 provider HTTP |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
@@ -288,7 +288,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | 角色卡、世界书、Agent workspace/profile、Skill package | `tt-adapter-storage-userdata` | skill 是 local package store，不是普通 JSON repo |
 | 第三方扩展安装、更新、发现 | `tt-adapter-extension` | 不归入 storage-userdata |
 | avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
-| LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding/CORS 代理 HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
 | Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
 | 导入下载、内容站点的地址与响应格式 | `tt-adapter-external-import` | 是否放行来源由 application 经 `DownloadSources` 决定 |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
