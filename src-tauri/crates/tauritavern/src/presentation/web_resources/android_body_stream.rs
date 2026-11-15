@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::{self, BufRead, BufReader, Read};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -13,11 +14,27 @@ use tauri::http::HeaderValue;
 use tt_ports::host_resource::{HostResourceStoreError, HostResourceStream};
 
 const BODY_STREAM_HEADER: &str = "x-tauritavern-body-stream";
+// The WebView reads 4 KiB per call.
+const READ_BUFFER_BYTES: u64 = 64 * 1024;
 
-type SharedStream = Arc<Mutex<HostResourceStream>>;
+type SharedStream = Arc<Mutex<BufReader<StreamReader>>>;
 
 static STREAMS: LazyLock<Mutex<HashMap<jlong, SharedStream>>> = LazyLock::new(Default::default);
 static NEXT_STREAM_ID: AtomicI64 = AtomicI64::new(1);
+
+struct StreamReader(HostResourceStream);
+
+impl Read for StreamReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buffer).map_err(|error| {
+            io::Error::other(match error {
+                HostResourceStoreError::NotFound(message)
+                | HostResourceStoreError::Forbidden(message)
+                | HostResourceStoreError::Internal(message) => message,
+            })
+        })
+    }
+}
 
 pub(super) fn hand_over(
     response: &mut tauri::http::Response<Cow<'static, [u8]>>,
@@ -25,7 +42,9 @@ pub(super) fn hand_over(
 ) -> Cow<'static, [u8]> {
     let length = stream.length();
     let id = NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed);
-    streams().insert(id, Arc::new(Mutex::new(stream)));
+    let reader =
+        BufReader::with_capacity(length.min(READ_BUFFER_BYTES) as usize, StreamReader(stream));
+    streams().insert(id, Arc::new(Mutex::new(reader)));
     response.headers_mut().insert(
         BODY_STREAM_HEADER,
         HeaderValue::from_str(&format!("{id} {length}")).expect("numeric header value"),
@@ -37,20 +56,11 @@ fn streams() -> std::sync::MutexGuard<'static, HashMap<jlong, SharedStream>> {
     STREAMS.lock().expect("host resource stream registry lock")
 }
 
-fn with_stream<T>(
-    id: jlong,
-    action: impl FnOnce(&mut HostResourceStream) -> Result<T, HostResourceStoreError>,
-) -> Result<T, String> {
-    let stream = streams()
+fn stream(id: jlong) -> Result<SharedStream, String> {
+    streams()
         .get(&id)
         .cloned()
-        .ok_or_else(|| format!("Host resource stream {id} is closed"))?;
-    let mut stream = stream.lock().expect("host resource stream lock");
-    action(&mut stream).map_err(|error| match error {
-        HostResourceStoreError::NotFound(message)
-        | HostResourceStoreError::Forbidden(message)
-        | HostResourceStoreError::Internal(message) => message,
-    })
+        .ok_or_else(|| format!("Host resource stream {id} is closed"))
 }
 
 fn throw_io_error(env: &mut JNIEnv, message: String) {
@@ -74,12 +84,16 @@ pub extern "system" fn Java_com_tauritavern_client_HostResourceBodyStream_read(
     let result = usize::try_from(length)
         .map_err(|_| format!("Invalid host resource read length: {length}"))
         .and_then(|length| {
-            let mut chunk = vec![0u8; length];
-            let count = with_stream(id, |stream| stream.read(&mut chunk))?;
+            let stream = stream(id)?;
+            let mut stream = stream.lock().expect("host resource stream lock");
+            let buffered = stream.fill_buf().map_err(|error| error.to_string())?;
+            let count = buffered.len().min(length);
             // SAFETY: u8 and i8 share size and alignment, and every bit pattern is valid for both.
-            let bytes = unsafe { std::slice::from_raw_parts(chunk.as_ptr().cast::<i8>(), count) };
+            let bytes =
+                unsafe { std::slice::from_raw_parts(buffered.as_ptr().cast::<i8>(), count) };
             env.set_byte_array_region(&buffer, offset, bytes)
                 .map_err(|error| error.to_string())?;
+            stream.consume(count);
             Ok(count as jint)
         });
     result.unwrap_or_else(|message| {
