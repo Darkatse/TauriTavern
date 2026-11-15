@@ -23,6 +23,8 @@ test = false
 
 [[bin]]
 name = "tt-perf"
+# Outside src/bin: cargo-tauri 2.11 (nixpkgs 26.05) bundles every src/bin file, whatever its required-features.
+path = "src/perf/main.rs"
 required-features = ["perf"]
 
 [build-dependencies]
