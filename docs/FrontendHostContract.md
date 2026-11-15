@@ -313,6 +313,13 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 - MP4 选择器使用占位图，不为 poster 引入视频解码器；
 - active background 与 `<video>` 始终保留 raw `/backgrounds/*`，`static=true` 不得进入播放路径。
 
+头像同样区分列表与其他用途：
+
+- 第一方头像列表用 `getListThumbnailUrl()` 取地址，模板图片懒加载。开启原图设置时地址带 `list=true`，关闭时与普通 `/thumbnail` 相同，列表与聊天共用一份缓存；
+- 聊天头像、已保存的 URL（`force_avatar`、群组 `avatar_url`）、编辑页预览和扩展使用普通 `/thumbnail`。
+
+两者的选择规则见 [HostResourceCaching §5](CurrentState/HostResourceCaching.md#5-各资源表示)。
+
 禁止事项（为了保持契约稳定）：
 
 - 禁止通过 DOM 原型级 monkey patch（例如改写 `HTMLImageElement.src`）来“模拟”这些端点的加载行为；必须补齐真实端点。

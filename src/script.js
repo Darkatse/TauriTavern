@@ -34,6 +34,7 @@ import {
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { initDrawers, getTopLevelDrawerPanel, isTopLevelDrawerOpen, setTopLevelDrawerOpen, toggleInlineDrawer } from './scripts/drawers.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
+import { getListThumbnailUrl, initializeListThumbnails } from './scripts/tauri/list-thumbnails.js';
 import { getStreamingRenderInterval, normalizeStreamingFps } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
@@ -94,6 +95,7 @@ import {
 } from './scripts/tauri/agent-import-postprocess.js';
 import { StagedFile } from './tauri/main/services/files/staged-file.js';
 import { isRemoteSource } from './tauri/main/kernel/remote-source.js';
+import { buildThumbnailUrl } from './tauri/main/context/asset-path-helpers.js';
 import {
     captureSettingsSaveState,
     isSettingsConflictError,
@@ -1191,6 +1193,7 @@ async function firstLoadInit() {
         initializeChatVirtualization(tauriTavernSettings);
         initializeColdSwipes(tauriTavernSettings);
         initializeCodeMirrorEditor(tauriTavernSettings);
+        initializeListThumbnails(tauriTavernSettings);
 
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
@@ -1634,7 +1637,7 @@ async function getHiddenBlock(hidden) {
 function getCharacterBlock(item, id) {
     let this_avatar = default_avatar;
     if (item.avatar != 'none') {
-        this_avatar = getThumbnailUrl('avatar', item.avatar);
+        this_avatar = getListThumbnailUrl('avatar', item.avatar);
     }
     // Populate the template
     const template = $('#character_template .character_select').clone();
@@ -9056,11 +9059,7 @@ async function read_avatar_load(input) {
  * @returns {string} The URL for the thumbnail
  */
 export function getThumbnailUrl(type, file, t = false) {
-    if (typeof window.__TAURITAVERN_THUMBNAIL__ === 'function') {
-        return window.__TAURITAVERN_THUMBNAIL__(type, file, t);
-    }
-
-    return `/thumbnail?type=${type}&file=${encodeURIComponent(file)}${t ? `&t=${Date.now()}` : ''}`;
+    return buildThumbnailUrl(type, file, { useTimestamp: t });
 }
 
 /**
@@ -9070,6 +9069,7 @@ export function getThumbnailUrl(type, file, t = false) {
 export async function refreshCharacterAvatarImages(avatarKey) {
     const urls = new Set([
         getThumbnailUrl('avatar', avatarKey),
+        getListThumbnailUrl('avatar', avatarKey),
         `/characters/${encodeURIComponent(avatarKey)}`,
     ].map(url => new URL(url, window.location.href).href));
     const images = Array.from(document.images)
@@ -9105,7 +9105,7 @@ export function buildAvatarList(block, entities, { templateId = 'inline_avatar_t
 
         let this_avatar = default_avatar;
         if (entity.item.avatar !== undefined && entity.item.avatar != 'none') {
-            this_avatar = getThumbnailUrl('avatar', entity.item.avatar);
+            this_avatar = getListThumbnailUrl('avatar', entity.item.avatar);
         }
 
         avatarTemplate.attr('data-type', entity.type);
@@ -9128,7 +9128,7 @@ export function buildAvatarList(block, entities, { templateId = 'inline_avatar_t
             avatarTemplate.attr('title', `[Group] ${entity.item.name}`);
         } else if (entity.type === 'persona') {
             avatarTemplate.attr({ 'data-pid': id, 'data-chid': null });
-            avatarTemplate.find('img').attr('src', getThumbnailUrl('persona', entity.item.avatar));
+            avatarTemplate.find('img').attr('src', getListThumbnailUrl('persona', entity.item.avatar));
             avatarTemplate.attr('title', `[Persona] ${entity.item.name}\nFile: ${entity.item.avatar}`);
         }
 

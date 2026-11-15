@@ -257,8 +257,9 @@ window.fetch = async (url, options) => {
     }
 };
 await main.getSettings();
-// These chat fixtures skip settings bootstrap; establish its save revision.
+// These chat fixtures skip settings bootstrap; establish its save revision and list thumbnails.
 (await load('scripts/tauri/setting/settings-persistence.js')).captureSettingsSaveState({}, { token: 'loaded' });
+(await load('scripts/tauri/list-thumbnails.js')).initializeListThumbnails({ avatar_persona_original_images_enabled: false });
 main.setAnimationDuration(0);
 
 async function reset(kind) {

@@ -14,6 +14,7 @@ import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup, createTauriTavernPanelPopup } from '../panel-popup.js';
 import { setOledBackgroundEnabled } from '../oled-background.js';
+import { buildThumbnailUrl } from '../../../../tauri/main/context/asset-path-helpers.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
 
@@ -102,8 +103,7 @@ const HELP_TOPICS = {
     avatarPersonaOriginalImages: {
         title: 'Enable Character/User Avatar Original Images',
         lines: [
-            'Character/User avatar originals help: on',
-            'Character/User avatar originals help: off',
+            'When enabled, character/user avatars in chat load full-size images, and lists keep thumbnails. Takes effect after reload.',
         ],
     },
     oledBackground: {
@@ -154,10 +154,7 @@ function getBackgroundThumbnailUrl(filename, isAnimated) {
         return '/img/No-Image-Placeholder.svg';
     }
 
-    const url = typeof window.__TAURITAVERN_THUMBNAIL__ === 'function'
-        ? window.__TAURITAVERN_THUMBNAIL__('bg', filename)
-        : `/thumbnail?type=bg&file=${encodeURIComponent(filename)}`;
-    return isAnimated ? `${url}&static=true` : url;
+    return buildThumbnailUrl('bg', filename, { static: isAnimated });
 }
 
 async function readBackgroundOptions() {

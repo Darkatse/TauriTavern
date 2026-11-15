@@ -329,7 +329,7 @@ function SettingsApp({
                 <SettingRow
                     label={tr('Enable Character/User Avatar Original Images')}
                     helpTopic="avatarPersonaOriginalImages"
-                    helpTitle={tr('When enabled, character/user avatars load full-size images. Takes effect after reload.')}
+                    helpTitle={tr('When enabled, character/user avatars in chat load full-size images, and lists keep thumbnails. Takes effect after reload.')}
                     onHelp={showHelp}
                 >
                     <ToggleSwitch

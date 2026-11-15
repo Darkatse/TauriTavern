@@ -114,7 +114,11 @@ identity 与 JPEG 是同一个原子 artifact：旧缓存、上游 SillyTavern �
 
 业务 mutation 不删除或预热 thumbnail cache。原文件始终先于 cache 被打开；删除后的旧 artifact 不可达，同名重建或覆盖后的 demand 会因 COM identity 不匹配而原地替换。这样 background、character、persona、archive import、同步与外部/symlink writer 都遵循同一 freshness 条件，缓存维护失败也不会把已成功的业务 mutation 伪装成失败。
 
-默认 `/thumbnail` 保持上游选择语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图可回退 original。`/thumbnail?type=bg&...&static=true` 是 gallery/folder 专用的强制静态表示：可解码 GIF/WebP/APNG 生成 first-frame JPEG；生成失败直接报错，绝不把动画 original 冒充静态预览。MP4 不引入视频解码依赖，前端预览使用占位；active background 与媒体播放始终读取 raw `/backgrounds/*`。
+`/thumbnail` 按以下规则选择表示：
+
+- 默认保持上游语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图回退 original。
+- 开启角色/用户头像原图设置后，avatar 与 persona 返回 original，相当于上游关闭 `thumbnails.enabled`。带 `list=true` 的请求不受该设置影响，前端何时使用见 [FrontendHostContract §4.4](../FrontendHostContract.md#44-浏览器资源契约public)。
+- `type=bg&static=true` 是背景预览的静态表示：GIF/WebP/APNG 生成首帧 JPEG，生成失败即报错，不以动画 original 代替。MP4 不生成预览，不引入视频解码依赖。
 
 生成的缩略图只缩小不放大：avatar 与 persona 裁成 2:3，background 保持比例。尺寸见 `tt-adapter-media/src/thumbnails.rs`。
 

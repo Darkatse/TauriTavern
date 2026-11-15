@@ -29,8 +29,6 @@ import {
  * @returns {TauriMainContext}
  */
 export function createTauriMainContext({ invoke }) {
-    const THUMBNAIL_ROUTE_TYPES = new Set(['bg', 'avatar', 'persona']);
-
     const invokeService = createInvokeService({
         invoke,
         policies: createHostInvokePolicies(),
@@ -53,9 +51,7 @@ export function createTauriMainContext({ invoke }) {
         materializeUploadFile: uploadService.materializeUploadFile,
     });
 
-    installAssetPathHelpers({
-        thumbnailRouteTypes: THUMBNAIL_ROUTE_TYPES,
-    });
+    installAssetPathHelpers();
     registerLifecycleFlushHandler('invoke-broker', invokeService.flushAllInvokes, { priority: 100 });
     installLifecycleFlushHandlers();
 
