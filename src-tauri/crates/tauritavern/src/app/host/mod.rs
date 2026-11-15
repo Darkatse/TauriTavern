@@ -22,6 +22,7 @@ use tt_adapter_storage_core::commit_stage::PageGeneration;
 
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::presentation::commands::registry::invoke_handler;
+use crate::presentation::web_resources::tauri_resource_adapter::read_host_resource_paths_as_empty_assets;
 
 pub(crate) use environment::host_environment;
 pub(crate) use setup::apply_startup_profile;
@@ -31,6 +32,9 @@ pub(crate) use shutdown::request_frontend_shutdown;
 
 pub(crate) fn run() {
     thread_pool::configure();
+
+    let mut context = tauri::generate_context!();
+    read_host_resource_paths_as_empty_assets(&mut context);
 
     // Builder order is part of the host contract: install native capabilities,
     // run setup to publish managed state and create the window, then expose the
@@ -54,7 +58,7 @@ pub(crate) fn run() {
                 );
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(shutdown::handle_run_event);
 }

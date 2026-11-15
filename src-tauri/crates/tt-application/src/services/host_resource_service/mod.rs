@@ -91,6 +91,11 @@ impl HostResourceDeliveryCapabilities {
     }
 }
 
+/// Accepts both encoded URI paths and decoded Tauri asset keys.
+pub fn is_host_resource_path(path: &str) -> bool {
+    classify_host_resource_route(path).is_some()
+}
+
 pub struct HostResourceService {
     avatar_persona_original_images_enabled: AtomicBool,
     store: Arc<dyn HostResourceAssetStore>,
@@ -114,7 +119,7 @@ impl HostResourceService {
         request: &Request<Vec<u8>>,
         delivery: HostResourceDeliveryCapabilities,
     ) -> Option<HostResourceResponse> {
-        let response = match classify_host_resource_route(request)? {
+        let response = match classify_host_resource_route(request.uri().path())? {
             HostResourceRoute::UserCss => Some(user_css::serve_user_css(
                 self.store.as_ref(),
                 request,

@@ -13,9 +13,10 @@ use tauri::http::header::{
 use tauri::http::header::{
     CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LANGUAGE, CONTENT_LOCATION,
 };
+use tauri::utils::assets::{AssetKey, AssetsIter, CspHash};
 use tt_application::services::host_resource_service::{
     HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody,
-    HostResourceService,
+    HostResourceService, is_host_resource_path,
 };
 
 const WRY_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(false);
@@ -39,6 +40,56 @@ const fn resource_delivery(over_ipc: bool) -> HostResourceDeliveryCapabilities {
             delivery.with_max_third_party_asset_bytes(32 * 1024 * 1024)
         }
         HostKind::Mobile | HostKind::Desktop => delivery,
+    }
+}
+
+/// Tauri resolves embedded assets before the host callback; `Some(empty)` prevents its
+/// index.html fallback for host resource paths.
+pub(crate) fn read_host_resource_paths_as_empty_assets<R: tauri::Runtime>(
+    context: &mut tauri::Context<R>,
+) {
+    let embedded = context.set_assets(Box::new(VacantAssets));
+    context.set_assets(Box::new(EmbeddedAssetsWithEmptyHostResources { embedded }));
+}
+
+struct EmbeddedAssetsWithEmptyHostResources<R: tauri::Runtime> {
+    embedded: Box<dyn tauri::Assets<R>>,
+}
+
+impl<R: tauri::Runtime> tauri::Assets<R> for EmbeddedAssetsWithEmptyHostResources<R> {
+    fn setup(&self, app: &tauri::App<R>) {
+        self.embedded.setup(app);
+    }
+
+    fn get(&self, key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+        if is_host_resource_path(key.as_ref()) {
+            return Some(Cow::Borrowed(&[]));
+        }
+        self.embedded.get(key)
+    }
+
+    fn iter(&self) -> Box<AssetsIter<'_>> {
+        self.embedded.iter()
+    }
+
+    fn csp_hashes(&self, html_path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+        self.embedded.csp_hashes(html_path)
+    }
+}
+
+struct VacantAssets;
+
+impl<R: tauri::Runtime> tauri::Assets<R> for VacantAssets {
+    fn get(&self, _key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+        unreachable!("the asset slot is refilled before the app is built")
+    }
+
+    fn iter(&self) -> Box<AssetsIter<'_>> {
+        unreachable!("the asset slot is refilled before the app is built")
+    }
+
+    fn csp_hashes(&self, _html_path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+        unreachable!("the asset slot is refilled before the app is built")
     }
 }
 
