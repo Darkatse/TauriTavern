@@ -178,7 +178,7 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 - `content.external_import`
   - Rust commands：
     - `src-tauri/crates/tauritavern/src/presentation/commands/import_source.rs:ImportSources::new`（`stage_content_from_url`、`download_asset`、`download_skill_import_url`）
-    - `src-tauri/crates/tauritavern/src/presentation/commands/file_staging_commands.rs:stage_file_from_url`
+    - `src-tauri/crates/tauritavern/src/presentation/commands/file_transfer_commands.rs:download_remote_file`
 - `updates.manual_check`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`

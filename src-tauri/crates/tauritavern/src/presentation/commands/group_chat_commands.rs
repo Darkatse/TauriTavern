@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
@@ -181,10 +182,12 @@ pub async fn rename_group_chat(
 
 #[tauri::command]
 pub async fn import_group_chat_payload(
+    app: AppHandle,
     dto: ImportGroupChatDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
     log_command("import_group_chat_payload");
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services

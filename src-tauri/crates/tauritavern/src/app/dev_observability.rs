@@ -112,8 +112,7 @@ impl DevObservabilityHub {
         let backend_logs_tail_text = format_backend_tail(&backend_tail);
         let readme_text = bundle_readme();
 
-        let output_path =
-            staging::create_staged_file(&self.app_handle, "dev-bundle", "zip").await?;
+        let output_path = staging::create_host_file(&self.app_handle, "zip").await?;
         let staged_path = output_path.clone();
         let runtime_paths = self.runtime_paths.clone();
 
@@ -134,7 +133,7 @@ impl DevObservabilityHub {
             DomainError::InternalError(format!("Export bundle task join error: {error}"))
         })?;
         if result.is_err()
-            && let Err(error) = staging::discard_file(&staged_path).await
+            && let Err(error) = staging::discard(&staged_path).await
         {
             tracing::warn!(%error, "Failed to discard incomplete dev bundle");
         }

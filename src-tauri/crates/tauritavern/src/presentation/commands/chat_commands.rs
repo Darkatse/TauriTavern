@@ -1,9 +1,10 @@
 use super::byte_reader_commands::ByteResource;
 use std::sync::Arc;
 
-use tauri::{Manager, ResourceId, Runtime, State, Webview};
+use tauri::{AppHandle, Manager, ResourceId, Runtime, State, Webview};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
@@ -266,6 +267,7 @@ pub async fn list_recent_chat_summaries(
 
 #[tauri::command]
 pub async fn import_chat(
+    app: AppHandle,
     dto: ImportChatDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ChatDto, CommandError> {
@@ -273,6 +275,7 @@ pub async fn import_chat(
         "import_chat for character {} from {}",
         dto.character_name, dto.file_path
     ));
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services
@@ -489,10 +492,12 @@ pub async fn get_chat_payload_before_pages(
 
 #[tauri::command]
 pub async fn import_character_chats(
+    app: AppHandle,
     dto: ImportCharacterChatsDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<String>, CommandError> {
     log_command(format!("import_character_chats {}", dto.character_name));
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services

@@ -1,7 +1,8 @@
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::chunk_body::{chunk_bytes_from_request, commit_headers};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
@@ -130,6 +131,7 @@ pub async fn delete_world_info(
 
 #[tauri::command]
 pub async fn import_world_info(
+    app: AppHandle,
     dto: ImportWorldInfoDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ImportWorldInfoResponseDto, CommandError> {
@@ -137,6 +139,9 @@ pub async fn import_world_info(
         "import_world_info, original_filename: {}",
         dto.original_filename
     ));
+    if !dto.file_path.is_empty() {
+        validate_staged_path(&app, &dto.file_path).await?;
+    }
 
     let name = app_state
         .services

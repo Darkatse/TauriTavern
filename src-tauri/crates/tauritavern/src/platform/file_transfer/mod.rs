@@ -150,7 +150,7 @@ pub async fn materialize(
     .await
     .map_err(|error| DomainError::InternalError(format!("File staging task failed: {error}")))?;
     if let Err(error) = result {
-        if let Err(cleanup_error) = staging::discard_file(&destination).await {
+        if let Err(cleanup_error) = staging::discard(&destination).await {
             tracing::warn!(%cleanup_error, "Failed to remove incomplete staged file");
         }
         return Err(error);
@@ -166,7 +166,7 @@ pub async fn deliver(
 ) -> Result<Delivery, DomainError> {
     let file_name = sanitize_file_name(file_name);
     let result = native::deliver(window, &source, &file_name).await;
-    if let Err(error) = staging::discard_file(&source).await {
+    if let Err(error) = staging::discard(&source).await {
         tracing::warn!(%error, "Failed to remove file after delivery");
     }
     result

@@ -1,12 +1,20 @@
 //! Private files shared by WebView byte staging and native file transfers.
+//!
+//! The staging root is cleared at startup and has two areas. The page area
+//! holds every file whose path the page holds, and only content the page may
+//! read: its own bytes, what the user picked or shared, and content downloaded
+//! under an import-source grant. The host area holds files the host keeps for
+//! the page without naming them to it.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 use tokio::fs;
 use tt_domain::errors::DomainError;
 
 const STAGING_ROOT_NAME: &str = "tauritavern-staging";
+const PAGE_AREA: &str = "page";
+const HOST_AREA: &str = "host";
 
 fn staging_root(app: &AppHandle) -> Result<PathBuf, DomainError> {
     app.path()
@@ -17,11 +25,11 @@ fn staging_root(app: &AppHandle) -> Result<PathBuf, DomainError> {
         })
 }
 
-pub async fn create_staged_file(
-    app: &AppHandle,
-    kind: &str,
-    extension: &str,
-) -> Result<PathBuf, DomainError> {
+fn page_area(app: &AppHandle) -> Result<PathBuf, DomainError> {
+    Ok(staging_root(app)?.join(PAGE_AREA))
+}
+
+fn kind_directory(app: &AppHandle, kind: &str) -> Result<PathBuf, DomainError> {
     if kind.is_empty()
         || kind.len() > 48
         || !kind
@@ -30,6 +38,10 @@ pub async fn create_staged_file(
     {
         return Err(DomainError::InvalidData("Invalid file staging kind".into()));
     }
+    Ok(page_area(app)?.join(kind))
+}
+
+fn file_name(extension: &str) -> Result<String, DomainError> {
     let extension = extension.trim_start_matches('.').to_ascii_lowercase();
     if extension.is_empty()
         || extension.len() > 12
@@ -39,38 +51,66 @@ pub async fn create_staged_file(
             "Invalid file staging extension".into(),
         ));
     }
+    Ok(format!("{}.{}", uuid::Uuid::new_v4().simple(), extension))
+}
 
-    let directory = staging_root(app)?.join(kind);
-    fs::create_dir_all(&directory).await.map_err(|error| {
+async fn create_directory(directory: &Path) -> Result<(), DomainError> {
+    fs::create_dir_all(directory).await.map_err(|error| {
         DomainError::file_io(
             "Create staging directory",
             directory.display().to_string(),
             error,
         )
-    })?;
-    let path = directory.join(format!("{}.{}", uuid::Uuid::new_v4().simple(), extension));
+    })
+}
+
+async fn create_file(directory: PathBuf, extension: &str) -> Result<PathBuf, DomainError> {
+    let path = directory.join(file_name(extension)?);
+    create_directory(&directory).await?;
     fs::File::create(&path).await.map_err(|error| {
         DomainError::file_io("Create staged file", path.display().to_string(), error)
     })?;
     Ok(path)
 }
 
+/// An empty file in the page area.
+pub async fn create_staged_file(
+    app: &AppHandle,
+    kind: &str,
+    extension: &str,
+) -> Result<PathBuf, DomainError> {
+    create_file(kind_directory(app, kind)?, extension).await
+}
+
+/// An empty file in the host area.
+pub async fn create_host_file(app: &AppHandle, extension: &str) -> Result<PathBuf, DomainError> {
+    create_file(staging_root(app)?.join(HOST_AREA), extension).await
+}
+
+/// The path a page names, when it lies in the page area.
 pub async fn validate_staged_path(
     app: &AppHandle,
     file_path: &str,
 ) -> Result<PathBuf, DomainError> {
-    let requested = PathBuf::from(file_path);
-    if !requested.is_absolute() {
+    resolve_in_area(&page_area(app)?, file_path).await
+}
+
+async fn resolve_in_area(area: &Path, requested: &str) -> Result<PathBuf, DomainError> {
+    let requested = PathBuf::from(requested);
+    if !requested.is_absolute()
+        || requested
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
         return Err(DomainError::InvalidData(
-            "File staging path must be absolute".into(),
+            "File staging path must be absolute and free of '..'".into(),
         ));
     }
     let parent = requested.parent().ok_or_else(|| {
         DomainError::InvalidData("File staging path is missing a parent directory".into())
     })?;
-    let root = staging_root(app)?;
-    let canonical_root = fs::canonicalize(&root).await.map_err(|error| {
-        DomainError::file_io("Resolve staging root", root.display().to_string(), error)
+    let canonical_area = fs::canonicalize(area).await.map_err(|error| {
+        DomainError::file_io("Resolve staging area", area.display().to_string(), error)
     })?;
     let canonical_parent = fs::canonicalize(parent).await.map_err(|error| {
         DomainError::file_io(
@@ -79,7 +119,7 @@ pub async fn validate_staged_path(
             error,
         )
     })?;
-    if !canonical_parent.starts_with(canonical_root) {
+    if !canonical_parent.starts_with(canonical_area) {
         return Err(DomainError::InvalidData(
             "File is outside the staging directory".into(),
         ));
@@ -87,8 +127,14 @@ pub async fn validate_staged_path(
     Ok(requested)
 }
 
-pub async fn discard_file(path: &Path) -> Result<(), DomainError> {
-    match fs::remove_file(path).await {
+/// Removes a staged file or directory; one already gone counts as removed.
+pub async fn discard(path: &Path) -> Result<(), DomainError> {
+    let removed = match fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path).await,
+        Ok(_) => fs::remove_file(path).await,
+        Err(error) => Err(error),
+    };
+    match removed {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(DomainError::file_io(
@@ -109,5 +155,48 @@ pub async fn clear_staging_root(app: &AppHandle) -> Result<(), DomainError> {
             root.display().to_string(),
             error,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn only_paths_inside_the_page_area_resolve() {
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-staging-{}", uuid::Uuid::new_v4()));
+        let area = root.join(PAGE_AREA);
+        let kind = area.join("avatar");
+        let host = root.join(HOST_AREA);
+        std::fs::create_dir_all(&kind).unwrap();
+        std::fs::create_dir_all(&host).unwrap();
+        for file in [kind.join("a.png"), host.join("b.bin"), root.join("c.bin")] {
+            std::fs::write(file, b"x").unwrap();
+        }
+        let accepted = kind.join("a.png");
+
+        assert!(
+            resolve_in_area(&area, accepted.to_str().unwrap())
+                .await
+                .is_ok()
+        );
+        for rejected in [
+            host.join("b.bin"),
+            root.join("c.bin"),
+            area.clone(),
+            kind.join("../../host/b.bin"),
+            kind.join(".."),
+            PathBuf::from("avatar/a.png"),
+        ] {
+            assert!(
+                resolve_in_area(&area, rejected.to_str().unwrap())
+                    .await
+                    .is_err(),
+                "{}",
+                rejected.display()
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

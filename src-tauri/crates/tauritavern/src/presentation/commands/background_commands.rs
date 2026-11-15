@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::background_dto::{DeleteBackgroundDto, RenameBackgroundDto};
@@ -92,6 +93,7 @@ pub async fn upload_background(
 
 #[tauri::command]
 pub async fn upload_background_from_path(
+    app: AppHandle,
     app_state: State<'_, Arc<AppState>>,
     filename: String,
     file_path: String,
@@ -100,11 +102,12 @@ pub async fn upload_background_from_path(
         "upload_background_from_path, filename: {}",
         filename
     ));
+    let path = validate_staged_path(&app, &file_path).await?;
 
     app_state
         .services
         .background_service
-        .upload_background_from_path(&filename, std::path::Path::new(&file_path))
+        .upload_background_from_path(&filename, &path)
         .await
         .map_err(map_command_error("Failed to upload background from path"))
 }

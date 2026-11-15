@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{
     log_command, log_user_visible_error, map_command_error,
 };
@@ -51,6 +51,7 @@ pub async fn delete_avatar(
 
 #[tauri::command]
 pub async fn upload_avatar(
+    app: AppHandle,
     file_path: String,
     overwrite_name: Option<String>,
     crop: Option<String>,
@@ -70,7 +71,7 @@ pub async fn upload_avatar(
         None => None,
     };
 
-    let path = PathBuf::from(file_path);
+    let path = validate_staged_path(&app, &file_path).await?;
     app_state
         .services
         .avatar_service

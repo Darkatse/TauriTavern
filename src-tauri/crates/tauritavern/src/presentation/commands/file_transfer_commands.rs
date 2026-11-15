@@ -1,13 +1,18 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Manager, ResourceId, State, WebviewWindow};
 
+use crate::app::AppState;
 use crate::infrastructure::staging;
 #[cfg(target_os = "android")]
 use crate::platform::file_transfer::PickedSource;
 use crate::platform::file_transfer::{self, Delivery, PickKind, PickedFile};
 use crate::presentation::commands::file_staging_commands::StagedFileResult;
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 
 #[derive(Serialize)]
@@ -21,6 +26,30 @@ impl From<Delivery> for DeliveryResult {
             delivered: matches!(delivery, Delivery::Delivered),
         }
     }
+}
+
+/// A remote file the page may deliver but never read; the handle owns the file.
+struct RemoteDownload {
+    path: PathBuf,
+}
+
+impl tauri::Resource for RemoteDownload {}
+
+impl Drop for RemoteDownload {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "Failed to remove remote download");
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDownloadResult {
+    download_id: ResourceId,
+    mime_type: Option<String>,
 }
 
 async fn stage_selected_file(
@@ -75,7 +104,7 @@ pub async fn pick_import_files(
     .await;
     if let Err(error) = result {
         for file in &staged {
-            if let Err(cleanup_error) = staging::discard_file(Path::new(&file.path)).await {
+            if let Err(cleanup_error) = staging::discard(Path::new(&file.path)).await {
                 tracing::warn!(%cleanup_error, "Failed to discard selected file");
             }
         }
@@ -115,4 +144,49 @@ pub async fn deliver_staged_file(
     Ok(file_transfer::deliver(&window, path, &file_name)
         .await?
         .into())
+}
+
+/// Downloads a remote file for [`deliver_remote_file`]; the page learns only its type.
+#[tauri::command]
+pub async fn download_remote_file(
+    app: AppHandle,
+    window: WebviewWindow,
+    url: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<RemoteDownloadResult, CommandError> {
+    log_command("download_remote_file");
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.content.external_import,
+        "content.external_import",
+    )?;
+    let download = RemoteDownload {
+        path: staging::create_host_file(&app, "bin").await?,
+    };
+    let file = app_state
+        .services
+        .content_service
+        .download_external_file(&url, &download.path)
+        .await?;
+    Ok(RemoteDownloadResult {
+        download_id: window.resources_table().add(download),
+        mime_type: file.content_type,
+    })
+}
+
+#[tauri::command]
+pub async fn deliver_remote_file(
+    window: WebviewWindow,
+    download_id: ResourceId,
+    file_name: String,
+) -> Result<DeliveryResult, CommandError> {
+    let download = window
+        .resources_table()
+        .take::<RemoteDownload>(download_id)
+        .map_err(map_command_error("Failed to access remote download"))?;
+    Ok(
+        file_transfer::deliver(&window, download.path.clone(), &file_name)
+            .await?
+            .into(),
+    )
 }

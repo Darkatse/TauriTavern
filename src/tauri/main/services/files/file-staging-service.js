@@ -60,16 +60,7 @@ export function createFileStagingService({ safeInvoke, invoke = invokeHost } = {
         }
     }
 
-    /**
-     * @param {string} url
-     * @returns {Promise<{ path: string; mimeType: string }>}
-     */
-    async function stageUrl(url) {
-        const result = await invokeCommand('stage_file_from_url', { url });
-        return { path: result.file_path, mimeType: result.mime_type ?? '' };
-    }
-
-    return { stageBlob, stageUrl, discardFile };
+    return { stageBlob, discardFile };
 }
 
 /** @param {string[]} candidates */

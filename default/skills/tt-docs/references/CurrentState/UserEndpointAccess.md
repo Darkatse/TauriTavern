@@ -39,4 +39,4 @@ iOS 的系统 Local Network permission 与本 grant 相互独立。Android 升�
 
 - 下载自己跟随重定向，首个请求与每个重定向目标按同一规则检查。
 - grant 保存在 `<app_root>/security/import-source-grants.json`，与端点 grant 分开存放，处理方式相同。
-- 保存图片（`stage_file_from_url`）不是导入，不经过此授权。
+- 保存图片（`download_remote_file`）不是导入，不经过此授权；下载留在宿主，页面读不到。
