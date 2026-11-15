@@ -7,7 +7,7 @@
 - **谁产出文件，谁发起交付。** Rust 产出的文件由对应命令交付。前端发起的交付有两种：页面可读的字节先暂存，再调用 `deliver_staged_file`；远程图片由 `download_remote_file` 下载进宿主区，页面按响应类型命名后凭句柄调用 `deliver_remote_file`。
 - **交付消费源文件。** 保存、取消或失败都会结束本次产物。
 - **交付结果为 `{ delivered }`。** 完成目标写入或系统交接后为 `true`，取消为 `false`，失败抛错。目标是普通文件时，同步落盘后才算完成。
-- **选取按用途过滤。** 角色卡、Skill 归档、数据归档分别映射为各平台的过滤条件；文件内容由导入方校验。
+- **选取按用途过滤。** 角色卡、Skill 归档、数据归档分别映射为各平台的过滤条件；文件内容由导入方校验。目录只在桌面选取：Skill 目录与数据目录。
 - **暂存文件的扩展名就是格式。** 由产出者确定一次：选取看文件名，Android 分享由 Kotlin 认定 PNG，URL 下载的文件先看 `Content-Type` 再看文件名，宿主写成的卡是 PNG。名称只是标签。
 - **URL 导入先识别站点。** 已识别站点的链接与 ID 换成站点提供的内容，站点分开提供卡片与图片时由宿主写成 PNG 卡；其余 URL 按直链下载，视为角色卡。站点规则在 `tt-adapter-external-import`。
 - **导入消费暂存文件。** 页面把暂存路径交给导入命令，由 Rust 读取，导入结束后删除。只有世界书与 ST 兼容路由整份读回。
@@ -16,11 +16,11 @@
 
 | 平台 | 选取 | 交付 |
 | --- | --- | --- |
-| Windows / macOS / Linux | dialog 插件返回路径，复制进暂存；数据归档原地使用 | 保存面板；同卷时移动，跨卷时复制 |
+| Windows / macOS / Linux | dialog 插件返回路径，复制进暂存；数据归档与数据目录原地使用；Skill 目录只复制其中的 Skill 包 | 保存面板；同卷时移动，跨卷时复制 |
 | Android / OpenHarmony | dialog 插件返回带授权的 URI，通过 fs 插件打开 fd 后复制进暂存 | 保存面板授权目标 URI，通过 fd 写入 |
 | iOS | Document Picker 生成副本，移动进暂存 | Share Sheet |
 
-Android 的 content URI 不带文件名，由 `ContentUriPlugin` 查询 `DISPLAY_NAME` 得到。分享给应用的 PNG 卡也以 content URI 交给宿主（`stage_shared_file`），在分享授权有效期间复制进暂存。
+Android 的 content URI 不带文件名，由 `ContentUriPlugin` 查询 `DISPLAY_NAME` 得到。分享给应用的 PNG 卡由 Kotlin 记下 URI，页面只收到分享 id；`stage_shared_file` 凭 id 向 `ContentUriPlugin` 取回 URI，在分享授权有效期间复制进暂存。
 
 Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自己的表转换；系统不认识的扩展名不声明具体类型。保存面板会按类型推导后缀，自行指定的类型可能与系统的表不一致，例如 ColorOS 会把 `application/octet-stream` 的 `.jsonl` 存成 `.bin`。
 
@@ -28,7 +28,7 @@ Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自
 
 | 暂存 | 位置 | 内容 |
 | --- | --- | --- |
-| 页面区 | `app_cache/tauritavern-staging/page/<kind>/` | WebView 字节（上传与 Blob 导出）、选取与分享的文件、经来源授权下载的 URL 内容 |
+| 页面区 | `app_cache/tauritavern-staging/page/<kind>/` | WebView 字节（上传与 Blob 导出）、选取与分享的文件、Skill 目录副本、经来源授权下载的 URL 内容 |
 | 宿主区 | `app_cache/tauritavern-staging/host/` | 保存图片时的下载、调试包 |
 | 归档 | `archive_imports_root/incoming`、`archive_exports_root` | 数据归档、用户备份 |
 
@@ -54,8 +54,10 @@ Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自
 | 角色卡导入（选取、Android 分享、URL） | `api.characterCards` 得到 `StagedFile`，再经 `processDroppedFiles` 导入 |
 | 世界书导入（URL） | `api.characterCards.contentFromUrl` 得到 `File`，再经 `importWorldInfo` 导入 |
 | Skill 归档选取 | `pick_import_files` |
+| Skill 目录选取（桌面） | `pick_skill_import_directories` |
+| 数据目录（桌面） | `pick_data_root` |
 
-`<input type="file">`、拖放和桌面目录选择沿用原有入口。新增的导入导出功能接入上述入口。
+`<input type="file">` 与拖放沿用原有入口。新增的导入导出功能接入上述入口。
 
 ## 5. 已知限制
 

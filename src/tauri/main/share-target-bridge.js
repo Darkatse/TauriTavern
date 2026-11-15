@@ -30,12 +30,12 @@ function normalizeSharePayload(rawPayload) {
     }
 
     if (kind === 'png') {
-        const { uri, name } = rawPayload;
-        if (typeof uri !== 'string' || !uri) {
+        const { id, name } = rawPayload;
+        if (typeof id !== 'string' || !id) {
             return null;
         }
 
-        return { kind: 'png', uri, name: String(name ?? '') };
+        return { kind: 'png', id, name: String(name ?? '') };
     }
 
     return null;

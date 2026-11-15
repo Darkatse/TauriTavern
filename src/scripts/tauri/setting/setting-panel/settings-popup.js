@@ -1,10 +1,6 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { translate } from '../../../i18n.js';
-import {
-    openDialog,
-    setDataRoot,
-    updateTauriTavernSettings,
-} from '../../../../tauri-bridge.js';
+import { pickDataRoot, updateTauriTavernSettings } from '../../../../tauri-bridge.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import {
     loadChatBackupStorageStats,
@@ -333,28 +329,12 @@ async function confirmChatBackupHistoryPurge() {
 }
 
 async function chooseDataRoot() {
-    const picked = await openDialog({
-        directory: true,
-        multiple: false,
-        title: translate('Select Data Directory'),
-    });
-
-    const selected = Array.isArray(picked) ? picked[0] : picked;
-    const normalized = String(selected || '').trim();
-    if (!normalized) {
-        return null;
-    }
-
     const confirm = createPopupColumn();
     const title = document.createElement('b');
     title.textContent = translate('Change Data Directory');
     const hint = document.createElement('div');
     hint.textContent = translate('The app will migrate data on next startup. Restart is required.');
-    const pathPreview = document.createElement('pre');
-    pathPreview.style.margin = '0';
-    pathPreview.style.whiteSpace = 'pre-wrap';
-    pathPreview.textContent = normalized;
-    confirm.append(title, hint, pathPreview);
+    confirm.append(title, hint);
 
     const confirmation = await callGenericPopup(confirm, POPUP_TYPE.CONFIRM, '', {
         okButton: translate('Confirm'),
@@ -367,16 +347,27 @@ async function chooseDataRoot() {
         return null;
     }
 
-    await setDataRoot(normalized);
+    const selected = await pickDataRoot();
+    if (!selected) {
+        return null;
+    }
 
-    await callGenericPopup(translate('Data directory saved. Restart to apply.'), POPUP_TYPE.TEXT, '', {
+    const saved = createPopupColumn();
+    const message = document.createElement('div');
+    message.textContent = translate('Data directory saved. Restart to apply.');
+    const pathPreview = document.createElement('pre');
+    pathPreview.style.margin = '0';
+    pathPreview.style.whiteSpace = 'pre-wrap';
+    pathPreview.textContent = selected;
+    saved.append(message, pathPreview);
+    await callGenericPopup(saved, POPUP_TYPE.TEXT, '', {
         okButton: translate('OK'),
         allowVerticalScrolling: true,
         wide: false,
         large: false,
     });
 
-    return normalized;
+    return selected;
 }
 
 function createSettingsActions(backgroundOptions) {

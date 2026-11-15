@@ -127,7 +127,7 @@ export function normalizeSkillImportInput(value) {
             source: normalizeSource(input.source),
         };
         const skillRoot = String(input.skillRoot ?? input.skill_root ?? '').trim();
-        if (kind === 'archiveFile' && skillRoot) {
+        if (skillRoot) {
             output.skillRoot = skillRoot;
         }
         return output;
@@ -154,7 +154,7 @@ export function normalizeSkillImportInput(value) {
  * @param {ReturnType<typeof normalizeSkillImportInput>} input
  */
 export function toSkillImportCommandInput(input) {
-    if (input.kind === 'archiveFile' && input.skillRoot) {
+    if (input.skillRoot) {
         const { skillRoot, ...output } = input;
         return { ...output, skill_root: skillRoot };
     }

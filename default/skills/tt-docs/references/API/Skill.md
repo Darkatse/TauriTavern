@@ -39,11 +39,11 @@ const installed = await skill.list();
 | `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入；来源规则见[导入来源](../CurrentState/UserEndpointAccess.md#导入来源) |
 | `discardPickedImport(input?)` | 释放指定来源的临时资源；无参数时释放整批来源 |
 
-导入输入有三种形式：
+导入输入有三种形式。目录与归档输入的 `path` 是宿主暂存路径，只能来自选取与发现方法；桌面选取目录时，宿主把其中的 Skill 包复制进暂存。
 
 ```ts
 type SkillImportInput =
-  | { kind: 'directory'; path: string; source?: unknown }
+  | { kind: 'directory'; path: string; skillRoot?: string; source?: unknown }
   | { kind: 'archiveFile'; path: string; skillRoot?: string; source?: unknown }
   | {
       kind: 'inlineFiles';
@@ -59,7 +59,7 @@ type SkillImportInput =
     };
 ```
 
-`skillRoot` 是归档内的 Skill 根路径；发现过程遇到 `SKILL.md` 后不再深入该目录。`source` 记录来源关系，角色卡和预设用它关联嵌入的 Skill。ZIP 和历史 `.ttskill` 归档都可导入，导出统一使用 ZIP。
+`skillRoot` 是目录或归档内的 Skill 根路径；发现过程遇到 `SKILL.md` 后不再深入该目录。`source` 记录来源关系，角色卡和预设用它关联嵌入的 Skill。ZIP 和历史 `.ttskill` 归档都可导入，导出统一使用 ZIP。
 
 ## 预览与安装
 

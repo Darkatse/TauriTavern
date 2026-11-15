@@ -56,8 +56,10 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     )
   }
 
+  val sharedUris = SharedUriRegistry()
+
   private val shareIntentParser: ShareIntentParser by lazy {
-    ShareIntentParser(contentResolver = contentResolver)
+    ShareIntentParser(contentResolver = contentResolver, sharedUris = sharedUris)
   }
 
   private val sharePayloadDispatcher: SharePayloadDispatcher by lazy {

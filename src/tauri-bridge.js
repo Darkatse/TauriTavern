@@ -133,21 +133,9 @@ export async function getRuntimePaths() {
     return invoke('get_runtime_paths');
 }
 
-export async function setDataRoot(dataRoot) {
-    if (typeof dataRoot !== 'string' || dataRoot.trim() === '') {
-        throw new Error('Invalid data root path');
-    }
-    return invokeWithHostNormalization('set_data_root', { data_root: dataRoot });
-}
-
-export async function openDialog(options = {}) {
-    if (!isPlainObject(options)) {
-        throw new Error('Invalid dialog options: expected an object');
-    }
-
-    Object.freeze(options);
-
-    return invokeWithHostNormalization('plugin:dialog|open', { options });
+/** Saves the folder the user picks as the next data root; `null` when they cancel. */
+export async function pickDataRoot() {
+    return invokeWithHostNormalization('pick_data_root');
 }
 
 export function writeClipboardText(text) {

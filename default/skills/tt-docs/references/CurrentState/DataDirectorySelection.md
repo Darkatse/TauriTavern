@@ -20,10 +20,8 @@
 
 - 位置：`src/scripts/tauri/setting/setting-panel/settings-popup.js`
 - 仅桌面宿主显示 `System -> Data Directory`（折叠区块），与后端只在 `cfg(desktop)` 下注册相关命令同源
-- 通过 `src/tauri-bridge.js` 的 `openDialog(...)` 调用 `plugin:dialog|open` 打开系统目录选择器（避免裸模块导入）
-- 选择后调用后端命令：
-  - `get_runtime_paths`
-  - `set_data_root`
+- 读取现状用 `get_runtime_paths`
+- 用户确认后调用 `pick_data_root`：宿主打开系统目录选择器并保存所选目录，取消时返回 `null`
 
 ### 2.2 运行时配置文件
 
@@ -52,7 +50,7 @@
 
 ### 3.1 目录校验
 
-- `set_data_root` 要求目标路径：
+- `pick_data_root` 要求所选目录：
   - 必须是绝对路径
   - 必须已存在且是目录
   - 必须是 **effectively empty**

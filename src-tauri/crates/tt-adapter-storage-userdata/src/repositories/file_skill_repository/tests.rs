@@ -327,14 +327,27 @@ async fn discovers_nested_skill_collections_in_directories_and_archives() {
 
     let repository_root = temp_root("discover-repository");
     let repository = test_repository(repository_root.clone());
+    let picked = repository_root.join("picked");
+    repository
+        .copy_import_directory(&source_root, &picked)
+        .await
+        .expect("copy picked directory");
     let directory_inputs = repository
         .discover_imports(SkillImportInput::Directory {
-            path: source_root.to_string_lossy().into_owned(),
+            path: picked.to_string_lossy().into_owned(),
+            skill_root: None,
             source: json!({"kind": "test"}),
         })
         .await
         .expect("discover directory skills");
     assert_eq!(directory_inputs.len(), 3);
+    for input in &directory_inputs {
+        let invalid = matches!(input, SkillImportInput::Directory { skill_root: Some(root), .. } if root == "nested/bad");
+        let preview = repository
+            .preview_import(input.clone(), global_scope())
+            .await;
+        assert_eq!(preview.is_err(), invalid, "{input:?}");
+    }
     let archive_path = repository_root.join("skills.zip");
     tokio_fs::write(
         &archive_path,

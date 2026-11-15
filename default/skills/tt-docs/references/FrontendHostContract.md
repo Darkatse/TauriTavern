@@ -94,7 +94,7 @@
 由 `src/tauri/main/share-target-bridge.js` 安装：
 
 - `window.__TAURITAVERN_NATIVE_SHARE__ = { push(payload), subscribe(handler) }`
-  - `push()`：注入分享 payload，`{ kind: 'url', url }` 或 `{ kind: 'png', uri, name }`（content URI 与显示名）。
+  - `push()`：注入分享 payload，`{ kind: 'url', url }` 或 `{ kind: 'png', id, name }`（分享 id 与显示名，`id` 交给 `api.characterCards.stageSharedFile`）。
   - `subscribe()`：订阅消费；若早到则进入 backlog，首次订阅会 drain backlog。
 
 ### 3.5 上游库兼容全局（Public）

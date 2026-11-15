@@ -24,7 +24,7 @@ use desktop as native;
 use ios as native;
 
 #[cfg(target_os = "android")]
-pub use content_uri::plugin;
+pub use content_uri::{plugin, take_shared_uri};
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -117,6 +117,15 @@ pub async fn pick(
     multiple: bool,
 ) -> Result<Option<Vec<PickedFile>>, DomainError> {
     native::pick(window, kind, multiple).await
+}
+
+/// Folders the user picks; only desktop hosts pick folders.
+#[cfg(desktop)]
+pub async fn pick_directories(
+    window: &WebviewWindow,
+    multiple: bool,
+) -> Result<Option<Vec<PathBuf>>, DomainError> {
+    desktop::pick_directories(window, multiple).await
 }
 
 pub async fn materialize(

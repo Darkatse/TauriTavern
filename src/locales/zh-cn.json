@@ -4138,7 +4138,6 @@
     "Data Directory": "数据目录",
     "Choose...": "选择...",
     "Data Directory hint": "重启后生效。现有数据将在下次启动时迁移。",
-    "Select Data Directory": "选择数据目录",
     "Change Data Directory": "更改数据目录",
     "The app will migrate data on next startup. Restart is required.": "应用将在下次启动时迁移数据。需要重启。",
     "Configured data directory:": "已配置的数据目录：",

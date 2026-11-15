@@ -51,9 +51,9 @@ function createCharacterCardsApi({
         return { kind: content.kind, file: new File([bytes], content.name, { type }) };
     }
 
-    /** @param {string} uri @param {string} name */
-    async function stageSharedFile(uri, name) {
-        return stagedFile(await safeInvoke('stage_shared_file', { uri, name }));
+    /** @param {string} id @param {string} name */
+    async function stageSharedFile(id, name) {
+        return stagedFile(await safeInvoke('stage_shared_file', { id, name }));
     }
 
     /** @param {string} avatar */

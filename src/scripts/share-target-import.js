@@ -6,7 +6,7 @@ async function handleNativeSharePayload(payload, { importFromExternalUrl, proces
             return;
         case 'png':
             await processDroppedFiles([
-                await window.__TAURITAVERN__.api.characterCards.stageSharedFile(payload.uri, payload.name),
+                await window.__TAURITAVERN__.api.characterCards.stageSharedFile(payload.id, payload.name),
             ]);
             return;
         default:

@@ -11,6 +11,7 @@ import java.util.Locale
 
 class ShareIntentParser(
   private val contentResolver: ContentResolver,
+  private val sharedUris: SharedUriRegistry,
 ) {
   fun canHandle(intent: Intent?): Boolean {
     val action = intent?.action ?: return false
@@ -90,7 +91,7 @@ class ShareIntentParser(
     }
 
     // The host must stage the URI while this activity still holds its read grant.
-    return NativeSharePayload(kind = "png", uri = uri.toString(), name = displayName)
+    return NativeSharePayload(kind = "png", id = sharedUris.add(uri), name = displayName)
   }
 
   private fun isPngMimeType(mimeType: String?): Boolean {
@@ -142,14 +143,14 @@ class ShareIntentParser(
 data class NativeSharePayload(
   val kind: String,
   val url: String? = null,
-  val uri: String? = null,
+  val id: String? = null,
   val name: String? = null,
 ) {
   fun toJsonObject(): JSONObject {
     return JSONObject().apply {
       put("kind", kind)
       url?.let { put("url", it) }
-      uri?.let { put("uri", it) }
+      id?.let { put("id", it) }
       name?.let { put("name", it) }
     }
   }

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -70,6 +71,17 @@ impl SkillService {
         input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, ApplicationError> {
         Ok(self.repository.discover_imports(input).await?)
+    }
+
+    pub async fn copy_import_directory(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(), ApplicationError> {
+        Ok(self
+            .repository
+            .copy_import_directory(source, destination)
+            .await?)
     }
 
     pub async fn discard_import_archive(&self, path: &str) -> Result<(), ApplicationError> {
@@ -315,7 +327,6 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
@@ -415,6 +426,14 @@ mod tests {
             &self,
             _input: SkillImportInput,
         ) -> Result<Vec<SkillImportInput>, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn copy_import_directory(
+            &self,
+            _source: &Path,
+            _destination: &Path,
+        ) -> Result<(), DomainError> {
             unreachable!("not needed for resolver tests")
         }
 

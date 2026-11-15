@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::State;
+#[cfg(desktop)]
+use tauri::WebviewWindow;
 
+#[cfg(desktop)]
+use crate::platform::file_transfer;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::services::runtime_paths_service::{
@@ -38,18 +42,27 @@ pub fn get_runtime_paths(
         .map_err(CommandError::from)
 }
 
+/// Saves the folder the user picks as the data root for the next start; `None` when they cancel.
+#[cfg(desktop)]
 #[tauri::command]
-pub async fn set_data_root(
-    data_root: String,
+pub async fn pick_data_root(
+    window: WebviewWindow,
     runtime_paths: State<'_, Arc<RuntimePathsService>>,
-) -> Result<(), CommandError> {
-    let raw = data_root.trim();
-    log_command(format!("set_data_root {}", raw));
+) -> Result<Option<String>, CommandError> {
+    log_command("pick_data_root");
 
+    let Some(directory) = file_transfer::pick_directories(&window, false)
+        .await?
+        .and_then(|directories| directories.into_iter().next())
+    else {
+        return Ok(None);
+    };
+    let directory = directory.to_string_lossy().into_owned();
     runtime_paths
-        .request_data_root_change(raw)
+        .request_data_root_change(&directory)
         .await
-        .map_err(map_set_data_root_error)
+        .map_err(map_data_root_change_error)?;
+    Ok(Some(directory))
 }
 
 fn runtime_paths_dto(info: RuntimePathsInfo) -> RuntimePathsDto {
@@ -64,7 +77,8 @@ fn runtime_paths_dto(info: RuntimePathsInfo) -> RuntimePathsDto {
     }
 }
 
-fn map_set_data_root_error(error: tt_domain::errors::DomainError) -> CommandError {
+#[cfg(desktop)]
+fn map_data_root_change_error(error: tt_domain::errors::DomainError) -> CommandError {
     let command_error = CommandError::from(error);
     if matches!(&command_error, CommandError::InternalServerError(_)) {
         map_command_error("Failed to set data root")(command_error)

@@ -82,6 +82,14 @@ pub async fn create_staged_file(
     create_file(kind_directory(app, kind)?, extension).await
 }
 
+/// An empty directory in the page area.
+#[cfg(desktop)]
+pub async fn create_staged_directory(app: &AppHandle, kind: &str) -> Result<PathBuf, DomainError> {
+    let directory = kind_directory(app, kind)?.join(uuid::Uuid::new_v4().simple().to_string());
+    create_directory(&directory).await?;
+    Ok(directory)
+}
+
 /// An empty file in the host area.
 pub async fn create_host_file(app: &AppHandle, extension: &str) -> Result<PathBuf, DomainError> {
     create_file(staging_root(app)?.join(HOST_AREA), extension).await

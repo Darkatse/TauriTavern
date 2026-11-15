@@ -1082,6 +1082,7 @@ type TauriTavernSkillImportInput =
     | {
         kind: 'directory';
         path: string;
+        skillRoot?: string;
         source?: unknown;
     }
     | {
@@ -1336,8 +1337,8 @@ type TauriTavernCharacterCardsApi = {
     stageFromUrl: (url: string) => Promise<TauriTavernStagedFile>;
     /** Project. */
     contentFromUrl: (url: string) => Promise<TauriTavernUrlContent>;
-    /** Project, Android only. */
-    stageSharedFile: (uri: string, name: string) => Promise<TauriTavernStagedFile>;
+    /** Project, Android only: `id` comes from a native share payload. */
+    stageSharedFile: (id: string, name: string) => Promise<TauriTavernStagedFile>;
     /** Project: adopt the stored card's embedded lorebook using its current binding. */
     adoptLorebook: (avatar: string) => Promise<TauriTavernCharacterLorebookAdoption>;
     /** Project: apply a decision returned by import or adoptLorebook. */

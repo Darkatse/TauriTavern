@@ -123,7 +123,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         #[cfg(desktop)]
         super::runtime_paths_commands::get_runtime_paths,
         #[cfg(desktop)]
-        super::runtime_paths_commands::set_data_root,
+        super::runtime_paths_commands::pick_data_root,
         super::settings_commands::begin_settings_commit,
         super::settings_commands::append_settings_commit_chunk,
         super::settings_commands::finish_settings_commit,
@@ -374,6 +374,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::download_skill_import_url,
         super::skill_commands::list_skills,
         super::skill_commands::list_skill_files,
+        #[cfg(desktop)]
+        super::skill_commands::pick_skill_import_directories,
         super::skill_commands::discover_skill_imports,
         super::skill_commands::discard_skill_import_archive,
         super::skill_commands::preview_skill_import,

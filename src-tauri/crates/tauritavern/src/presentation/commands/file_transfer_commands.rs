@@ -118,17 +118,12 @@ pub async fn pick_import_files(
 #[tauri::command]
 pub async fn stage_shared_file(
     app: AppHandle,
-    uri: String,
+    id: String,
     name: String,
 ) -> Result<StagedFileResult, CommandError> {
-    if !uri.starts_with("content://") {
-        return Err(CommandError::BadRequest(
-            "Shared files must be content URIs".into(),
-        ));
-    }
     let file = PickedFile {
         name,
-        source: PickedSource::ContentUri(uri),
+        source: PickedSource::ContentUri(file_transfer::take_shared_uri(&app, &id).await?),
     };
     stage_selected_file(&app, PickKind::CharacterCard, "png", file).await
 }

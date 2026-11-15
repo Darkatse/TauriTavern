@@ -115,23 +115,45 @@ struct ContentUriPlugin<R: tauri::Runtime> {
 }
 
 #[cfg(target_os = "android")]
+fn plugin_handle(app: &AppHandle) -> Result<&tauri::plugin::PluginHandle<tauri::Wry>, DomainError> {
+    app.state::<ContentUriPlugin<tauri::Wry>>()
+        .inner()
+        .handle
+        .as_ref()
+        .map_err(|error| {
+            DomainError::InternalError(format!("Content URI plugin is unavailable: {error}"))
+        })
+}
+
+#[cfg(target_os = "android")]
 async fn display_name(app: &AppHandle, uri: &str) -> Result<String, DomainError> {
     #[derive(serde::Deserialize)]
     struct DisplayName {
         name: String,
     }
 
-    let plugin = app.state::<ContentUriPlugin<tauri::Wry>>();
-    let handle = plugin.handle.as_ref().map_err(|error| {
-        DomainError::InternalError(format!("Content URI plugin is unavailable: {error}"))
-    })?;
-    handle
+    plugin_handle(app)?
         .run_mobile_plugin_async::<DisplayName>("displayName", serde_json::json!({ "uri": uri }))
         .await
         .map(|result| result.name)
         .map_err(|error| {
             DomainError::InternalError(format!("Failed to read selected file name: {error}"))
         })
+}
+
+/// The content URI behind share `id`; the activity hands each share out once.
+#[cfg(target_os = "android")]
+pub async fn take_shared_uri(app: &AppHandle, id: &str) -> Result<String, DomainError> {
+    #[derive(serde::Deserialize)]
+    struct SharedUri {
+        uri: String,
+    }
+
+    plugin_handle(app)?
+        .run_mobile_plugin_async::<SharedUri>("takeSharedUri", serde_json::json!({ "id": id }))
+        .await
+        .map(|result| result.uri)
+        .map_err(|error| DomainError::InvalidData(format!("Shared file is unavailable: {error}")))
 }
 
 #[cfg(target_os = "android")]
