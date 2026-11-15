@@ -94,6 +94,7 @@ enum GeminiThinkingModel {
     Gemini25Pro,
     LowHighLevels,
     LowToHighLevels,
+    LowToXHighLevels,
     MinimalToHighLevels,
 }
 
@@ -229,6 +230,9 @@ pub(super) fn map_gemini_thinking_control(
         GeminiThinkingModel::LowToHighLevels => {
             low_to_high_level(effort).map(GeminiThinkingControl::Level)
         }
+        GeminiThinkingModel::LowToXHighLevels => {
+            low_to_xhigh_level(effort).map(GeminiThinkingControl::Level)
+        }
     };
 
     Ok(control)
@@ -245,7 +249,10 @@ fn classify_gemini_thinking_model(model: &GeminiModel) -> Option<GeminiThinkingM
         (3, 7) | (3, 8) if model.is("flash") => Some(GeminiThinkingModel::LowToHighLevels),
         (3, _) if model.is("pro") => Some(GeminiThinkingModel::LowToHighLevels),
         (3, _) if model.is("flash") => Some(GeminiThinkingModel::MinimalToHighLevels),
-        (4, _) => Some(GeminiThinkingModel::LowToHighLevels),
+        (4, _) if model.is("argon") || model.is("carbon") => {
+            Some(GeminiThinkingModel::LowToHighLevels)
+        }
+        (4, _) => Some(GeminiThinkingModel::LowToXHighLevels),
         _ => None,
     }
 }
@@ -322,6 +329,17 @@ fn low_to_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
         RequestedReasoningEffort::High
         | RequestedReasoningEffort::Max
         | RequestedReasoningEffort::XHigh => Some("high"),
+        RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
+    }
+}
+
+fn low_to_xhigh_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+    match effort {
+        RequestedReasoningEffort::Auto => None,
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
+        RequestedReasoningEffort::Medium => Some("medium"),
+        RequestedReasoningEffort::High => Some("high"),
+        RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Some("xhigh"),
         RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
     }
 }
@@ -430,6 +448,11 @@ mod tests {
             ("gemini-3.8-flash", RequestedReasoningEffort::Minimal, "low"),
             ("gemini-4-argon", RequestedReasoningEffort::Minimal, "low"),
             ("gemini-4-carbon", RequestedReasoningEffort::Max, "high"),
+            (
+                "gemini-4-hydrogen",
+                RequestedReasoningEffort::XHigh,
+                "xhigh",
+            ),
         ] {
             let model = GeminiModel::parse(model).expect("model must be Gemini");
             assert_eq!(
