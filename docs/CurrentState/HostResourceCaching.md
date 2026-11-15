@@ -116,6 +116,8 @@ identity 与 JPEG 是同一个原子 artifact：旧缓存、上游 SillyTavern �
 
 默认 `/thumbnail` 保持上游选择语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图可回退 original。`/thumbnail?type=bg&...&static=true` 是 gallery/folder 专用的强制静态表示：可解码 GIF/WebP/APNG 生成 first-frame JPEG；生成失败直接报错，绝不把动画 original 冒充静态预览。MP4 不引入视频解码依赖，前端预览使用占位；active background 与媒体播放始终读取 raw `/backgrounds/*`。
 
+生成的缩略图只缩小不放大：avatar 与 persona 裁成 2:3，background 保持比例。尺寸见 `tt-adapter-media/src/thumbnails.rs`。
+
 ## 6. 平台 delivery
 
 Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。Host Resource 因此先产生标准逻辑决策，再按入口交付：

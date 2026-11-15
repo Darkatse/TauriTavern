@@ -1,7 +1,7 @@
 use crate::persistence::thumbnail_cache::{ThumbnailConfig, ThumbnailResizeMode};
 
-pub const AVATAR_THUMBNAIL_WIDTH: u32 = 96;
-pub const AVATAR_THUMBNAIL_HEIGHT: u32 = 144;
+pub const AVATAR_THUMBNAIL_WIDTH: u32 = 512;
+pub const AVATAR_THUMBNAIL_HEIGHT: u32 = 768;
 pub const AVATAR_THUMBNAIL_QUALITY: u8 = 90;
 
 pub const BACKGROUND_THUMBNAIL_WIDTH: u32 = 160;
