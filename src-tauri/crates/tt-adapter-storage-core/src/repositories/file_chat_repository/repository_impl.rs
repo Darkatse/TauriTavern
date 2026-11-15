@@ -513,24 +513,6 @@ impl ChatRepository for FileChatRepository {
         })
     }
 
-    async fn get_chat_payload_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat not found: {}/{}",
-                character_name, file_name
-            )));
-        }
-
-        Ok(path)
-    }
-
     async fn get_chat_payload_tail_lines(
         &self,
         character_name: &str,

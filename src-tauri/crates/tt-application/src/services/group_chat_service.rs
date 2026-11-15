@@ -203,24 +203,6 @@ impl GroupChatService {
         self.group_chat_repository.clear_cache().await
     }
 
-    /// Get the absolute path to a group chat payload file.
-    pub async fn get_group_chat_payload_path(
-        &self,
-        chat_id: &str,
-    ) -> Result<String, ApplicationError> {
-        if chat_id.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Group chat id cannot be empty".to_string(),
-            ));
-        }
-
-        let path = self
-            .group_chat_repository
-            .get_group_chat_payload_path(chat_id)
-            .await?;
-        Ok(path.to_string_lossy().to_string())
-    }
-
     /// Get the tail window for a group chat JSONL payload.
     pub async fn get_group_chat_payload_tail_lines(
         &self,

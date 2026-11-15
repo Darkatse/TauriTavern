@@ -55,7 +55,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
-第一方默认加载通过共享的 Tauri FileHandle 流读取 JSONL，以同一已打开文件及其初始大小为界；提前 EOF 视为失败，完成、取消或失败时关闭资源。各运行模式共用已解析的 `data_root` scope。
+第一方默认加载经 `open_chat_payload_jsonl` 取得宿主字节资源，经 `read_bytes` 读取原样 JSONL。读取以同一已打开文件及其初始大小为界，提前 EOF 视为失败；完成、取消或失败时关闭资源。
 
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 
@@ -171,10 +171,10 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 - `src/script.js`：角色聊天 canonical load/save、DOM truncation、Show More、保存队列。
 - `src/scripts/group-chats.js`：群聊 canonical load/save。
 - `src/scripts/chat-payload-transport.js`：完整 payload transport 公共入口。
-- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport 与共享 FileHandle pull stream 接入边界。
+- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport。
 - `src/scripts/tauri/chat/jsonl.js`：同步 JSON 记录快照、字节分帧与 JSONL 读取。
 - `src/scripts/tauri/chat/commit.js`：快照捕获时机、IPC 会话、ACK 校验与提交错误分类。
-- `src/tauri/main/services/files/readable-file-stream-service.js`：跨平台 plugin-fs open/read/close pull stream。
+- `src/tauri/main/services/files/readable-file-stream-service.js`：宿主字节资源的 pull stream。
 - `src/tauri/main/api/chat.js`：扩展历史分页 API 与 `windowInfo()`。
 
 Rust：

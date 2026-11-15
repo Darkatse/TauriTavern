@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tt_domain::errors::DomainError;
 
@@ -35,9 +35,6 @@ pub trait GroupChatRepository: Send + Sync {
         query: &str,
         chat_ids: Option<&[String]>,
     ) -> Result<Vec<ChatSearchResult>, DomainError>;
-
-    /// Get the absolute path to a group chat payload file.
-    async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
 
     /// Get the tail page for a group chat JSONL payload (excluding the header line).
     async fn get_group_chat_payload_tail_lines(

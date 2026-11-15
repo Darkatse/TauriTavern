@@ -572,19 +572,6 @@ impl ChatService {
         self.chat_repository.clear_cache().await
     }
 
-    /// Get the absolute path to a character chat payload file.
-    pub async fn get_chat_payload_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<String, ApplicationError> {
-        let path = self
-            .chat_repository
-            .get_chat_payload_path(character_name, file_name)
-            .await?;
-        Ok(path.to_string_lossy().to_string())
-    }
-
     pub async fn get_chat_payload(
         &self,
         character_name: &str,

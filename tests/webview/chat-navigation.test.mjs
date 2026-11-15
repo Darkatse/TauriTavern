@@ -81,6 +81,17 @@ window.__TAURI__.core.invoke = async (command, args, options) => {
             handles.set(rid, new window.TextEncoder().encode(JSON.stringify(record)));
             return rid;
         }
+        case 'open_chat_payload_jsonl': {
+            const fileName = args.target.fileName ?? args.target.chatId;
+            loads.push({ fileName, allowNotFound: args.allowNotFound });
+            if (!payloads.has(fileName)) {
+                if (args.allowNotFound) return null;
+                throw new Error(`Chat not found: ${fileName}`);
+            }
+            const rid = nextHandle++;
+            handles.set(rid, new window.TextEncoder().encode(payloads.get(fileName)));
+            return rid;
+        }
         case 'open_chat_payload_json': {
             const fileName = args.target.fileName ?? args.target.chatId;
             const rid = nextHandle++;
@@ -146,31 +157,6 @@ window.__TAURI__.core.invoke = async (command, args, options) => {
             return;
         }
         case 'abort_chat_commit': sessions.delete(args.sessionId); return;
-        case 'get_chat_payload_path':
-        case 'get_group_chat_path': {
-            const fileName = args.fileName ?? args.id;
-            loads.push({ fileName, allowNotFound: args.allowNotFound });
-            if (!payloads.has(fileName)) {
-                if (args.allowNotFound) return null;
-                throw new Error(`Chat not found: ${fileName}`);
-            }
-            return fileName;
-        }
-        case 'plugin:fs|open': {
-            const rid = nextHandle++;
-            handles.set(rid, new TextEncoder().encode(payloads.get(args.path)));
-            return rid;
-        }
-        case 'plugin:fs|fstat': return { size: handles.get(args.rid).length };
-        case 'plugin:fs|read': {
-            const content = handles.get(args.rid);
-            const chunk = content.subarray(0, args.len);
-            const bytes = new window.Uint8Array(args.len + 8);
-            bytes.set(chunk);
-            new window.DataView(bytes.buffer).setBigUint64(args.len, BigInt(chunk.length));
-            handles.set(args.rid, content.subarray(chunk.length));
-            return bytes;
-        }
         case 'plugin:resources|close':
             swipeSources.delete(args.rid);
             handles.delete(args.rid);

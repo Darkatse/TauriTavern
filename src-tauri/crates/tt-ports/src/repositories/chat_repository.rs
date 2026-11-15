@@ -1,7 +1,7 @@
 use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
@@ -131,13 +131,6 @@ pub trait ChatRepository: Send + Sync {
         character_name: &str,
         file_name: &str,
     ) -> Result<Vec<u8>, DomainError>;
-
-    /// Get the absolute path to a character chat payload file.
-    async fn get_chat_payload_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<PathBuf, DomainError>;
 
     /// Get the tail page for a character chat JSONL payload (excluding the header line).
     async fn get_chat_payload_tail_lines(

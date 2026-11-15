@@ -63,7 +63,7 @@ pub(super) fn mock_app(
             c::mcp_commands::create_mcp_server,
             c::character_commands::get_character_chats_by_id,
             c::character_commands::get_character,
-            c::chat_commands::get_chat_payload_path,
+            c::chat_commands::open_chat_payload_jsonl,
             c::agent_commands::list_active_agent_runs,
             c::agent_session_commands::load_agent_session_profile,
             c::agent_session_commands::list_agent_sessions,

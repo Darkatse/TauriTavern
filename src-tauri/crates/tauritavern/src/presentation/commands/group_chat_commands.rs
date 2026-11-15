@@ -72,30 +72,6 @@ pub async fn search_group_chats(
 }
 
 #[tauri::command]
-pub async fn get_group_chat_path(
-    id: String,
-    allow_not_found: Option<bool>,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<String, CommandError> {
-    log_command(format!("get_group_chat_path {}", id));
-
-    let allow_not_found = allow_not_found.unwrap_or(false);
-    match app_state
-        .services
-        .group_chat_service
-        .get_group_chat_payload_path(&id)
-        .await
-    {
-        Ok(path) => Ok(path),
-        Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(String::new()),
-        Err(error) => Err(map_command_error(format!(
-            "Failed to get group chat payload path {}",
-            id
-        ))(error)),
-    }
-}
-
-#[tauri::command]
 pub async fn get_group_chat_payload_tail(
     id: String,
     max_lines: usize,

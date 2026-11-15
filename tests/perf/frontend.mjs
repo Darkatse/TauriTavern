@@ -238,8 +238,8 @@ installWebHost({
 // Host traffic as the native host sees it: the UTF-8 JSON of every command's arguments and result, with binary
 // data counted by its bytes. The trace records every call in order for the backend replay; strings the host
 // issued (session ids, revisions) become references to the result that issued them, including results that are
-// JSON documents in binary form. Resource ids are small numbers, so only a result's \`readerId\` issues one and
-// only an argument's \`rid\` refers to one.
+// JSON documents in binary form. Resource ids are small numbers, so only an \`open_*\` command's result, or a
+// result's \`readerId\`, issues one, and only an argument's \`rid\` refers to one.
 globalThis.__perfHost = {
     bytes: 0, recording: true, step: 'app/startup', calls: [], issued: new Map(),
     keep: () => sessionStorage.setItem('perf-host', JSON.stringify(fixture.snapshot())),
@@ -280,11 +280,11 @@ function parsedResult(value) {
         return undefined;
     }
 }
-function rememberIssued(issued, index, value, at = []) {
-    const resourceId = typeof value === 'number' && at.at(-1) === 'readerId';
+function rememberIssued(issued, index, value, opensResource, at = []) {
+    const resourceId = typeof value === 'number' && (at.at(-1) === 'readerId' || (opensResource && !at.length));
     if ((issuedToken(value) || resourceId) && !issued.has(value)) issued.set(value, [index, at]);
     else if (value && typeof value === 'object' && !ArrayBuffer.isView(value) && !(value instanceof ArrayBuffer)) {
-        for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, [...at, key]);
+        for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, opensResource, [...at, key]);
     }
 }
 // Native commands the Web Host lacks, answered as the native host would.
@@ -328,7 +328,7 @@ window.__TAURI__.core.invoke = async (command, args, options) => {
         throw error;
     }
     host.bytes += hostBytes(result);
-    rememberIssued(host.issued, index, parsedResult(result));
+    rememberIssued(host.issued, index, parsedResult(result), command.startsWith('open_'));
     return result;
 };
 </script>`;

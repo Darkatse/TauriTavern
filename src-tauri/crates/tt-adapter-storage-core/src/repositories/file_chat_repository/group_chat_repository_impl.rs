@@ -96,21 +96,6 @@ impl GroupChatRepository for FileChatRepository {
         Ok(results.into_iter().map(ChatSearchResult::from).collect())
     }
 
-    async fn get_group_chat_payload_path(
-        &self,
-        chat_id: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        let path = self.get_group_chat_path(chat_id)?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Group chat not found: {}",
-                chat_id
-            )));
-        }
-
-        Ok(path)
-    }
-
     async fn get_group_chat_payload_tail_lines(
         &self,
         chat_id: &str,

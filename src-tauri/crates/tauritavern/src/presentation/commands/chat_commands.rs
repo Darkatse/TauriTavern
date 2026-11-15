@@ -1,7 +1,7 @@
 use super::byte_reader_commands::ByteResource;
 use std::sync::Arc;
 
-use tauri::{Manager, ResourceId, State, Webview};
+use tauri::{Manager, ResourceId, Runtime, State, Webview};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -13,6 +13,7 @@ use tt_application::dto::chat_dto::{
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_contracts::chat::ChatBackupCatalogEntry;
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::chat_repository::{
     ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
@@ -21,24 +22,39 @@ const CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES: usize = 512 * 1024;
 const CHAT_PAYLOAD_READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 #[tauri::command]
-pub async fn open_chat_payload_json(
+pub async fn open_chat_payload_jsonl<R: Runtime>(
     target: ChatHistoryLocator,
     allow_not_found: bool,
-    webview: Webview,
+    webview: Webview<R>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Option<ResourceId>, CommandError> {
-    let Some(reader) = app_state
+    let reader = app_state
+        .services
+        .chat_commit_service
+        .open_payload_jsonl(target, allow_not_found)
+        .await?;
+    Ok(reader.map(|reader| add_payload_reader(&webview, reader)))
+}
+
+#[tauri::command]
+pub async fn open_chat_payload_json<R: Runtime>(
+    target: ChatHistoryLocator,
+    allow_not_found: bool,
+    webview: Webview<R>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Option<ResourceId>, CommandError> {
+    let reader = app_state
         .services
         .chat_commit_service
         .open_payload_json(target, allow_not_found)
-        .await?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(webview.resources_table().add(ByteResource::new(
-        reader,
-        CHAT_PAYLOAD_READ_CHUNK_BYTES,
-    ))))
+        .await?;
+    Ok(reader.map(|reader| add_payload_reader(&webview, reader)))
+}
+
+fn add_payload_reader<R: Runtime>(webview: &Webview<R>, reader: Box<dyn ByteReader>) -> ResourceId {
+    webview
+        .resources_table()
+        .add(ByteResource::new(reader, CHAT_PAYLOAD_READ_CHUNK_BYTES))
 }
 
 #[tauri::command]
@@ -376,34 +392,6 @@ pub async fn clear_chat_cache(app_state: State<'_, Arc<AppState>>) -> Result<(),
         .clear_cache()
         .await
         .map_err(map_command_error("Failed to clear chat cache"))
-}
-
-#[tauri::command]
-pub async fn get_chat_payload_path(
-    character_name: String,
-    file_name: String,
-    allow_not_found: Option<bool>,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<String, CommandError> {
-    log_command(format!(
-        "get_chat_payload_path {}/{}",
-        character_name, file_name
-    ));
-
-    let allow_not_found = allow_not_found.unwrap_or(false);
-    match app_state
-        .services
-        .chat_service
-        .get_chat_payload_path(&character_name, &file_name)
-        .await
-    {
-        Ok(path) => Ok(path),
-        Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(String::new()),
-        Err(error) => Err(map_command_error(format!(
-            "Failed to get chat payload path {}/{}",
-            character_name, file_name
-        ))(error)),
-    }
 }
 
 #[tauri::command]

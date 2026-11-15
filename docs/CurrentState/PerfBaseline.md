@@ -86,6 +86,6 @@ CI 只比较 Linux。
 - JS 分配不含 ArrayBuffer 的外部内存、Blink 创建的字符串与 DOM 对象。
 - 测量页不接管 Worker 与 iframe 内的定时器和动画，经它们延后的工作不计入。
 - JS-Slash-Runner 不在测量内。
-- 后端不计插件命令（如经 `plugin:fs` 读取聊天文件）与网络。
+- 后端不计插件命令与网络。
 - 系统库自己的分配（如打开目录时的缓冲）不经 tt-perf 的分配器，不计入分配，其分配器开销仍在 Linux 的指令数里。
 - 启动时第一次目录扫描会查询 CPU 配额，Linux 上要读 cgroup 的 `cpu.max`，`app/startup` 的读次数因此随机器的 cgroup 层级差几次。

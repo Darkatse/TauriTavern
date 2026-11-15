@@ -64,7 +64,7 @@ const host = installWebHost({
 | `get_character` | `/api/characters/get`，见“角色” |
 | `get_bootstrap_metadata` | `/api/characters/all`、`/api/groups/all`、`/api/avatars/get`、`/api/secrets/read` |
 | `get_character_chats_by_id` | `/api/characters/chats`，结果须为数组，没有聊天时为 `[]`；ST 这时返回的 `{ error: true }` 会被拒绝 |
-| `get_chat_payload_path`；`plugin:fs\|open`、`plugin:fs\|fstat`、`plugin:fs\|read`；`plugin:resources\|close` | `/api/chats/get`，见"聊天读取" |
+| `open_chat_payload_jsonl`、`read_bytes`、`plugin:resources\|close` | `/api/chats/get`，见"聊天读取" |
 | `list_active_agent_runs` | 返回空集合，浏览器宿主不拥有原生 Agent Run |
 | `get_all_backgrounds`、`get_background_folders`、`get_all_background_metadata` | `/api/backgrounds/all`、`/api/backgrounds/folders`、`/api/image-metadata/all` |
 | `get_extensions` | `GET /api/extensions/discover`，把 ST 的 `type` 转回原生 `extension_type` |
@@ -109,7 +109,7 @@ const host = installWebHost({
 
 **聊天提交**。完整 payload 编码为 JSONL；metadata 提交只替换 header 的 `chat_metadata`；metadata extension 替换对应命名空间，`null` 删除它。TT 在已有 integrity 时要求新值完全匹配，省略也拒绝，不匹配返回 `{ BadRequest: 'integrity' }`。完整 payload 的 `force` 原样传给 ST，metadata 提交用 `false`；不强制保存时，ST 会拒绝覆盖首行已损坏的聊天文件。
 
-**聊天读取**。后端返回的消息记录编码成 JSONL，再经 `plugin:fs` 那组命令读取；每次读取的响应末尾带 8 字节大端长度，与原生相同。ST 用空对象 `{}` 表示聊天不存在：`allowNotFound` 为真时返回空路径，否则以 `{ NotFound }` 拒绝。
+**聊天读取**。后端返回的消息记录编码成 JSONL，作为字节资源经 `read_bytes` 读取，分块与原生相同。ST 用空对象 `{}` 表示聊天不存在：`allowNotFound` 为真时返回 `null`，否则以 `{ NotFound }` 拒绝。
 
 **角色**。`get_bootstrap_metadata` 保留后端给出的 `shallow` 标记，浅卡片的 `json_data` 为 `null`。`get_character` 与编辑后的回读得到完整卡片，`json_data` 是 ST 返回的原始卡片文本。ST 读卡失败时仍返回 200 和一个不含 `json_data` 的空壳，Web Host 把它当作错误。完整卡片更新转回 ST 的文本表单，保留 `json_data` 中的其他字段；头像文件与裁剪不在范围内。
 

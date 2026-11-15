@@ -59,6 +59,13 @@ pub enum ChatCommitTarget {
 /// Target-addressed chat file reads and atomic payload or metadata commits.
 #[async_trait]
 pub trait ChatCommitRepository: Send + Sync {
+    /// The file's bytes as stored, bounded by its size when opened.
+    async fn open_payload_jsonl(
+        &self,
+        target: ChatCommitTarget,
+    ) -> Result<Box<dyn ByteReader>, DomainError>;
+
+    /// The file's records as one JSON array.
     async fn open_payload_json(
         &self,
         target: ChatCommitTarget,

@@ -974,8 +974,7 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
         assert_eq!(
             fs::read(
                 repository
-                    .get_group_chat_payload_path(&restored_group)
-                    .await
+                    .get_group_chat_path(&restored_group)
                     .expect("resolve restored group chat")
             )
             .await
@@ -1483,7 +1482,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
     assert_eq!(backup_file_names(&root).await.len(), 3);
 
     let current_path = repository
-        .get_chat_payload_path("Alice", "session-one")
+        .resolve_character_chat_path("Alice", "session-one")
         .await
         .expect("resolve current path");
     let _snapshot_guard = repository
@@ -1575,7 +1574,7 @@ async fn chat_commit_sanitizes_paths_and_preserves_unicode_spacing() {
             .unwrap();
         assert_eq!(
             repository
-                .get_chat_payload_path(character, read_name)
+                .resolve_character_chat_path(character, read_name)
                 .await
                 .unwrap(),
             root.join("chats").join(expected)
@@ -1820,8 +1819,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
     .unwrap();
 
     let payload_path = repository
-        .get_group_chat_payload_path("group-session")
-        .await
+        .get_group_chat_path("group-session")
         .expect("get group payload path");
     let saved = crate::chat_jsonl::read_payload(&payload_path)
         .await
@@ -1833,10 +1831,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
         .await
         .expect("delete group chat payload");
 
-    let deleted = repository
-        .get_group_chat_payload_path("group-session")
-        .await;
-    assert!(matches!(deleted, Err(DomainError::NotFound(_))));
+    assert!(!payload_path.exists());
 
     cleanup_repository(repository, root).await;
 }
@@ -2738,7 +2733,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
     );
 
     let path = repository
-        .get_chat_payload_path("alice", "session")
+        .resolve_character_chat_path("alice", "session")
         .await
         .unwrap();
     let bytes = fs::read(&path).await.unwrap();
