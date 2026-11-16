@@ -191,7 +191,7 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
 - `network.request_proxy`
   - 启动期：`src-tauri/crates/tauritavern/src/app/host/setup.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 应用继续启动，但 HTTP pool 保持 fail-closed，直到用户在 Settings 中关闭 proxy
-  - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:update_tauritavern_settings` 禁止启用 proxy
+  - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:set_request_proxy` 禁止启用 proxy
 - `ai.image_generation`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
 - `sync.lan`

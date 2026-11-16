@@ -3,7 +3,9 @@ pub mod revision;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use url::Url;
 
+use crate::errors::DomainError;
 use crate::models::update::UpdateChannel;
 
 fn default_perf_profile() -> String {
@@ -131,6 +133,48 @@ impl Default for RequestProxySettings {
             url: String::new(),
             bypass: default_request_proxy_bypass(),
         }
+    }
+}
+
+impl RequestProxySettings {
+    /// A URL without a scheme, including `host:port`, names an HTTP proxy.
+    pub fn proxy_url(&self) -> Result<Option<Url>, DomainError> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        let url = self.url.trim();
+        if url.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL is required".to_string(),
+            ));
+        }
+
+        let proxy_url = Url::parse(url)
+            .ok()
+            .filter(Url::has_host)
+            .map_or_else(|| Url::parse(&format!("http://{url}")), Ok)
+            .map_err(|error| {
+                DomainError::InvalidData(format!("Invalid request proxy URL: {error}"))
+            })?;
+        if !matches!(
+            proxy_url.scheme(),
+            "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
+        ) {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL must use http, https, socks4, socks4a, socks5, or socks5h"
+                    .to_string(),
+            ));
+        }
+        if !matches!(proxy_url.path(), "" | "/")
+            || proxy_url.query().is_some()
+            || proxy_url.fragment().is_some()
+        {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL must not include a path, query, or fragment".to_string(),
+            ));
+        }
+        Ok(Some(proxy_url))
     }
 }
 

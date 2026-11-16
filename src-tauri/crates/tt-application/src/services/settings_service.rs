@@ -127,12 +127,6 @@ impl SettingsService {
     ) -> Result<TauriTavernSettingsDto, ApplicationError> {
         tracing::debug!("Updating TauriTavern settings");
 
-        let request_proxy_update = dto.request_proxy.clone().map(RequestProxySettings::from);
-        if let Some(settings) = request_proxy_update.as_ref() {
-            self.request_proxy_runtime
-                .validate_request_proxy_settings(settings)?;
-        }
-
         let write_guard = self.tauritavern_settings_write_lock.lock().await;
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
@@ -182,10 +176,6 @@ impl SettingsService {
 
         if let Some(close_to_tray_on_close) = dto.close_to_tray_on_close {
             settings.close_to_tray_on_close = close_to_tray_on_close;
-        }
-
-        if let Some(request_proxy) = dto.request_proxy {
-            settings.request_proxy = request_proxy.into();
         }
 
         if let Some(avatar_persona_original_images_enabled) =
@@ -280,30 +270,34 @@ impl SettingsService {
             .await?;
         drop(write_guard);
 
-        let request_proxy_result = request_proxy_update.is_some().then(|| {
-            self.request_proxy_runtime
-                .apply_request_proxy_settings(&settings.request_proxy)
-        });
-        let chat_backup_result = if chat_backups_changed {
-            let result = self
-                .chat_backup_runtime
+        if chat_backups_changed {
+            self.chat_backup_runtime
                 .apply_chat_backup_settings(settings.chat_backups)
-                .await;
-            if result.is_ok() && chat_backup_reconciliation_required {
+                .await?;
+            if chat_backup_reconciliation_required {
                 self.schedule_chat_backup_reconciliation();
             }
-            Some(result)
-        } else {
-            None
-        };
-        if let Some(result) = request_proxy_result {
-            result?;
-        }
-        if let Some(result) = chat_backup_result {
-            result?;
         }
 
         Ok(TauriTavernSettingsDto::from(settings))
+    }
+
+    pub async fn set_request_proxy(
+        &self,
+        proxy: RequestProxySettings,
+    ) -> Result<(), ApplicationError> {
+        self.request_proxy_runtime
+            .validate_request_proxy_settings(&proxy)?;
+
+        let _write = self.tauritavern_settings_write_lock.lock().await;
+        let mut settings = self.settings_repository.load_tauritavern_settings().await?;
+        settings.request_proxy = proxy;
+        self.settings_repository
+            .save_tauritavern_settings(&settings)
+            .await?;
+        self.request_proxy_runtime
+            .apply_request_proxy_settings(&settings.request_proxy)?;
+        Ok(())
     }
 
     /// Takes effect at the next launch, when `SecretService` reads it.
@@ -762,7 +756,6 @@ mod tests {
                     max_total_bytes: Some(0),
                 }),
                 close_to_tray_on_close: None,
-                request_proxy: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -816,7 +809,6 @@ mod tests {
             cold_swipes_enabled: None,
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
-            request_proxy: None,
             avatar_persona_original_images_enabled: None,
             dev: None,
             dynamic_theme: None,
@@ -884,7 +876,6 @@ mod tests {
                 cold_swipes_enabled: None,
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
-                request_proxy: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,

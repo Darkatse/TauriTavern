@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClientBuilder};
 use reqwest::redirect::Policy;
-use reqwest::{Client, NoProxy, Proxy, Url};
+use reqwest::{Client, NoProxy, Proxy};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
 use tt_ports::settings::RequestProxyRuntime;
@@ -293,39 +293,9 @@ impl UserEndpointGrantRuntime for HttpClientPool {
 }
 
 fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>, DomainError> {
-    if !settings.enabled {
+    let Some(proxy_url) = settings.proxy_url()? else {
         return Ok(None);
-    }
-
-    let url = settings.url.trim();
-    if url.is_empty() {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL is required".to_string(),
-        ));
-    }
-
-    let proxy_url = Url::parse(url)
-        .ok()
-        .filter(Url::has_host)
-        .map_or_else(|| Url::parse(&format!("http://{url}")), Ok)
-        .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
-    if !matches!(
-        proxy_url.scheme(),
-        "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
-    ) {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL must use http, https, socks4, socks4a, socks5, or socks5h"
-                .to_string(),
-        ));
-    }
-    if !matches!(proxy_url.path(), "" | "/")
-        || proxy_url.query().is_some()
-        || proxy_url.fragment().is_some()
-    {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL must not include a path, query, or fragment".to_string(),
-        ));
-    }
+    };
     let mut proxy = Proxy::all(proxy_url)
         .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
 

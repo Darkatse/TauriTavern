@@ -156,7 +156,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         avatarPersonaOriginalImagesEnabled: hasAvatarPersonaOriginalImagesEnabledChange,
         promptCacheTtl: hasPromptCacheTtlChange,
         models: hasModelsChange,
-        requestProxy: hasRequestProxyChange,
     };
 
     const hasChanges = Object.values(changes).some(Boolean);
@@ -222,18 +221,18 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         }
         patch.models = { claude };
     }
-    if (hasRequestProxyChange) {
-        patch.request_proxy = {
-            enabled: nextRequestProxyEnabled,
-            url: nextRequestProxyUrl,
-            bypass: nextRequestProxyBypass,
-        };
-    }
 
     return {
         hasChanges,
         patch,
         changes,
+        requestProxy: hasRequestProxyChange
+            ? {
+                enabled: nextRequestProxyEnabled,
+                url: nextRequestProxyUrl,
+                bypass: nextRequestProxyBypass,
+            }
+            : null,
         requiresChatBackupPurgeConfirmation: hasChatBackupsChange
             && !isChatBackupHistoryDisabled(initial.chatBackups)
             && isChatBackupHistoryDisabled({
@@ -265,11 +264,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             },
             avatarPersonaOriginalImagesEnabled: nextAvatarPersonaOriginalImagesEnabled,
             promptCacheTtl: nextPromptCacheTtl,
-            requestProxy: {
-                enabled: nextRequestProxyEnabled,
-                url: nextRequestProxyUrl,
-                bypass: nextRequestProxyBypass,
-            },
         },
     };
 }
