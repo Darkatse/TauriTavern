@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
 use crate::app::dev_observability::DevObservabilityHub;
@@ -8,6 +8,7 @@ use crate::presentation::commands::chunk_body::{chunk_bytes_from_request, commit
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
+use crate::presentation::commands::keys_exposure::ensure_keys_exposure_consent;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::settings_dto::{
     SettingsSnapshotDto, TauriTavernSettingsDto, UpdateTauriTavernSettingsDto, UserSettingsDto,
@@ -137,6 +138,26 @@ pub async fn update_tauritavern_settings(
     }
 
     Ok(settings)
+}
+
+#[tauri::command]
+pub async fn set_keys_exposure(
+    allowed: bool,
+    locale: String,
+    app_state: State<'_, Arc<AppState>>,
+    window: WebviewWindow,
+) -> Result<(), CommandError> {
+    log_command(format!("set_keys_exposure {allowed}"));
+
+    if allowed {
+        ensure_keys_exposure_consent(&window, &locale).await?;
+    }
+    app_state
+        .services
+        .settings_service
+        .set_keys_exposure(allowed)
+        .await
+        .map_err(map_command_error("Failed to set keys exposure"))
 }
 
 #[tauri::command]

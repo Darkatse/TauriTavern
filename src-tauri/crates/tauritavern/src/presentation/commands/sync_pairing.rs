@@ -1,6 +1,6 @@
 use tauri::WebviewWindow;
 
-use crate::presentation::commands::access_consent::{ConsentCopy, ConsentRequest, ask, localized};
+use crate::presentation::commands::access_consent::{ConsentCopy, ask, localized};
 use crate::presentation::errors::CommandError;
 use tt_domain::errors::DomainError;
 
@@ -43,14 +43,7 @@ pub(super) async fn ask_pairing_consent(
             localized(locale, &SERVER_ZH_HANS, &SERVER_ZH_HANT, &SERVER_EN),
         ),
     };
-    ask(
-        window,
-        &ConsentRequest {
-            subject: &subject,
-            copy,
-        },
-    )
-    .await
+    ask(window, Some(&subject), copy).await
 }
 
 static LAN_ZH_HANS: ConsentCopy = ConsentCopy {

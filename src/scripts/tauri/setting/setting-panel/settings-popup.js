@@ -1,6 +1,7 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
-import { translate } from '../../../i18n.js';
-import { pickDataRoot, updateTauriTavernSettings } from '../../../../tauri-bridge.js';
+import { getCurrentLocale, translate } from '../../../i18n.js';
+import { invoke, pickDataRoot, updateTauriTavernSettings } from '../../../../tauri-bridge.js';
+import { isCommandCancelled } from '../../../util/command-error-utils.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import {
     loadChatBackupStorageStats,
@@ -370,9 +371,22 @@ async function chooseDataRoot() {
     return selected;
 }
 
+async function setKeysExposure(allowed) {
+    try {
+        await invoke('set_keys_exposure', { allowed, locale: getCurrentLocale() });
+        return allowed;
+    } catch (error) {
+        if (isCommandCancelled(error)) {
+            return null;
+        }
+        throw error;
+    }
+}
+
 function createSettingsActions(backgroundOptions) {
     return {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
+        setKeysExposure: (allowed) => runTaskOrPopup(() => setKeysExposure(allowed)),
         chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
         manageQuickAccess: () => runTaskOrPopup(async () => {

@@ -35,6 +35,8 @@ pub struct SettingsService {
     chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     sillytavern_settings_cache: Mutex<Option<SettingsAggregateCacheEntry>>,
     user_settings_save_lock: Mutex<()>,
+    /// Held from load to save, so one write cannot restore a field another write just changed.
+    tauritavern_settings_write_lock: Mutex<()>,
 }
 
 impl SettingsService {
@@ -51,6 +53,7 @@ impl SettingsService {
             chat_backup_runtime,
             sillytavern_settings_cache: Mutex::new(None),
             user_settings_save_lock: Mutex::new(()),
+            tauritavern_settings_write_lock: Mutex::new(()),
         }
     }
 
@@ -130,6 +133,7 @@ impl SettingsService {
                 .validate_request_proxy_settings(settings)?;
         }
 
+        let write_guard = self.tauritavern_settings_write_lock.lock().await;
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
         if let Some(updates) = dto.updates {
@@ -182,10 +186,6 @@ impl SettingsService {
 
         if let Some(request_proxy) = dto.request_proxy {
             settings.request_proxy = request_proxy.into();
-        }
-
-        if let Some(allow_keys_exposure) = dto.allow_keys_exposure {
-            settings.allow_keys_exposure = allow_keys_exposure;
         }
 
         if let Some(avatar_persona_original_images_enabled) =
@@ -278,6 +278,7 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
+        drop(write_guard);
 
         let request_proxy_result = request_proxy_update.is_some().then(|| {
             self.request_proxy_runtime
@@ -303,6 +304,17 @@ impl SettingsService {
         }
 
         Ok(TauriTavernSettingsDto::from(settings))
+    }
+
+    /// Takes effect at the next launch, when `SecretService` reads it.
+    pub async fn set_keys_exposure(&self, allowed: bool) -> Result<(), ApplicationError> {
+        let _write = self.tauritavern_settings_write_lock.lock().await;
+        let mut settings = self.settings_repository.load_tauritavern_settings().await?;
+        settings.allow_keys_exposure = allowed;
+        self.settings_repository
+            .save_tauritavern_settings(&settings)
+            .await?;
+        Ok(())
     }
 
     fn apply_agent_settings_update(
@@ -751,7 +763,6 @@ mod tests {
                 }),
                 close_to_tray_on_close: None,
                 request_proxy: None,
-                allow_keys_exposure: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -806,7 +817,6 @@ mod tests {
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
             request_proxy: None,
-            allow_keys_exposure: None,
             avatar_persona_original_images_enabled: None,
             dev: None,
             dynamic_theme: None,
@@ -875,7 +885,6 @@ mod tests {
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
                 request_proxy: None,
-                allow_keys_exposure: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,

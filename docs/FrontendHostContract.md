@@ -284,7 +284,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `/backgrounds/*`、`/assets/*`
   - `/user/images/*`、`/user/files/*`
 
-`/api/users/backup` 与上游不同：由宿主生成并交付备份，返回 `{ ok, delivered, includes_secrets }`。
+`/api/users/backup` 与上游不同：由宿主生成并交付备份，返回 `{ ok, delivered, includes_secrets }`。是否包含密钥由宿主决定，与上游一样只在密钥显示生效时包含。
 
 ### 4.4 浏览器资源契约（Public）
 

@@ -32,7 +32,7 @@ export function createSettings(store, loadDefaults) {
             patch = structuredClone(patch);
             const initial = await loadDefaults();
             const value = read(initial);
-            const { updates, request_proxy, ...options } = patch;
+            const { updates, request_proxy, allow_keys_exposure: _, ...options } = patch;
             applyOptions(value, options, initial);
             // These two DTOs contain required fields rather than nested Option patches.
             if (request_proxy != null) value.request_proxy = request_proxy;

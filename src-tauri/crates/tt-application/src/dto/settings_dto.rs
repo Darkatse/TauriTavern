@@ -52,7 +52,6 @@ pub struct UpdateTauriTavernSettingsDto {
     pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
-    pub allow_keys_exposure: Option<bool>,
     pub avatar_persona_original_images_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,

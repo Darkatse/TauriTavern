@@ -130,24 +130,36 @@ pub async fn save_export_data_archive(
     Ok(delivery?.into())
 }
 
+#[derive(Serialize)]
+pub struct UserBackupResult {
+    #[serde(flatten)]
+    delivery: DeliveryResult,
+    includes_secrets: bool,
+}
+
 #[tauri::command]
 pub async fn export_user_backup_archive(
     app_state: State<'_, Arc<AppState>>,
     window: WebviewWindow,
     handle: String,
-    include_secrets: bool,
-) -> Result<DeliveryResult, CommandError> {
+) -> Result<UserBackupResult, CommandError> {
+    let includes_secrets = app_state
+        .services
+        .secret_service
+        .read_settings()
+        .allow_keys_exposure;
     log_command(format!(
-        "export_user_backup_archive {handle} include_secrets={include_secrets}"
+        "export_user_backup_archive {handle} includes_secrets={includes_secrets}"
     ));
     let archive = app_state
         .services
         .data_archive_service
-        .export_user_backup(handle, include_secrets)
+        .export_user_backup(handle, includes_secrets)
         .await?;
-    Ok(
-        file_transfer::deliver(&window, archive.archive_path.into(), &archive.file_name)
-            .await?
-            .into(),
-    )
+    let delivery =
+        file_transfer::deliver(&window, archive.archive_path.into(), &archive.file_name).await?;
+    Ok(UserBackupResult {
+        delivery: delivery.into(),
+        includes_secrets,
+    })
 }

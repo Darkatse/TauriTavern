@@ -6,9 +6,7 @@ use tauri::WebviewWindow;
 use url::Url;
 
 use crate::app::AppState;
-use crate::presentation::commands::access_consent::{
-    ConsentCopy, ConsentRequest, ask_once, localized,
-};
+use crate::presentation::commands::access_consent::{ConsentCopy, ask_once, localized};
 use crate::presentation::commands::helpers::ensure_ios_policy_allows;
 use crate::presentation::errors::CommandError;
 use tt_application::services::external_import_service::{
@@ -46,14 +44,11 @@ impl<'a> ImportSources<'a> {
 impl DownloadSources for ImportSources<'_> {
     async fn allow(&self, url: &Url) -> Result<(), DomainError> {
         let source = http_origin(url)?;
-        let request = ConsentRequest {
-            subject: &source,
-            copy: localized(self.locale, &ZH_HANS, &ZH_HANT, &EN),
-        };
         ask_once(
             self.window,
             self.access,
-            request,
+            &source,
+            localized(self.locale, &ZH_HANS, &ZH_HANT, &EN),
             "Import source authorization cancelled by user",
         )
         .await

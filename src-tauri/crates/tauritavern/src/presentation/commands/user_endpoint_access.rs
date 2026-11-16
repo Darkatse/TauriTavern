@@ -1,9 +1,7 @@
 use tauri::WebviewWindow;
 use url::Url;
 
-use crate::presentation::commands::access_consent::{
-    ConsentCopy, ConsentRequest, ask_once, localized,
-};
+use crate::presentation::commands::access_consent::{ConsentCopy, ask_once, localized};
 use crate::presentation::errors::CommandError;
 use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
 use tt_domain::models::endpoint_url::http_origin;
@@ -20,14 +18,11 @@ pub(super) async fn ensure_user_endpoint_access(
     };
 
     let origin = http_origin(destination)?;
-    let request = ConsentRequest {
-        subject: &origin,
-        copy: localized(locale, &ZH_HANS, &ZH_HANT, &EN),
-    };
     ask_once(
         window,
         access_service,
-        request,
+        &origin,
+        localized(locale, &ZH_HANS, &ZH_HANT, &EN),
         "Endpoint authorization cancelled by user",
     )
     .await?;

@@ -34,54 +34,56 @@ pub(super) fn localized(
     }
 }
 
-pub(super) struct ConsentRequest<'a> {
-    pub(super) subject: &'a str,
-    pub(super) copy: &'static ConsentCopy,
-}
-
 pub(super) async fn ask(
     window: &WebviewWindow,
-    request: &ConsentRequest<'_>,
+    subject: Option<&str>,
+    copy: &ConsentCopy,
 ) -> Result<bool, DomainError> {
     let _turn = DIALOG_GATE.lock().await;
-    show_dialog(window, request).await
+    show_dialog(window, subject, copy).await
 }
 
 pub(super) async fn ask_once(
     window: &WebviewWindow,
     grants: &dyn UserGrants,
-    request: ConsentRequest<'_>,
+    subject: &str,
+    copy: &ConsentCopy,
     cancelled: &'static str,
 ) -> Result<(), DomainError> {
-    if grants.is_allowed(request.subject).await {
+    if grants.is_allowed(subject).await {
         return Ok(());
     }
 
     let _turn = DIALOG_GATE.lock().await;
-    if grants.is_allowed(request.subject).await {
+    if grants.is_allowed(subject).await {
         return Ok(());
     }
-    if !show_dialog(window, &request).await? {
+    if !show_dialog(window, Some(subject), copy).await? {
         return Err(DomainError::Cancelled(cancelled.to_string()));
     }
 
-    grants.grant(request.subject).await;
+    grants.grant(subject).await;
     Ok(())
 }
 
 async fn show_dialog(
     window: &WebviewWindow,
-    request: &ConsentRequest<'_>,
+    subject: Option<&str>,
+    copy: &ConsentCopy,
 ) -> Result<bool, DomainError> {
-    let copy = request.copy;
-    let http_warning = copy
-        .http_warning
-        .filter(|_| request.subject.starts_with("http://"))
-        .unwrap_or_default();
-    let message = format!(
-        "{} {}\n\n{}{}",
-        copy.subject_label, request.subject, copy.warning, http_warning
-    );
+    let message = match subject {
+        Some(subject) => {
+            let http_warning = copy
+                .http_warning
+                .filter(|_| subject.starts_with("http://"))
+                .unwrap_or_default();
+            format!(
+                "{} {subject}\n\n{}{http_warning}",
+                copy.subject_label, copy.warning
+            )
+        }
+        None => copy.warning.to_string(),
+    };
 
     let dialog = window.dialog().message(message);
     // Without a parent the sheet goes to `NSApp.mainWindow`, which is unset while TauriTavern is

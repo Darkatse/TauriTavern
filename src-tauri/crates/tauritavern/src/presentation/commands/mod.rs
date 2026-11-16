@@ -34,6 +34,7 @@ pub mod helpers;
 pub mod image_commands;
 pub mod image_metadata_commands;
 mod import_source;
+mod keys_exposure;
 pub mod lan_sync_commands;
 pub mod llm_connection_commands;
 pub mod mcp_commands;

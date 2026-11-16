@@ -75,6 +75,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
 function createActions(overrides: Partial<SettingsActions> = {}): SettingsActions {
     return {
         chooseDataRoot: () => Promise.resolve(null),
+        setKeysExposure: () => Promise.resolve(null),
         chooseWallpaper: () => Promise.resolve(null),
         showHelp: () => Promise.resolve(),
         manageQuickAccess: () => Promise.resolve(),
@@ -326,4 +327,37 @@ test('choosing a data root projects busy state and the pending migration result'
         .toContain('Configured data directory: /new/root');
     expect(chooseButton.disabled).toBe(false);
     expect(container.textContent).toContain('Data directory migration is pending.');
+});
+
+test('the keys exposure switch shows only what the host stored', async () => {
+    const user = userEvent.setup();
+    const requested: boolean[] = [];
+    let answer!: (stored: boolean | null) => void;
+    const options = createOptions({
+        actions: createActions({
+            setKeysExposure: allowed => new Promise<boolean | null>(resolve => {
+                requested.push(allowed);
+                answer = resolve;
+            }),
+        }),
+    });
+    const { container } = mountApp(options);
+    const toggle = within(container).getByRole<HTMLInputElement>('checkbox', { name: 'Allow Keys Exposure' });
+
+    await user.click(toggle);
+    expect(toggle.disabled).toBe(true);
+    await act(async () => {
+        answer(null);
+        await Promise.resolve();
+    });
+    expect(toggle.checked).toBe(false);
+
+    await user.click(toggle);
+    await act(async () => {
+        answer(true);
+        await Promise.resolve();
+    });
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+    expect(requested).toEqual([true, true]);
 });
