@@ -333,7 +333,7 @@ import {
     getInstructStoppingSequences,
     getInstructMacroValues,
 } from './scripts/instruct-mode.js';
-import { initLocales, t, translate } from './scripts/i18n.js';
+import { getCurrentLocale, initLocales, t, translate } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, warmTokenizerCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
@@ -5281,7 +5281,7 @@ function cleanupGenerationAfterUnhandledError(type, dryRun) {
 
 async function prepareLegacyMcpGenerationContext() {
     try {
-        const context = await createLegacyMcpGenerationContext();
+        const context = await createLegacyMcpGenerationContext({ locale: getCurrentLocale() });
         if (context.diagnostics.length > 0) {
             toastr.warning(
                 'Some MCP tools are unavailable for this generation. Check MCP Manager and the console for details.',

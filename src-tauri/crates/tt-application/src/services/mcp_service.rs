@@ -4,6 +4,7 @@ use std::{
 };
 
 use tokio::sync::Mutex;
+use url::Url;
 
 use crate::{
     dto::mcp_dto::{ListMcpServersResultDto, McpServerDto, McpStorageIssueDto},
@@ -13,7 +14,7 @@ use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpServerRegistration,
     McpServerState, McpToolPermission,
 };
-use tt_domain::models::tool::ToolDescriptionOverride;
+use tt_domain::models::tool::{ToolDescriptionOverride, ToolId};
 use tt_ports::{mcp::McpGateway, repositories::mcp_server_repository::McpServerRepository};
 
 mod call;
@@ -154,6 +155,22 @@ impl McpService {
             .expect("MCP catalog snapshot lock poisoned")
             .remove(&id);
         Ok(())
+    }
+
+    /// Registration errors are reported by the operation, not this consent lookup.
+    pub async fn resolve_user_endpoint(&self, registration_id: &str) -> Option<Url> {
+        let id = McpRegistrationId::parse(registration_id).ok()?;
+        self.registration_endpoint(&id).await
+    }
+
+    pub async fn resolve_tool_user_endpoint(&self, tool_id: &ToolId) -> Option<Url> {
+        let id = McpRegistrationId::from_provider_id(tool_id.provider_id()).ok()?;
+        self.registration_endpoint(&id).await
+    }
+
+    async fn registration_endpoint(&self, id: &McpRegistrationId) -> Option<Url> {
+        let registration = self.repository.load(id).await.ok()??;
+        (registration.state() == McpServerState::Active).then(|| registration.endpoint().url())
     }
 
     async fn require_registration(

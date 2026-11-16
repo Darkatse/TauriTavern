@@ -1,3 +1,4 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
 
 const SUPPORTED_VECTOR_ENDPOINTS = new Set([
@@ -24,7 +25,11 @@ function vectorErrorCause(status) {
 
 async function invokeVector(context, jsonResponse, path, request) {
     try {
-        const response = await context.safeInvoke('vector_handle', { path, request });
+        const response = await context.safeInvoke('vector_handle', {
+            path,
+            request,
+            locale: getSillyTavernLocale(),
+        });
         const status = Number(response?.status);
         const safeStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : 500;
 

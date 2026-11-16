@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
+use crate::presentation::commands::user_endpoint_access::ensure_user_endpoint_access;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::stable_diffusion_dto::SdRouteResponseDto;
 
@@ -15,6 +16,8 @@ pub async fn sd_handle(
     request_id: String,
     path: String,
     body: Value,
+    locale: String,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SdRouteResponseDto, CommandError> {
     let request_id = request_id.trim().to_string();
@@ -27,9 +30,19 @@ pub async fn sd_handle(
         "ai.image_generation",
     )?;
 
-    app_state
-        .services
-        .stable_diffusion_service
+    let service = &app_state.services.stable_diffusion_service;
+    let endpoint = service
+        .resolve_user_endpoint(&path, &body)
+        .map_err(map_command_error("SD request failed"))?;
+    ensure_user_endpoint_access(
+        endpoint.as_ref(),
+        &locale,
+        &window,
+        &app_state.services.user_endpoint_access_service,
+    )
+    .await?;
+
+    service
         .handle_request(&request_id, path, body)
         .await
         .map_err(map_command_error("SD request failed"))

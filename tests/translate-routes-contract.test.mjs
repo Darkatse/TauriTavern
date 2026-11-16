@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { textResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerTranslateRoutes } from '../src/tauri/main/routes/translate-routes.js';
@@ -32,6 +33,7 @@ test('translate routes forward provider to backend', async () => {
             args: {
                 provider: 'google',
                 body: { text: '你好', lang: 'en' },
+                locale: getSillyTavernLocale(),
             },
         },
     ]);

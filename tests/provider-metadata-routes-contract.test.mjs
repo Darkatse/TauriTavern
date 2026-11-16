@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerProviderRoutes } from '../src/tauri/main/routes/provider-routes.js';
@@ -112,6 +113,7 @@ test('vector compatibility routes preserve success and validation responses', as
         payload: {
             path: 'insert',
             request: { collectionId: 'chat-1', items: [], source: 'transformers' },
+            locale: getSillyTavernLocale(),
         },
     });
 

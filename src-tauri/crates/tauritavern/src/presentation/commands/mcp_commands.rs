@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::{
     app::AppState,
     presentation::{
-        commands::helpers::{log_command, map_command_error},
+        commands::{
+            helpers::{log_command, map_command_error},
+            user_endpoint_access::ensure_user_endpoint_access,
+        },
         errors::CommandError,
     },
 };
@@ -99,9 +102,12 @@ pub async fn remove_mcp_server(
 #[tauri::command]
 pub async fn discover_mcp_tools(
     dto: McpRegistrationIdDto,
+    locale: String,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<McpDiscoveryResultDto, CommandError> {
     log_command("discover_mcp_tools");
+    ensure_registration_access(&dto.registration_id, &locale, &window, &app_state).await?;
     app_state
         .services
         .mcp_service
@@ -113,9 +119,12 @@ pub async fn discover_mcp_tools(
 #[tauri::command]
 pub async fn refresh_mcp_tools(
     dto: McpRegistrationIdDto,
+    locale: String,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<McpDiscoveryResultDto, CommandError> {
     log_command("refresh_mcp_tools");
+    ensure_registration_access(&dto.registration_id, &locale, &window, &app_state).await?;
     app_state
         .services
         .mcp_service
@@ -171,9 +180,12 @@ pub async fn start_mcp_test_call(
 #[tauri::command]
 pub async fn test_mcp_tool_call(
     dto: TestMcpToolCallDto,
+    locale: String,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<McpCallOutcomeDto, CommandError> {
     log_command("test_mcp_tool_call");
+    ensure_registration_access(&dto.registration_id, &locale, &window, &app_state).await?;
     app_state
         .services
         .mcp_service
@@ -231,9 +243,23 @@ pub async fn start_legacy_mcp_tool_call(
 #[tauri::command]
 pub async fn call_legacy_mcp_tool(
     dto: CallLegacyMcpToolDto,
+    locale: String,
+    window: WebviewWindow,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<McpCallOutcomeDto, CommandError> {
     log_command("call_legacy_mcp_tool");
+    let services = &app_state.services;
+    ensure_user_endpoint_access(
+        services
+            .mcp_service
+            .resolve_tool_user_endpoint(&dto.tool_id)
+            .await
+            .as_ref(),
+        &locale,
+        &window,
+        &services.user_endpoint_access_service,
+    )
+    .await?;
     app_state
         .services
         .mcp_service
@@ -254,4 +280,24 @@ pub async fn cancel_legacy_mcp_tool_call(
         .cancel_call(&dto.execution_call_id)
         .await
         .map_err(map_command_error("Failed to cancel Legacy MCP tool call"))
+}
+
+async fn ensure_registration_access(
+    registration_id: &str,
+    locale: &str,
+    window: &WebviewWindow,
+    app_state: &AppState,
+) -> Result<(), CommandError> {
+    let services = &app_state.services;
+    ensure_user_endpoint_access(
+        services
+            .mcp_service
+            .resolve_user_endpoint(registration_id)
+            .await
+            .as_ref(),
+        locale,
+        window,
+        &services.user_endpoint_access_service,
+    )
+    .await
 }

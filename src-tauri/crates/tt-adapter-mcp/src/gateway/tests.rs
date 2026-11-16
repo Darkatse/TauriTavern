@@ -18,8 +18,10 @@ use tokio::{
 
 use tokio_util::sync::CancellationToken;
 use tt_adapter_http::HttpClientPool;
+use tt_domain::models::endpoint_url::http_origin;
 use tt_domain::models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders};
 use tt_ports::mcp::{McpCallOutcome, McpGateway, McpKnownResponse};
+use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::{
     RmcpMcpGateway,
@@ -27,8 +29,10 @@ use super::{
     tool_call::await_call_response,
 };
 
-fn gateway() -> RmcpMcpGateway {
-    RmcpMcpGateway::new(Arc::new(HttpClientPool::new("TauriTavern MCP test")))
+fn gateway(endpoint: &str) -> RmcpMcpGateway {
+    let pool = HttpClientPool::new("TauriTavern MCP test");
+    pool.allow_user_endpoints(&[http_origin(&endpoint.parse().unwrap()).unwrap()]);
+    RmcpMcpGateway::new(Arc::new(pool))
 }
 
 fn tool(name: &'static str, schema: Value) -> Tool {
@@ -136,10 +140,41 @@ struct FixtureRequest {
 }
 
 #[tokio::test]
+async fn unapproved_endpoints_are_refused_before_connecting() {
+    let gateway = RmcpMcpGateway::new(Arc::new(HttpClientPool::new("TauriTavern MCP test")));
+    let endpoint = McpEndpoint::parse("http://127.0.0.1:9/mcp").unwrap();
+
+    let error = gateway
+        .discover_tools(
+            &endpoint,
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("requires approval"), "{error}");
+
+    let outcome = gateway
+        .call_tool(
+            &endpoint,
+            &McpRequestHeaders::default(),
+            McpProtocolVersionPreference::Auto,
+            "first",
+            Map::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, McpCallOutcome::NotSent(ref issue) if issue.message.contains("requires approval"))
+    );
+}
+
+#[tokio::test]
 async fn streamable_http_fixture_covers_modern_lifecycle_and_full_pagination() {
     let (endpoint, _, server) = spawn_fixture(FixtureMode::Modern).await;
 
-    let result = gateway()
+    let result = gateway(&endpoint)
         .discover_tools(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -165,7 +200,7 @@ async fn streamable_http_fixture_covers_modern_lifecycle_and_full_pagination() {
 async fn discovery_retries_legacy_after_finite_sse_method_not_found() {
     let (endpoint, _, server) = spawn_fixture(FixtureMode::LegacySse).await;
 
-    let result = gateway()
+    let result = gateway(&endpoint)
         .discover_tools(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -189,7 +224,7 @@ async fn auto_discovery_accepts_sessionless_http_rejections_from_legacy_servers(
     ] {
         let (endpoint, _, server) = spawn_fixture(mode).await;
 
-        let result = gateway()
+        let result = gateway(&endpoint)
             .discover_tools(
                 &McpEndpoint::parse(endpoint).unwrap(),
                 &McpRequestHeaders::default(),
@@ -209,7 +244,7 @@ async fn auto_discovery_accepts_sessionless_http_rejections_from_legacy_servers(
 async fn fixed_legacy_version_initializes_without_discovering() {
     let (endpoint, captured, server) = spawn_fixture(FixtureMode::LegacyPython).await;
 
-    let result = gateway()
+    let result = gateway(&endpoint)
         .discover_tools(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -234,7 +269,7 @@ async fn fixed_legacy_version_initializes_without_discovering() {
 async fn fixed_modern_version_never_falls_back_to_legacy_initialization() {
     for mode in [FixtureMode::LegacyPython, FixtureMode::LegacySse] {
         let (endpoint, captured, server) = spawn_fixture(mode).await;
-        let result = gateway()
+        let result = gateway(&endpoint)
             .discover_tools(
                 &McpEndpoint::parse(endpoint).unwrap(),
                 &McpRequestHeaders::default(),
@@ -257,7 +292,7 @@ async fn fixed_modern_version_never_falls_back_to_legacy_initialization() {
 #[tokio::test]
 async fn fixed_version_rejects_a_different_negotiated_version_before_listing_tools() {
     let (endpoint, captured, server) = spawn_fixture(FixtureMode::LegacyPython).await;
-    let error = gateway()
+    let error = gateway(&endpoint)
         .discover_tools(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -289,7 +324,7 @@ async fn modern_call_sends_custom_and_standard_headers_and_preserves_arguments()
     let arguments =
         serde_json::from_str(r#"{"region":"us-east-1","exact":9007199254740993}"#).unwrap();
 
-    let outcome = gateway()
+    let outcome = gateway(&endpoint)
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
             &request_headers,
@@ -351,7 +386,7 @@ async fn modern_call_sends_custom_and_standard_headers_and_preserves_arguments()
 async fn json_rpc_tool_error_is_a_known_response() {
     let (endpoint, _, server) = spawn_fixture(FixtureMode::ModernServerError).await;
 
-    let outcome = gateway()
+    let outcome = gateway(&endpoint)
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -383,7 +418,7 @@ async fn invalid_http_headers_make_the_call_not_sent() {
             name.to_string(),
             "application/json".to_string(),
         )]));
-        let outcome = gateway()
+        let outcome = gateway(&endpoint)
             .call_tool(
                 &McpEndpoint::parse(endpoint).unwrap(),
                 &headers,
@@ -411,7 +446,7 @@ async fn invalid_http_headers_make_the_call_not_sent() {
 async fn invalid_standard_header_annotation_makes_the_target_not_sent() {
     let (endpoint, captured, server) = spawn_fixture(FixtureMode::ModernInvalidHeader).await;
 
-    let outcome = gateway()
+    let outcome = gateway(&endpoint)
         .call_tool(
             &McpEndpoint::parse(endpoint).unwrap(),
             &McpRequestHeaders::default(),
@@ -440,7 +475,7 @@ async fn cancelling_after_tools_call_returns_unknown() {
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
     let call = tokio::spawn(async move {
-        gateway()
+        gateway(&endpoint)
             .call_tool(
                 &McpEndpoint::parse(endpoint).unwrap(),
                 &McpRequestHeaders::default(),
@@ -485,7 +520,7 @@ async fn cancelling_after_tools_call_returns_unknown() {
 async fn disconnect_and_malformed_response_after_commit_are_unknown() {
     for mode in [FixtureMode::ModernDisconnect, FixtureMode::ModernMalformed] {
         let (endpoint, _, server) = spawn_fixture(mode).await;
-        let outcome = gateway()
+        let outcome = gateway(&endpoint)
             .call_tool(
                 &McpEndpoint::parse(endpoint).unwrap(),
                 &McpRequestHeaders::default(),

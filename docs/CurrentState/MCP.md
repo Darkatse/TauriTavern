@@ -81,6 +81,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以 MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
 - Agent MCP 结果的文字、图片与诊断如何交给模型，以及 Manager 测试调用与 Legacy 聊天的差别，见 [Agent 消费契约](../API/MCP.md#7-agent-消费契约)。
 - transport 接受任意带 host 的 HTTP(S) endpoint，包括公网 HTTP、userinfo 与 query。Manager 激活 HTTP registration 时会明确提示流量未加密。
+- endpoint 是[用户端点](UserEndpointAccess.md)：discovery、refresh、测试调用与 Legacy 调用的命令在连接前按来源询问一次；Agent 调用不询问，来源未授权时在发送前返回 NotSent，用户在 MCP Manager 发现或刷新工具时授权。
 - custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存。transport 无法接受的配置（非法 header，或 RMCP 保留的 `Accept`、`Mcp-Session-Id`、`Last-Event-Id`）会让启动请求失败，因此在 `tools/call` 发送前返回 NotSent。endpoint credentials 与认证 headers 明文保存在 registration 中。
 - 单 tool wire representation：256 KiB；完整 catalog：8 MiB。
 - 每个 server：最多 32 页、512 tools。

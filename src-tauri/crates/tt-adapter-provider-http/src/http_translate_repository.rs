@@ -17,46 +17,70 @@ impl HttpTranslateRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self { http_clients }
     }
-
-    fn http_client(&self) -> Result<reqwest::Client, DomainError> {
-        self.http_clients.client(HttpClientProfile::Translation)
-    }
 }
 
 #[async_trait]
 impl TranslateRepository for HttpTranslateRepository {
     async fn translate(&self, request: TranslateRequest) -> Result<String, DomainError> {
+        let client = match user_endpoint(&request) {
+            Some(url) => self
+                .http_clients
+                .user_endpoint_client(HttpClientProfile::Translation, url.as_str())?,
+            None => self.http_clients.client(HttpClientProfile::Translation)?,
+        };
         match request {
-            TranslateRequest::Google { text, lang } => {
-                translate_google(self.http_client()?, text, lang).await
-            }
+            TranslateRequest::Google { text, lang } => translate_google(client, text, lang).await,
             TranslateRequest::Libre {
                 url,
                 api_key,
                 text,
                 lang,
-            } => translate_libre(self.http_client()?, url, api_key, text, lang).await,
+            } => translate_libre(client, url, api_key, text, lang).await,
             TranslateRequest::Lingva {
                 base_url,
                 text,
                 lang,
-            } => translate_lingva(self.http_client()?, base_url, text, lang).await,
+                ..
+            } => translate_lingva(client, base_url, text, lang).await,
             TranslateRequest::Deepl {
                 endpoint,
                 auth_key,
                 text,
                 lang,
-            } => translate_deepl(self.http_client()?, endpoint.url(), auth_key, text, lang).await,
-            TranslateRequest::Deeplx { url, text, lang } => {
-                translate_deeplx(self.http_client()?, url, text, lang).await
-            }
+            } => translate_deepl(client, endpoint.url(), auth_key, text, lang).await,
+            TranslateRequest::Deeplx {
+                url, text, lang, ..
+            } => translate_deeplx(client, url, text, lang).await,
             TranslateRequest::OneRing {
                 url,
                 text,
                 from_lang,
                 to_lang,
-            } => translate_onering(self.http_client()?, url, text, from_lang, to_lang).await,
+                ..
+            } => translate_onering(client, url, text, from_lang, to_lang).await,
         }
+    }
+}
+
+fn user_endpoint(request: &TranslateRequest) -> Option<&Url> {
+    match request {
+        TranslateRequest::Libre { url, .. }
+        | TranslateRequest::Deeplx {
+            url,
+            user_configured_endpoint: true,
+            ..
+        }
+        | TranslateRequest::OneRing {
+            url,
+            user_configured_endpoint: true,
+            ..
+        } => Some(url),
+        TranslateRequest::Lingva {
+            base_url,
+            user_configured_endpoint: true,
+            ..
+        } => Some(base_url),
+        _ => None,
     }
 }
 
@@ -388,7 +412,44 @@ async fn translate_onering(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_google_translation;
+    use super::*;
+
+    #[tokio::test]
+    async fn addresses_the_page_configured_need_approval() {
+        let repository =
+            HttpTranslateRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
+        let url = || Url::parse("http://127.0.0.1:9/translate").unwrap();
+        for request in [
+            TranslateRequest::Libre {
+                url: url(),
+                api_key: Some("key".into()),
+                text: "hello".into(),
+                lang: "en".into(),
+            },
+            TranslateRequest::Lingva {
+                base_url: url(),
+                user_configured_endpoint: true,
+                text: "hello".into(),
+                lang: "en".into(),
+            },
+            TranslateRequest::Deeplx {
+                url: url(),
+                user_configured_endpoint: true,
+                text: "hello".into(),
+                lang: "en".into(),
+            },
+            TranslateRequest::OneRing {
+                url: url(),
+                user_configured_endpoint: true,
+                text: "hello".into(),
+                from_lang: "zh".into(),
+                to_lang: "en".into(),
+            },
+        ] {
+            let error = repository.translate(request).await.unwrap_err();
+            assert!(error.to_string().contains("requires approval"), "{error}");
+        }
+    }
 
     #[test]
     fn google_translation_parser_collects_segments() {

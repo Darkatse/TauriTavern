@@ -1,3 +1,4 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
 
 function normalizeProvider(wildcard) {
@@ -25,6 +26,7 @@ export function registerTranslateRoutes(router, context, { textResponse }) {
             const translated = await context.safeInvoke('translate_text', {
                 provider,
                 body,
+                locale: getSillyTavernLocale(),
             });
             return textResponse(translated ?? '');
         } catch (error) {

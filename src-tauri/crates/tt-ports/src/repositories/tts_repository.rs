@@ -56,6 +56,7 @@ pub enum GoogleGeminiTtsRequest {
         voice: String,
         model: String,
         base_url: String,
+        user_configured_endpoint: bool,
         api_key: String,
     },
 }

@@ -9,7 +9,9 @@ use tokio::time::sleep;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::tts_repository::{TtsRepository, TtsRequest, TtsRouteResponse};
+use tt_ports::repositories::tts_repository::{
+    GoogleGeminiTtsRequest, OpenAiTtsRequest, TtsRepository, TtsRequest, TtsRouteResponse,
+};
 
 mod azure;
 mod elevenlabs;
@@ -33,16 +35,17 @@ impl HttpTtsRepository {
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
         Self { http_clients }
     }
-
-    fn http_client(&self) -> Result<reqwest::Client, DomainError> {
-        self.http_clients.client(HttpClientProfile::Tts)
-    }
 }
 
 #[async_trait]
 impl TtsRepository for HttpTtsRepository {
     async fn handle(&self, request: TtsRequest) -> Result<TtsRouteResponse, DomainError> {
-        let client = self.http_client()?;
+        let client = match user_endpoint(&request) {
+            Some(url) => self
+                .http_clients
+                .user_endpoint_client(HttpClientProfile::Tts, url)?,
+            None => self.http_clients.client(HttpClientProfile::Tts)?,
+        };
 
         match request {
             TtsRequest::Azure(request) => azure::handle(client, request).await,
@@ -82,6 +85,20 @@ impl TtsRepository for HttpTtsRepository {
             } => mimo::generate(client, api_key, text, voice_id, model, format, instructions).await,
             TtsRequest::MinimaxGenerate { request } => minimax::generate(client, request).await,
         }
+    }
+}
+
+fn user_endpoint(request: &TtsRequest) -> Option<&str> {
+    match request {
+        TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate { endpoint, .. }) => {
+            Some(endpoint.as_str())
+        }
+        TtsRequest::GoogleGemini(GoogleGeminiTtsRequest::Generate {
+            base_url,
+            user_configured_endpoint: true,
+            ..
+        }) => Some(base_url),
+        _ => None,
     }
 }
 
@@ -224,11 +241,43 @@ mod tests {
 
     use super::{HttpTtsRepository, parse_upstream_error_message};
     use tt_adapter_http::HttpClientPool;
-    use tt_ports::repositories::tts_repository::{OpenAiTtsRequest, TtsRepository, TtsRequest};
+    use tt_domain::models::endpoint_url::http_origin;
+    use tt_ports::repositories::tts_repository::{
+        GoogleGeminiTtsRequest, OpenAiTtsRequest, TtsRepository, TtsRequest,
+    };
+    use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
+
+    #[tokio::test]
+    async fn addresses_the_page_chose_need_approval() {
+        let repository = HttpTtsRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
+        for request in [
+            TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate {
+                api_key: Some("key".into()),
+                endpoint: "http://127.0.0.1:9/v1/audio/speech".parse().unwrap(),
+                input: "hello".into(),
+                voice: "test".into(),
+                model: "test".into(),
+                response_format: "mp3".into(),
+                speed: 1.0,
+            }),
+            TtsRequest::GoogleGemini(GoogleGeminiTtsRequest::Generate {
+                text: "hello".into(),
+                voice: "test".into(),
+                model: "test".into(),
+                base_url: "http://127.0.0.1:9".into(),
+                user_configured_endpoint: true,
+                api_key: "key".into(),
+            }),
+        ] {
+            let error = repository.handle(request).await.unwrap_err();
+            assert!(error.to_string().contains("requires approval"), "{error}");
+        }
+    }
 
     #[tokio::test]
     async fn openai_compatible_rejects_error_documents_and_preserves_audio_bytes() {
-        let repository = HttpTtsRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
+        let pool = Arc::new(HttpClientPool::new("TauriTavern/test"));
+        let repository = HttpTtsRepository::new(pool.clone());
         for (content_type, body, status) in [
             ("text/html; charset=utf-8", b"<!DOCTYPE html>".to_vec(), 502),
             (
@@ -239,6 +288,7 @@ mod tests {
             ("application/octet-stream", vec![0, 1, 255], 200),
         ] {
             let (url, server) = spawn_one_response(200, content_type, body.clone()).await;
+            pool.allow_user_endpoints(&[http_origin(&url.parse().unwrap()).unwrap()]);
             let response = repository
                 .handle(TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate {
                     api_key: None,

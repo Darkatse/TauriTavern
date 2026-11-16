@@ -43,7 +43,9 @@ impl McpGateway for RmcpMcpGateway {
         request_headers: &McpRequestHeaders,
         protocol_version: McpProtocolVersionPreference,
     ) -> Result<McpDiscoveryResult, DomainError> {
-        let http_client = self.http_clients.client(HttpClientProfile::Mcp)?;
+        let http_client = self
+            .http_clients
+            .user_endpoint_client(HttpClientProfile::Mcp, endpoint.as_str())?;
         let request_headers = compile_request_headers(request_headers)?;
         let cancel = CancellationToken::new();
         let (mut client, peer_info) = timeout(
@@ -109,7 +111,10 @@ impl McpGateway for RmcpMcpGateway {
             ));
         }
 
-        let http_client = match self.http_clients.client(HttpClientProfile::Mcp) {
+        let http_client = match self
+            .http_clients
+            .user_endpoint_client(HttpClientProfile::Mcp, endpoint.as_str())
+        {
             Ok(client) => client,
             Err(error) => {
                 return Ok(not_sent(

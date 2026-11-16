@@ -221,6 +221,7 @@ pub(super) async fn handle_gemini(
             model,
             base_url,
             api_key,
+            ..
         } => generate_gemini(client, text, voice, model, base_url, api_key).await,
     }
 }

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
+
 // The Rust command DTOs own input validation; this module only maps the Host ABI onto commands.
 
 function cancelledBeforeSend() {
@@ -24,8 +26,14 @@ function createMcpApi({ safeInvoke }) {
             update: async (input) => safeInvoke('update_mcp_server', { dto: input }),
             setState: async (input) => safeInvoke('set_mcp_server_state', { dto: input }),
             remove: async (input) => safeInvoke('remove_mcp_server', { dto: registrationDto(input) }),
-            discover: async (input) => safeInvoke('discover_mcp_tools', { dto: registrationDto(input) }),
-            refresh: async (input) => safeInvoke('refresh_mcp_tools', { dto: registrationDto(input) }),
+            discover: async (input) => safeInvoke('discover_mcp_tools', {
+                dto: registrationDto(input),
+                locale: getSillyTavernLocale(),
+            }),
+            refresh: async (input) => safeInvoke('refresh_mcp_tools', {
+                dto: registrationDto(input),
+                locale: getSillyTavernLocale(),
+            }),
         },
         tools: {
             setPermission: async (input) => safeInvoke('set_mcp_tool_permission', { dto: input }),
@@ -59,7 +67,7 @@ function createMcpApi({ safeInvoke }) {
                 }
 
                 try {
-                    return await safeInvoke('test_mcp_tool_call', { dto });
+                    return await safeInvoke('test_mcp_tool_call', { dto, locale: getSillyTavernLocale() });
                 } catch (error) {
                     // Also releases the start acknowledgement when the backend rejects the input.
                     cancel();

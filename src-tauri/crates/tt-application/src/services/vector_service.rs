@@ -4,6 +4,7 @@ use std::sync::Arc;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use serde_json::Value;
+use url::Url;
 
 use crate::dto::vector_dto::{
     VectorRouteRequestDto, VectorRouteResponseDto, VectorRouteResponseKindDto,
@@ -52,12 +53,36 @@ impl VectorService {
         }
     }
 
+    /// KoboldCpp inserts and queries consume vectors already computed by `koboldcpp-embed`.
+    pub fn resolve_user_endpoint(
+        &self,
+        path: &str,
+        request: &VectorRouteRequestDto,
+    ) -> Result<Option<Url>, ApplicationError> {
+        let source = match normalize_path(path).as_str() {
+            "koboldcpp-embed" => VectorSource::KoboldCpp,
+            "insert" | "query" | "query-multi" => match VectorSource::parse(&request.source)? {
+                VectorSource::KoboldCpp => return Ok(None),
+                source => source,
+            },
+            _ => return Ok(None),
+        };
+        if !source.uses_custom_endpoint() {
+            return Ok(None);
+        }
+        self.ensure_remote_source_allowed(source)?;
+        let endpoint = custom_endpoint(source, request)?;
+        Url::parse(endpoint).map(Some).map_err(|error| {
+            ApplicationError::ValidationError(format!("Invalid server URL {endpoint:?}: {error}"))
+        })
+    }
+
     pub async fn handle_request(
         &self,
         path: &str,
         request: VectorRouteRequestDto,
     ) -> Result<VectorRouteResponseDto, ApplicationError> {
-        match path.trim().trim_matches('/').to_ascii_lowercase().as_str() {
+        match normalize_path(path).as_str() {
             "list" => self.list(request).await,
             "insert" => self.insert(request).await,
             "delete" => self.delete(request).await,
@@ -411,7 +436,7 @@ impl VectorService {
                 model: context.model.clone(),
             },
             VectorSource::Extras => RemoteEmbeddingProtocol::Extras {
-                base_url: required_value(&request.extras_url, "extrasUrl")?.to_string(),
+                base_url: custom_endpoint(context.source, request)?.to_string(),
                 api_key: non_empty(&request.extras_key),
             },
             VectorSource::Palm => RemoteEmbeddingProtocol::GoogleAiStudio {
@@ -446,21 +471,21 @@ impl VectorService {
                 },
             },
             VectorSource::Ollama => RemoteEmbeddingProtocol::Ollama {
-                base_url: required_value(&request.api_url, "apiUrl")?.to_string(),
+                base_url: custom_endpoint(context.source, request)?.to_string(),
                 model: required_value(&context.model, "model")?.to_string(),
                 keep: request.keep,
             },
             VectorSource::LlamaCpp => RemoteEmbeddingProtocol::LlamaCpp {
-                base_url: required_value(&request.api_url, "apiUrl")?.to_string(),
+                base_url: custom_endpoint(context.source, request)?.to_string(),
                 api_key: self.optional_secret(SecretKeys::LLAMACPP).await?,
             },
             VectorSource::Vllm => RemoteEmbeddingProtocol::Vllm {
-                base_url: required_value(&request.api_url, "apiUrl")?.to_string(),
+                base_url: custom_endpoint(context.source, request)?.to_string(),
                 api_key: self.optional_secret(SecretKeys::VLLM).await?,
                 model: required_value(&context.model, "model")?.to_string(),
             },
             VectorSource::KoboldCpp => RemoteEmbeddingProtocol::KoboldCpp {
-                base_url: required_value(&request.api_url, "apiUrl")?.to_string(),
+                base_url: custom_endpoint(context.source, request)?.to_string(),
                 api_key: self.optional_secret(SecretKeys::KOBOLDCPP).await?,
             },
             VectorSource::Transformers | VectorSource::WebLlm => {
@@ -853,6 +878,20 @@ fn precomputed_embeddings(
             })
         })
         .collect()
+}
+
+fn normalize_path(path: &str) -> String {
+    path.trim().trim_matches('/').to_ascii_lowercase()
+}
+
+fn custom_endpoint(
+    source: VectorSource,
+    request: &VectorRouteRequestDto,
+) -> Result<&str, ApplicationError> {
+    match source {
+        VectorSource::Extras => required_value(&request.extras_url, "extrasUrl"),
+        _ => required_value(&request.api_url, "apiUrl"),
+    }
 }
 
 fn required_value<'a>(value: &'a str, field: &str) -> Result<&'a str, ApplicationError> {

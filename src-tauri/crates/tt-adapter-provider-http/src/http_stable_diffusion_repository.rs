@@ -134,8 +134,11 @@ fn empty(status: u16) -> SdRouteResponse {
     }
 }
 
-fn http_client(http_clients: &Arc<HttpClientPool>) -> Result<reqwest::Client, DomainError> {
-    http_clients.client(HttpClientProfile::ImageGeneration)
+fn user_endpoint_client(
+    http_clients: &HttpClientPool,
+    url: &str,
+) -> Result<reqwest::Client, DomainError> {
+    http_clients.user_endpoint_client(HttpClientProfile::ImageGeneration, url)
 }
 
 fn require_string(body: &Value, key: &str) -> Result<String, DomainError> {
@@ -245,7 +248,7 @@ async fn webui_ping(
     let auth = optional_string(body, "auth");
     let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .get(options_url)
         .header(reqwest::header::AUTHORIZATION, basic_auth_header(&auth))
@@ -268,7 +271,7 @@ async fn webui_upscalers(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let upscalers_url = append_endpoint_path(&url, "sdapi/v1/upscalers")?;
     let latent_url = append_endpoint_path(&url, "sdapi/v1/latent-upscale-modes")?;
@@ -318,7 +321,7 @@ async fn webui_sdnext_upscalers(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let upscalers_url = append_endpoint_path(&url, "sdapi/v1/upscalers")?;
 
@@ -366,7 +369,7 @@ async fn webui_vaes(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let auto_url = append_endpoint_path(&url, "sdapi/v1/sd-vae")?;
     let forge_url = append_endpoint_path(&url, "sdapi/v1/sd-modules")?;
@@ -413,7 +416,7 @@ async fn webui_samplers(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let samplers_url = append_endpoint_path(&url, "sdapi/v1/samplers")?;
 
@@ -445,7 +448,7 @@ async fn webui_schedulers(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let schedulers_url = append_endpoint_path(&url, "sdapi/v1/schedulers")?;
 
@@ -477,7 +480,7 @@ async fn webui_models(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let models_url = append_endpoint_path(&url, "sdapi/v1/sd-models")?;
 
@@ -512,7 +515,7 @@ async fn webui_get_model(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
@@ -543,7 +546,7 @@ async fn webui_set_model(
     let url = require_string(body, "url")?;
     let auth = optional_string(body, "auth");
     let model = require_string(body, "model")?;
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let options_url = append_endpoint_path(&url, "sdapi/v1/options")?;
 
@@ -612,7 +615,7 @@ async fn webui_generate(
 ) -> Result<SdRouteResponse, DomainError> {
     let url = require_string(&body, "url")?;
     let auth = optional_string(&body, "auth");
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     // Forge compatibility: try to remove forge_additional_modules if remote is not Forge.
     if let Ok(options_url) = append_endpoint_path(&url, "sdapi/v1/options") {
@@ -685,7 +688,7 @@ async fn comfy_ping(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "system_stats")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .get(target)
         .send()
@@ -708,7 +711,7 @@ async fn comfy_object_info(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "object_info")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .get(target)
         .send()
@@ -852,7 +855,7 @@ async fn comfy_generate(
     let prompt_url = append_endpoint_path(&url, "prompt")?;
     let interrupt_url = append_endpoint_path(&url, "interrupt")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
 
     let prompt_request = client
         .post(prompt_url)
@@ -1210,7 +1213,7 @@ async fn sdcpp_ping(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "v1/images/generations")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .request(reqwest::Method::OPTIONS, target)
         .send()
@@ -1233,7 +1236,7 @@ async fn sdcpp_models(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "v1/models")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .get(target)
         .send()
@@ -1298,7 +1301,7 @@ async fn sdcpp_generate(
         payload.insert("clip_skip".to_string(), clip_skip);
     }
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let request = client
         .post(target)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -1525,7 +1528,7 @@ async fn workers_ai_generate(
     maybe_insert_nonnegative_number(&mut payload, "seed", &request.body, "seed")?;
 
     let target = workers_ai_run_url(&account_id, &model)?;
-    let client = http_client(http_clients)?;
+    let client = http_clients.client(HttpClientProfile::ImageGeneration)?;
     let mut builder = client
         .post(target)
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"));
@@ -1597,7 +1600,7 @@ async fn drawthings_ping(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .head(target)
         .send()
@@ -1621,7 +1624,7 @@ async fn drawthings_get_field(
     let url = require_string(body, "url")?;
     let target = append_endpoint_path(&url, "")?;
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let response = client
         .get(target)
         .send()
@@ -1655,7 +1658,7 @@ async fn drawthings_generate(
         map.remove("auth");
     }
 
-    let client = http_client(http_clients)?;
+    let client = user_endpoint_client(http_clients, &url)?;
     let request = client
         .post(target)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -1691,6 +1694,32 @@ async fn drawthings_generate(
 mod tests {
     use super::optional_nonnegative_number_value;
     use serde_json::json;
+    use tt_domain::models::endpoint_url::http_origin;
+    use tt_ports::repositories::stable_diffusion_repository::{
+        SdRouteCredentials, SdRouteRequest, StableDiffusionRepository,
+    };
+    use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
+
+    #[tokio::test]
+    async fn servers_the_page_names_need_approval() {
+        let repository = super::HttpStableDiffusionRepository::new(
+            super::Arc::new(super::HttpClientPool::new("TauriTavern/test")),
+            std::env::temp_dir(),
+        );
+        for path in ["ping", "comfy/ping", "sdcpp/ping", "drawthings/ping"] {
+            let (_cancel, cancel) = super::watch::channel(false);
+            let request = SdRouteRequest {
+                path: path.to_string(),
+                body: json!({ "url": "http://127.0.0.1:9" }),
+                credentials: SdRouteCredentials::None,
+            };
+            let error = repository.handle(request, cancel).await.unwrap_err();
+            assert!(
+                error.to_string().contains("requires approval"),
+                "{path}: {error}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn comfy_generation_queries_only_its_prompt_and_returns_the_image() {
@@ -1744,6 +1773,7 @@ mod tests {
         });
 
         let pool = super::Arc::new(super::HttpClientPool::new("TauriTavern/test"));
+        pool.allow_user_endpoints(&[http_origin(&url.parse().unwrap()).unwrap()]);
         let (_cancel, cancel) = super::watch::channel(false);
         let result = super::comfy_generate(&pool, &json!({ "url": url, "prompt": "{}" }), cancel)
             .await

@@ -1,3 +1,4 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { decodeBase64ToBytes } from '../binary-utils.js';
 import { safeResponseStatusText, textResponse } from '../http-utils.js';
 import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
@@ -48,6 +49,7 @@ async function handleTtsRoute(context, path, body) {
         const payload = await context.safeInvoke('tts_handle', {
             path,
             body: body || {},
+            locale: getSillyTavernLocale(),
         });
 
         return createRouteResponse(payload);

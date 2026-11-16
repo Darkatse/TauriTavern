@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::dto::tts_dto::TtsRouteResponseDto;
 use crate::errors::ApplicationError;
-use tt_domain::models::endpoint_url::HostLabel;
+use tt_domain::models::endpoint_url::{HostLabel, parse_user_http_endpoint};
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::tts_repository::{
@@ -35,6 +35,15 @@ impl TtsService {
         Self {
             tts_repository,
             secret_repository,
+        }
+    }
+
+    /// Endpoint parse errors are reported as HTTP 400 by `handle_request`.
+    pub fn resolve_user_endpoint(&self, path: &str, body: &Value) -> Option<Url> {
+        match normalize_path(path).as_str() {
+            "openai/custom/generate-voice" => compatible_endpoint(body).ok(),
+            "google/generate-native-tts" => gemini_reverse_proxy(body).and_then(Result::ok),
+            _ => None,
         }
     }
 
@@ -101,21 +110,25 @@ impl TtsService {
                     return Ok(json_error_response(400, "No Google TTS model provided").into());
                 };
 
-                let (base_url, api_key) =
-                    if let Some(base_url) = optional_string(&body, "reverse_proxy") {
-                        (
-                            base_url,
+                let (base_url, api_key, user_configured_endpoint) =
+                    match gemini_reverse_proxy(&body) {
+                        Some(Ok(proxy)) => (
+                            proxy.into(),
                             optional_content(&body, "proxy_password").unwrap_or_default(),
-                        )
-                    } else {
-                        let Some(api_key) = self.read_secret(SecretKeys::MAKERSUITE).await? else {
-                            return Ok(json_error_response(
-                                400,
-                                "Google AI Studio API key is required",
-                            )
-                            .into());
-                        };
-                        (GOOGLE_AI_STUDIO_API.to_string(), api_key)
+                            true,
+                        ),
+                        Some(Err(response)) => return Ok(response.into()),
+                        None => {
+                            let Some(api_key) = self.read_secret(SecretKeys::MAKERSUITE).await?
+                            else {
+                                return Ok(json_error_response(
+                                    400,
+                                    "Google AI Studio API key is required",
+                                )
+                                .into());
+                            };
+                            (GOOGLE_AI_STUDIO_API.to_string(), api_key, false)
+                        }
                     };
 
                 TtsRequest::GoogleGemini(GoogleGeminiTtsRequest::Generate {
@@ -123,6 +136,7 @@ impl TtsService {
                     voice,
                     model,
                     base_url,
+                    user_configured_endpoint,
                     api_key,
                 })
             }
@@ -156,18 +170,9 @@ impl TtsService {
                 })
             }
             "openai/custom/generate-voice" => {
-                let Some(endpoint) = optional_string(&body, "provider_endpoint") else {
-                    return Ok(text_response(400, "Provider endpoint is required").into());
-                };
-                let endpoint = match Url::parse(&endpoint) {
+                let endpoint = match compatible_endpoint(&body) {
                     Ok(endpoint) => endpoint,
-                    Err(error) => {
-                        return Ok(text_response(
-                            400,
-                            format!("Invalid provider endpoint: {error}"),
-                        )
-                        .into());
-                    }
+                    Err(response) => return Ok(response.into()),
                 };
                 TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate {
                     api_key: self.read_secret(SecretKeys::CUSTOM_OPENAI_TTS).await?,
@@ -605,6 +610,23 @@ fn finite_f64_or_default(body: &Value, key: &str, default: f64) -> Option<f64> {
     })?;
 
     number.is_finite().then_some(number)
+}
+
+fn compatible_endpoint(body: &Value) -> Result<Url, TtsRouteResponse> {
+    let Some(endpoint) = optional_string(body, "provider_endpoint") else {
+        return Err(text_response(400, "Provider endpoint is required"));
+    };
+    Url::parse(&endpoint)
+        .map_err(|error| text_response(400, format!("Invalid provider endpoint: {error}")))
+}
+
+/// Shares the reverse proxy of Google AI Studio chat, and its normalization.
+fn gemini_reverse_proxy(body: &Value) -> Option<Result<Url, TtsRouteResponse>> {
+    let proxy = optional_string(body, "reverse_proxy")?;
+    Some(
+        parse_user_http_endpoint(&proxy)
+            .map_err(|error| json_error_response(400, error.to_string())),
+    )
 }
 
 fn azure_region(body: &Value) -> Result<HostLabel, TtsRouteResponse> {

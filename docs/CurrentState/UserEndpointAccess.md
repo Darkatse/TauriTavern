@@ -2,7 +2,9 @@
 
 ## 边界
 
-`custom_url`、`reverse_proxy` 与 CORS 代理 `/proxy/<URL>` 是必要的 SillyTavern 兼容能力，也是 WebView 中第三方扩展能够控制的网络出口。TauriTavern 对每个用户配置端点要求一次 Rust 原生 dialog 授权；公网、局域网、loopback、LAN hostname 与代理软件 Fake IP 使用同一规则。内置 provider 端点不需要授权。
+用户端点是这样一类原生出站请求：目的地由页面或页面可写的配置决定，并且请求会带上宿主密钥、把响应交回页面，或者发出 WebView 自己发不了的请求。`custom_url`、`reverse_proxy`、CORS 代理 `/proxy/<URL>` 与各类自托管服务地址是必要的 SillyTavern 兼容能力，MCP 服务器由用户注册，它们也都是 WebView 中第三方扩展能够控制的网络出口。TauriTavern 对每个来源要求一次 Rust 原生 dialog 授权；公网、局域网、loopback、LAN hostname 与代理软件 Fake IP 使用同一规则。内置 provider 的地址，包括自托管服务未配置时的默认地址，不需要授权。
+
+导入下载另有[来源授权](#导入来源)；扩展 Git 远程只发 smart HTTP GET，内容不回到页面；保存图片的下载留在宿主。三者都不是用户端点。
 
 本机制不识别扩展身份。扩展可以触发 dialog，但不能替用户确认；用户授权后，同一 WebView 内的代码都能使用该端点。WebView 的原生能力边界见 [FrontendGuide §2.2](../FrontendGuide.md#22-原生能力)。
 
@@ -18,11 +20,11 @@
 
 - 授权的单位是来源（scheme、host、port），写法与浏览器相同，例如 `https://example.com:8443`。`endpoint_url::http_origin` 是唯一算法，只接受 HTTP(S)。授权覆盖该来源下的任意路径与查询串，一个服务器只问一次。
 - 各入口自己校验输入：chat completion 与 SearXNG 的基址经 `parse_user_http_endpoint` 规范化，拒绝 userinfo、query 与 fragment；CORS 代理的目标可以是该来源下的任意地址。
-- 授权在 Rust command（chat completion、SearXNG 搜索与 CORS 代理）中检查，兼容路由和扩展请求无需单独预检。
-- HTTP pool 对每次用户端点请求按请求地址的来源独立检查 grant，绕过 command gate 的调用会 fail closed。
+- 命令在发送前询问：服务给出请求的目的地，命令调用 `ensure_user_endpoint_access`，兼容路由和扩展请求无需单独预检。不经过命令的请求（Agent 的模型请求与 MCP 工具调用）不询问。
+- adapter 经 `HttpClientPool::user_endpoint_client` 发送用户端点请求。pool 对每次请求按请求地址的来源独立检查 grant，未授权即拒绝，绕过命令的调用 fail closed。
 - 显式 loopback、RFC1918、IPv6 ULA 地址及 `localhost` 强制 Direct；其他端点遵循 Request Proxy 设置。
 - DNS 结果不参与授权或传输分类。LAN hostname 和 Fake IP 因此不会被解析地址误判。
-- 重定向最多 5 次且必须同源。
+- 重定向最多 5 次且必须同源；本身不跟随重定向的请求（MCP）仍不跟随。
 
 原生 dialog 的安全文案和来源由 Rust host 组装；WebView 只提供 locale，不提供实际展示文案或确认结果。用户取消是正常取消状态，不会被包装成连接错误。
 
@@ -47,3 +49,10 @@ iOS 的系统 Local Network permission 与本 grant 相互独立。Android 升�
 - 下载自己跟随重定向，首个请求与每个重定向目标按同一规则检查。
 - grant 保存在 `<app_root>/security/import-source-grants.json`，与端点 grant 分开存放，处理方式相同。
 - 保存图片（`download_remote_file`）不是导入，不经过此授权；下载留在宿主，页面读不到。
+
+## 修改入口
+
+- 新增用户端点入口：服务提供目的地（`resolve_user_endpoint`，或预先构造的请求），命令调用 `presentation/commands/user_endpoint_access.rs` 的 `ensure_user_endpoint_access`，adapter 用 `user_endpoint_client` 发送。现有入口是 chat completion、SearXNG、CORS 代理、TTS、向量、图像生成、翻译与 MCP 的命令。
+- 授权主体：`tt-domain` 的 `endpoint_url::http_origin`；授权列表的加载：`tt-application` 的 `user_grants.rs`；路由、直连与重定向：`tt-adapter-http` 的 `restricted_endpoint.rs`。
+- 内置主机：`endpoint_url::HostLabel`；Vertex AI 的 region 与主机：`tt-domain` 的 `vertex_ai.rs`。
+- dialog 文案：`user_endpoint_access.rs` 与 `import_source.rs`。
