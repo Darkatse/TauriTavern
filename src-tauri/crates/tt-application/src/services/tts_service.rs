@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::dto::tts_dto::TtsRouteResponseDto;
 use crate::errors::ApplicationError;
+use tt_domain::models::endpoint_url::HostLabel;
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::tts_repository::{
@@ -16,7 +17,8 @@ use tt_ports::repositories::tts_repository::{
 };
 use url::Url;
 
-const MINIMAX_TTS_DEFAULT_API_HOST: &str = "https://api.minimax.io";
+const MINIMAX_API_HOST: &str = "https://api.minimax.io";
+const MINIMAX_API_HOST_CN: &str = "https://api.minimaxi.com";
 const GOOGLE_AI_STUDIO_API: &str = "https://generativelanguage.googleapis.com";
 const VOLCENGINE_TTS_ENDPOINT: &str = "https://openspeech.bytedance.com/api/v3/tts/unidirectional";
 
@@ -46,8 +48,9 @@ impl TtsService {
                 let Some(api_key) = self.read_secret(SecretKeys::AZURE_TTS).await? else {
                     return Ok(text_response(403, "Azure TTS API key is required").into());
                 };
-                let Some(region) = optional_string(&body, "region") else {
-                    return Ok(text_response(400, "Azure TTS region is required").into());
+                let region = match azure_region(&body) {
+                    Ok(region) => region,
+                    Err(response) => return Ok(response.into()),
                 };
                 TtsRequest::Azure(AzureTtsRequest::List { api_key, region })
             }
@@ -55,8 +58,9 @@ impl TtsService {
                 let Some(api_key) = self.read_secret(SecretKeys::AZURE_TTS).await? else {
                     return Ok(text_response(403, "Azure TTS API key is required").into());
                 };
-                let Some(region) = optional_string(&body, "region") else {
-                    return Ok(text_response(400, "Azure TTS region is required").into());
+                let region = match azure_region(&body) {
+                    Ok(region) => region,
+                    Err(response) => return Ok(response.into()),
                 };
                 let Some(text) = optional_content(&body, "text") else {
                     return Ok(text_response(400, "No text provided").into());
@@ -402,10 +406,10 @@ impl TtsService {
                     return Ok(json_error_response(400, "No MiniMax voice provided").into());
                 }
 
-                let api_host = string_or_default(&body, "apiHost", MINIMAX_TTS_DEFAULT_API_HOST)
-                    .trim()
-                    .trim_end_matches('/')
-                    .to_string();
+                let api_host = match minimax_api_host(&body) {
+                    Ok(api_host) => api_host.to_string(),
+                    Err(response) => return Ok(response.into()),
+                };
                 let Some(speed) = finite_f64_or_default(&body, "speed", 1.0) else {
                     return Ok(json_error_response(400, "MiniMax speed must be a number").into());
                 };
@@ -601,6 +605,26 @@ fn finite_f64_or_default(body: &Value, key: &str, default: f64) -> Option<f64> {
     })?;
 
     number.is_finite().then_some(number)
+}
+
+fn azure_region(body: &Value) -> Result<HostLabel, TtsRouteResponse> {
+    let Some(region) = optional_string(body, "region") else {
+        return Err(text_response(400, "Azure TTS region is required"));
+    };
+    HostLabel::parse("Azure TTS region", &region)
+        .map_err(|error| text_response(400, error.to_string()))
+}
+
+fn minimax_api_host(body: &Value) -> Result<&'static str, TtsRouteResponse> {
+    let api_host = optional_string(body, "apiHost");
+    match api_host.as_deref().map(|host| host.trim_end_matches('/')) {
+        None | Some(MINIMAX_API_HOST) => Ok(MINIMAX_API_HOST),
+        Some(MINIMAX_API_HOST_CN) => Ok(MINIMAX_API_HOST_CN),
+        Some(other) => Err(json_error_response(
+            400,
+            format!("Unsupported MiniMax API host: {other}"),
+        )),
+    }
 }
 
 fn minimax_pitch(body: &Value) -> Option<i64> {

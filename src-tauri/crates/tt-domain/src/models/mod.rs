@@ -31,4 +31,5 @@ pub mod update;
 pub mod upstream_failure;
 pub mod user;
 pub mod user_directory;
+pub mod vertex_ai;
 pub mod world_info;

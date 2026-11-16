@@ -1,3 +1,5 @@
+use std::fmt;
+
 use url::Url;
 
 use crate::errors::DomainError;
@@ -27,6 +29,39 @@ pub fn parse_user_http_endpoint(raw: &str) -> Result<Url, DomainError> {
     }
 
     Ok(url)
+}
+
+/// A single DNS label; untrusted values cannot escape a built-in provider's host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostLabel(String);
+
+impl HostLabel {
+    pub fn parse(name: &str, value: &str) -> Result<Self, DomainError> {
+        let value = value.trim();
+        let is_label = (1..=63).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !value.starts_with('-')
+            && !value.ends_with('-');
+        if !is_label {
+            return Err(DomainError::InvalidData(format!(
+                "{name} must be 1 to 63 letters, digits or hyphens, \
+                 not starting or ending with a hyphen: {value:?}"
+            )));
+        }
+        Ok(Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for HostLabel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 pub fn append_endpoint_path(base_url: &str, endpoint_path: &str) -> Result<Url, DomainError> {
@@ -95,7 +130,39 @@ fn parse_endpoint_base(base_url: &str) -> Result<Url, DomainError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_endpoint_path, append_endpoint_segments, parse_user_http_endpoint};
+    use super::{
+        HostLabel, append_endpoint_path, append_endpoint_segments, parse_user_http_endpoint,
+    };
+
+    #[test]
+    fn host_labels_cannot_name_another_host() {
+        for label in [
+            "us-central1",
+            "eastus",
+            "us-east-1",
+            " eu ",
+            &"a".repeat(63),
+        ] {
+            assert_eq!(
+                HostLabel::parse("Region", label).unwrap().as_str(),
+                label.trim()
+            );
+        }
+
+        for value in [
+            "evil.example/x?",
+            "a.b",
+            "evil.example#",
+            "user@evil",
+            "-east",
+            "east-",
+            "",
+            "  ",
+            &"a".repeat(64),
+        ] {
+            assert!(HostLabel::parse("Region", value).is_err(), "{value:?}");
+        }
+    }
 
     #[test]
     fn user_http_endpoint_is_canonical_and_unambiguous() {

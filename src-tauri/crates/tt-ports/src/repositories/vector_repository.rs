@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::HostLabel;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LocalEmbeddingModel {
@@ -127,7 +128,7 @@ pub enum RemoteEmbeddingProtocol {
     },
     VertexAi {
         model: String,
-        region: String,
+        region: HostLabel,
         auth: VertexEmbeddingAuth,
     },
     Ollama {

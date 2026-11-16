@@ -13,7 +13,9 @@ use tt_domain::ios_policy::{
     AllowlistMode, AllowlistSetting, IosPolicyActivationReport, IosPolicyScope,
 };
 use tt_domain::models::chat_completion_source::ChatCompletionSource;
+use tt_domain::models::endpoint_url::HostLabel;
 use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::vertex_ai::vertex_ai_region;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::vector_repository::{
     LocalEmbeddingModel, LocalEmbeddingRepository, LocalEmbeddingRequest, RemoteEmbeddingProtocol,
@@ -361,7 +363,10 @@ impl VectorService {
             },
             VectorSource::Chutes => RemoteEmbeddingProtocol::OpenAi {
                 provider: "Chutes".to_string(),
-                base_url: format!("https://{}.chutes.ai/v1", context.model),
+                base_url: format!(
+                    "https://{}.chutes.ai/v1",
+                    HostLabel::parse("Chutes model", &context.model)?
+                ),
                 api_key: self.required_secret(SecretKeys::CHUTES, "Chutes").await?,
                 model: context.model.clone(),
                 omit_model: true,
@@ -417,7 +422,7 @@ impl VectorService {
             },
             VectorSource::VertexAi => RemoteEmbeddingProtocol::VertexAi {
                 model: context.model.clone(),
-                region: defaulted(&request.vertexai_region, "us-central1"),
+                region: vertex_ai_region(&request.vertexai_region)?,
                 auth: match defaulted(&request.vertexai_auth_mode, "express").as_str() {
                     "express" => VertexEmbeddingAuth::Express {
                         api_key: self
@@ -679,7 +684,7 @@ impl SourceContext {
             VectorSource::WorkersAi => request.workers_ai_account_id.trim().to_string(),
             VectorSource::VertexAi => format!(
                 "{}|{}",
-                defaulted(&request.vertexai_region, "us-central1").to_ascii_lowercase(),
+                vertex_ai_region(&request.vertexai_region)?,
                 request.vertexai_express_project_id.trim()
             ),
             _ => String::new(),

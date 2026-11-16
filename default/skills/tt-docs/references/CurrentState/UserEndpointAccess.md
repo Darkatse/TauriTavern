@@ -6,6 +6,14 @@
 
 本机制不识别扩展身份。扩展可以触发 dialog，但不能替用户确认；用户授权后，同一 WebView 内的代码都能使用该端点。WebView 的原生能力边界见 [FrontendGuide §2.2](../FrontendGuide.md#22-原生能力)。
 
+## 内置主机
+
+内置 provider 的主机由宿主写定，页面的值只能在其中选择：
+
+- 拼进主机名的值（region、作为子域的模型名等）先解析为 `tt-domain` 的 `HostLabel`：1 到 63 个 ASCII 字母、数字或连字符，首尾不是连字符。拼主机名的代码只接受这个类型。
+- 只有几个固定主机的 provider，页面的值按枚举选择主机，其他值一律拒绝。
+- 不合法的值返回校验错误，不发出请求。
+
 ## 授权与传输
 
 - 复用 `parse_user_http_endpoint` 规范化 URL，并拒绝非 HTTP(S)、userinfo、query 与 fragment。

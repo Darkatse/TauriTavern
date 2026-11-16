@@ -9,8 +9,11 @@ use crate::dto::chat_completion_dto::{
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
-use tt_domain::models::endpoint_url::{append_endpoint_segments, parse_user_http_endpoint};
+use tt_domain::models::endpoint_url::{
+    HostLabel, append_endpoint_segments, parse_user_http_endpoint,
+};
 use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::vertex_ai::{VERTEX_AI_GLOBAL_HOST, vertex_ai_host, vertex_ai_region};
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
@@ -24,7 +27,6 @@ const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com/v1";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
-const VERTEXAI_GLOBAL_BASE: &str = "https://aiplatform.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
 const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
 const COHERE_STATUS_API_BASE: &str = "https://api.cohere.ai/v1";
@@ -467,7 +469,7 @@ fn default_base_url(
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
-        ChatCompletionSource::VertexAi => VERTEXAI_GLOBAL_BASE.to_string(),
+        ChatCompletionSource::VertexAi => VERTEX_AI_GLOBAL_HOST.to_string(),
         ChatCompletionSource::DeepSeek => match purpose {
             ApiConfigPurpose::Status => DEEPSEEK_STATUS_API_BASE.to_string(),
             ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
@@ -494,7 +496,7 @@ fn default_base_url(
             }
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
-        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
+        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region)?,
         ChatCompletionSource::Xai => XAI_API_BASE.to_string(),
         ChatCompletionSource::Pollinations => match purpose {
             ApiConfigPurpose::Status => POLLINATIONS_STATUS_API_BASE.to_string(),
@@ -604,14 +606,14 @@ fn moonshot_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
     }
 }
 
-fn aws_bedrock_base_url(region: &str) -> String {
-    let region = region.trim();
-    let region = if region.is_empty() {
+fn aws_bedrock_base_url(region: &str) -> Result<String, ApplicationError> {
+    let region = if region.trim().is_empty() {
         AWS_BEDROCK_DEFAULT_REGION
     } else {
         region
     };
-    format!("https://bedrock-runtime.{region}.amazonaws.com")
+    let region = HostLabel::parse("AWS Bedrock region", region)?;
+    Ok(format!("https://bedrock-runtime.{region}.amazonaws.com"))
 }
 
 async fn resolve_vertexai_generate_api_config(
@@ -650,13 +652,12 @@ async fn resolve_vertexai_generate_api_config(
         .unwrap_or("express")
         .to_ascii_lowercase();
 
-    let region = payload
-        .get("vertexai_region")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("us-central1")
-        .to_ascii_lowercase();
+    let region = vertex_ai_region(
+        payload
+            .get("vertexai_region")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
 
     let is_claude_model = payload
         .get("model")
@@ -728,15 +729,11 @@ async fn resolve_vertexai_generate_api_config(
 }
 
 /// Without a project, Vertex AI Express serves the location chosen at signup.
-fn vertexai_base_url(region: &str, project_id: Option<&str>) -> String {
+fn vertexai_base_url(region: &HostLabel, project_id: Option<&str>) -> String {
     let Some(project_id) = project_id else {
-        return format!("{VERTEXAI_GLOBAL_BASE}/v1");
+        return format!("{VERTEX_AI_GLOBAL_HOST}/v1");
     };
-    let host = match region {
-        "global" => VERTEXAI_GLOBAL_BASE.to_string(),
-        "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
-        _ => format!("https://{region}-aiplatform.googleapis.com"),
-    };
+    let host = vertex_ai_host(region);
     format!("{host}/v1/projects/{project_id}/locations/{region}")
 }
 

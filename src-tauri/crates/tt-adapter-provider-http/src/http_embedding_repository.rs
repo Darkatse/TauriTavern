@@ -7,6 +7,8 @@ use serde_json::{Map, Value, json};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::HostLabel;
+use tt_domain::models::vertex_ai::vertex_ai_host;
 use tt_ports::repositories::vector_repository::{
     RemoteEmbeddingBatch, RemoteEmbeddingProtocol, RemoteEmbeddingRepository,
     RemoteEmbeddingRequest, VertexEmbeddingAuth,
@@ -52,12 +54,11 @@ impl HttpEmbeddingRepository {
     async fn embed_vertex(
         &self,
         model: String,
-        region: String,
+        region: HostLabel,
         auth: VertexEmbeddingAuth,
         texts: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, DomainError> {
-        let region = normalized_region(&region);
-        let host = vertex_host(&region);
+        let host = vertex_ai_host(&region);
         let instances = texts
             .into_iter()
             .map(|content| json!({ "content": content }))
@@ -524,23 +525,6 @@ fn service_account_project_id(credentials: &str) -> Result<String, DomainError> 
                 "Vertex AI service account JSON is missing project_id".to_string(),
             )
         })
-}
-
-fn normalized_region(region: &str) -> String {
-    let region = region.trim().to_ascii_lowercase();
-    if region.is_empty() {
-        "us-central1".to_string()
-    } else {
-        region
-    }
-}
-
-fn vertex_host(region: &str) -> String {
-    match region {
-        "global" => "https://aiplatform.googleapis.com".to_string(),
-        "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
-        _ => format!("https://{region}-aiplatform.googleapis.com"),
-    }
 }
 
 fn invalid_url(provider: &'static str) -> impl FnOnce(url::ParseError) -> DomainError {

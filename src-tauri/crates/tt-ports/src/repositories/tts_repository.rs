@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::HostLabel;
 
 #[derive(Debug, Clone)]
 pub struct GrokOutputFormat {
@@ -31,11 +32,11 @@ pub struct MinimaxGenerateRequest {
 pub enum AzureTtsRequest {
     List {
         api_key: String,
-        region: String,
+        region: HostLabel,
     },
     Generate {
         api_key: String,
-        region: String,
+        region: HostLabel,
         text: String,
         voice: String,
     },
