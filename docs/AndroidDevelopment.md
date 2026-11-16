@@ -53,7 +53,7 @@ https://v2.tauri.app/develop/resources/#android
 
 平台策略：
 
-- Android 与 OpenHarmony：`build.rs` 发出 `embedded_resources`，只读嵌入映射；
+- Android 与 OpenHarmony：`build.rs` 发出 `embedded_resources`，只读嵌入映射；`tauri.android.conf.json` 与 `tauri.ohos.conf.json` 因此把 `bundle.resources` 置空，安装包不再复制一份资源；
 - 其他平台：走 `BaseDirectory::Resource` + fs 访问；portable 构建在磁盘未命中时回退到嵌入映射。
 
 #### C. 前后端模板读取解耦
