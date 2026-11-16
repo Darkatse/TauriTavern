@@ -99,7 +99,7 @@ const raw = await dev.llmApiLogs.getRaw(index[0].id);
 
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
-| `index(options?)` | `Promise<LlmApiLogIndexEntry[]>` | 获取最近几条请求索引 |
+| `index(options?)` | `Promise<LlmApiLogIndexEntry[]>` | 获取最近几条请求索引，按时间从旧到新 |
 | `getPreview(id)` | `Promise<LlmApiLogPreview>` | 获取适合 UI 展示的预览 |
 | `getRaw(id)` | `Promise<LlmApiLogRaw>` | 获取完整原始请求/响应 |
 | `subscribeIndex(handler)` | `Promise<unsubscribe>` | 订阅新增索引项 |

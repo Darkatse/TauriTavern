@@ -26,7 +26,6 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     // 1. Publish runtime paths first. Every later host/app subsystem must derive
     // paths from this snapshot rather than resolving independently.
     let runtime_paths = super::runtime_paths::install(app, &app_handle)?;
-    super::observability::purge_old_logs(&runtime_paths);
 
     // 2. Publish lightweight host services that do not depend on user settings.
     // AppState construction later reuses the same HTTP pool via managed state.
