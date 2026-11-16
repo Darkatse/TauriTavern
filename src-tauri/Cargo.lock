@@ -9452,6 +9452,7 @@ name = "tt-adapter-tokenization"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "brotli-decompressor",
  "flate2",
  "miktik",
  "serde_json",

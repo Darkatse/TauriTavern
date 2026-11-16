@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use brotli_decompressor::Decompressor;
 use flate2::read::GzDecoder;
 use miktik::{
     ARTIFACT_VERSION, Framing, Model, Source, Tokenizer, TokenizerError, TokenizerRegistry,
@@ -18,13 +19,17 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
 // The bundled sources and their origins are listed in resources/tokenizers/NOTICE.md.
-const CLAUDE_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.gz");
-const DEEPSEEK_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
-const GEMMA3_MODEL_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/gemma3.model.gz");
-const GLM_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/glm.json.gz");
-const KIMI_TIKTOKEN_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/kimi.tiktoken.gz");
-const QWEN2_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/qwen2.json.gz");
-const QWEN3_5_JSON_GZIP: &[u8] = include_bytes!("../../../resources/tokenizers/qwen3.5.json.gz");
+const CLAUDE_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.br");
+const DEEPSEEK_JSON_BROTLI: &[u8] =
+    include_bytes!("../../../resources/tokenizers/deepseek.json.br");
+const GEMMA3_MODEL_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/gemma3.model.br");
+const GLM_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/glm.json.br");
+const KIMI_TIKTOKEN_BROTLI: &[u8] =
+    include_bytes!("../../../resources/tokenizers/kimi.tiktoken.br");
+const QWEN2_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/qwen2.json.br");
+const QWEN3_5_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/qwen3.5.json.br");
+
+const BROTLI_BUFFER_BYTES: usize = 64 * 1024;
 
 // Downloaded sources are checked against their SHA-256, and their URLs name a commit where the host
 // has one.
@@ -62,13 +67,14 @@ const SEGMENT_CACHE_BYTES: usize = 8 * 1024 * 1024;
 enum ResourceCompression {
     None,
     Gzip,
+    Brotli,
 }
 
 #[derive(Clone, Copy)]
 enum SourceOrigin {
     /// An OpenAI encoding built into MikTik.
     Builtin,
-    /// Gzip-compressed bytes built into TauriTavern.
+    /// Brotli-compressed source bytes.
     Bundled(&'static [u8]),
     /// A file downloaded on first use and kept in the cache directory under the source's name.
     /// `sha256` is the hash of the file after decompression.
@@ -174,13 +180,13 @@ impl MiktikTokenizerRepository {
             )
         };
         let (name, origin) = match id {
-            "claude" => bundled("claude.json", CLAUDE_JSON_GZIP),
-            "deepseek" => bundled("deepseek.json", DEEPSEEK_JSON_GZIP),
-            "gemini" | "gemma" => bundled("gemma3.model", GEMMA3_MODEL_GZIP),
-            "kimi" | "kimi-k3" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_GZIP),
-            "qwen2" => bundled("qwen2.json", QWEN2_JSON_GZIP),
-            "qwen3.5" => bundled("qwen3.5.json", QWEN3_5_JSON_GZIP),
-            "glm" => bundled("glm.json", GLM_JSON_GZIP),
+            "claude" => bundled("claude.json", CLAUDE_JSON_BROTLI),
+            "deepseek" => bundled("deepseek.json", DEEPSEEK_JSON_BROTLI),
+            "gemini" | "gemma" => bundled("gemma3.model", GEMMA3_MODEL_BROTLI),
+            "kimi" | "kimi-k3" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_BROTLI),
+            "qwen2" => bundled("qwen2.json", QWEN2_JSON_BROTLI),
+            "qwen3.5" => bundled("qwen3.5.json", QWEN3_5_JSON_BROTLI),
+            "glm" => bundled("glm.json", GLM_JSON_BROTLI),
             // Downloaded rather than bundled, so that TauriTavern does not redistribute it under
             // MiniMax's license. ModelScope is reachable where Hugging Face is not.
             "minimax" => remote(
@@ -365,7 +371,7 @@ impl MiktikTokenizerRepository {
             SourceOrigin::Builtin => None,
             SourceOrigin::Bundled(bytes) => Some(
                 blocking("Tokenizer source", move || {
-                    decompress(bytes, ResourceCompression::Gzip, source.name)
+                    decompress(bytes, ResourceCompression::Brotli, source.name)
                 })
                 .await??,
             ),
@@ -801,20 +807,19 @@ fn decompress(
     compression: ResourceCompression,
     source_name: &str,
 ) -> Result<Vec<u8>, DomainError> {
-    match compression {
-        ResourceCompression::None => Ok(payload.to_vec()),
-        ResourceCompression::Gzip => {
-            let mut decoder = GzDecoder::new(Cursor::new(payload));
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed).map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to decompress tokenizer payload '{}': {}",
-                    source_name, error
-                ))
-            })?;
-            Ok(decompressed)
-        }
-    }
+    let mut decoder: Box<dyn Read + '_> = match compression {
+        ResourceCompression::None => return Ok(payload.to_vec()),
+        ResourceCompression::Gzip => Box::new(GzDecoder::new(Cursor::new(payload))),
+        ResourceCompression::Brotli => Box::new(Decompressor::new(payload, BROTLI_BUFFER_BYTES)),
+    };
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to decompress tokenizer payload '{}': {}",
+            source_name, error
+        ))
+    })?;
+    Ok(decompressed)
 }
 
 /// Removes every entry under `dir` that is not in `used` or on the way to it.
