@@ -71,6 +71,10 @@
         }
       },
       "rpm": {
+        "compression": {
+          "type": "zstd",
+          "level": 12
+        },
         "depends": [
           "libdbus-1.so.3()(64bit)",
           "gstreamer1(element-appsink)()(64bit)",
