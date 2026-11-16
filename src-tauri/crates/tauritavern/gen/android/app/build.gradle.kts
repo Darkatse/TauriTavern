@@ -80,6 +80,13 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        // Compress native libraries in sideloaded release APKs.
+        variant.packaging.jniLibs.useLegacyPackaging.set(true)
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_1_8

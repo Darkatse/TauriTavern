@@ -11,6 +11,7 @@ Gradle 工程跟随 Tauri CLI 的 Android 模板，当前对齐 2.12.3：Gradle 
 - `compileSdk`、`targetSdk` 为 36。targetSdk 37 起访问局域网需要 `ACCESS_LOCAL_NETWORK` 运行时权限，提升前先建立统一的本地网络权限入口。
 - 开启 configuration cache：`BuildTask` 经 `ExecOperations` 调用 CLI，执行阶段不访问 `Project`。
 - `android.builtInKotlin=false`、`android.newDsl=false` 与模板一致，因为 Tauri 与官方插件仍应用 `org.jetbrains.kotlin.android`。
+- release APK 压缩存放原生库（`useLegacyPackaging`），安装时解压：GitHub 下载按 APK 原样计算，原生库压缩后小约 40%；debug 保持不压缩，不拖慢开发构建与安装。
 - release 沿用 `proguard-android-optimize.txt`，`@JavascriptInterface` 方法由其中的默认规则保留；`proguard-rules.pro` 只补依赖缺失的规则，原因写在规则旁。
 
 ## 1. 原生内容视口与窗口背景
