@@ -175,6 +175,7 @@ const delivered = await dev.exportBundle();
 
 - 由用户在系统保存面板中选择位置（iOS 为分享面板），见[文件传输](../CurrentState/FileTransfer.md)。
 - 导出内容包含后端文件日志、前端日志 snapshot、LLM API Logs（含 raw）与设置/版本信息。
+- 设置副本不含密钥文件；键名表明是凭据的值（password、API key、token、auth、headers 等）替换为 `[redacted]`，URL 中的用户名与密码被去掉。
 - 导出文件可能包含 prompt/响应体等敏感信息；分享前请自行检查。
 
 ## 5. 边界与稳定性

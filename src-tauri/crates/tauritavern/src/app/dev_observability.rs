@@ -260,7 +260,7 @@ fn bundle_readme() -> String {
         "- frontend/logs.jsonl: preview only (truncated/summarized).",
         "- backend/*.log: full backend file logs (may include forwarded frontend logs).",
         "- llm-api/*: LLM API request/response raw logs (may contain prompts/responses).",
-        "- settings/*: app settings snapshot (secrets are not included).",
+        "- settings/*: app settings snapshot; secrets, credential-like values and URL user info are removed.",
         "",
         "Review files before sharing.",
         "",
