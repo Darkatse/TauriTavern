@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, oneshot};
 use tt_contracts::sync::SyncJobEvent;
 use tt_contracts::sync_automation::{SyncAutomationStatus, SyncAutomationToastEvent};
 use tt_domain::errors::DomainError;
-use tt_domain::models::lan_sync::LanSyncPairRequestEvent;
+use tt_domain::models::lan_sync::LanSyncPairingReviewEvent;
 use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerEvents, PairingApproval};
 use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::SyncAutomationEventPublisher;
@@ -114,7 +114,13 @@ impl tt_ports::lan_discovery::LanDiscoveryHost for TauriLanDiscoveryHost {
 
 struct TauriPairingApproval {
     app_handle: AppHandle,
-    pending: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+    pending: Mutex<HashMap<String, PendingApproval>>,
+}
+
+struct PendingApproval {
+    request: LanPairingApprovalRequest,
+    decision: oneshot::Sender<bool>,
+    claimed: bool,
 }
 
 impl TauriPairingApproval {
@@ -129,31 +135,33 @@ impl TauriPairingApproval {
 #[async_trait]
 impl PairingApproval for TauriPairingApproval {
     async fn request(&self, request: LanPairingApprovalRequest) -> Result<bool, DomainError> {
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(request.request_id.clone(), tx);
-        }
+        let request_id = request.request_id.clone();
+        let timeout = Duration::from_millis(request.expires_at_ms.saturating_sub(now_ms()));
+        let (decision, rx) = oneshot::channel();
+        self.pending.lock().await.insert(
+            request_id.clone(),
+            PendingApproval {
+                request,
+                decision,
+                claimed: false,
+            },
+        );
 
         if let Err(error) = self.app_handle.emit(
-            "lan_sync:pair_request",
-            LanSyncPairRequestEvent {
-                request_id: request.request_id.clone(),
-                peer_device_id: request.peer_device_id,
-                peer_device_name: request.peer_device_name,
-                peer_ip: request.peer_ip,
+            "lan_sync:pairing_review",
+            LanSyncPairingReviewEvent {
+                request_id: request_id.clone(),
             },
         ) {
-            self.pending.lock().await.remove(&request.request_id);
+            self.pending.lock().await.remove(&request_id);
             return Err(DomainError::InternalError(error.to_string()));
         }
 
-        let timeout = Duration::from_millis(request.expires_at_ms.saturating_sub(now_ms()));
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(accepted)) => Ok(accepted),
             Ok(Err(_)) => Err(DomainError::cancelled("Pairing request cancelled")),
             Err(_) => {
-                self.pending.lock().await.remove(&request.request_id);
+                self.pending.lock().await.remove(&request_id);
                 Err(DomainError::AuthenticationError(
                     "Pairing expired".to_string(),
                 ))
@@ -161,17 +169,31 @@ impl PairingApproval for TauriPairingApproval {
         }
     }
 
+    async fn claim(&self, request_id: &str) -> Result<LanPairingApprovalRequest, DomainError> {
+        let mut pending = self.pending.lock().await;
+        let entry = pending.get_mut(request_id).ok_or_else(|| {
+            DomainError::NotFound(format!("Pair request not found: {request_id}"))
+        })?;
+        if entry.claimed {
+            return Err(DomainError::Conflict(format!(
+                "Pair request is already being reviewed: {request_id}"
+            )));
+        }
+        entry.claimed = true;
+        Ok(entry.request.clone())
+    }
+
     async fn confirm(&self, request_id: &str, accept: bool) -> Result<(), DomainError> {
-        let tx = self
+        let entry = self
             .pending
             .lock()
             .await
             .remove(request_id)
             .ok_or_else(|| {
-                DomainError::NotFound(format!("Pair request not found: {}", request_id))
+                DomainError::NotFound(format!("Pair request not found: {request_id}"))
             })?;
 
-        tx.send(accept).map_err(|_| {
+        entry.decision.send(accept).map_err(|_| {
             DomainError::InternalError("Pairing decision receiver dropped".to_string())
         })
     }

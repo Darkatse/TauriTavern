@@ -35,6 +35,10 @@ export function extractErrorText(value) {
     return String(value).trim();
 }
 
+export function isCommandCancelled(value) {
+    return typeof value === 'object' && value !== null && Object.hasOwn(value, 'Cancelled');
+}
+
 export function getCommandErrorMessage(value) {
     return stripCommandErrorPrefixes(extractErrorText(value));
 }

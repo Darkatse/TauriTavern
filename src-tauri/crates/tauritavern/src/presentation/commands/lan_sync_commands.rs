@@ -2,17 +2,20 @@ use std::sync::Arc;
 
 use qrcode::QrCode;
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 use ttsync_contract::sync::{OverwritePolicy, SyncMode};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
+use crate::presentation::commands::sync_pairing::{
+    PairingPeer, ask_pairing_consent, ensure_pairing_consent,
+};
 use crate::presentation::errors::CommandError;
 use tt_contracts::lan_discovery::LanDiscoveredDevice;
 use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
-use tt_domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
+use tt_domain::models::lan_sync::{LanPairTarget, LanSyncPairedDeviceSummary, LanSyncStatus};
 
 fn ensure_lan_sync_allowed(app_state: &AppState) -> Result<(), CommandError> {
     ensure_ios_policy_allows(
@@ -120,17 +123,26 @@ impl From<LanSyncPairedDeviceSummary> for LanSyncPairedDeviceDto {
 pub async fn lan_sync_request_pairing(
     app_state: State<'_, Arc<AppState>>,
     pair_uri: String,
+    locale: String,
+    window: WebviewWindow,
 ) -> Result<LanSyncPairedDeviceDto, CommandError> {
     log_command("lan_sync_request_pairing");
     ensure_lan_sync_allowed(&app_state)?;
 
-    app_state
+    let target = app_state
         .services
         .lan_sync_service
-        .request_pairing(&pair_uri)
+        .link_pair_target(&pair_uri)
         .await
-        .map(LanSyncPairedDeviceDto::from)
-        .map_err(map_command_error("Failed to request LAN sync pairing"))
+        .map_err(map_command_error("Failed to request LAN sync pairing"))?;
+    pair_confirmed(
+        &app_state,
+        target,
+        &locale,
+        &window,
+        "Failed to request LAN sync pairing",
+    )
+    .await
 }
 
 #[tauri::command]
@@ -151,15 +163,29 @@ pub async fn lan_sync_discover_devices(
 pub async fn lan_sync_connect_address(
     app_state: State<'_, Arc<AppState>>,
     address: String,
+    locale: String,
+    window: WebviewWindow,
 ) -> Result<(), CommandError> {
     log_command("lan_sync_connect_address");
     ensure_lan_sync_allowed(&app_state)?;
-    app_state
+    let Some(target) = app_state
         .services
         .lan_sync_service
         .connect_address(&address)
         .await
-        .map_err(map_command_error("Failed to connect to LAN device"))
+        .map_err(map_command_error("Failed to connect to LAN device"))?
+    else {
+        return Ok(());
+    };
+    pair_confirmed(
+        &app_state,
+        target,
+        &locale,
+        &window,
+        "Failed to connect to LAN device",
+    )
+    .await
+    .map(|_| ())
 }
 
 #[tauri::command]
@@ -181,33 +207,79 @@ pub async fn lan_sync_set_device_name(
 pub async fn lan_sync_pair_device(
     app_state: State<'_, Arc<AppState>>,
     device_id: String,
+    locale: String,
+    window: WebviewWindow,
 ) -> Result<LanSyncPairedDeviceDto, CommandError> {
     log_command("lan_sync_pair_device");
     ensure_lan_sync_allowed(&app_state)?;
+    let target = app_state
+        .services
+        .lan_sync_service
+        .nearby_pair_target(&device_id)
+        .await
+        .map_err(map_command_error("Failed to pair LAN sync device"))?;
+    pair_confirmed(
+        &app_state,
+        target,
+        &locale,
+        &window,
+        "Failed to pair LAN sync device",
+    )
+    .await
+}
+
+async fn pair_confirmed(
+    app_state: &AppState,
+    target: LanPairTarget,
+    locale: &str,
+    window: &WebviewWindow,
+    failure: &str,
+) -> Result<LanSyncPairedDeviceDto, CommandError> {
+    ensure_pairing_consent(
+        window,
+        locale,
+        PairingPeer::LanDevice {
+            name: target.device_name.as_deref(),
+            host: &target.host,
+        },
+    )
+    .await?;
     app_state
         .services
         .lan_sync_service
-        .pair_device(&device_id)
+        .pair(target)
         .await
         .map(LanSyncPairedDeviceDto::from)
-        .map_err(map_command_error("Failed to pair LAN sync device"))
+        .map_err(map_command_error(failure))
 }
 
 #[tauri::command]
-pub async fn lan_sync_confirm_pairing(
+pub async fn lan_sync_review_pairing(
     app_state: State<'_, Arc<AppState>>,
     request_id: String,
-    accept: bool,
+    locale: String,
+    window: WebviewWindow,
 ) -> Result<(), CommandError> {
-    log_command("lan_sync_confirm_pairing");
+    log_command("lan_sync_review_pairing");
     ensure_lan_sync_allowed(&app_state)?;
-
-    app_state
-        .services
-        .lan_sync_service
-        .confirm_pairing(&request_id, accept)
+    let service = &app_state.services.lan_sync_service;
+    let request = service
+        .claim_pairing_request(&request_id)
         .await
-        .map_err(map_command_error("Failed to confirm LAN sync pairing"))
+        .map_err(map_command_error("Failed to review LAN sync pairing"))?;
+    let accepted = ask_pairing_consent(
+        &window,
+        &locale,
+        PairingPeer::LanDevice {
+            name: Some(&request.peer_device_name),
+            host: &request.peer_ip,
+        },
+    )
+    .await?;
+    service
+        .confirm_pairing(&request_id, accepted)
+        .await
+        .map_err(map_command_error("Failed to review LAN sync pairing"))
 }
 
 #[tauri::command]

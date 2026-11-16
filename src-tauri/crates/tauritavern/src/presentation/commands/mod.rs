@@ -53,6 +53,7 @@ pub mod sprite_commands;
 pub mod stable_diffusion_commands;
 pub mod sync_automation_commands;
 pub mod sync_commands;
+mod sync_pairing;
 pub mod theme_commands;
 pub mod tokenizer_commands;
 pub mod translate_commands;

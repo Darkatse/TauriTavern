@@ -92,6 +92,8 @@ pub trait LanPairingClient: Send + Sync {
 #[async_trait]
 pub trait PairingApproval: Send + Sync {
     async fn request(&self, request: LanPairingApprovalRequest) -> Result<bool, DomainError>;
+    /// Each pending request can be claimed only once.
+    async fn claim(&self, request_id: &str) -> Result<LanPairingApprovalRequest, DomainError>;
     async fn confirm(&self, request_id: &str, accept: bool) -> Result<(), DomainError>;
     async fn cancel_all(&self);
 }

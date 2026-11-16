@@ -13,7 +13,7 @@ pub(super) struct ConsentCopy {
     pub(super) title: &'static str,
     pub(super) subject_label: &'static str,
     pub(super) warning: &'static str,
-    pub(super) http_warning: &'static str,
+    pub(super) http_warning: Option<&'static str>,
     pub(super) confirm: &'static str,
     pub(super) cancel: &'static str,
 }
@@ -37,13 +37,21 @@ pub(super) fn localized(
 pub(super) struct ConsentRequest<'a> {
     pub(super) subject: &'a str,
     pub(super) copy: &'static ConsentCopy,
-    pub(super) cancelled: &'static str,
+}
+
+pub(super) async fn ask(
+    window: &WebviewWindow,
+    request: &ConsentRequest<'_>,
+) -> Result<bool, DomainError> {
+    let _turn = DIALOG_GATE.lock().await;
+    show_dialog(window, request).await
 }
 
 pub(super) async fn ask_once(
     window: &WebviewWindow,
     grants: &dyn UserGrants,
     request: ConsentRequest<'_>,
+    cancelled: &'static str,
 ) -> Result<(), DomainError> {
     if grants.is_allowed(request.subject).await {
         return Ok(());
@@ -54,7 +62,7 @@ pub(super) async fn ask_once(
         return Ok(());
     }
     if !show_dialog(window, &request).await? {
-        return Err(DomainError::Cancelled(request.cancelled.to_string()));
+        return Err(DomainError::Cancelled(cancelled.to_string()));
     }
 
     grants.grant(request.subject).await;
@@ -66,11 +74,10 @@ async fn show_dialog(
     request: &ConsentRequest<'_>,
 ) -> Result<bool, DomainError> {
     let copy = request.copy;
-    let http_warning = if request.subject.starts_with("http://") {
-        copy.http_warning
-    } else {
-        ""
-    };
+    let http_warning = copy
+        .http_warning
+        .filter(|_| request.subject.starts_with("http://"))
+        .unwrap_or_default();
     let message = format!(
         "{} {}\n\n{}{}",
         copy.subject_label, request.subject, copy.warning, http_warning

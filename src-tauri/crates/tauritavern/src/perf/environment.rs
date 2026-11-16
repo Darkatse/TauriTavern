@@ -245,6 +245,10 @@ impl PairingApproval for Detached {
         Err(unreachable_in_replay("LAN pairing"))
     }
 
+    async fn claim(&self, _request_id: &str) -> Result<LanPairingApprovalRequest, DomainError> {
+        Err(unreachable_in_replay("LAN pairing"))
+    }
+
     async fn confirm(&self, _request_id: &str, _accept: bool) -> Result<(), DomainError> {
         Err(unreachable_in_replay("LAN pairing"))
     }

@@ -1,5 +1,6 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { translate } from '../../../i18n.js';
+import { isCommandCancelled } from '../../../util/command-error-utils.js';
 
 async function submitDeviceInput({ title, hint, value = '', placeholder = '', label, pending, submit }) {
     const content = document.createElement('div');
@@ -40,6 +41,10 @@ async function submitDeviceInput({ title, hint, value = '', placeholder = '', la
                 saved = true;
                 return true;
             } catch (error) {
+                if (isCommandCancelled(error)) {
+                    feedback.textContent = '';
+                    return false;
+                }
                 const { toUserFacingErrorText } = await import('../../../util/user-facing-error.js');
                 feedback.classList.add('is-error');
                 feedback.textContent = toUserFacingErrorText(error);

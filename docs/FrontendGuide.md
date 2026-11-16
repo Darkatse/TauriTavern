@@ -58,6 +58,8 @@ TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中�
 
 页面里的代码，包括第三方扩展和同源 iframe 中的卡片脚本，共用同一组原生能力，宿主不区分调用者。因此页面不持有文件系统能力：capability 不授予 `fs:*` 与 `dialog:*`，也不启用 asset 协议。宿主文件只以命令交出的字节资源到达页面，交出什么由命令决定，页面经 `read_bytes` 读取（`services/files/byte-stream-service.js`）。页面交给宿主的文件路径只能是暂存路径，选取面板由宿主打开，见[文件传输](CurrentState/FileTransfer.md#3-暂存)。
 
+页面也不能替用户确认。让宿主数据或密钥离开本机的信任决定，例如[用户端点与导入来源](CurrentState/UserEndpointAccess.md)的授权和[同步配对](CurrentState/Sync.md#lan-发现与信任)，只由 Rust 原生对话框作出。对话框的文案与对象由宿主组装，页面只提供 locale。用户取消时命令返回 `Cancelled`，这是正常结果，不按错误显示。
+
 ## 3. 目录结构（前端集成相关）
 
 ```text

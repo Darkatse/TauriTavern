@@ -356,9 +356,7 @@ export function createSyncController({
             if (!value) {
                 throw new Error(tr('Pair URI is empty'));
             }
-            if (!await actions.connectPairUri(value)) {
-                return;
-            }
+            await actions.connectPairUri(value);
             setState({ requestPairUri: '' });
         });
         await refresh();
