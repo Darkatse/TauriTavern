@@ -175,20 +175,20 @@ impl HttpClientPool {
     pub fn user_endpoint_client(
         &self,
         profile: HttpClientProfile,
-        base_url: &str,
+        url: &str,
     ) -> Result<Client, DomainError> {
-        self.user_endpoint_client_with_revision(profile, base_url)
+        self.user_endpoint_client_with_revision(profile, url)
             .map(|(client, _revision)| client)
     }
 
     pub fn user_endpoint_client_with_revision(
         &self,
         profile: HttpClientProfile,
-        base_url: &str,
+        url: &str,
     ) -> Result<(Client, u64), DomainError> {
         let route = {
             let state = self.state.read().unwrap();
-            user_endpoint_route(base_url, &state.user_endpoint_grants)?
+            user_endpoint_route(url, &state.user_endpoint_grants)?
         };
         self.client_with_revision_for_route(profile, Some(route))
     }
@@ -283,12 +283,12 @@ impl RequestProxyRuntime for HttpClientPool {
 }
 
 impl UserEndpointGrantRuntime for HttpClientPool {
-    fn allow_user_endpoints(&self, endpoints: &[String]) {
+    fn allow_user_endpoints(&self, origins: &[String]) {
         self.state
             .write()
             .unwrap()
             .user_endpoint_grants
-            .extend(endpoints.iter().cloned());
+            .extend(origins.iter().cloned());
     }
 }
 
@@ -420,9 +420,10 @@ mod tests {
 
     use super::{HttpClientPool, HttpClientProfile};
     use rcgen::{CertifiedKey, generate_simple_self_signed};
-    use reqwest::StatusCode;
+    use reqwest::{StatusCode, Url};
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
+    use tt_domain::models::endpoint_url::http_origin;
     use tt_domain::models::settings::RequestProxySettings;
     use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
@@ -432,11 +433,9 @@ mod tests {
         HttpClientPool::new(TEST_USER_AGENT)
     }
 
-    fn grant_user_endpoint(pool: &HttpClientPool, endpoint: &str) {
-        let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
-            .unwrap()
-            .to_string();
-        pool.allow_user_endpoints(&[endpoint]);
+    fn grant_user_endpoint(pool: &HttpClientPool, url: &str) {
+        let origin = http_origin(&Url::parse(url).unwrap()).unwrap();
+        pool.allow_user_endpoints(&[origin]);
     }
 
     struct CaptureServer {

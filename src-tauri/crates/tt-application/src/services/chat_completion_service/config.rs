@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value};
+use url::Url;
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
@@ -214,7 +215,8 @@ async fn resolve_api_config(
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
-    let user_endpoint = resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?;
+    let user_endpoint =
+        resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?.map(String::from);
 
     match source {
         ChatCompletionSource::Custom => {
@@ -338,7 +340,7 @@ pub(super) fn resolve_user_configured_endpoint(
     source: ChatCompletionSource,
     reverse_proxy: &str,
     custom_url: &str,
-) -> Result<Option<String>, ApplicationError> {
+) -> Result<Option<Url>, ApplicationError> {
     let reverse_proxy = reverse_proxy.trim();
     let custom_url = custom_url.trim();
     let endpoint = match source {
@@ -355,12 +357,10 @@ pub(super) fn resolve_user_configured_endpoint(
 
     let endpoint = parse_user_http_endpoint(endpoint)?;
     if source == ChatCompletionSource::VertexAi {
-        return Ok(Some(
-            append_endpoint_segments(endpoint.as_str(), &["v1"])?.to_string(),
-        ));
+        return Ok(Some(append_endpoint_segments(endpoint.as_str(), &["v1"])?));
     }
 
-    Ok(Some(endpoint.to_string()))
+    Ok(Some(endpoint))
 }
 
 pub(super) fn get_payload_string(
@@ -629,7 +629,8 @@ async fn resolve_vertexai_generate_api_config(
     if !reverse_proxy.is_empty() {
         let base_url =
             resolve_user_configured_endpoint(ChatCompletionSource::VertexAi, reverse_proxy, "")?
-                .expect("non-empty Vertex AI reverse proxy must resolve");
+                .expect("non-empty Vertex AI reverse proxy must resolve")
+                .into();
         return Ok(ChatCompletionApiConfig {
             base_url,
             user_configured_endpoint: true,
@@ -831,7 +832,8 @@ mod tests {
 
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
-        resolve_generate_api_config, resolve_status_api_config, resolve_user_configured_endpoint,
+        Url, resolve_generate_api_config, resolve_status_api_config,
+        resolve_user_configured_endpoint,
     };
 
     struct TestSecretRepository {
@@ -928,7 +930,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(endpoint.as_deref(), Some("http://192.168.1.2:11434/v1"));
+        assert_eq!(
+            endpoint.as_ref().map(Url::as_str),
+            Some("http://192.168.1.2:11434/v1")
+        );
         assert_eq!(
             resolve_user_configured_endpoint(ChatCompletionSource::OpenAi, "   ", "").unwrap(),
             None
@@ -940,7 +945,8 @@ mod tests {
                 "",
             )
             .unwrap()
-            .as_deref(),
+            .as_ref()
+            .map(Url::as_str),
             Some("https://proxy.example.com/base/v1")
         );
     }

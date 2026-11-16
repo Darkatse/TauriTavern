@@ -1,23 +1,27 @@
 use tauri::WebviewWindow;
+use url::Url;
 
 use crate::presentation::commands::access_consent::{
     ConsentCopy, ConsentRequest, ask_once, localized,
 };
 use crate::presentation::errors::CommandError;
 use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
+use tt_domain::models::endpoint_url::http_origin;
 
+/// `None` denotes a built-in destination and bypasses user consent.
 pub(super) async fn ensure_user_endpoint_access(
-    endpoint: Option<String>,
+    destination: Option<&Url>,
     locale: &str,
     window: &WebviewWindow,
     access_service: &UserEndpointAccessService,
 ) -> Result<(), CommandError> {
-    let Some(endpoint) = endpoint else {
+    let Some(destination) = destination else {
         return Ok(());
     };
 
+    let origin = http_origin(destination)?;
     let request = ConsentRequest {
-        subject: &endpoint,
+        subject: &origin,
         copy: localized(locale, &ZH_HANS, &ZH_HANT, &EN),
         cancelled: "Endpoint authorization cancelled by user",
     };

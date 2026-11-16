@@ -23,7 +23,7 @@ pub async fn search_searxng(
         .prepare_request(dto)
         .map_err(map_command_error("SearXNG search request is invalid"))?;
     ensure_user_endpoint_access(
-        Some(request.base_url.to_string()),
+        Some(&request.base_url),
         &locale,
         &window,
         &app_state.services.user_endpoint_access_service,

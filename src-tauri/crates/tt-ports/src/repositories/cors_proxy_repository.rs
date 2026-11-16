@@ -8,9 +8,7 @@ use crate::byte_reader::ByteReader;
 /// Header names with their raw values, in order.
 pub type Headers = Vec<(String, Vec<u8>)>;
 
-/// A page's request for `url`, sent to the user endpoint `endpoint` that contains it.
 pub struct CorsProxyRequest {
-    pub endpoint: String,
     pub url: Url,
     pub method: String,
     pub headers: Headers,

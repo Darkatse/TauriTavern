@@ -27,7 +27,7 @@ impl CorsProxyRepository for HttpCorsProxyRepository {
     async fn send(&self, request: CorsProxyRequest) -> Result<CorsProxyResponse, DomainError> {
         let client = self
             .http_clients
-            .user_endpoint_client(HttpClientProfile::CorsProxy, &request.endpoint)?;
+            .user_endpoint_client(HttpClientProfile::CorsProxy, request.url.as_str())?;
         let method = Method::from_bytes(request.method.as_bytes()).map_err(|_| {
             DomainError::InvalidData(format!("Invalid CORS proxy method: {}", request.method))
         })?;
@@ -153,11 +153,9 @@ mod tests {
         });
 
         let pool = HttpClientPool::new("TauriTavern/test");
-        let endpoint = format!("{origin}/");
-        pool.allow_user_endpoints(std::slice::from_ref(&endpoint));
+        pool.allow_user_endpoints(std::slice::from_ref(&origin));
         let response = HttpCorsProxyRepository::new(Arc::new(pool))
             .send(CorsProxyRequest {
-                endpoint,
                 url: format!("{origin}/v1/tts?format=mp3").parse().unwrap(),
                 method: "POST".to_string(),
                 headers: vec![

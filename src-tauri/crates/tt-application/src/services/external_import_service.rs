@@ -23,11 +23,6 @@ const PRE_APPROVED_IMPORT_SOURCES: &[&str] = &[
     "https://aicharactercards.com",
 ];
 
-/// An import source is an origin: scheme, host and port.
-pub fn import_source(url: &Url) -> String {
-    url.origin().ascii_serialization()
-}
-
 pub(crate) struct AnySource;
 
 #[async_trait]
@@ -50,7 +45,6 @@ impl ImportSourceAccessService {
     }
 }
 
-/// Subjects are [`import_source`]s.
 #[async_trait]
 impl UserGrants for ImportSourceAccessService {
     async fn is_allowed(&self, source: &str) -> bool {
@@ -64,6 +58,8 @@ impl UserGrants for ImportSourceAccessService {
 
 #[cfg(test)]
 mod tests {
+    use tt_domain::models::endpoint_url::http_origin;
+
     use super::*;
     use crate::services::user_grants::tests::MemoryGrantRepository;
 
@@ -75,7 +71,8 @@ mod tests {
     async fn import_sources_match_by_origin() {
         let access =
             ImportSourceAccessService::initialize(Arc::new(MemoryGrantRepository::default())).await;
-        let allowed = async |raw: &str| access.is_allowed(&import_source(&url(raw))).await;
+        let origin = |raw: &str| http_origin(&url(raw)).unwrap();
+        let allowed = async |raw: &str| access.is_allowed(&origin(raw)).await;
 
         assert!(allowed("https://files.catbox.moe/abc.png").await);
         assert!(allowed("https://cdn.discordapp.com/attachments/1/2/card.png").await);
@@ -91,7 +88,7 @@ mod tests {
         assert!(!allowed("http://[::1]/card.png").await);
 
         access
-            .grant(&import_source(&url("http://localhost:8000/card.png")))
+            .grant(&origin("http://localhost:8000/card.png"))
             .await;
 
         assert!(allowed("http://localhost:8000/other.json").await);

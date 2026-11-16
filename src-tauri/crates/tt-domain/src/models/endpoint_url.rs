@@ -31,6 +31,17 @@ pub fn parse_user_http_endpoint(raw: &str) -> Result<Url, DomainError> {
     Ok(url)
 }
 
+/// Canonical origin key shared by endpoint and import grants, without a trailing slash.
+pub fn http_origin(url: &Url) -> Result<String, DomainError> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(DomainError::InvalidData(format!(
+            "Only http and https URLs can be approved, not {}:",
+            url.scheme()
+        )));
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
 /// A single DNS label; untrusted values cannot escape a built-in provider's host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostLabel(String);
@@ -130,9 +141,36 @@ fn parse_endpoint_base(base_url: &str) -> Result<Url, DomainError> {
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+
     use super::{
-        HostLabel, append_endpoint_path, append_endpoint_segments, parse_user_http_endpoint,
+        HostLabel, append_endpoint_path, append_endpoint_segments, http_origin,
+        parse_user_http_endpoint,
     };
+
+    #[test]
+    fn http_origin_keeps_only_scheme_host_and_port() {
+        for (url, origin) in [
+            (
+                "https://user:secret@API.Example.com/v1/tts?token=x#part",
+                "https://api.example.com",
+            ),
+            ("https://example.com:443/v1", "https://example.com"),
+            ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434"),
+            ("http://[::1]:8080/", "http://[::1]:8080"),
+            ("https://bücher.example/", "https://xn--bcher-kva.example"),
+        ] {
+            assert_eq!(http_origin(&Url::parse(url).unwrap()).unwrap(), origin);
+        }
+
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.com/",
+            "data:text/plain,x",
+        ] {
+            assert!(http_origin(&Url::parse(url).unwrap()).is_err(), "{url}");
+        }
+    }
 
     #[test]
     fn host_labels_cannot_name_another_host() {

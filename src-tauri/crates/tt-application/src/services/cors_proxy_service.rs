@@ -4,7 +4,6 @@ use url::Url;
 
 use crate::dto::cors_proxy_dto::CorsProxyRequestDto;
 use crate::errors::ApplicationError;
-use tt_domain::models::endpoint_url::parse_user_http_endpoint;
 use tt_ports::repositories::cors_proxy_repository::{
     CorsProxyRepository, CorsProxyRequest, CorsProxyResponse,
 };
@@ -52,8 +51,6 @@ fn prepare_request(dto: CorsProxyRequestDto) -> Result<CorsProxyRequest, Applica
     }
     url.set_fragment(None);
 
-    // The page can address any path on the target's origin, so the origin is the endpoint the user approves.
-    let endpoint = parse_user_http_endpoint(&url.origin().ascii_serialization())?.to_string();
     let headers = dto
         .headers
         .into_iter()
@@ -61,7 +58,6 @@ fn prepare_request(dto: CorsProxyRequestDto) -> Result<CorsProxyRequest, Applica
         .collect();
 
     Ok(CorsProxyRequest {
-        endpoint,
         url,
         method: dto.method,
         headers,
@@ -86,11 +82,10 @@ mod tests {
     }
 
     #[test]
-    fn the_approved_endpoint_is_the_target_origin() {
+    fn prepared_request_keeps_the_query_and_drops_the_host_token() {
         let request =
             prepare_request(dto("https://api.example.com:8443/v1/tts?format=mp3#part")).unwrap();
 
-        assert_eq!(request.endpoint, "https://api.example.com:8443/");
         assert_eq!(
             request.url.as_str(),
             "https://api.example.com:8443/v1/tts?format=mp3"

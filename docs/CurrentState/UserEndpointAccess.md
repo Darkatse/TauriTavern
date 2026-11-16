@@ -16,26 +16,25 @@
 
 ## 授权与传输
 
-- 复用 `parse_user_http_endpoint` 规范化 URL，并拒绝非 HTTP(S)、userinfo、query 与 fragment。
-- grant 保存规范化端点字符串，精确包含 scheme、host、port 与 base path。
+- 授权的单位是来源（scheme、host、port），写法与浏览器相同，例如 `https://example.com:8443`。`endpoint_url::http_origin` 是唯一算法，只接受 HTTP(S)。授权覆盖该来源下的任意路径与查询串，一个服务器只问一次。
+- 各入口自己校验输入：chat completion 与 SearXNG 的基址经 `parse_user_http_endpoint` 规范化，拒绝 userinfo、query 与 fragment；CORS 代理的目标可以是该来源下的任意地址。
 - 授权在 Rust command（chat completion、SearXNG 搜索与 CORS 代理）中检查，兼容路由和扩展请求无需单独预检。
-- CORS 代理的端点是目标的来源，例如 `https://api.fish.audio/v1/tts` 对应 `https://api.fish.audio/`：页面可以请求这个来源下的任意路径。
-- HTTP pool 对每次用户端点请求独立检查 grant，绕过 command gate 的调用会 fail closed。
+- HTTP pool 对每次用户端点请求按请求地址的来源独立检查 grant，绕过 command gate 的调用会 fail closed。
 - 显式 loopback、RFC1918、IPv6 ULA 地址及 `localhost` 强制 Direct；其他端点遵循 Request Proxy 设置。
 - DNS 结果不参与授权或传输分类。LAN hostname 和 Fake IP 因此不会被解析地址误判。
 - 重定向最多 5 次且必须同源。
 
-原生 dialog 的安全文案和规范化端点由 Rust host 组装；WebView 只提供 locale，不提供实际展示文案或确认结果。用户取消是正常取消状态，不会被包装成连接错误。
+原生 dialog 的安全文案和来源由 Rust host 组装；WebView 只提供 locale，不提供实际展示文案或确认结果。用户取消是正常取消状态，不会被包装成连接错误。
 
 ## 持久化
 
-grant 是一个 JSON 字符串数组，位置为：
+grant 是一个来源组成的 JSON 字符串数组，位置为：
 
 ```text
 <app_root>/security/user-endpoint-grants.json
 ```
 
-它不随 `data_root`、数据备份或导入迁移。文件缺失或不可读时按空 grant 启动。原生确认会立即授权当前会话，然后原子持久化；写入失败只记录 warning，本次连接继续，重启后需要重新确认。
+它不随 `data_root`、数据备份或导入迁移。文件缺失或不可读时按空 grant 启动。加载时每一项都换算成来源并去重，下次写入时按来源保存。原生确认会立即授权当前会话，然后原子持久化；写入失败只记录 warning，本次连接继续，重启后需要重新确认。
 
 旧的 `local-endpoint-grants.json` 不读取也不迁移。
 
@@ -43,7 +42,7 @@ iOS 的系统 Local Network permission 与本 grant 相互独立。Android 升�
 
 ## 导入来源
 
-导入下载（URL 导入、资源库下载、Skill 的 URL 导入）使用同一种授权，单位是来源（scheme、host、port）。常用文件托管与已识别站点的来源已预先批准（`external_import_service.rs` 的 `PRE_APPROVED_IMPORT_SOURCES`），其余来源首次使用时询问。
+导入下载（URL 导入、资源库下载、Skill 的 URL 导入）使用同一种授权，单位同样是来源。常用文件托管与已识别站点的来源已预先批准（`external_import_service.rs` 的 `PRE_APPROVED_IMPORT_SOURCES`），其余来源首次使用时询问。
 
 - 下载自己跟随重定向，首个请求与每个重定向目标按同一规则检查。
 - grant 保存在 `<app_root>/security/import-source-grants.json`，与端点 grant 分开存放，处理方式相同。

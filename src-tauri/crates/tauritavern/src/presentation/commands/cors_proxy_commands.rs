@@ -65,7 +65,7 @@ pub async fn send_cors_proxy_request(
         .prepare_request(dto)
         .map_err(map_command_error("CORS proxy request is invalid"))?;
     ensure_user_endpoint_access(
-        Some(proxy_request.endpoint.clone()),
+        Some(&proxy_request.url),
         &metadata.locale,
         &window,
         &app_state.services.user_endpoint_access_service,

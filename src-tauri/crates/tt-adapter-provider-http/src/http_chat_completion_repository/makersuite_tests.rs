@@ -53,12 +53,11 @@ async fn upstream(bodies: Vec<String>) -> (String, tokio::task::JoinHandle<Vec<S
 }
 
 fn repository(base_url: String) -> (HttpChatCompletionRepository, ChatCompletionApiConfig) {
-    let base_url = reqwest::Url::parse(&base_url).unwrap().to_string();
+    let base_url = reqwest::Url::parse(&base_url).unwrap();
     let pool = Arc::new(HttpClientPool::new("TauriTavern/test"));
-    let grant = tt_domain::models::endpoint_url::parse_user_http_endpoint(&base_url)
-        .unwrap()
-        .to_string();
-    pool.allow_user_endpoints(&[grant]);
+    let origin = tt_domain::models::endpoint_url::http_origin(&base_url).unwrap();
+    pool.allow_user_endpoints(&[origin]);
+    let base_url = base_url.to_string();
     let config = ChatCompletionApiConfig {
         base_url,
         user_configured_endpoint: true,

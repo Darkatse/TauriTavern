@@ -26,7 +26,7 @@ pub async fn get_chat_completions_status(
         .chat_completion_service
         .resolve_status_user_endpoint(&dto)?;
     ensure_user_endpoint_access(
-        endpoint,
+        endpoint.as_ref(),
         &locale,
         &window,
         &app_state.services.user_endpoint_access_service,
@@ -58,7 +58,7 @@ pub async fn generate_chat_completion(
         .chat_completion_service
         .resolve_generate_user_endpoint(&dto)?;
     ensure_user_endpoint_access(
-        endpoint,
+        endpoint.as_ref(),
         &locale,
         &window,
         &app_state.services.user_endpoint_access_service,
@@ -90,7 +90,7 @@ pub async fn start_chat_completion_stream(
         .chat_completion_service
         .resolve_generate_user_endpoint(&dto)?;
     ensure_user_endpoint_access(
-        endpoint,
+        endpoint.as_ref(),
         &locale,
         &window,
         &app_state.services.user_endpoint_access_service,

@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::http_origin;
 use tt_ports::repositories::grant_repository::GrantRepository;
+use url::Url;
 
 #[async_trait]
 pub trait UserGrants: Send + Sync {
@@ -19,11 +22,20 @@ pub(crate) struct GrantList {
 }
 
 impl GrantList {
+    /// Old path-scoped grants become origins; the next new grant persists the migration.
     pub(crate) async fn load(kind: &'static str, repository: Arc<dyn GrantRepository>) -> Self {
-        let grants = repository.load().await.unwrap_or_else(|error| {
+        let saved = repository.load().await.unwrap_or_else(|error| {
             tracing::warn!(%error, kind, "Grants could not be loaded; starting with none");
             Vec::new()
         });
+        let mut grants = Vec::with_capacity(saved.len());
+        for grant in saved {
+            match saved_origin(&grant) {
+                Ok(origin) if !grants.contains(&origin) => grants.push(origin),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, kind, grant, "Saved grant is ignored"),
+            }
+        }
         Self {
             kind,
             repository,
@@ -59,6 +71,12 @@ impl GrantList {
             );
         }
     }
+}
+
+fn saved_origin(grant: &str) -> Result<String, DomainError> {
+    let url = Url::parse(grant)
+        .map_err(|error| DomainError::InvalidData(format!("Invalid grant URL: {error}")))?;
+    http_origin(&url)
 }
 
 #[cfg(test)]

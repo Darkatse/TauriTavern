@@ -12,9 +12,10 @@ use crate::presentation::commands::access_consent::{
 use crate::presentation::commands::helpers::ensure_ios_policy_allows;
 use crate::presentation::errors::CommandError;
 use tt_application::services::external_import_service::{
-    DownloadSources, ImportSourceAccessService, import_source,
+    DownloadSources, ImportSourceAccessService,
 };
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::http_origin;
 
 pub(super) struct ImportSources<'a> {
     window: &'a WebviewWindow,
@@ -44,7 +45,7 @@ impl<'a> ImportSources<'a> {
 #[async_trait]
 impl DownloadSources for ImportSources<'_> {
     async fn allow(&self, url: &Url) -> Result<(), DomainError> {
-        let source = import_source(url);
+        let source = http_origin(url)?;
         let request = ConsentRequest {
             subject: &source,
             copy: localized(self.locale, &ZH_HANS, &ZH_HANT, &EN),

@@ -5,6 +5,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, watch};
+use url::Url;
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
@@ -146,7 +147,7 @@ impl ChatCompletionService {
     pub fn resolve_status_user_endpoint(
         &self,
         dto: &ChatCompletionStatusRequestDto,
-    ) -> Result<Option<String>, ApplicationError> {
+    ) -> Result<Option<Url>, ApplicationError> {
         let Some(source) = self.resolve_status_source(dto)? else {
             return Ok(None);
         };
@@ -157,7 +158,7 @@ impl ChatCompletionService {
     pub fn resolve_generate_user_endpoint(
         &self,
         dto: &ChatCompletionGenerateRequestDto,
-    ) -> Result<Option<String>, ApplicationError> {
+    ) -> Result<Option<Url>, ApplicationError> {
         let source = self.resolve_generate_source(dto)?;
         let custom_url = config::get_payload_string(&dto.payload, "custom_url")?;
 

@@ -53,15 +53,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saved_and_new_grants_reach_the_runtime() {
-        let saved = "https://saved.example/v1".to_string();
-        let repository = Arc::new(MemoryGrantRepository(Mutex::new(vec![saved.clone()])));
+    async fn saved_and_new_grants_reach_the_runtime_as_origins() {
+        let repository = Arc::new(MemoryGrantRepository(Mutex::new(vec![
+            "https://saved.example/v1".to_string(),
+            "https://saved.example/".to_string(),
+        ])));
         let runtime = Arc::new(RecordingRuntime::default());
-        let service = UserEndpointAccessService::initialize(repository, runtime.clone()).await;
+        let service =
+            UserEndpointAccessService::initialize(repository.clone(), runtime.clone()).await;
 
-        let new = "https://new.example/v1".to_string();
-        service.grant(&new).await;
+        service.grant("https://new.example").await;
 
-        assert_eq!(*runtime.0.lock().unwrap(), HashSet::from([saved, new]));
+        let origins = ["https://saved.example", "https://new.example"].map(String::from);
+        assert_eq!(*runtime.0.lock().unwrap(), HashSet::from(origins.clone()));
+        assert_eq!(*repository.0.lock().unwrap(), origins);
     }
 }

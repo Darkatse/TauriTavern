@@ -129,7 +129,10 @@ mod tests {
         };
         let repository = HttpSearxngSearchRepository::new(pool.clone());
 
-        pool.allow_user_endpoints(&[request.base_url.to_string()]);
+        pool.allow_user_endpoints(&[tt_domain::models::endpoint_url::http_origin(
+            &request.base_url,
+        )
+        .unwrap()]);
 
         assert_eq!(
             repository.search(request).await.unwrap(),
