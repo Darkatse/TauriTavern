@@ -261,9 +261,11 @@ export function registerAiRoutes(router, context, { jsonResponse }, generation) 
                     locale: getSillyTavernLocale(),
                 });
             },
-            runRequest: () => requestChatCompletion(generation, payload, init?.signal),
             errorChunk: (content) => buildErrorStreamChunk(content, payload),
-            errorCompletion: (content) => buildErrorCompletionPayload(content, payload),
+            nonStream: {
+                run: () => requestChatCompletion(generation, payload, init?.signal),
+                errorCompletion: (content) => buildErrorCompletionPayload(content, payload),
+            },
             label: 'Chat completion',
         });
     });

@@ -84,14 +84,16 @@ export function registerTextCompletionRoutes(router, context, { jsonResponse }, 
             signal: init?.signal,
             chunkText: extractChunkText,
             startStream: (streamId) => context.safeInvoke('start_text_completion_stream', { ...args, streamId }),
-            runRequest: () => generation.request({ command: 'generate_text_completion', args, signal: init?.signal }),
             errorChunk: buildErrorChunk,
-            errorCompletion: buildErrorCompletion,
-            quietErrorResponse: (error, errorMessage) => jsonResponse({
-                error: true,
-                status: commandErrorResponse(error).status,
-                response: errorMessage,
-            }),
+            nonStream: {
+                run: () => generation.request({ command: 'generate_text_completion', args, signal: init?.signal }),
+                errorCompletion: buildErrorCompletion,
+                quietErrorResponse: (error, errorMessage) => jsonResponse({
+                    error: true,
+                    status: commandErrorResponse(error).status,
+                    response: errorMessage,
+                }),
+            },
             label: 'Text completion',
         });
     });

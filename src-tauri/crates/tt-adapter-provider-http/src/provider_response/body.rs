@@ -62,6 +62,23 @@ pub(crate) async fn read_upstream_json_body(
     operation: &str,
     response: Response,
 ) -> Result<Value, DomainError> {
+    read_upstream_json(provider_name, operation, response, true).await
+}
+
+pub(crate) async fn read_upstream_json_body_without_url(
+    provider_name: &str,
+    operation: &str,
+    response: Response,
+) -> Result<Value, DomainError> {
+    read_upstream_json(provider_name, operation, response, false).await
+}
+
+async fn read_upstream_json(
+    provider_name: &str,
+    operation: &str,
+    response: Response,
+    report_url: bool,
+) -> Result<Value, DomainError> {
     let status = response.status();
     let content_type = response
         .headers()
@@ -69,12 +86,11 @@ pub(crate) async fn read_upstream_json_body(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let endpoint = response.url().clone();
-
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| upstream::body_failure(error, &endpoint))?;
+    let body = if report_url {
+        upstream::read_body(response).await?
+    } else {
+        upstream::read_body_without_url(response).await?
+    };
 
     parse_upstream_json_body(
         provider_name,

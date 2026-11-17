@@ -88,7 +88,8 @@ src/
 │           ├── character-routes.js
 │           ├── chat-routes.js
 │           ├── ai-routes.js
-│           └── text-completion-routes.js
+│           ├── text-completion-routes.js
+│           └── horde-routes.js
 └── scripts/
     ├── extensions/runtime/      # 第三方插件运行时（资源解析/模块重写/加载器）
     └── ...                    # 上游 SillyTavern 功能模块
@@ -162,6 +163,7 @@ src/
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 | `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini / OpenCode） |
 | `text-completion-routes.js` | Text Completion（本地 / 自建文本补全后端） |
+| `horde-routes.js` | AI Horde（状态、worker 与文本模型列表、用户信息与文本生成流） |
 | `tokenizer-routes.js` | tokenizer count/encode/decode/bias 与上游本地 tokenizer 兼容路由；本地 tokenizer 的文本计数走 `count-text`，不经 `encode`；文本补全的远程分词 |
 
 ## 6.1 聊天 payload 与 DOM 边界

@@ -4,7 +4,7 @@
 
 ## 可用范围
 
-- 主 API 的可用集合由 parking 适配器决定：宿主实现的两族（`openai`、`textgenerationwebui`），iOS 关闭文本补全时去掉后者。选择器、`/api` 命令与 Connection Manager 都按它判断；设置里保存的主 API 不在集合内时，加载设置时切回聊天补全并提示一次。
+- 主 API 的可用集合由 parking 适配器决定：宿主实现的聊天补全、文本补全与 [AI Horde](Horde.md)（`openai`、`textgenerationwebui`、`koboldhorde`），iOS 关闭文本补全或 Horde 时去掉对应一项。选择器、`/api` 命令与 Connection Manager 都按它判断；设置里保存的主 API 不在集合内时，加载设置时切回聊天补全并提示一次。
 - Connection Manager 的配置可以是文本补全；Agent 只使用聊天补全。
 - 宿主实现由用户填写地址的类型，类型集合在 `TextCompletionType`。下拉里的云服务类型可以选，请求时报告不支持。
 
@@ -27,7 +27,7 @@
 
 生成与聊天补全共用生成运行时（流会话、取消、后台租约、完成通知）与 [LLM API 日志](LoggingObservability.md)。
 
-出错的呈现与聊天补全相同：非 quiet 的失败写成一条角色回复；quiet 的非流式请求返回上游的 `{ error: true, status, response }`，流在开始前失败时返回 502；流开始之后的失败写成错误事件。
+出错的呈现见[前端宿主契约](../FrontendHostContract.md#43-路由表public)的生成路由；quiet 的非流式请求失败时返回上游的 `{ error: true, status, response }`。
 
 取消时运行时丢弃生成。KoboldCpp 在连接断开后仍会生成完这一轮，所以已开始的生成被取消时另发 `POST /api/extra/abort`。
 

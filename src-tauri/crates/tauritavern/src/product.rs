@@ -2,6 +2,12 @@ use tt_domain::models::update::UpdateChannel;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const USER_AGENT: &str = concat!("TauriTavern/", env!("CARGO_PKG_VERSION"));
+/// How the AI Horde identifies a client: `name:version:contact`.
+pub(crate) const HORDE_CLIENT_AGENT: &str = concat!(
+    "TauriTavern:",
+    env!("CARGO_PKG_VERSION"),
+    ":https://github.com/Darkatse/TauriTavern"
+);
 pub(crate) const GIT_REVISION: &str = env!("TAURITAVERN_GIT_REVISION");
 pub(crate) const GIT_BRANCH: &str = env!("TAURITAVERN_GIT_BRANCH");
 

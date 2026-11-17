@@ -4927,7 +4927,7 @@ export async function generateRawData({ prompt = '', api = null, instructOverrid
             case 'kobold':
             case 'koboldhorde':
                 if (kai_settings.preset_settings === 'gui') {
-                    generateData = { prompt: prompt, gui_settings: true, max_length: amount_gen, max_context_length: max_context, api_server: kai_settings.api_server };
+                    generateData = { prompt: prompt, type: 'quiet', gui_settings: true, max_length: amount_gen, max_context_length: max_context, api_server: kai_settings.api_server };
                 } else {
                     const isHorde = api === 'koboldhorde';
                     const koboldSettings = koboldai_settings[koboldai_setting_names[kai_settings.preset_settings]];

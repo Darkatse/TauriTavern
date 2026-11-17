@@ -57,7 +57,7 @@ pub struct IosPolicyCapabilities {
     pub llm: IosPolicyLlmCapabilities,
     pub network: IosPolicyNetworkCapabilities,
     pub scripting: IosPolicyScriptingCapabilities,
-    pub ai: IosPolicyImageGenerationCapabilities,
+    pub ai: IosPolicyAiCapabilities,
     pub sync: IosPolicySyncCapabilities,
     pub about: IosPolicyAboutCapabilities,
 }
@@ -144,8 +144,9 @@ pub struct IosPolicyScriptingCapabilities {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct IosPolicyImageGenerationCapabilities {
+pub struct IosPolicyAiCapabilities {
     pub image_generation: bool,
+    pub horde: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,7 +205,7 @@ struct IosPolicyCapabilitiesOverride {
     #[serde(default)]
     pub scripting: IosPolicyScriptingCapabilitiesOverride,
     #[serde(default)]
-    pub ai: IosPolicyImageGenerationCapabilitiesOverride,
+    pub ai: IosPolicyAiCapabilitiesOverride,
     #[serde(default)]
     pub sync: IosPolicySyncCapabilitiesOverride,
     #[serde(default)]
@@ -285,8 +286,9 @@ struct IosPolicyScriptingCapabilitiesOverride {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
-struct IosPolicyImageGenerationCapabilitiesOverride {
+struct IosPolicyAiCapabilitiesOverride {
     pub image_generation: Option<bool>,
+    pub horde: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -339,8 +341,9 @@ impl IosPolicyCapabilities {
                     prompt_injections: true,
                     tool_registration: true,
                 },
-                ai: IosPolicyImageGenerationCapabilities {
+                ai: IosPolicyAiCapabilities {
                     image_generation: true,
+                    horde: true,
                 },
                 sync: IosPolicySyncCapabilities { lan: true },
                 about: IosPolicyAboutCapabilities { git_info: true },
@@ -397,8 +400,9 @@ impl IosPolicyCapabilities {
                     prompt_injections: false,
                     tool_registration: false,
                 },
-                ai: IosPolicyImageGenerationCapabilities {
+                ai: IosPolicyAiCapabilities {
                     image_generation: false,
+                    horde: false,
                 },
                 sync: IosPolicySyncCapabilities { lan: false },
                 about: IosPolicyAboutCapabilities { git_info: false },
@@ -514,6 +518,10 @@ impl IosPolicyCapabilitiesOverride {
         if let Some(value) = ai.image_generation {
             capabilities.ai.image_generation = value;
             overridden.push("ai.image_generation".to_string());
+        }
+        if let Some(value) = ai.horde {
+            capabilities.ai.horde = value;
+            overridden.push("ai.horde".to_string());
         }
 
         let sync = self.sync;

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
-import { consumeGenerationStream } from '../src/tauri/main/services/ai/generation-stream-consumer.js';
+import { consumeGenerationStream } from '../src/tauri/main/services/ai/generation-stream.js';
 
 function installBrowserShims() {
     globalThis.window ??= {};

@@ -26,6 +26,7 @@ use tt_application::services::external_import_service::ImportSourceAccessService
 use tt_application::services::generation_runtime::GenerationRuntime;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
+use tt_application::services::horde_service::HordeService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
@@ -112,6 +113,7 @@ pub(crate) struct AppServices {
     pub(crate) generation_runtime: Arc<GenerationRuntime>,
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
     pub(crate) text_completion_service: Arc<TextCompletionService>,
+    pub(crate) horde_service: Arc<HordeService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
     pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
     pub(crate) import_source_access_service: Arc<ImportSourceAccessService>,

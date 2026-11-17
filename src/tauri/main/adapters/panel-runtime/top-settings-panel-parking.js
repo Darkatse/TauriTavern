@@ -47,11 +47,13 @@ const LEFT_NAV_REQUIRED_ANCHORS = Object.freeze([
     '#range_block_openai', // onModelChange reads max through the DOM; parking yields NaN.
     '#openai_reasoning_effort_block', // The assistant reads data-source after APP_READY.
     '#common-gen-settings-block', // Text completion props updates #max_context via restoreNumericInput.
+    '#kobold_api-settings', // Switching Kobold presets updates controls and sampler order via the DOM.
     '#textgenerationwebui_api-settings', // Switching types or presets updates controls via restoreNumericInput.
 ]);
 
 // `compat` only: keep these selectable while parked, for third-party scripts.
 const LEFT_NAV_COMPAT_ANCHORS = Object.freeze([
+    '#kobold_api-presets',
     '#openai_api-presets',
     '#textgenerationwebui_api-presets',
     '#completion_prompt_manager',

@@ -20,6 +20,7 @@ pub mod extension_store_repository;
 pub mod grant_repository;
 pub mod group_chat_repository;
 pub mod group_repository;
+pub mod horde_repository;
 pub mod image_metadata_repository;
 pub mod llm_connection_repository;
 pub mod mcp_server_repository;

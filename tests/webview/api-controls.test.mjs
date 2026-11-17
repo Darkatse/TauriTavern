@@ -27,7 +27,14 @@ test('preset selection preserves legal context ranges and reports adjusted value
     expect(textgen.textgenerationwebui_settings.rep_pen_range).toBe(32768);
     expect(textgen.textgenerationwebui_settings.dry_penalty_last_n).toBe(32768);
     $('#max_context_unlocked').prop('checked', false).trigger('change');
-    $('#settings_preset').val('0').trigger('change');
+    const presetsParent = $('#kobold_api-presets').parent();
+    const parkedPresets = $('#kobold_api-presets').detach();
+    try {
+        parkedPresets.find('#settings_preset').val('0').trigger('change');
+    } finally {
+        presetsParent.prepend(parkedPresets);
+    }
+    expect(kai.kai_settings.preset_settings).toBe('Long');
     expect(kai.kai_settings.rep_pen_range).toBe(32768);
     expect(script.max_context).toBe(65536);
     expect($('.toast-warning').length).toBe(0);

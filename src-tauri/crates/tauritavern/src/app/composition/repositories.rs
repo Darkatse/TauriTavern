@@ -16,8 +16,9 @@ use tt_adapter_media::{
 };
 use tt_adapter_provider_http::{
     HttpChatCompletionRepository, HttpCorsProxyRepository, HttpEmbeddingRepository,
-    HttpProviderMetadataRepository, HttpSearxngSearchRepository, HttpStableDiffusionRepository,
-    HttpTextCompletionRepository, HttpTranslateRepository, HttpTtsRepository,
+    HttpHordeRepository, HttpProviderMetadataRepository, HttpSearxngSearchRepository,
+    HttpStableDiffusionRepository, HttpTextCompletionRepository, HttpTranslateRepository,
+    HttpTtsRepository,
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
@@ -55,6 +56,7 @@ use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository
 use tt_ports::repositories::grant_repository::GrantRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::group_repository::GroupRepository;
+use tt_ports::repositories::horde_repository::HordeRepository;
 use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 use tt_ports::repositories::mcp_server_repository::McpServerRepository;
@@ -124,6 +126,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     pub(in crate::app::composition) text_completion_repository: Arc<dyn TextCompletionRepository>,
+    pub(in crate::app::composition) horde_repository: Arc<dyn HordeRepository>,
     pub(in crate::app::composition) provider_metadata_repository:
         Arc<dyn ProviderMetadataRepository>,
     pub(in crate::app::composition) searxng_search_repository: Arc<dyn SearxngSearchRepository>,
@@ -355,6 +358,10 @@ pub(super) async fn build(
             Arc::new(HttpTextCompletionRepository::new(http_client_pool.clone())),
             environment.llm_api_log_store.clone(),
         ));
+    let horde_repository: Arc<dyn HordeRepository> = Arc::new(HttpHordeRepository::new(
+        http_client_pool.clone(),
+        crate::product::HORDE_CLIENT_AGENT,
+    ));
     let provider_metadata_repository: Arc<dyn ProviderMetadataRepository> = Arc::new(
         HttpProviderMetadataRepository::new(http_client_pool.clone()),
     );
@@ -438,6 +445,7 @@ pub(super) async fn build(
         workspace_repository,
         chat_completion_repository,
         text_completion_repository,
+        horde_repository,
         provider_metadata_repository,
         searxng_search_repository,
         cors_proxy_repository,

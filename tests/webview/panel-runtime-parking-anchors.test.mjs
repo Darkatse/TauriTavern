@@ -29,7 +29,9 @@ test('compat parking keeps required bounds and third-party anchors reachable', (
     expect(document.getElementById('openai_max_context')).not.toBeNull();
     expect(document.getElementById('max_context')).not.toBeNull();
     expect(document.getElementById('amount_gen')).not.toBeNull();
+    expect(document.getElementById('temp')).not.toBeNull();
     expect(document.getElementById('temp_textgenerationwebui')).not.toBeNull();
+    expect(document.getElementById('kobold_api-presets')).not.toBeNull();
     expect(document.getElementById('openai_api-presets')).not.toBeNull();
     expect(document.getElementById('textgenerationwebui_api-presets')).not.toBeNull();
     expect(document.getElementById('completion_prompt_manager')).not.toBeNull();
@@ -54,7 +56,9 @@ test('aggressive parking keeps required bounds but drops the third-party anchors
     expect(document.getElementById('openai_max_context')).not.toBeNull();
     expect(document.getElementById('max_context')).not.toBeNull();
     expect(document.getElementById('amount_gen')).not.toBeNull();
+    expect(document.getElementById('temp')).not.toBeNull();
     expect(document.getElementById('temp_textgenerationwebui')).not.toBeNull();
+    expect(document.getElementById('kobold_api-presets')).toBeNull();
     expect(document.getElementById('openai_api-presets')).toBeNull();
     expect(document.getElementById('textgenerationwebui_api-presets')).toBeNull();
     expect(document.getElementById('tokenizer')).not.toBeNull();

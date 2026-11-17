@@ -12,7 +12,7 @@ mod stream;
 
 pub(crate) use body::{
     log_upstream_body_parse_failure, parse_upstream_json_body, provider_error,
-    provider_error_message, read_upstream_json_body,
+    provider_error_message, read_upstream_json_body, read_upstream_json_body_without_url,
 };
 use context_overflow::context_overflow_error;
 pub(crate) use context_overflow::context_overflow_or;

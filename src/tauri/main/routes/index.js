@@ -10,6 +10,7 @@ import { registerChatRoutes } from './chat-routes.js';
 import { registerBackupsRoutes } from './backups-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
 import { registerTextCompletionRoutes } from './text-completion-routes.js';
+import { registerHordeRoutes } from './horde-routes.js';
 import { createGenerationSessions } from '../services/ai/generation-sessions.js';
 import { registerTokenizerRoutes } from './tokenizer-routes.js';
 import { registerProviderRoutes } from './provider-routes.js';
@@ -43,6 +44,7 @@ export function registerRoutes(router, context, responses) {
     registerWorldInfoRoutes(router, context, responses);
     registerAiRoutes(router, context, responses, generation);
     registerTextCompletionRoutes(router, context, responses, generation);
+    registerHordeRoutes(router, context, responses, generation);
     registerTokenizerRoutes(router, context, responses);
     registerVectorRoutes(router, context, responses);
     registerSpriteRoutes(router, context, responses);

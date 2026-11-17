@@ -29,6 +29,13 @@ pub async fn read_body(response: Response) -> Result<Bytes, UpstreamFailure> {
         .map_err(|error| body_failure(error, &endpoint))
 }
 
+pub async fn read_body_without_url(response: Response) -> Result<Bytes, UpstreamFailure> {
+    response.bytes().await.map_err(|error| {
+        let error = error.without_url();
+        classify(&error, None, Some(UPSTREAM_NETWORK_BODY_INTERRUPTED))
+    })
+}
+
 pub fn sanitize_endpoint(url: &Url) -> String {
     let mut sanitized = url.clone();
     let _ = sanitized.set_username("");

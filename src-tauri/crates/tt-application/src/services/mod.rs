@@ -34,6 +34,7 @@ pub mod generation_runtime;
 pub mod group_chat_service;
 pub mod group_service;
 mod hashing;
+pub mod horde_service;
 pub mod host_resource_service;
 pub mod image_metadata_service;
 pub mod lan_sync_service;

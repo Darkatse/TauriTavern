@@ -6,6 +6,7 @@ import { translateSillyTavern } from './sillytavern-i18n.js';
 
 const CHAT_COMPLETION_API = 'openai';
 const TEXT_COMPLETION_API = 'textgenerationwebui';
+const HORDE_API = 'koboldhorde';
 
 /** @type {boolean} */
 let installed = false;
@@ -25,13 +26,17 @@ function mustGetMainApiSelect() {
 }
 
 /**
- * The main APIs the host implements; iOS policy can turn text completion off.
+ * The main APIs the host implements; iOS policy can turn text completion and the Horde off.
  * @returns {Set<string>}
  */
 function getAvailableMainApis() {
-    const available = new Set([CHAT_COMPLETION_API, TEXT_COMPLETION_API]);
-    if (getActiveIosPolicyCapabilities()?.llm?.text_completions?.enabled === false) {
+    const available = new Set([CHAT_COMPLETION_API, TEXT_COMPLETION_API, HORDE_API]);
+    const capabilities = getActiveIosPolicyCapabilities();
+    if (capabilities?.llm?.text_completions?.enabled === false) {
         available.delete(TEXT_COMPLETION_API);
+    }
+    if (capabilities?.ai?.horde === false) {
+        available.delete(HORDE_API);
     }
     return available;
 }

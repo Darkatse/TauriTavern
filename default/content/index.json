@@ -140,6 +140,30 @@
         "type": "workflow"
     },
     {
+        "filename": "presets/kobold/Deterministic.json",
+        "type": "kobold_preset"
+    },
+    {
+        "filename": "presets/kobold/Neutral.json",
+        "type": "kobold_preset"
+    },
+    {
+        "filename": "presets/kobold/RecoveredRuins.json",
+        "type": "kobold_preset"
+    },
+    {
+        "filename": "presets/kobold/Universal-Creative.json",
+        "type": "kobold_preset"
+    },
+    {
+        "filename": "presets/kobold/Universal-Light.json",
+        "type": "kobold_preset"
+    },
+    {
+        "filename": "presets/kobold/Universal-Super-Creative.json",
+        "type": "kobold_preset"
+    },
+    {
         "filename": "presets/textgen/Asterism.json",
         "type": "textgen_preset"
     },

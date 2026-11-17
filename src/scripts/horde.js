@@ -10,12 +10,11 @@ import {
     setOnlineStatus,
 } from '../script.js';
 import { SECRET_KEYS, readSecretState, secret_state, writeSecret } from './secrets.js';
-import { delay } from './utils.js';
 import { isMobile } from './RossAscends-mods.js';
 import { autoSelectInstructPreset } from './instruct-mode.js';
 import { t } from './i18n.js';
-import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { kai_settings } from './kai-settings.js';
+import EventSourceStream from './sse-stream.js';
 
 export {
     MIN_LENGTH,
@@ -30,8 +29,6 @@ export let horde_settings = {
     trusted_workers_only: false,
 };
 
-const MAX_RETRIES = 480;
-const CHECK_INTERVAL = 2500;
 const MIN_LENGTH = 16;
 
 /**
@@ -62,42 +59,6 @@ async function getModels(force) {
     const data = await response.json();
     console.log('getModels', data);
     return data;
-}
-
-
-/**
- * Gets the status of a Horde task.
- * @param {string} taskId Task ID
- * @returns {Promise<Object>} Task status
- */
-async function getTaskStatus(taskId) {
-    const response = await fetch('/api/horde/task-status', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ taskId }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to get task status: ${response.statusText}`);
-    }
-
-    return await response.json();
-}
-
-/**
- * Cancels a Horde task.
- * @param {string} taskId Task ID
- */
-async function cancelTask(taskId) {
-    const response = await fetch('/api/horde/cancel-task', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ taskId }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to cancel task: ${response.statusText}`);
-    }
 }
 
 /**
@@ -197,92 +158,90 @@ function setContextSizePreview() {
  * @param params
  * @param signal
  * @param reportProgress
- * @returns {Promise<{text: *, workerName: string}>}
+ * @returns {Promise<{text: *, workerName: string | undefined}>}
  * @throws {Error}
  */
 export async function generateHorde(prompt, params, signal, reportProgress) {
     validateHordeModel();
-    delete params.prompt;
-
-    // No idea what these do
-    params.n = 1;
-    params.frmtadsnsp = false;
-    params.frmtrmblln = false;
-    params.frmtrmspch = false;
-    params.frmttriminc = false;
+    const { prompt: _prompt, type, ...hordeParams } = params;
 
     const payload = {
-        'prompt': prompt,
-        'params': params,
-        'trusted_workers': horde_settings.trusted_workers_only,
+        prompt,
+        params: {
+            ...hordeParams,
+            // No idea what these do
+            n: 1,
+            frmtadsnsp: false,
+            frmtrmblln: false,
+            frmtrmspch: false,
+            frmttriminc: false,
+        },
+        trusted_workers: horde_settings.trusted_workers_only,
         //"slow_workers": false,
-        'models': horde_settings.models,
+        models: horde_settings.models,
+        type,
     };
 
-    const response = await fetch('/api/horde/generate-text', {
+    const response = await fetch('/api/backends/koboldhorde/generate', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify(payload),
+        signal,
     });
 
-    if (!response.ok) {
-        toastr.error(response.statusText, 'Horde generation failed');
-        throw new Error(`Horde generation failed: ${response.statusText}`);
-    }
-
-    const responseJson = await response.json();
-
-    if (responseJson.error) {
-        const reason = responseJson.error?.message || 'Unknown error';
+    /** @param {string} reason */
+    const failGeneration = (reason) => {
         toastr.error(reason, 'Horde generation failed');
         throw new Error(`Horde generation failed: ${reason}`);
+    };
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        failGeneration(data?.error?.message || response.statusText);
     }
 
-    const taskId = responseJson.id;
-    let queue_position_first = null;
-    console.log(`Horde task id = ${taskId}`);
+    const eventStream = new EventSourceStream();
+    response.body.pipeThrough(eventStream);
+    const reader = eventStream.readable.getReader();
+    let generation = null;
+    let firstQueuePosition = null;
 
-    for (let retryNumber = 0; retryNumber < MAX_RETRIES; retryNumber++) {
-        if (signal.aborted) {
-            cancelTask(taskId);
-            throw new Error('Request aborted');
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done || value.data === '[DONE]') {
+                break;
+            }
+
+            const status = JSON.parse(value.data);
+            generation = status.generations?.[0] ?? null;
+            if (generation || !reportProgress) {
+                continue;
+            }
+
+            if (!firstQueuePosition) {
+                firstQueuePosition = status.queue_position;
+                setGenerationProgress(0);
+            } else if (status.queue_position >= 0) {
+                setGenerationProgress(Math.round(100 - (status.queue_position / firstQueuePosition * 100)));
+            }
         }
-
-        const statusCheckJson = await getTaskStatus(taskId);
-        console.log(statusCheckJson);
-
-        if (statusCheckJson.faulted === true) {
-            toastr.error('Horde request faulted. Please try again.');
-            throw new Error('Horde generation failed: Faulted');
-        }
-
-        if (statusCheckJson.is_possible === false) {
-            toastr.error('There are no Horde workers that are able to generate text with your request. Please change the parameters or try again later.');
-            throw new Error('Horde generation failed: Unsatisfiable request');
-        }
-
-        if (statusCheckJson.done && Array.isArray(statusCheckJson.generations) && statusCheckJson.generations.length) {
-            reportProgress && setGenerationProgress(100);
-            const generatedText = statusCheckJson.generations[0].text;
-            const WorkerName = statusCheckJson.generations[0].worker_name;
-            const WorkerModel = statusCheckJson.generations[0].model;
-            console.log(generatedText);
-            console.log(`Generated by Horde Worker: ${WorkerName} [${WorkerModel}]`);
-            return { text: generatedText, workerName: `Generated by Horde worker: ${WorkerName} [${WorkerModel}]` };
-        } else if (!queue_position_first) {
-            queue_position_first = statusCheckJson.queue_position;
-            reportProgress && setGenerationProgress(0);
-        } else if (statusCheckJson.queue_position >= 0) {
-            let queue_position = statusCheckJson.queue_position;
-            const progress = Math.round(100 - (queue_position / queue_position_first * 100));
-            reportProgress && setGenerationProgress(progress);
-        }
-
-        await delay(CHECK_INTERVAL);
+    } catch (error) {
+        signal?.throwIfAborted();
+        failGeneration(error instanceof Error ? error.message : String(error));
     }
 
-    await callGenericPopup(t`Horde request timed out. Try again`, POPUP_TYPE.TEXT);
-    throw new Error('Horde timeout');
+    // The stream can close before the aborted signal rejects the reader.
+    signal?.throwIfAborted();
+    if (!generation) {
+        throw new Error('Horde generation ended without a result');
+    }
+
+    reportProgress && setGenerationProgress(100);
+    const workerName = generation.worker_name
+        ? `Generated by Horde worker: ${generation.worker_name} [${generation.model}]`
+        : undefined;
+    return { text: generation.text, workerName };
 }
 
 

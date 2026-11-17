@@ -20,45 +20,15 @@ import {
     shouldNotifyCompletion,
 } from './generation-notifications.js';
 import { createGenerationStatusBridge } from './generation-status-bridge.js';
-import { consumeGenerationStream } from './generation-stream-consumer.js';
+import { createErrorStreamResponse, serveGenerationStream } from './generation-stream.js';
 
 /**
  * @typedef {import('../../context/types.js').TauriInvokeCommand} TauriInvokeCommand
- * @typedef {import('./generation-stream-consumer.js').GenerationStreamEvent} GenerationStreamEvent
- *
- * @typedef {{
- *   finish: (params?: {
- *     success?: boolean | undefined;
- *     errorMessage?: string | undefined;
- *     notifyFailure?: boolean | undefined;
- *   }) => void;
- *   reportStreamChunk: (data: string) => void;
- * }} GenerationLifecycle
  */
 
-const STREAM_FRAME_INTERVAL_MS = 10;
-const STREAM_RESPONSE_HEADERS = Object.freeze({
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-});
 const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
 const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
-
-/**
- * @param {string} text
- * @returns {string}
- */
-function encodeSseDataFrame(text) {
-    if (!text.includes('\n') && !text.includes('\r')) {
-        return `data: ${text}\n\n`;
-    }
-
-    const lines = text.split(/\r\n|\r|\n/g);
-    const framed = lines.map((line) => `data: ${line}\n`).join('');
-    return `${framed}\n`;
-}
 
 /**
  * Shallow-copies a plain object payload and normalizes non-objects to `{}`.
@@ -87,27 +57,6 @@ function isQuietRequest(payload) {
  */
 export function isRequestCancelled(error) {
     return isAbortError(error) || isCommandCancelled(error);
-}
-
-/**
- * Serves one already-built error chunk as a finished SSE stream.
- * @param {unknown} chunk
- * @returns {Response}
- */
-function createErrorStreamResponse(chunk) {
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-        start(controller) {
-            controller.enqueue(encoder.encode(encodeSseDataFrame(JSON.stringify(chunk))));
-            controller.enqueue(encoder.encode(encodeSseDataFrame('[DONE]')));
-            controller.close();
-        },
-    });
-
-    return new Response(readable, {
-        status: 200,
-        headers: STREAM_RESPONSE_HEADERS,
-    });
 }
 
 /**
@@ -183,255 +132,20 @@ export function createGenerationSessions(context) {
     }
 
     /**
-     * Starts a Rust stream session and serves it as SSE. `start(streamId)` must resolve before a
-     * streaming `Response` is returned so pre-stream errors and cancellations flow through
-     * `generate`'s error path. `errorChunk(assistantText)` wraps a formatted failure for that family.
-     *
-     * @param {{
-     *   start: (streamId: string) => Promise<unknown>;
-     *   errorChunk: (assistantText: string) => unknown;
-     *   signal?: AbortSignal | null | undefined;
-     *   lifecycle: GenerationLifecycle;
-     * }} params
-     * @returns {Promise<Response>}
-     */
-    async function streamResponse({ start, errorChunk, signal, lifecycle }) {
-        if (signal?.aborted) {
-            throw createAbortError();
-        }
-
-        const streamId = createRandomId();
-        const closeSession = async () => {
-            try {
-                await context.safeInvoke('close_generation_stream', { streamId });
-            } catch (error) {
-                console.debug('Failed to close generation stream:', error);
-            }
-        };
-
-        try {
-            await start(streamId);
-        } catch (error) {
-            if (signal?.aborted) {
-                throw createAbortError();
-            }
-            throw error;
-        }
-
-        if (signal?.aborted) {
-            await closeSession();
-            throw createAbortError();
-        }
-
-        const encoder = new TextEncoder();
-        let isClosed = false;
-        let sawDone = false;
-        /** @type {ReturnType<typeof setTimeout> | null} */
-        let flushTimer = null;
-        /** @type {(() => void) | null} */
-        let abortHandler = null;
-        /** @type {ReadableStreamDefaultController<Uint8Array> | null} */
-        let controllerRef = null;
-        /** @type {string[]} */
-        const pendingFrames = [];
-
-        const flushFrames = () => {
-            if (!controllerRef || pendingFrames.length === 0) {
-                return;
-            }
-
-            const framed = pendingFrames.map((data) => encodeSseDataFrame(data)).join('');
-            pendingFrames.length = 0;
-            controllerRef.enqueue(encoder.encode(framed));
-        };
-
-        const scheduleFlush = () => {
-            if (flushTimer !== null || isClosed) {
-                return;
-            }
-
-            flushTimer = setTimeout(() => {
-                flushTimer = null;
-                flushFrames();
-            }, STREAM_FRAME_INTERVAL_MS);
-        };
-
-        /**
-         * @param {{
-         *   cancelUpstream?: boolean;
-         *   appendDone?: boolean;
-         *   errorPayload?: unknown;
-         *   failureMessage?: string;
-         * }} [options]
-         */
-        const closeStream = async ({
-            cancelUpstream = false,
-            appendDone = false,
-            errorPayload = null,
-            failureMessage = '',
-        } = {}) => {
-            if (isClosed) {
-                return;
-            }
-
-            isClosed = true;
-
-            if (flushTimer !== null) {
-                clearTimeout(flushTimer);
-                flushTimer = null;
-            }
-
-            if (errorPayload) {
-                pendingFrames.push(JSON.stringify(errorPayload));
-            }
-
-            if (appendDone && !sawDone) {
-                sawDone = true;
-                pendingFrames.push('[DONE]');
-            }
-
-            flushFrames();
-
-            if (controllerRef) {
-                try {
-                    controllerRef.close();
-                } catch {
-                    // stream already closed
-                }
-            }
-
-            if (signal && abortHandler) {
-                signal.removeEventListener('abort', abortHandler);
-                abortHandler = null;
-            }
-
-            await closeSession();
-
-            const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
-            const shouldNotifyFailure = !isSuccessfulCompletion && !cancelUpstream && Boolean(failureMessage || errorPayload);
-            lifecycle.finish({
-                success: isSuccessfulCompletion,
-                errorMessage: failureMessage,
-                notifyFailure: shouldNotifyFailure,
-            });
-        };
-
-        /** @param {GenerationStreamEvent} event */
-        const onStreamEvent = (event) => {
-            if (isClosed) {
-                return;
-            }
-
-            switch (event.type) {
-                case 'chunk': {
-                    if (!event.data) {
-                        return;
-                    }
-
-                    pendingFrames.push(event.data);
-
-                    if (event.data === '[DONE]') {
-                        sawDone = true;
-                        flushFrames();
-                        return;
-                    }
-
-                    lifecycle.reportStreamChunk(event.data);
-                    scheduleFlush();
-                    return;
-                }
-                case 'error': {
-                    const failureMessage = getUserFacingErrorMessage(event);
-                    void closeStream({
-                        appendDone: true,
-                        errorPayload: errorChunk(formatAssistantErrorText(failureMessage)),
-                        failureMessage,
-                    });
-                    return;
-                }
-                case 'done': {
-                    void closeStream({ appendDone: true });
-                    return;
-                }
-                default: {
-                    /** @type {never} */
-                    const unexpected = event;
-                    throw new Error(`Unexpected generation stream event: ${JSON.stringify(unexpected)}`);
-                }
-            }
-        };
-
-        const pumpStream = async () => {
-            try {
-                const status = await consumeGenerationStream({
-                    safeInvoke: context.safeInvoke,
-                    streamId,
-                    onEvent: onStreamEvent,
-                    isClosed: () => isClosed,
-                });
-                if (status === 'done') {
-                    await closeStream({ appendDone: true });
-                } else if (status === 'cancelled') {
-                    await closeStream({ cancelUpstream: true });
-                }
-            } catch (error) {
-                if (isClosed) {
-                    return;
-                }
-
-                const failureMessage = getUserFacingErrorMessage(error);
-                await closeStream({
-                    appendDone: true,
-                    errorPayload: errorChunk(formatAssistantErrorText(failureMessage)),
-                    failureMessage,
-                });
-            }
-        };
-
-        const readable = new ReadableStream({
-            start(controller) {
-                controllerRef = controller;
-
-                if (signal) {
-                    abortHandler = () => {
-                        void closeStream({ cancelUpstream: true });
-                    };
-
-                    if (signal.aborted) {
-                        abortHandler();
-                        return;
-                    }
-
-                    signal.addEventListener('abort', abortHandler, { once: true });
-                }
-
-                void pumpStream();
-            },
-            async cancel() {
-                await closeStream({ cancelUpstream: true });
-            },
-        });
-
-        return new Response(readable, {
-            status: 200,
-            headers: STREAM_RESPONSE_HEADERS,
-        });
-    }
-
-    /**
-     * Serves a generate route. The family supplies how to start its stream and run its request,
-     * how to read output text from its stream events, and its error shapes. A failure becomes an
-     * assistant reply, except for a quiet request: that answers `502 { error: { message } }`, or
-     * `quietErrorResponse` when a non-stream one fails.
+     * Serves a generate route; a family without `nonStream` always streams. A failure becomes an
+     * assistant reply, except for a quiet request: that answers `502 { error: { message } }` (or
+     * `nonStream.quietErrorResponse`) before a stream starts, and fails the stream once streaming.
      * @param {{
      *   payload: Record<string, unknown>;
      *   signal?: AbortSignal | null | undefined;
      *   chunkText: (data: string) => string;
      *   startStream: (streamId: string) => Promise<unknown>;
-     *   runRequest: () => Promise<unknown>;
      *   errorChunk: (assistantText: string) => unknown;
-     *   errorCompletion: (assistantText: string) => unknown;
-     *   quietErrorResponse?: ((error: unknown, errorMessage: string) => Response) | undefined;
+     *   nonStream?: {
+     *     run: () => Promise<unknown>;
+     *     errorCompletion: (assistantText: string) => unknown;
+     *     quietErrorResponse?: ((error: unknown, errorMessage: string) => Response) | undefined;
+     *   } | undefined;
      *   label: string;
      * }} params
      */
@@ -440,23 +154,28 @@ export function createGenerationSessions(context) {
         signal,
         chunkText,
         startStream,
-        runRequest,
         errorChunk,
-        errorCompletion,
-        quietErrorResponse,
+        nonStream,
         label,
     }) {
-        const wantsStream = Boolean(payload.stream);
+        const nonStreamForm = payload.stream ? undefined : nonStream;
         const quiet = isQuietRequest(payload);
         const lifecycle = lifecycles.createLifecycle({ quiet, chunkText });
         lifecycle.begin();
 
         try {
-            if (wantsStream) {
-                return await streamResponse({ start: startStream, errorChunk, signal, lifecycle });
+            if (!nonStreamForm) {
+                return await serveGenerationStream({
+                    safeInvoke: context.safeInvoke,
+                    start: startStream,
+                    errorChunk,
+                    quiet,
+                    signal,
+                    lifecycle,
+                });
             }
 
-            const completion = await runRequest();
+            const completion = await nonStreamForm.run();
             lifecycle.finish({ success: true });
             return jsonResponse(completion ?? {});
         } catch (error) {
@@ -471,15 +190,15 @@ export function createGenerationSessions(context) {
 
             console.error(`${label} generation failed:`, error);
             if (quiet) {
-                return !wantsStream && quietErrorResponse
-                    ? quietErrorResponse(error, errorMessage)
+                return nonStreamForm?.quietErrorResponse
+                    ? nonStreamForm.quietErrorResponse(error, errorMessage)
                     : jsonResponse(buildLegacyErrorPayload(error), 502);
             }
 
             const assistantText = formatAssistantErrorText(errorMessage);
-            return wantsStream
-                ? createErrorStreamResponse(errorChunk(assistantText))
-                : jsonResponse(errorCompletion(assistantText));
+            return nonStreamForm
+                ? jsonResponse(nonStreamForm.errorCompletion(assistantText))
+                : createErrorStreamResponse(errorChunk(assistantText));
         }
     }
 

@@ -152,6 +152,7 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 | `scripting.prompt_injections` | ✅ | ✅ | ❌ |
 | `scripting.tool_registration` | ✅ | ✅ | ❌ |
 | `ai.image_generation` | ✅ | ✅ | ❌ |
+| `ai.horde` | ✅ | ✅ | ❌ |
 | `sync.lan` | ✅ | ✅ | ❌ |
 | `about.git_info` | ✅ | ✅ | ❌ |
 
@@ -197,6 +198,9 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:set_request_proxy` 禁止启用 proxy
 - `ai.image_generation`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
+- `ai.horde`
+  - Service：`src-tauri/crates/tt-application/src/services/horde_service/mod.rs`
+  - 行为：禁用时拒绝 AI Horde 的全部请求
 - `sync.lan`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/lan_sync_commands.rs:*`（所有 LAN sync 命令统一门禁）
 
@@ -205,8 +209,8 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 - `updates.startup_check`
   - 前端系统扩展 `tauritavern-version` 在 `APP_READY` 时检查 capability 并跳过启动更新检查
   - 实现：`src/scripts/extensions/tauritavern-version/index.js`
-- `llm.text_completions.enabled`
-  - 主 API 选择器去掉文本补全；settings 里 `main_api === "textgenerationwebui"` 时，加载 settings 时切回 chat completion 并提示
+- `llm.text_completions.enabled` / `ai.horde`
+  - 主 API 选择器去掉文本补全或 Horde；settings 里保存的主 API 被去掉时，加载 settings 时切回 chat completion 并提示
   - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）

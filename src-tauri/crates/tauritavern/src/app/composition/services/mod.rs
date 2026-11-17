@@ -32,6 +32,7 @@ use tt_application::services::external_import_service::ImportSourceAccessService
 use tt_application::services::generation_runtime::GenerationRuntime;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
+use tt_application::services::horde_service::HordeService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
@@ -153,6 +154,12 @@ pub(super) async fn build(
     ));
     let text_completion_service = Arc::new(TextCompletionService::new(
         repositories.text_completion_repository.clone(),
+        repositories.secret_repository.clone(),
+        generation_runtime.clone(),
+        ios_policy.clone(),
+    ));
+    let horde_service = Arc::new(HordeService::new(
+        repositories.horde_repository.clone(),
         repositories.secret_repository.clone(),
         generation_runtime.clone(),
         ios_policy.clone(),
@@ -318,6 +325,7 @@ pub(super) async fn build(
         generation_runtime,
         chat_completion_service,
         text_completion_service,
+        horde_service,
         llm_connection_service,
         user_endpoint_access_service,
         import_source_access_service,

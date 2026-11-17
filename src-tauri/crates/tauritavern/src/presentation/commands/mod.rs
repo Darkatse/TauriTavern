@@ -32,6 +32,7 @@ pub mod group_chat_api_commands;
 pub mod group_chat_commands;
 pub mod group_commands;
 pub mod helpers;
+pub mod horde_commands;
 pub mod image_commands;
 pub mod image_metadata_commands;
 mod import_source;

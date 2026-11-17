@@ -30,3 +30,6 @@ ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
