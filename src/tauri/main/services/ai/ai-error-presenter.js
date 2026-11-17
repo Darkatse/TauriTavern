@@ -1,22 +1,41 @@
-import { getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
-import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+// @ts-check
+
+import { getCommandErrorMessage } from '../../../../scripts/util/command-error-utils.js';
+import { translateSillyTavern } from '../../adapters/st/sillytavern-i18n.js';
 import {
     asUpstreamFailureDetails,
     findUpstreamFailureDetails,
     upstreamFailureMessage,
-} from '../kernel/upstream-failure.js';
+} from '../../kernel/upstream-failure.js';
 
 export { asUpstreamFailureDetails };
 
+/**
+ * @param {unknown} error
+ */
 export function getUpstreamFailureDetails(error) {
     return findUpstreamFailureDetails(error);
 }
 
+/** @returns {string} */
 export function translateApiErrorLabel() {
     return `[${translateSillyTavern('API Error', 'API Error')}]`;
 }
 
-export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat completion request failed') {
+/**
+ * @param {string} message
+ * @returns {string}
+ */
+export function formatAssistantErrorText(message) {
+    return `${translateApiErrorLabel()}\n${message}`;
+}
+
+/**
+ * @param {unknown} error
+ * @param {string} [fallbackMessage]
+ * @returns {string}
+ */
+export function getUserFacingErrorMessage(error, fallbackMessage = 'Generation request failed') {
     const details = getUpstreamFailureDetails(error);
     if (!details) {
         return getCommandErrorMessage(error) || fallbackMessage;
@@ -44,8 +63,13 @@ export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat complet
     return lines.join('\n');
 }
 
+/**
+ * @param {unknown} error
+ * @returns {{ error: Record<string, unknown> }}
+ */
 export function buildLegacyErrorPayload(error) {
     const details = getUpstreamFailureDetails(error);
+    /** @type {Record<string, unknown>} */
     const payload = {
         message: getUserFacingErrorMessage(error),
     };

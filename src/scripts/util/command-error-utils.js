@@ -10,9 +10,10 @@ import { asUpstreamFailureDetails, upstreamFailureMessage } from '../../tauri/ma
  */
 const KINDS = Object.freeze([
     { variant: 'BadRequest', status: 400, prefixes: ['Bad request', 'Validation error'] },
-    { variant: 'Conflict', status: 409, prefixes: ['Conflict'] },
+    { variant: 'Unauthorized', status: 401, prefixes: ['Unauthorized'] },
+    { variant: 'Forbidden', status: 403, prefixes: ['Forbidden', 'Permission denied'] },
     { variant: 'NotFound', status: 404, prefixes: ['Not found', 'Entity not found'] },
-    { variant: 'Unauthorized', status: 401, prefixes: ['Unauthorized', 'Permission denied'] },
+    { variant: 'Conflict', status: 409, prefixes: ['Conflict'] },
     { variant: 'TooManyRequests', status: 429, prefixes: ['Too many requests'] },
     { variant: 'InternalServerError', status: 500, prefixes: ['Internal server error', 'Internal error'] },
 ]);

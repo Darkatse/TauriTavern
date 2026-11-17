@@ -393,9 +393,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
-        super::chat_completion_commands::read_chat_completion_stream,
-        super::chat_completion_commands::close_chat_completion_stream,
-        super::chat_completion_commands::cancel_chat_completion_generation,
+        // Generation commands shared by every API family
+        super::generation_commands::read_generation_stream,
+        super::generation_commands::close_generation_stream,
+        super::generation_commands::cancel_generation,
         // SearXNG compatibility search
         super::searxng_search_commands::search_searxng,
         // CORS proxy compatibility

@@ -12,10 +12,10 @@ use super::readable::{
 use super::store::LlmApiLogStore;
 use super::types::{LlmApiLogMeta, LlmApiRawKind};
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionRepositoryGenerateResponse,
+    ChatCompletionSource, ChatCompletionStreamDelta,
 };
 
 pub struct LoggingChatCompletionRepository {
@@ -149,8 +149,8 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
         let started = Instant::now();
         let started_at_ms = chrono::Utc::now().timestamp_millis();

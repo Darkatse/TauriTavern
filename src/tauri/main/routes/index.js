@@ -9,6 +9,7 @@ import { registerCharacterRoutes } from './character-routes.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { registerBackupsRoutes } from './backups-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
+import { createGenerationSessions } from '../services/ai/generation-sessions.js';
 import { registerTokenizerRoutes } from './tokenizer-routes.js';
 import { registerProviderRoutes } from './provider-routes.js';
 import { registerSearchRoutes } from './search-routes.js';
@@ -24,6 +25,8 @@ import { registerSpriteRoutes } from './sprite-routes.js';
 import { registerCorsProxyRoutes } from './cors-proxy-routes.js';
 
 export function registerRoutes(router, context, responses) {
+    const generation = createGenerationSessions(context);
+
     registerSystemRoutes(router, context, responses);
     registerBootstrapRoutes(router, context, responses);
     registerSettingsRoutes(router, context, responses);
@@ -37,7 +40,7 @@ export function registerRoutes(router, context, responses) {
     registerContentRoutes(router, context, responses);
     registerAssetsRoutes(router, context, responses);
     registerWorldInfoRoutes(router, context, responses);
-    registerAiRoutes(router, context, responses);
+    registerAiRoutes(router, context, responses, generation);
     registerTokenizerRoutes(router, context, responses);
     registerVectorRoutes(router, context, responses);
     registerSpriteRoutes(router, context, responses);

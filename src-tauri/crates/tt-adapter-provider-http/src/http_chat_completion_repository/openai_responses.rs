@@ -13,10 +13,11 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 
 use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender, OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
+    OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
 use super::normalizers;
@@ -205,7 +206,7 @@ impl ResponsesStreamState {
 
     fn handle_event(
         &mut self,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         event: &Value,
     ) -> Result<(), DomainError> {
         if self.done_sent {
@@ -325,7 +326,7 @@ impl ResponsesStreamState {
 
     fn send_delta(
         &mut self,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         delta: Value,
         finish_reason: Option<&str>,
         usage: Option<Value>,
@@ -425,8 +426,8 @@ pub(super) async fn generate_stream(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     generate_stream_http(
         repository,
@@ -492,8 +493,8 @@ async fn generate_stream_http(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;

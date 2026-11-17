@@ -27,6 +27,7 @@ pub mod extension_store_commands;
 pub mod file_commands;
 pub mod file_staging_commands;
 pub mod file_transfer_commands;
+pub mod generation_commands;
 pub mod group_chat_api_commands;
 pub mod group_chat_commands;
 pub mod group_commands;

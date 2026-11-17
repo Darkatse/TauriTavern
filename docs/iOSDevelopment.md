@@ -148,7 +148,7 @@ Tauri npm CLI 当前会让 `actool` 继承已关闭的 stdin，导致图标编�
 
 ## 7. AI 生成后台执行
 
-iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行：
+iOS 生成的后台租约由 Rust 生成运行时（`GenerationRuntime`）持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行：
 
 - iOS 26+ 的用户可见生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；
 - 流式生成以累计收到的 provider 响应字节作为单调递增的真实进度。因为 LLM 输出总量事先未知，`NSProgress` 保持 indeterminate，成功结束时再收敛到 100%；
@@ -156,7 +156,7 @@ iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不
 
 生命周期契约：
 
-- 普通与流式 Chat Completion 在网络请求前取得后台租约；
+- 普通与流式生成在网络请求前取得后台租约；
 - 成功、失败或用户取消都会由 Rust 立即完成对应的系统任务；
 - 若系统先触发 expiration handler，原生适配器只结束后台保护并记录警告，不把“后台保护结束”伪装成“生成失败”；
 - 系统随后可以挂起应用；若进程仍存活，生成在恢复执行后继续等待真实 provider 结果、网络错误或用户取消；

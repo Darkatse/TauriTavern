@@ -111,14 +111,14 @@ test('Web Host stream reads replay an unacknowledged cursor and cancellation rel
         : handle(request);
     const invoke = window.__TAURI__.core.invoke;
     await invoke('start_chat_completion_stream', { streamId: 'replay', dto: {} });
-    const first = invoke('read_chat_completion_stream', { streamId: 'replay', afterSeq: 0 });
+    const first = invoke('read_generation_stream', { streamId: 'replay', afterSeq: 0 });
     producer.enqueue(new TextEncoder().encode('data: {"choices":[]}\n\n'));
     const batch = await first;
     expect(batch.events[0].seq).toBe(1);
     expect(batch.events[0].data).toBe('{"choices":[]}');
-    expect(await invoke('read_chat_completion_stream', { streamId: 'replay', afterSeq: 0 })).toEqual(batch);
-    const blocked = invoke('read_chat_completion_stream', { streamId: 'replay', afterSeq: 1 });
-    await invoke('close_chat_completion_stream', { streamId: 'replay' });
+    expect(await invoke('read_generation_stream', { streamId: 'replay', afterSeq: 0 })).toEqual(batch);
+    const blocked = invoke('read_generation_stream', { streamId: 'replay', afterSeq: 1 });
+    await invoke('close_generation_stream', { streamId: 'replay' });
     expect((await blocked).status).toBe('cancelled');
     await cancelled.promise;
 });

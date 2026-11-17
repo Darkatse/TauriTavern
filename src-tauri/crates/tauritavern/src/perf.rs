@@ -56,8 +56,8 @@ fn replayed(call: &Call) -> bool {
                 | "check_for_update"
                 | "get_chat_completions_status"
                 | "start_chat_completion_stream"
-                | "read_chat_completion_stream"
-                | "close_chat_completion_stream"
+                | "read_generation_stream"
+                | "close_generation_stream"
                 | "get_notification_permission_state"
         )
 }

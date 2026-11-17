@@ -244,7 +244,7 @@ pub fn show_system_notification(
         get_notification_permission_state_inner(&app)?,
         NotificationPermissionStateDto::Granted
     ) {
-        return Err(CommandError::Unauthorized(
+        return Err(CommandError::Forbidden(
             "Notification permission is not granted".to_string(),
         ));
     }

@@ -1,6 +1,6 @@
-import { createAbortError, isAbortError } from '../kernel/abort-error.js';
-import { isCommandCancelled } from '../../../scripts/util/command-error-utils.js';
-import { buildLegacyErrorPayload } from './ai-error-presenter.js';
+import { createAbortError } from '../kernel/abort-error.js';
+import { buildLegacyErrorPayload } from '../services/ai/ai-error-presenter.js';
+import { isRequestCancelled } from '../services/ai/generation-sessions.js';
 
 const CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
 const UNAVAILABLE_CAPTION_ROUTES = Object.freeze([
@@ -166,7 +166,7 @@ export function registerCaptionRoutes(router, { jsonResponse, invokeChatCompleti
                 if (error instanceof CaptionRequestError) {
                     return jsonResponse({ error: true, message: error.message }, error.status);
                 }
-                if (isAbortError(error) || isCommandCancelled(error)) {
+                if (isRequestCancelled(error)) {
                     throw createAbortError();
                 }
                 console.error('Image captioning failed:', error);

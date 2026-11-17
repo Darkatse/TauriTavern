@@ -1,9 +1,8 @@
 use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionCancelReceiver, ChatCompletionStreamDelta, ChatCompletionStreamSender,
-};
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
+use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
 
 use super::HttpChatCompletionRepository;
 
@@ -25,8 +24,8 @@ pub(super) async fn consume_generate_content_stream(
 pub(super) async fn stream_generate_content_with_native(
     provider_name: &str,
     response: reqwest::Response,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let mut accumulator = GeminiStreamAccumulator::default();
     HttpChatCompletionRepository::stream_sse_response_with_hook(

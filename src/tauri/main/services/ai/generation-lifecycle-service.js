@@ -5,18 +5,9 @@
  */
 
 /**
- * @param {unknown} value
- * @returns {string}
- */
-function extractOpenAiChunkText(value) {
-    const parsed = JSON.parse(String(value || ''));
-    const delta = parsed?.choices?.[0]?.delta;
-    return typeof delta?.content === 'string' ? delta.content : '';
-}
-
-/**
  * @param {{
  *   enabled: boolean;
+ *   chunkText: (data: string) => string;
  *   statusBridge: {
  *     supportsProgressUpdates: () => boolean;
  *     reportProgress: (outputTokens: number) => boolean;
@@ -29,6 +20,7 @@ function extractOpenAiChunkText(value) {
  */
 function createStreamProgressReporter({
     enabled,
+    chunkText,
     statusBridge,
     shouldNotifyCompletion,
     estimateTokenCount,
@@ -58,13 +50,13 @@ function createStreamProgressReporter({
             }
 
             try {
-                const chunkText = extractOpenAiChunkText(data);
-                if (!chunkText) {
+                const text = chunkText(data);
+                if (!text) {
                     return;
                 }
 
-                outputChunks.push(chunkText);
-                outputChars += chunkText.length;
+                outputChunks.push(text);
+                outputChars += text.length;
 
                 const now = Date.now();
                 const shouldCompute = now - lastTokenReportAt >= progressThrottleMs
@@ -167,14 +159,16 @@ export function createGenerationLifecycleService({
 
     return {
         /**
-         * @param {{ quiet: boolean }} params
+         * `chunkText` reads the output text of one stream event in the caller's response format.
+         * @param {{ quiet: boolean; chunkText: (data: string) => string }} params
          */
-        createLifecycle({ quiet }) {
+        createLifecycle({ quiet, chunkText }) {
             let active = false;
             /** @type {NotificationPermissionState | null} */
             let preparedPermissionState = null;
             const progressReporter = createStreamProgressReporter({
                 enabled: !quiet,
+                chunkText,
                 statusBridge,
                 shouldNotifyCompletion,
                 estimateTokenCount,
@@ -205,9 +199,9 @@ export function createGenerationLifecycleService({
 
                 /**
                  * @param {{
-                 *   success?: boolean;
-                 *   errorMessage?: string;
-                 *   notifyFailure?: boolean;
+                 *   success?: boolean | undefined;
+                 *   errorMessage?: string | undefined;
+                 *   notifyFailure?: boolean | undefined;
                  * }} [params]
                  */
                 finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
@@ -216,7 +210,7 @@ export function createGenerationLifecycleService({
                     }
 
                     active = false;
-                    activeCount = Math.max(0, activeCount - 1);
+                    activeCount -= 1;
 
                     if (activeCount !== 0) {
                         return;
@@ -234,9 +228,9 @@ export function createGenerationLifecycleService({
 
                                 if (permissionState === 'granted') {
                                     await showCompletionNotification({
-                                        success: Boolean(success),
+                                        success,
                                         errorMessage,
-                                        notifyFailure: Boolean(notifyFailure),
+                                        notifyFailure,
                                     });
                                 }
                             } catch (error) {

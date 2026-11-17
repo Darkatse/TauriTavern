@@ -4,7 +4,6 @@
   "maxLinesByPath": {
     "src/tauri/main/bootstrap.js": 500,
     "src/tauri/main/context.js": 5,
-    "src/tauri/main/routes/ai-routes.js": 777,
     "src/tauri/main/routes/chat-routes.js": 500
   },
   "notes": [

@@ -14,8 +14,10 @@ async function createAiRouter(safeInvoke) {
     };
 
     const { registerAiRoutes } = await import('../src/tauri/main/routes/ai-routes.js');
+    const { createGenerationSessions } = await import('../src/tauri/main/services/ai/generation-sessions.js');
     const router = createRouteRegistry();
-    registerAiRoutes(router, { safeInvoke }, { jsonResponse });
+    const context = { safeInvoke };
+    registerAiRoutes(router, context, { jsonResponse }, createGenerationSessions(context));
     return router;
 }
 
@@ -90,4 +92,50 @@ test('OpenCode generation carries the current stable chat id', async () => {
 
     const generate = calls.find(call => call.command === 'generate_chat_completion');
     assert.equal(generate.args.dto._tauritavern_stable_chat_id, 'stable-chat');
+});
+
+test('pre-stream cancellation and quiet start failures are handled before returning SSE 200', async () => {
+    const cancelledRouter = await createAiRouter(async (command) => {
+        if (command === 'get_notification_permission_state') {
+            return 'denied';
+        }
+        if (command === 'start_chat_completion_stream') {
+            throw { Cancelled: 'Endpoint authorization cancelled by user' };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await assert.rejects(
+        cancelledRouter.handle({
+            method: 'POST',
+            path: '/api/backends/chat-completions/generate',
+            body: { stream: true },
+        }),
+        { name: 'AbortError' },
+    );
+
+    const quietErrorRouter = await createAiRouter(async (command) => {
+        if (command === 'start_chat_completion_stream') {
+            throw { Forbidden: 'iOS policy disabled capability: llm.chat_completion_sources' };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    let quietResponse;
+    try {
+        quietResponse = await quietErrorRouter.handle({
+            method: 'POST',
+            path: '/api/backends/chat-completions/generate',
+            body: { stream: true, type: 'quiet' },
+        });
+    } finally {
+        console.error = originalConsoleError;
+    }
+
+    assert.equal(quietResponse.status, 502);
+    assert.deepEqual(await quietResponse.json(), {
+        error: { message: 'iOS policy disabled capability: llm.chat_completion_sources' },
+    });
 });

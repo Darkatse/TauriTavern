@@ -3,10 +3,9 @@ use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
 use super::normalizers;
@@ -51,7 +50,7 @@ impl InteractionsStreamState {
 
     fn handle_event(
         &mut self,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         raw_payload: &[u8],
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
@@ -93,7 +92,7 @@ impl InteractionsStreamState {
     fn apply_step_start(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         if self.active_step.is_some() {
@@ -166,7 +165,7 @@ impl InteractionsStreamState {
     fn apply_step_delta(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         let index = required_index(event, "step.delta event")?;
@@ -270,7 +269,7 @@ impl InteractionsStreamState {
     fn apply_step_stop(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
     ) -> Result<(), DomainError> {
         let index = required_index(event, "step.stop event")?;
         let mut active = self
@@ -306,7 +305,7 @@ impl InteractionsStreamState {
     fn apply_interaction_completed(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
     ) -> Result<(), DomainError> {
         if self.active_step.is_some() {
             return Err(invalid_stream(
@@ -382,7 +381,7 @@ impl InteractionsStreamState {
         })
     }
 
-    fn send_delta(&mut self, sender: Option<&ChatCompletionStreamSender>, delta: Value) {
+    fn send_delta(&mut self, sender: Option<&GenerationStreamSender>, delta: Value) {
         let Some(sender) = sender else {
             return;
         };
@@ -392,7 +391,7 @@ impl InteractionsStreamState {
 
     fn send_terminal(
         &mut self,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         delta: Value,
         finish_reason: &str,
         usage: Option<Value>,
@@ -407,7 +406,7 @@ impl InteractionsStreamState {
         self.send_chunk(sender, chunk);
     }
 
-    fn ensure_role(&mut self, sender: &ChatCompletionStreamSender) {
+    fn ensure_role(&mut self, sender: &GenerationStreamSender) {
         if self.sent_role {
             return;
         }
@@ -418,7 +417,7 @@ impl InteractionsStreamState {
         );
     }
 
-    fn send_chunk(&self, sender: &ChatCompletionStreamSender, chunk: Value) {
+    fn send_chunk(&self, sender: &GenerationStreamSender, chunk: Value) {
         let _ = sender.send(chunk.to_string());
     }
 
@@ -475,8 +474,8 @@ pub(super) async fn generate_stream(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
@@ -757,7 +756,7 @@ mod tests {
 
     fn apply(
         state: &mut InteractionsStreamState,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         event: Value,
     ) -> Result<(), DomainError> {
         state.handle_event(
@@ -769,7 +768,7 @@ mod tests {
 
     fn apply_all(
         state: &mut InteractionsStreamState,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         events: Value,
     ) -> Vec<ChatCompletionStreamDelta> {
         let mut deltas = Vec::new();

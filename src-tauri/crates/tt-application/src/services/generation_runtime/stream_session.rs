@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify, RwLock, watch};
 use tt_domain::models::upstream_failure::UpstreamFailure;
 
-use crate::dto::chat_completion_dto::{
-    ChatCompletionStreamEventDto, ChatCompletionStreamReadResultDto, ChatCompletionStreamStatusDto,
+use crate::dto::generation_stream_dto::{
+    GenerationStreamEventDto, GenerationStreamReadResultDto, GenerationStreamStatusDto,
 };
 use crate::errors::ApplicationError;
 
@@ -33,7 +33,7 @@ impl StreamSessionRegistry {
         let mut active = self.active.write().await;
         if active.contains_key(stream_id) {
             return Err(ApplicationError::Conflict(format!(
-                "Chat completion stream already exists: {stream_id}"
+                "Generation stream already exists: {stream_id}"
             )));
         }
 
@@ -46,7 +46,7 @@ impl StreamSessionRegistry {
         &self,
         stream_id: &str,
         after_seq: u64,
-    ) -> Result<ChatCompletionStreamReadResultDto, ApplicationError> {
+    ) -> Result<GenerationStreamReadResultDto, ApplicationError> {
         let session = self
             .active
             .read()
@@ -54,7 +54,7 @@ impl StreamSessionRegistry {
             .get(stream_id)
             .cloned()
             .ok_or_else(|| {
-                ApplicationError::NotFound(format!("Chat completion stream not found: {stream_id}"))
+                ApplicationError::NotFound(format!("Generation stream not found: {stream_id}"))
             })?;
 
         session.read(after_seq).await
@@ -126,12 +126,12 @@ impl StreamSession {
 
     async fn append(&self, data: String) -> Result<StreamAppendOutcome, ApplicationError> {
         let mut state = self.state.lock().await;
-        if state.status != ChatCompletionStreamStatusDto::Running {
+        if state.status != GenerationStreamStatusDto::Running {
             return Ok(StreamAppendOutcome::SessionClosed);
         }
         if state.buffered_bytes.saturating_add(data.len()) > MAX_REPLAY_BYTES {
             return Err(ApplicationError::InternalError(format!(
-                "Chat completion stream replay buffer exceeded {} MiB",
+                "Generation stream replay buffer exceeded {} MiB",
                 MAX_REPLAY_BYTES / 1024 / 1024
             )));
         }
@@ -142,15 +142,15 @@ impl StreamSession {
         state.buffered_bytes += data.len();
         state
             .events
-            .push_back(ChatCompletionStreamEventDto::Chunk { seq, data });
+            .push_back(GenerationStreamEventDto::Chunk { seq, data });
 
         if provider_done {
             let seq = state.next_seq;
             state.next_seq += 1;
             state
                 .events
-                .push_back(ChatCompletionStreamEventDto::Done { seq });
-            state.status = ChatCompletionStreamStatusDto::Done;
+                .push_back(GenerationStreamEventDto::Done { seq });
+            state.status = GenerationStreamStatusDto::Done;
         }
 
         drop(state);
@@ -164,7 +164,7 @@ impl StreamSession {
 
     async fn finish(&self) {
         let mut state = self.state.lock().await;
-        if state.status != ChatCompletionStreamStatusDto::Running {
+        if state.status != GenerationStreamStatusDto::Running {
             return;
         }
 
@@ -172,35 +172,35 @@ impl StreamSession {
         state.next_seq += 1;
         state
             .events
-            .push_back(ChatCompletionStreamEventDto::Done { seq });
-        state.status = ChatCompletionStreamStatusDto::Done;
+            .push_back(GenerationStreamEventDto::Done { seq });
+        state.status = GenerationStreamStatusDto::Done;
         drop(state);
         self.wake_reader();
     }
 
     async fn fail(&self, message: String, details: Option<UpstreamFailure>) {
         let mut state = self.state.lock().await;
-        if state.status != ChatCompletionStreamStatusDto::Running {
+        if state.status != GenerationStreamStatusDto::Running {
             return;
         }
 
         let seq = state.next_seq;
         state.next_seq += 1;
-        state.events.push_back(ChatCompletionStreamEventDto::Error {
+        state.events.push_back(GenerationStreamEventDto::Error {
             seq,
             message,
             details,
         });
-        state.status = ChatCompletionStreamStatusDto::Error;
+        state.status = GenerationStreamStatusDto::Error;
         drop(state);
         self.wake_reader();
     }
 
     async fn close(&self) {
         let mut state = self.state.lock().await;
-        let was_running = state.status == ChatCompletionStreamStatusDto::Running;
+        let was_running = state.status == GenerationStreamStatusDto::Running;
         if was_running {
-            state.status = ChatCompletionStreamStatusDto::Cancelled;
+            state.status = GenerationStreamStatusDto::Cancelled;
         }
         drop(state);
 
@@ -213,20 +213,20 @@ impl StreamSession {
     async fn read(
         &self,
         after_seq: u64,
-    ) -> Result<ChatCompletionStreamReadResultDto, ApplicationError> {
+    ) -> Result<GenerationStreamReadResultDto, ApplicationError> {
         loop {
             let notified = self.changed.notified();
             let mut state = self.state.lock().await;
 
             if after_seq < state.acknowledged_seq {
                 return Err(ApplicationError::Conflict(format!(
-                    "Chat completion stream cursor {after_seq} is behind acknowledged sequence {}",
+                    "Generation stream cursor {after_seq} is behind acknowledged sequence {}",
                     state.acknowledged_seq
                 )));
             }
             if after_seq > state.delivered_seq {
                 return Err(ApplicationError::ValidationError(format!(
-                    "Chat completion stream cursor {after_seq} exceeds delivered sequence {}",
+                    "Generation stream cursor {after_seq} exceeds delivered sequence {}",
                     state.delivered_seq
                 )));
             }
@@ -253,8 +253,8 @@ impl StreamSession {
                 state.delivered_seq = state.delivered_seq.max(event.seq());
             }
 
-            if !events.is_empty() || state.status != ChatCompletionStreamStatusDto::Running {
-                return Ok(ChatCompletionStreamReadResultDto {
+            if !events.is_empty() || state.status != GenerationStreamStatusDto::Running {
+                return Ok(GenerationStreamReadResultDto {
                     events,
                     status: state.status,
                 });
@@ -267,8 +267,8 @@ impl StreamSession {
 }
 
 struct StreamSessionState {
-    events: VecDeque<ChatCompletionStreamEventDto>,
-    status: ChatCompletionStreamStatusDto,
+    events: VecDeque<GenerationStreamEventDto>,
+    status: GenerationStreamStatusDto,
     next_seq: u64,
     delivered_seq: u64,
     acknowledged_seq: u64,
@@ -279,7 +279,7 @@ impl Default for StreamSessionState {
     fn default() -> Self {
         Self {
             events: VecDeque::new(),
-            status: ChatCompletionStreamStatusDto::Running,
+            status: GenerationStreamStatusDto::Running,
             next_seq: 1,
             delivered_seq: 0,
             acknowledged_seq: 0,
@@ -322,12 +322,12 @@ mod tests {
         let terminal = session.read(2).await.unwrap();
         assert!(matches!(
             terminal.events.as_slice(),
-            [ChatCompletionStreamEventDto::Done { seq: 3 }]
+            [GenerationStreamEventDto::Done { seq: 3 }]
         ));
 
         let acknowledged = session.read(3).await.unwrap();
         assert!(acknowledged.events.is_empty());
-        assert_eq!(acknowledged.status, ChatCompletionStreamStatusDto::Done);
+        assert_eq!(acknowledged.status, GenerationStreamStatusDto::Done);
     }
 
     #[tokio::test]
@@ -348,11 +348,11 @@ mod tests {
         assert!(matches!(
             terminal.events.as_slice(),
             [
-                ChatCompletionStreamEventDto::Chunk { seq: 1, data },
-                ChatCompletionStreamEventDto::Done { seq: 2 },
+                GenerationStreamEventDto::Chunk { seq: 1, data },
+                GenerationStreamEventDto::Done { seq: 2 },
             ] if data == PROVIDER_DONE_SENTINEL
         ));
-        assert_eq!(terminal.status, ChatCompletionStreamStatusDto::Done);
+        assert_eq!(terminal.status, GenerationStreamStatusDto::Done);
     }
 
     #[tokio::test]

@@ -1,27 +1,24 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{RwLock, watch};
 use url::Url;
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
-    ChatCompletionStreamReadResultDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::generation_runtime::{GenerationRuntime, until_cancelled};
 use crate::services::hashing::hex_lower;
-use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::claude_model::supports_one_hour_prompt_cache;
 use tt_domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
-use tt_ports::generation_background::{GenerationBackgroundOutcome, GenerationBackgroundRuntime};
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
-    ChatCompletionStreamDelta, ChatCompletionStreamSender,
+    ChatCompletionStreamDelta,
 };
 use tt_ports::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
 use tt_ports::repositories::secret_repository::SecretRepository;
@@ -32,20 +29,16 @@ mod config;
 mod custom_api_format;
 mod custom_parameters;
 pub(crate) mod exchange;
-mod generation_background;
 mod model_capabilities;
 pub(super) mod opencode;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
-mod stream_session;
 
 use self::additional_parameters::AdditionalParameters;
 use self::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
-use self::generation_background::GenerationBackgroundLease;
-use self::stream_session::{StreamAppendOutcome, StreamSessionRegistry};
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
 pub(crate) const OPENCODE_STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
@@ -81,10 +74,8 @@ pub struct ChatCompletionService {
     secret_repository: Arc<dyn SecretRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
     prompt_cache_repository: Arc<dyn PromptCacheRepository>,
-    generation_background_runtime: Option<Arc<dyn GenerationBackgroundRuntime>>,
+    generation_runtime: Arc<GenerationRuntime>,
     ios_policy: IosPolicyActivationReport,
-    stream_sessions: StreamSessionRegistry,
-    active_generations: CancellationRegistry,
 }
 
 impl ChatCompletionService {
@@ -93,7 +84,7 @@ impl ChatCompletionService {
         secret_repository: Arc<dyn SecretRepository>,
         settings_repository: Arc<dyn SettingsRepository>,
         prompt_cache_repository: Arc<dyn PromptCacheRepository>,
-        generation_background_runtime: Option<Arc<dyn GenerationBackgroundRuntime>>,
+        generation_runtime: Arc<GenerationRuntime>,
         ios_policy: IosPolicyActivationReport,
     ) -> Self {
         Self {
@@ -101,10 +92,8 @@ impl ChatCompletionService {
             secret_repository,
             settings_repository,
             prompt_cache_repository,
-            generation_background_runtime,
+            generation_runtime,
             ios_policy,
-            stream_sessions: StreamSessionRegistry::default(),
-            active_generations: CancellationRegistry::default(),
         }
     }
 
@@ -515,66 +504,27 @@ impl ChatCompletionService {
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<Value, ApplicationError> {
         let notify_completion = !Self::is_quiet_request(&dto);
-        let cancel = self.register_generation(request_id).await;
-        let background = GenerationBackgroundLease::start(
-            self.generation_background_runtime.as_ref(),
-            request_id,
-            notify_completion,
-        );
-        let result = self.generate_with_cancel(dto, cancel).await;
-        self.complete_generation(request_id).await;
-        background.complete(Self::background_outcome(&result), notify_completion);
-        result
-    }
-
-    async fn generate_with_cancel(
-        &self,
-        dto: ChatCompletionGenerateRequestDto,
-        mut cancel: ChatCompletionCancelReceiver,
-    ) -> Result<Value, ApplicationError> {
-        let generation = self.execute_generate(dto, None);
-        tokio::pin!(generation);
-
-        let execution = tokio::select! {
-            result = &mut generation => result,
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    return Err(DomainError::generation_cancelled_by_user().into());
-                }
-
-                generation.await
-            }
-        }?;
-
-        Ok(execution.body)
+        self.generation_runtime
+            .run_request(request_id, notify_completion, async {
+                Ok(self.execute_generate(dto, None).await?.body)
+            })
+            .await
     }
 
     pub(crate) async fn generate_exchange_with_cancel(
         &self,
         dto: ChatCompletionGenerateRequestDto,
         on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
-        mut cancel: ChatCompletionCancelReceiver,
+        cancel: GenerationCancelReceiver,
     ) -> Result<ChatCompletionExchange, ApplicationError> {
-        let generation = self.generate_exchange(dto, on_delta);
-        tokio::pin!(generation);
-
-        tokio::select! {
-            result = &mut generation => result,
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    return Err(DomainError::generation_cancelled_by_user().into());
-                }
-
-                generation.await
-            }
-        }
+        until_cancelled(self.generate_exchange(dto, on_delta), cancel).await
     }
 
     pub async fn generate_stream(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), ApplicationError> {
         let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
@@ -602,149 +552,17 @@ impl ChatCompletionService {
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<(), ApplicationError> {
         let notify_completion = !Self::is_quiet_request(&dto);
-        let cancel = self.stream_sessions.register(&stream_id).await?;
-        let background = GenerationBackgroundLease::start(
-            self.generation_background_runtime.as_ref(),
-            &stream_id,
-            notify_completion,
-        );
         let service = self.clone();
-        tokio::spawn(async move {
-            service
-                .run_stream(stream_id, dto, cancel, background, notify_completion)
-                .await;
-        });
-        Ok(())
-    }
-
-    pub async fn read_stream(
-        &self,
-        stream_id: &str,
-        after_seq: u64,
-    ) -> Result<ChatCompletionStreamReadResultDto, ApplicationError> {
-        self.stream_sessions.read(stream_id, after_seq).await
-    }
-
-    pub async fn close_stream(&self, stream_id: &str) -> bool {
-        self.stream_sessions.close(stream_id).await
-    }
-
-    async fn register_generation(&self, request_id: &str) -> watch::Receiver<bool> {
-        self.active_generations.register(request_id).await
-    }
-
-    pub async fn cancel_generation(&self, request_id: &str) -> bool {
-        self.active_generations.cancel(request_id).await
-    }
-
-    async fn complete_generation(&self, request_id: &str) {
-        self.active_generations.complete(request_id).await;
-    }
-
-    async fn run_stream(
-        self: Arc<Self>,
-        stream_id: String,
-        dto: ChatCompletionGenerateRequestDto,
-        mut lifecycle_cancel: watch::Receiver<bool>,
-        mut background: GenerationBackgroundLease,
-        notify_completion: bool,
-    ) {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let (stop_provider, provider_cancel) = watch::channel(false);
-        let generation_task = tokio::spawn({
-            let service = self.clone();
-            async move { service.generate_stream(dto, sender, provider_cancel).await }
-        });
-        let mut received_bytes = 0_u64;
-
-        let result = loop {
-            let chunk = tokio::select! {
-                chunk = receiver.recv() => chunk,
-                _ = lifecycle_cancel.changed() => {
-                    generation_task.abort();
-                    break Err(DomainError::generation_cancelled_by_user().into());
-                }
-            };
-            let Some(chunk) = chunk else {
-                break match generation_task.await {
-                    Ok(result) => result,
-                    Err(error) => Err(ApplicationError::InternalError(format!(
-                        "Streaming task join failed: {error}"
-                    ))),
-                };
-            };
-
-            if chunk.is_empty() {
-                continue;
-            }
-
-            received_bytes = received_bytes.saturating_add(chunk.len() as u64);
-            background.report_progress(received_bytes);
-
-            match self.stream_sessions.append(&stream_id, chunk).await {
-                Ok(StreamAppendOutcome::Appended) => {}
-                Ok(StreamAppendOutcome::ProviderDone) => {
-                    Self::finish_provider_after_done(&stream_id, stop_provider, generation_task)
-                        .await;
-                    break Ok(());
-                }
-                Ok(StreamAppendOutcome::SessionClosed) => {
-                    generation_task.abort();
-                    return;
-                }
-                Err(error) => {
-                    generation_task.abort();
-                    self.stream_sessions.fail(&stream_id, error).await;
-                    background.complete(
-                        GenerationBackgroundOutcome::Failed { status_code: None },
-                        notify_completion,
-                    );
-                    return;
-                }
-            }
-        };
-
-        let outcome = Self::background_outcome(&result);
-        match result {
-            Ok(()) => self.stream_sessions.finish(&stream_id).await,
-            Err(error) => self.stream_sessions.fail(&stream_id, error).await,
-        }
-        background.complete(outcome, notify_completion);
-    }
-
-    async fn finish_provider_after_done(
-        stream_id: &str,
-        stop_provider: watch::Sender<bool>,
-        generation_task: tokio::task::JoinHandle<Result<(), ApplicationError>>,
-    ) {
-        let _ = stop_provider.send(true);
-        match generation_task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::error!(
-                stream_id,
-                "Provider stream cleanup failed after completion: {error}"
-            ),
-            Err(error) => tracing::error!(
-                stream_id,
-                "Provider stream cleanup task failed after completion: {error}"
-            ),
-        }
+        self.generation_runtime
+            .start_stream(stream_id, notify_completion, move |sender, cancel| async move {
+                service.generate_stream(dto, sender, cancel).await
+            })
+            .await
     }
 
     fn is_quiet_request(dto: &ChatCompletionGenerateRequestDto) -> bool {
         dto.get_string("type")
             .is_some_and(|value| value.trim().eq_ignore_ascii_case("quiet"))
-    }
-
-    fn background_outcome<T>(result: &Result<T, ApplicationError>) -> GenerationBackgroundOutcome {
-        match result {
-            Ok(_) => GenerationBackgroundOutcome::Succeeded,
-            Err(ApplicationError::Cancelled(_)) => GenerationBackgroundOutcome::Cancelled,
-            Err(ApplicationError::RateLimited(_)) => GenerationBackgroundOutcome::Failed {
-                status_code: Some(429),
-            },
-            Err(_) => GenerationBackgroundOutcome::Failed { status_code: None },
-        }
     }
 
     pub async fn close_provider_session(&self, session_id: &str) {
@@ -998,9 +816,6 @@ fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use serde_json::{Value, json};
 
     use super::{
@@ -1008,8 +823,6 @@ mod tests {
         apply_opencode_session_header, apply_vertexai_prompt_cache_session_header,
         ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
     };
-    use crate::errors::ApplicationError;
-    use tokio::sync::watch;
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
         ChatCompletionSource,
@@ -1164,61 +977,5 @@ mod tests {
                 expected_error
             );
         }
-    }
-
-    #[tokio::test]
-    async fn provider_done_waits_for_provider_cleanup() {
-        let (stop_provider, mut provider_cancel) = watch::channel(false);
-        let cleaned_up = Arc::new(AtomicBool::new(false));
-        let generation_task = tokio::spawn({
-            let cleaned_up = cleaned_up.clone();
-            async move {
-                provider_cancel.changed().await.unwrap();
-                cleaned_up.store(true, Ordering::SeqCst);
-                Ok::<(), ApplicationError>(())
-            }
-        });
-
-        ChatCompletionService::finish_provider_after_done(
-            "stream-1",
-            stop_provider,
-            generation_task,
-        )
-        .await;
-
-        assert!(cleaned_up.load(Ordering::SeqCst));
-    }
-}
-
-#[derive(Default)]
-struct CancellationRegistry {
-    active: RwLock<HashMap<String, watch::Sender<bool>>>,
-}
-
-impl CancellationRegistry {
-    async fn register(&self, request_id: &str) -> watch::Receiver<bool> {
-        let (sender, receiver) = watch::channel(false);
-        let mut active = self.active.write().await;
-
-        if let Some(previous_sender) = active.insert(request_id.to_string(), sender) {
-            let _ = previous_sender.send(true);
-        }
-
-        receiver
-    }
-
-    async fn cancel(&self, request_id: &str) -> bool {
-        let mut active = self.active.write().await;
-        let Some(sender) = active.remove(request_id) else {
-            return false;
-        };
-
-        let _ = sender.send(true);
-        true
-    }
-
-    async fn complete(&self, request_id: &str) {
-        let mut active = self.active.write().await;
-        active.remove(request_id);
     }
 }

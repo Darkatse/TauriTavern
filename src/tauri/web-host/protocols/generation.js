@@ -58,7 +58,7 @@ export function createGenerationCommands({ json, request }) {
             const reader = (/** @type {ReadableStream<BufferSource>} */ (body)).pipeThrough(new EventSourceStream()).getReader();
             sessions.set(streamId, { reader, seq: 0, cursor: -1, status: 'running', batch: undefined });
         },
-        read_chat_completion_stream: ({ streamId, afterSeq }) => {
+        read_generation_stream: ({ streamId, afterSeq }) => {
             const session = get(streamId);
             // Retain the unacknowledged read, including an in-flight pull, for this cursor.
             if (afterSeq === session.cursor) return session.batch;
@@ -66,8 +66,8 @@ export function createGenerationCommands({ json, request }) {
             session.cursor = afterSeq;
             return session.batch = pull(session);
         },
-        close_chat_completion_stream: ({ streamId }) => close(streamId),
+        close_generation_stream: ({ streamId }) => close(streamId),
         // Non-streaming backend requests finish synchronously, so none remain to cancel.
-        cancel_chat_completion_generation: () => undefined,
+        cancel_generation: () => undefined,
     };
 }

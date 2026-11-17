@@ -131,17 +131,17 @@ https://v2.tauri.app/develop/resources/#android
 
 ## 6. AI 生成后台执行与通知生命周期
 
-Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompletionService` 持有生成任务与后台执行租约；WebView 只负责消费流事件，并在 Android 16+ 可用时补充非关键的 token 进度。
+Android AI 生成使用任务级 `dataSync` Foreground Service。Rust 生成运行时（`GenerationRuntime`）持有各 API 族的生成任务与后台执行租约；WebView 只负责消费流事件，并在 Android 16+ 可用时补充非关键的 token 进度。
 
 执行契约：
 
-- 第一个 Chat Completion 任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
+- 第一个生成任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
 - 并发任务通过稳定 task id 计数，共享一个 FGS；
 - 最后一个任务成功、失败或取消后立即 `stopForeground()` + `stopSelfResult()`；
 - Service 使用 `START_NOT_STICKY`，不会在没有真实生成任务时被系统复活；
 - Android 15+ `dataSync` 超时时通过 `onTimeout()` 立即释放 FGS，但不把平台保护到期升级为生成失败；
 - 应用启动本身不再启动保活服务，避免无任务时消耗 Android 的后台 FGS 配额。
-- 原生插件不可用或 FGS 启停失败只记录警告；Chat Completion 仍按真实 provider 结果继续，不阻塞应用启动或生成。
+- 原生插件不可用或 FGS 启停失败只记录警告；生成仍按真实 provider 结果继续，不阻塞应用启动或生成。
 
 当前通知槽位：
 

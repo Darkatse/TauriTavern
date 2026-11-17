@@ -23,6 +23,7 @@ use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
 use tt_application::services::external_import_service::ImportSourceAccessService;
+use tt_application::services::generation_runtime::GenerationRuntime;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
@@ -107,6 +108,7 @@ pub(crate) struct AppServices {
     pub(crate) agent_run_history_service: Arc<AgentRunHistoryService>,
     pub(crate) agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
     pub(crate) agent_runtime_service: Arc<AgentRuntimeService>,
+    pub(crate) generation_runtime: Arc<GenerationRuntime>,
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
     pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,

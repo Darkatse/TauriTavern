@@ -10,10 +10,10 @@ use serde_json::Value;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionRepositoryGenerateResponse,
+    ChatCompletionSource, ChatCompletionStreamDelta,
 };
 
 mod aws_bedrock;
@@ -115,7 +115,7 @@ impl HttpChatCompletionRepository {
     }
 
     fn client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
-        self.client_for_profile(config, HttpClientProfile::ChatCompletion)
+        self.client_for_profile(config, HttpClientProfile::Generation)
     }
 
     fn metadata_client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
@@ -136,7 +136,7 @@ impl HttpChatCompletionRepository {
     }
 
     fn stream_client(&self, config: &ChatCompletionApiConfig) -> Result<Client, DomainError> {
-        self.client_for_profile(config, HttpClientProfile::ChatCompletionStream)
+        self.client_for_profile(config, HttpClientProfile::GenerationStream)
     }
 
     fn websocket_client(
@@ -326,8 +326,8 @@ impl HttpChatCompletionRepository {
     async fn stream_sse_response(
         provider_name: &str,
         response: reqwest::Response,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
         Self::stream_sse_response_with_hook(provider_name, response, sender, cancel, |_| Ok(()))
             .await
@@ -336,8 +336,8 @@ impl HttpChatCompletionRepository {
     async fn stream_sse_response_with_hook<F>(
         provider_name: &str,
         response: reqwest::Response,
-        sender: ChatCompletionStreamSender,
-        mut cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        mut cancel: GenerationCancelReceiver,
         mut hook: F,
     ) -> Result<(), DomainError>
     where
@@ -363,8 +363,8 @@ impl HttpChatCompletionRepository {
         provider_name: &str,
         model: String,
         response: reqwest::Response,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
         let mut logged = false;
         Self::stream_sse_response_with_hook(
@@ -731,8 +731,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
         let source_name = source.display_name();
         let source = provider_transport_source(source, endpoint_path)?;

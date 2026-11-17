@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use tokio::sync::{mpsc::UnboundedSender, watch};
 
 use tt_domain::errors::DomainError;
+
+use crate::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 pub use tt_domain::models::chat_completion_source::ChatCompletionSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,8 +39,6 @@ pub struct ChatCompletionApiConfig {
     pub aws_bedrock_custom_stream_path: Option<String>,
 }
 
-pub type ChatCompletionStreamSender = UnboundedSender<String>;
-pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
 pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
 
@@ -121,8 +120,8 @@ pub trait ChatCompletionRepository: Send + Sync {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError>;
 
     async fn generate_with_deltas(

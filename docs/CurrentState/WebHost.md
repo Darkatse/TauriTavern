@@ -87,8 +87,8 @@ const host = installWebHost({
 | `merge_character_card_data` | `/api/characters/merge-attributes`，随后读取更新后的 DTO |
 | `generate_chat_completion` | `/api/backends/chat-completions/generate`，非流式 JSON 响应 |
 | `get_chat_completions_status` | `/api/backends/chat-completions/status`，连接与模型列表 |
-| `start_chat_completion_stream`、`read_chat_completion_stream`、`close_chat_completion_stream` | 同一生成端点的 SSE 流，转为 `afterSeq` 会话 |
-| `cancel_chat_completion_generation` | 确认接收；非流式请求同步完成，没有可取消的请求 |
+| `start_chat_completion_stream`、`read_generation_stream`、`close_generation_stream` | 同一生成端点的 SSE 流，转为 `afterSeq` 会话 |
+| `cancel_generation` | 确认接收；非流式请求同步完成，没有可取消的请求 |
 | `chat_history_generation_started`、`chat_history_generation_finished` | 确认接收；Session 的聊天写入即记录，不建立原生历史仓库 |
 | `get_notification_permission_state` | `denied`：预览不拥有原生系统通知能力 |
 | `get_window_snapshot` | `null`：视口由浏览器管理 |

@@ -2,9 +2,8 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
-};
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
+use tt_ports::repositories::chat_completion_repository::ChatCompletionApiConfig;
 
 use super::HttpChatCompletionRepository;
 use super::response_body::read_upstream_json_body;
@@ -62,8 +61,8 @@ pub(super) async fn generate_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let endpoint_path = normalize_endpoint_path(endpoint_path);
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;

@@ -21,10 +21,9 @@ use serde_json::{Value, json};
 use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, extract_provider};
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
 use super::HttpChatCompletionRepository;
@@ -303,8 +302,8 @@ pub(super) async fn generate_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let stream_mode = stream_mode_from_endpoint(
         endpoint_path,
@@ -475,8 +474,8 @@ fn to_stream_endpoint(endpoint_path: &str) -> Result<String, DomainError> {
 
 async fn forward_eventstream_response(
     response: reqwest::Response,
-    sender: ChatCompletionStreamSender,
-    mut cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    mut cancel: GenerationCancelReceiver,
     mode: StreamMode,
 ) -> Result<(), DomainError> {
     let consume = consume_eventstream_response(response, &mode, |event| {

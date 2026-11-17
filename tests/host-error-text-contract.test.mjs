@@ -29,6 +29,7 @@ test('a host error has one text, status and cancellation, raw or through safeInv
     };
     for (const [raw, text, status] of [
         [{ NotFound: 'Chat missing' }, 'Not found: Chat missing', 404],
+        [{ Forbidden: 'Admin key required' }, 'Forbidden: Admin key required', 403],
         [{ TooManyRequests: 'Slow down' }, 'Too many requests: Slow down', 429],
         [{ Cancelled: 'Generation cancelled by user' }, 'Generation cancelled by user', 500],
         [{ Unsupported: 'Web Host does not support x' }, 'Web Host does not support x', 500],
@@ -45,5 +46,9 @@ test('a host error has one text, status and cancellation, raw or through safeInv
 
 test('display text drops every kind prefix, including the rate limit', () => {
     assert.equal(getCommandErrorMessage({ InternalServerError: 'Internal error: disk full' }), 'disk full');
+    assert.equal(
+        getCommandErrorMessage({ Forbidden: 'Permission denied: iOS policy disabled capability' }),
+        'iOS policy disabled capability',
+    );
     assert.ok(isGitHubRateLimitMessage(getCommandErrorMessage(new Error(`Too many requests: ${GITHUB_RATE_LIMIT_MESSAGE}`))));
 });

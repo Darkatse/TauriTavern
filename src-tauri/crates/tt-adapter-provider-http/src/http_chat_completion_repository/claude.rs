@@ -6,10 +6,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse,
+    ChatCompletionStreamDelta,
 };
 
 use super::HttpChatCompletionRepository;
@@ -96,8 +96,8 @@ pub(super) async fn generate_stream(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;

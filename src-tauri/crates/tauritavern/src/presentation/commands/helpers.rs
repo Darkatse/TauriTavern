@@ -8,7 +8,7 @@ pub fn ensure_ios_policy_allows(
     capability: &'static str,
 ) -> Result<(), CommandError> {
     if ios_policy.scope == tt_domain::ios_policy::IosPolicyScope::Ios && !allowed {
-        return Err(CommandError::Unauthorized(format!(
+        return Err(CommandError::Forbidden(format!(
             "iOS policy disabled capability: {capability}"
         )));
     }
@@ -63,4 +63,24 @@ pub fn log_user_visible_error(message: impl AsRef<str>) {
         target: crate::observability_targets::USER_VISIBLE_ERROR,
         "{message}",
     );
+}
+
+pub fn normalize_request_id(id: &str) -> Result<String, CommandError> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() || trimmed.len() > 128 {
+        return Err(CommandError::BadRequest(
+            "Invalid request id length".to_string(),
+        ));
+    }
+
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err(CommandError::BadRequest(
+            "Invalid request id characters".to_string(),
+        ));
+    }
+
+    Ok(trimmed.to_string())
 }

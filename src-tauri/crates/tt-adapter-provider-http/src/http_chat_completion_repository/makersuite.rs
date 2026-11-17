@@ -4,10 +4,9 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
 use super::HttpChatCompletionRepository;
@@ -150,8 +149,8 @@ pub(super) async fn generate_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response = send_stream_request(repository, config, endpoint_path, payload).await?;
 

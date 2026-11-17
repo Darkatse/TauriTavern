@@ -5,6 +5,7 @@ pub mod database;
 pub mod extension_tools;
 pub mod external_import;
 pub mod generation_background;
+pub mod generation_stream;
 pub mod host_resource;
 pub mod lan_discovery;
 pub mod lan_sync;

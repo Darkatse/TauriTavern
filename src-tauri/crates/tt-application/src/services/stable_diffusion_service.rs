@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::sync::{RwLock, watch};
 use url::Url;
 
 use crate::dto::stable_diffusion_dto::{SdRouteResponseDto, SdRouteResponseKindDto};
 use crate::errors::ApplicationError;
+use crate::services::request_cancellation::CancellationRegistry;
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::stable_diffusion_repository::{
@@ -86,7 +85,7 @@ impl StableDiffusionService {
             SdRouteCredentials::None
         };
 
-        let cancel = self.active_requests.register(request_id).await;
+        let request = self.active_requests.register(request_id)?;
         let result = self
             .repository
             .handle(
@@ -95,10 +94,10 @@ impl StableDiffusionService {
                     body,
                     credentials,
                 },
-                cancel,
+                request.receiver(),
             )
             .await;
-        self.active_requests.complete(request_id).await;
+        drop(request);
 
         let response = result.map_err(ApplicationError::from)?;
 
@@ -113,8 +112,8 @@ impl StableDiffusionService {
         })
     }
 
-    pub async fn cancel_request(&self, request_id: &str) -> bool {
-        self.active_requests.cancel(request_id).await
+    pub fn cancel_request(&self, request_id: &str) -> bool {
+        self.active_requests.cancel(request_id)
     }
 }
 
@@ -131,38 +130,5 @@ fn text_response(status: u16, message: impl Into<String>) -> SdRouteResponseDto 
         status,
         kind: SdRouteResponseKindDto::Text,
         body: Value::String(message.into()),
-    }
-}
-
-#[derive(Default)]
-struct CancellationRegistry {
-    active: RwLock<HashMap<String, watch::Sender<bool>>>,
-}
-
-impl CancellationRegistry {
-    async fn register(&self, request_id: &str) -> watch::Receiver<bool> {
-        let (sender, receiver) = watch::channel(false);
-        let mut active = self.active.write().await;
-
-        if let Some(previous_sender) = active.insert(request_id.to_string(), sender) {
-            let _ = previous_sender.send(true);
-        }
-
-        receiver
-    }
-
-    async fn cancel(&self, request_id: &str) -> bool {
-        let mut active = self.active.write().await;
-        let Some(sender) = active.remove(request_id) else {
-            return false;
-        };
-
-        let _ = sender.send(true);
-        true
-    }
-
-    async fn complete(&self, request_id: &str) {
-        let mut active = self.active.write().await;
-        active.remove(request_id);
     }
 }

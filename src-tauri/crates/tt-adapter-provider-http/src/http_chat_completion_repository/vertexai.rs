@@ -2,10 +2,9 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Map, Value, json};
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
 use super::HttpChatCompletionRepository;
@@ -127,8 +126,8 @@ pub(super) async fn generate_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     if is_anthropic_raw_predict_endpoint(endpoint_path) {
         return generate_claude_stream(repository, config, endpoint_path, payload, sender, cancel)
@@ -143,8 +142,8 @@ async fn generate_gemini_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response = send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
 
@@ -188,8 +187,8 @@ async fn generate_claude_stream(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let (model, response) =
         send_claude_stream_request(repository, config, endpoint_path, payload).await?;
