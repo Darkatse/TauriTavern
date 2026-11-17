@@ -79,6 +79,14 @@ function selectAvailableMainApi(settings) {
     }
 }
 
+/**
+ * @param {unknown} api
+ * @returns {boolean}
+ */
+export function isMainApiAvailable(api) {
+    return typeof api === 'string' && getAvailableMainApis().has(api.trim());
+}
+
 export function syncMainApiOptionParking() {
     const available = getAvailableMainApis();
     parkUnavailableOptions(available);

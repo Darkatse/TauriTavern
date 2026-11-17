@@ -10,9 +10,25 @@ use crate::presentation::commands::helpers::{
 use crate::presentation::commands::user_endpoint_access::ensure_user_endpoint_access;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::text_completion_dto::{
-    TextCompletionGenerateRequestDto, TextCompletionPropsRequestDto, TextCompletionStatusDto,
-    TextCompletionStatusRequestDto,
+    TextCompletionEncodeRequestDto, TextCompletionGenerateRequestDto,
+    TextCompletionOllamaDownloadRequestDto, TextCompletionPropsRequestDto, TextCompletionStatusDto,
+    TextCompletionStatusRequestDto, TextCompletionTabbyDownloadRequestDto, TextCompletionTokensDto,
 };
+
+async fn authorize_endpoint(
+    endpoint: &url::Url,
+    locale: &str,
+    window: &WebviewWindow,
+    app_state: &AppState,
+) -> Result<(), CommandError> {
+    ensure_user_endpoint_access(
+        Some(endpoint),
+        locale,
+        window,
+        &app_state.services.user_endpoint_access_service,
+    )
+    .await
+}
 
 #[tauri::command]
 pub async fn get_text_completions_status(
@@ -25,13 +41,7 @@ pub async fn get_text_completions_status(
 
     let service = &app_state.services.text_completion_service;
     let server = service.prepare_status(dto)?;
-    ensure_user_endpoint_access(
-        Some(server.endpoint()),
-        &locale,
-        &window,
-        &app_state.services.user_endpoint_access_service,
-    )
-    .await?;
+    authorize_endpoint(server.endpoint(), &locale, &window, &app_state).await?;
 
     service
         .get_status(server)
@@ -50,13 +60,7 @@ pub async fn get_text_completions_props(
 
     let service = &app_state.services.text_completion_service;
     let prepared = service.prepare_props(dto)?;
-    ensure_user_endpoint_access(
-        Some(prepared.endpoint()),
-        &locale,
-        &window,
-        &app_state.services.user_endpoint_access_service,
-    )
-    .await?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
 
     service
         .get_props(prepared)
@@ -81,13 +85,7 @@ pub async fn generate_text_completion(
         .register_request(&request_id)?;
     let service = &app_state.services.text_completion_service;
     let prepared = service.prepare_generation(dto)?;
-    ensure_user_endpoint_access(
-        Some(prepared.endpoint()),
-        &locale,
-        &window,
-        &app_state.services.user_endpoint_access_service,
-    )
-    .await?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
 
     service
         .generate_request(request, prepared)
@@ -108,16 +106,66 @@ pub async fn start_text_completion_stream(
 
     let service = &app_state.services.text_completion_service;
     let prepared = service.prepare_generation(dto)?;
-    ensure_user_endpoint_access(
-        Some(prepared.endpoint()),
-        &locale,
-        &window,
-        &app_state.services.user_endpoint_access_service,
-    )
-    .await?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
 
     service
         .start_stream(stream_id, prepared)
         .await
         .map_err(map_command_error("Failed to start text completion stream"))
+}
+
+#[tauri::command]
+pub async fn encode_text_completion_tokens(
+    dto: TextCompletionEncodeRequestDto,
+    locale: String,
+    window: WebviewWindow,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<TextCompletionTokensDto, CommandError> {
+    log_command("encode_text_completion_tokens");
+
+    let service = &app_state.services.text_completion_service;
+    let prepared = service.prepare_encode(dto)?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
+
+    service.encode(prepared).await.map_err(map_command_error(
+        "Failed to tokenize with the text completion server",
+    ))
+}
+
+#[tauri::command]
+pub async fn download_ollama_model(
+    dto: TextCompletionOllamaDownloadRequestDto,
+    locale: String,
+    window: WebviewWindow,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("download_ollama_model");
+
+    let service = &app_state.services.text_completion_service;
+    let prepared = service.prepare_ollama_download(dto)?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
+
+    service
+        .download(prepared)
+        .await
+        .map_err(map_command_error("Failed to download the Ollama model"))
+}
+
+#[tauri::command]
+pub async fn download_tabby_model(
+    dto: TextCompletionTabbyDownloadRequestDto,
+    locale: String,
+    window: WebviewWindow,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("download_tabby_model");
+
+    let service = &app_state.services.text_completion_service;
+    let prepared = service.prepare_tabby_download(dto)?;
+    authorize_endpoint(prepared.endpoint(), &locale, &window, &app_state).await?;
+
+    service
+        .download(prepared)
+        .await
+        .map_err(map_command_error("Failed to download the TabbyAPI model"))
 }

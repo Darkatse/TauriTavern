@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -16,8 +16,9 @@ use tt_ports::repositories::text_completion_repository::{
 };
 
 use crate::dto::text_completion_dto::{
-    TextCompletionGenerateRequestDto, TextCompletionPropsRequestDto, TextCompletionStatusDto,
-    TextCompletionStatusRequestDto,
+    TextCompletionEncodeRequestDto, TextCompletionGenerateRequestDto,
+    TextCompletionOllamaDownloadRequestDto, TextCompletionPropsRequestDto, TextCompletionStatusDto,
+    TextCompletionStatusRequestDto, TextCompletionTabbyDownloadRequestDto, TextCompletionTokensDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::{
@@ -71,6 +72,30 @@ impl PreparedTextCompletionGeneration {
     }
 }
 
+pub struct PreparedTextCompletionEncode {
+    server: TextCompletionServer,
+    path: &'static str,
+    body: Value,
+}
+
+impl PreparedTextCompletionEncode {
+    pub fn endpoint(&self) -> &Url {
+        self.server.endpoint()
+    }
+}
+
+pub struct PreparedTextCompletionDownload {
+    server: TextCompletionServer,
+    path: &'static str,
+    body: Value,
+}
+
+impl PreparedTextCompletionDownload {
+    pub fn endpoint(&self) -> &Url {
+        self.server.endpoint()
+    }
+}
+
 pub struct TextCompletionService {
     repository: Arc<dyn TextCompletionRepository>,
     secret_repository: Arc<dyn SecretRepository>,
@@ -97,7 +122,7 @@ impl TextCompletionService {
         &self,
         dto: TextCompletionStatusRequestDto,
     ) -> Result<TextCompletionServer, ApplicationError> {
-        self.resolve_server(&dto.api_type, &dto.api_server)
+        self.resolve_server(parse_type(&dto.api_type)?, &dto.api_server)
     }
 
     pub fn prepare_props(
@@ -105,7 +130,7 @@ impl TextCompletionService {
         dto: TextCompletionPropsRequestDto,
     ) -> Result<PreparedTextCompletionProps, ApplicationError> {
         Ok(PreparedTextCompletionProps {
-            server: self.resolve_server(&dto.api_type, &dto.api_server)?,
+            server: self.resolve_server(parse_type(&dto.api_type)?, &dto.api_server)?,
             model: dto.model,
         })
     }
@@ -114,15 +139,9 @@ impl TextCompletionService {
         &self,
         dto: TextCompletionGenerateRequestDto,
     ) -> Result<PreparedTextCompletionGeneration, ApplicationError> {
-        let field = |key: &str| match dto.payload.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::String(value)) => Ok(Some(value.as_str())),
-            Some(_) => Err(ApplicationError::ValidationError(format!(
-                "Text completion request field must be a string: {key}"
-            ))),
-        };
+        let field = |key| string_field(&dto.payload, key);
         let server = self.resolve_server(
-            field("api_type")?.unwrap_or_default(),
+            parse_type(field("api_type")?.unwrap_or_default())?,
             field("api_server")?.unwrap_or_default(),
         )?;
         let secret_id = requested_secret_id(field("secret_id")?).map(str::to_owned);
@@ -133,6 +152,49 @@ impl TextCompletionService {
             secret_id,
             notify_completion,
             body,
+        })
+    }
+
+    pub fn prepare_encode(
+        &self,
+        dto: TextCompletionEncodeRequestDto,
+    ) -> Result<PreparedTextCompletionEncode, ApplicationError> {
+        let server = self.resolve_server(parse_type(&dto.api_type)?, &dto.api_server)?;
+        let model = dto
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty());
+        let (path, body) =
+            backend::encode_request(server.api_type, &dto.text, model).ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "{} does not tokenize text",
+                    server.api_type.display_name()
+                ))
+            })?;
+        Ok(PreparedTextCompletionEncode { server, path, body })
+    }
+
+    pub fn prepare_ollama_download(
+        &self,
+        dto: TextCompletionOllamaDownloadRequestDto,
+    ) -> Result<PreparedTextCompletionDownload, ApplicationError> {
+        Ok(PreparedTextCompletionDownload {
+            server: self.resolve_server(TextCompletionType::Ollama, &dto.api_server)?,
+            path: "/api/pull",
+            body: json!({ "model": dto.name.trim(), "stream": false }),
+        })
+    }
+
+    pub fn prepare_tabby_download(
+        &self,
+        dto: TextCompletionTabbyDownloadRequestDto,
+    ) -> Result<PreparedTextCompletionDownload, ApplicationError> {
+        let api_server = string_field(&dto.payload, "api_server")?.unwrap_or_default();
+        Ok(PreparedTextCompletionDownload {
+            server: self.resolve_server(TextCompletionType::Tabby, api_server)?,
+            path: "/v1/download",
+            body: Value::Object(backend::without_host_fields(dto.payload)),
         })
     }
 
@@ -230,6 +292,41 @@ impl TextCompletionService {
         Ok(props)
     }
 
+    pub async fn encode(
+        &self,
+        prepared: PreparedTextCompletionEncode,
+    ) -> Result<TextCompletionTokensDto, ApplicationError> {
+        let endpoint = self.endpoint_with_auth(prepared.server, None).await?;
+        let response = self
+            .repository
+            .post(&endpoint, prepared.path, &prepared.body)
+            .await?;
+        backend::encoded_tokens(endpoint.api_type, response)
+    }
+
+    pub async fn download(
+        &self,
+        prepared: PreparedTextCompletionDownload,
+    ) -> Result<(), ApplicationError> {
+        let endpoint = self.endpoint_with_auth(prepared.server, None).await?;
+        if endpoint.api_type == TextCompletionType::Tabby {
+            let permission = self
+                .repository
+                .get(&endpoint, "/v1/auth/permission")
+                .await?;
+            if permission.get("permission").and_then(Value::as_str) != Some("admin") {
+                return Err(ApplicationError::PermissionDenied(
+                    "TabbyAPI downloads models only with an admin key".to_string(),
+                ));
+            }
+        }
+
+        self.repository
+            .download(&endpoint, prepared.path, &prepared.body)
+            .await?;
+        Ok(())
+    }
+
     pub async fn generate_request(
         &self,
         request: RegisteredRequest<'_>,
@@ -325,18 +422,14 @@ impl TextCompletionService {
         })
     }
 
-    /// Every route takes the server URL with or without its `/v1` suffix.
+    /// Every request resolves its server here before consent and any network request, so the iOS
+    /// policy is checked here. The URL may end in `/v1`.
     fn resolve_server(
         &self,
-        api_type: &str,
+        api_type: TextCompletionType,
         api_server: &str,
     ) -> Result<TextCompletionServer, ApplicationError> {
         self.ensure_text_completions_allowed()?;
-        let api_type = TextCompletionType::parse(api_type).ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "Unsupported text completion type: {api_type}"
-            ))
-        })?;
         if api_server.trim().is_empty() {
             return Err(ApplicationError::ValidationError(format!(
                 "{} server URL is missing",
@@ -363,6 +456,25 @@ impl TextCompletionService {
             ));
         }
         Ok(())
+    }
+}
+
+fn parse_type(api_type: &str) -> Result<TextCompletionType, ApplicationError> {
+    TextCompletionType::parse(api_type).ok_or_else(|| {
+        ApplicationError::ValidationError(format!("Unsupported text completion type: {api_type}"))
+    })
+}
+
+fn string_field<'a>(
+    payload: &'a Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a str>, ApplicationError> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.as_str())),
+        Some(_) => Err(ApplicationError::ValidationError(format!(
+            "Text completion request field must be a string: {key}"
+        ))),
     }
 }
 

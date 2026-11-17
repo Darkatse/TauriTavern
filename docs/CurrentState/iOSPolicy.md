@@ -207,7 +207,7 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - 实现：`src/scripts/extensions/tauritavern-version/index.js`
 - `llm.text_completions.enabled`
   - 主 API 选择器去掉文本补全；settings 里 `main_api === "textgenerationwebui"` 时，加载 settings 时切回 chat completion 并提示
-  - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`（主 API 的可用集合只在这里决定）
+  - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）
 

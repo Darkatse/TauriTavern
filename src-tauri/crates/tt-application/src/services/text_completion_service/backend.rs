@@ -1,7 +1,7 @@
-//! What differs between text completion backends: paths, authentication, request bodies and the
-//! stream format. Parameter names and stream parsing belong to the page.
+//! What differs between text completion backends. Parameter names and stream parsing belong to the
+//! page.
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::text_completion_repository::{
@@ -9,6 +9,7 @@ use tt_ports::repositories::text_completion_repository::{
 };
 
 use super::ollama;
+use crate::dto::text_completion_dto::TextCompletionTokensDto;
 use crate::errors::ApplicationError;
 
 /// Request fields the page adds for TauriTavern; backends never receive them.
@@ -161,14 +162,18 @@ pub(super) fn auth_headers(api_type: TextCompletionType, api_key: &str) -> Vec<(
     }
 }
 
-pub(super) fn generate_body(
-    api_type: TextCompletionType,
-    mut payload: Map<String, Value>,
-) -> Result<Value, ApplicationError> {
+pub(super) fn without_host_fields(mut payload: Map<String, Value>) -> Map<String, Value> {
     for field in HOST_FIELDS {
         payload.remove(*field);
     }
+    payload
+}
 
+pub(super) fn generate_body(
+    api_type: TextCompletionType,
+    payload: Map<String, Value>,
+) -> Result<Value, ApplicationError> {
+    let mut payload = without_host_fields(payload);
     match api_type {
         TextCompletionType::Generic => {
             payload.retain(|key, _| OPENAI_KEYS.contains(&key.as_str()));
@@ -213,9 +218,129 @@ pub(super) fn models(
     }
 }
 
+pub(super) fn encode_request(
+    api_type: TextCompletionType,
+    text: &str,
+    model: Option<&str>,
+) -> Option<(&'static str, Value)> {
+    let with_model = |mut body: Value| {
+        if let Some(model) = model {
+            body["model"] = json!(model);
+        }
+        body
+    };
+    match api_type {
+        TextCompletionType::Tabby => Some((
+            "/v1/token/encode",
+            json!({ "text": text, "add_bos_token": false, "encode_special_tokens": false }),
+        )),
+        TextCompletionType::KoboldCpp => Some((
+            "/api/extra/tokencount",
+            json!({ "prompt": text, "special": false }),
+        )),
+        TextCompletionType::LlamaCpp => Some(("/tokenize", with_model(json!({ "content": text })))),
+        TextCompletionType::Vllm => Some(("/tokenize", with_model(json!({ "prompt": text })))),
+        TextCompletionType::Aphrodite => {
+            Some(("/v1/tokenize", with_model(json!({ "prompt": text }))))
+        }
+        TextCompletionType::Ooba => Some(("/v1/internal/encode", json!({ "text": text }))),
+        TextCompletionType::Ollama
+        | TextCompletionType::HuggingFace
+        | TextCompletionType::Generic => None,
+    }
+}
+
+/// Servers name the count and the ids differently; the first field present wins.
+pub(super) fn encoded_tokens(
+    api_type: TextCompletionType,
+    response: Value,
+) -> Result<TextCompletionTokensDto, ApplicationError> {
+    let Value::Object(mut response) = response else {
+        return Err(ApplicationError::ValidationError(format!(
+            "{} returned no token count",
+            api_type.display_name()
+        )));
+    };
+    let mut take_field = |key: &str| response.remove(key).filter(|value| !value.is_null());
+    let count = match ["length", "count", "value"]
+        .into_iter()
+        .find_map(&mut take_field)
+    {
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|count| usize::try_from(count).ok())
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "{} returned invalid token count",
+                        api_type.display_name()
+                    ))
+                })?,
+        ),
+        None => None,
+    };
+    let tokens = take_field("tokens");
+    let counts_tokens = tokens.is_some();
+    let ids = match tokens.or_else(|| take_field("ids")) {
+        Some(ids) => serde_json::from_value::<Vec<u32>>(ids).map_err(|_| {
+            ApplicationError::ValidationError(format!(
+                "{} returned invalid token ids",
+                api_type.display_name()
+            ))
+        })?,
+        None => Vec::new(),
+    };
+    let count = match count {
+        Some(count) => count,
+        None if counts_tokens => ids.len(),
+        None => {
+            return Err(ApplicationError::ValidationError(format!(
+                "{} returned no token count",
+                api_type.display_name()
+            )));
+        }
+    };
+    Ok(TextCompletionTokensDto { count, ids })
+}
+
 pub(super) fn missing_model_list(api_type: TextCompletionType) -> ApplicationError {
     ApplicationError::ValidationError(format!(
         "{} returned no model list",
         api_type.display_name()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoded_tokens_reads_each_servers_response() {
+        let tokens = |response: Value| {
+            encoded_tokens(TextCompletionType::LlamaCpp, response)
+                .map(|tokens| (tokens.count, tokens.ids))
+        };
+
+        assert_eq!(
+            tokens(json!({ "tokens": [1, 2, 3], "length": 3 })).unwrap(),
+            (3, vec![1, 2, 3])
+        );
+        assert_eq!(
+            tokens(json!({ "count": 2, "max_model_len": 8192, "tokens": [7, 8] })).unwrap(),
+            (2, vec![7, 8])
+        );
+        assert_eq!(
+            tokens(json!({ "value": 2, "ids": [4, 5] })).unwrap(),
+            (2, vec![4, 5])
+        );
+        assert_eq!(tokens(json!({ "tokens": [9] })).unwrap(), (1, vec![9]));
+        assert_eq!(
+            tokens(json!({ "value": 2, "ids": null })).unwrap(),
+            (2, Vec::new())
+        );
+
+        assert!(tokens(json!({ "count": -1, "tokens": [1, 2] })).is_err());
+        assert!(tokens(json!({ "ids": [1] })).is_err());
+        assert!(tokens(json!({ "tokens": [{ "id": 1, "piece": "a" }] })).is_err());
+    }
 }

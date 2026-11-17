@@ -33,6 +33,8 @@ test('compat parking keeps required bounds and third-party anchors reachable', (
     expect(document.getElementById('openai_api-presets')).not.toBeNull();
     expect(document.getElementById('textgenerationwebui_api-presets')).not.toBeNull();
     expect(document.getElementById('completion_prompt_manager')).not.toBeNull();
+    expect(document.getElementById('tokenizer')).not.toBeNull();
+    expect(document.getElementById('instruct_presets')).not.toBeNull();
 
     manager.setVisible('panel:left-nav-panel', true);
     manager.reconcile();
@@ -55,6 +57,8 @@ test('aggressive parking keeps required bounds but drops the third-party anchors
     expect(document.getElementById('temp_textgenerationwebui')).not.toBeNull();
     expect(document.getElementById('openai_api-presets')).toBeNull();
     expect(document.getElementById('textgenerationwebui_api-presets')).toBeNull();
+    expect(document.getElementById('tokenizer')).not.toBeNull();
+    expect(document.getElementById('instruct_presets')).not.toBeNull();
 });
 
 test('API connections gates keep the custom form for a saved custom source variant', () => {

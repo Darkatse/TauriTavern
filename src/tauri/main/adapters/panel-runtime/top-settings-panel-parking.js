@@ -312,7 +312,7 @@ export function installTopSettingsPanelParking({ manager }) {
             pinnedSelectors: leftNavPinnedSelectors,
             afterHydrate: () => syncLeftNavMainApiUi(),
         }),
-        registerDrawerParking(manager, { panelId: 'AdvancedFormatting', parkedSelector: '.flex-container.spaceEvenly' }),
+        // #AdvancedFormatting stays connected: code outside the drawer reads and writes its controls.
         registerDrawerParking(manager, {
             panelId: 'WorldInfo',
             // compat parks only the entry list, which holds nearly all World Info DOM. The lorebook

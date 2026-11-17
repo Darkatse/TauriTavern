@@ -1,3 +1,4 @@
+import { isMainApiAvailable } from '../../tauri/main/adapters/st/main-api-selector-option-parking.js';
 import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
@@ -281,6 +282,18 @@ export async function getWebLlmContextSize() {
     return model?.context_size;
 }
 
+function getApiEndpointKey(apiMap) {
+    // Some providers do not need a model, like koboldcpp, so support is decided by endpoint key.
+    switch (apiMap?.selected) {
+        case 'openai':
+            return apiMap.source;
+        case 'textgenerationwebui':
+            return apiMap.type;
+        default:
+            return null;
+    }
+}
+
 /**
  * It uses the profiles to send a generate request to the API.
  */
@@ -295,9 +308,14 @@ export class ConnectionManagerRequestService {
     };
 
     static getAllowedTypes() {
-        return {
-            openai: t`Chat Completion`,
-        };
+        const types = {};
+        if (isMainApiAvailable('openai')) {
+            types.openai = t`Chat Completion`;
+        }
+        if (isMainApiAvailable('textgenerationwebui')) {
+            types.textgenerationwebui = t`Text Completion`;
+        }
+        return types;
     }
 
     /**
@@ -309,13 +327,13 @@ export class ConnectionManagerRequestService {
      * @param {AbortSignal?} [custom.signal]
      * @param {boolean?} [custom.extractData=true]
      * @param {boolean?} [custom.includePreset=true]
-     * @param {boolean?} [custom.includeInstruct=true] Ignored; kept for upstream compatibility.
-     * @param {Partial<InstructSettings>?} [custom.instructSettings] Ignored; kept for upstream compatibility.
+     * @param {boolean?} [custom.includeInstruct=true]
+     * @param {Partial<InstructSettings>?} [custom.instructSettings] Override instruct settings
      * @param {Record<string, any>} [overridePayload] - Override payload for the request
      * @returns {Promise<import('../custom-request.js').ExtractedData | (() => AsyncGenerator<import('../custom-request.js').StreamResponse>)>} If not streaming, returns extracted data; if streaming, returns a function that creates an AsyncGenerator
      */
     static async sendRequest(profileId, prompt, maxTokens, custom = this.defaultSendRequestParams, overridePayload = {}) {
-        const { stream, signal, extractData, includePreset } = { ...this.defaultSendRequestParams, ...custom };
+        const { stream, signal, extractData, includePreset, includeInstruct, instructSettings } = { ...this.defaultSendRequestParams, ...custom };
 
         const context = SillyTavern.getContext();
         if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
@@ -326,46 +344,82 @@ export class ConnectionManagerRequestService {
         const selectedApiMap = this.validateProfile(profile);
 
         try {
-            const proxyPreset = proxies.find((p) => p.name === profile.proxy);
-            const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
-            return await context.ChatCompletionService.processRequest({
-                stream,
-                messages,
-                max_tokens: maxTokens,
-                model: profile.model,
-                chat_completion_source: selectedApiMap.source,
-                custom_api_format: profile['custom-api-format'],
-                opencode_api_format: profile['custom-api-format'],
-                opencode_endpoint: profile['api-url'],
-                secret_id: profile['secret-id'],
-                custom_url: profile['api-url'],
-                vertexai_region: profile['api-url'],
-                zai_endpoint: profile['api-url'],
-                siliconflow_endpoint: profile['api-url'],
-                minimax_endpoint: profile['api-url'],
-                moonshot_endpoint: profile['api-url'],
-                pollinations_endpoint: profile['api-url'],
-                reverse_proxy: proxyPreset?.url,
-                proxy_password: proxyPreset?.password,
-                custom_prompt_post_processing: profile['prompt-post-processing'],
-                ...overridePayload,
-            }, {
-                presetName: includePreset ? profile.preset : undefined,
-            }, extractData, signal);
+            switch (selectedApiMap.selected) {
+                case 'openai': {
+                    const proxyPreset = proxies.find((p) => p.name === profile.proxy);
+
+                    const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
+                    return await context.ChatCompletionService.processRequest({
+                        stream,
+                        messages,
+                        max_tokens: maxTokens,
+                        model: profile.model,
+                        chat_completion_source: selectedApiMap.source,
+                        custom_api_format: profile['custom-api-format'],
+                        opencode_api_format: profile['custom-api-format'],
+                        opencode_endpoint: profile['api-url'],
+                        secret_id: profile['secret-id'],
+                        custom_url: profile['api-url'],
+                        vertexai_region: profile['api-url'],
+                        zai_endpoint: profile['api-url'],
+                        siliconflow_endpoint: profile['api-url'],
+                        minimax_endpoint: profile['api-url'],
+                        moonshot_endpoint: profile['api-url'],
+                        pollinations_endpoint: profile['api-url'],
+                        reverse_proxy: proxyPreset?.url,
+                        proxy_password: proxyPreset?.password,
+                        custom_prompt_post_processing: profile['prompt-post-processing'],
+                        ...overridePayload,
+                    }, {
+                        presetName: includePreset ? profile.preset : undefined,
+                    }, extractData, signal);
+                }
+                case 'textgenerationwebui': {
+                    return await context.TextCompletionService.processRequest({
+                        stream,
+                        prompt,
+                        max_tokens: maxTokens,
+                        model: profile.model,
+                        api_type: selectedApiMap.type,
+                        api_server: profile['api-url'],
+                        secret_id: profile['secret-id'],
+                        ...overridePayload,
+                    }, {
+                        instructName: includeInstruct ? profile.instruct : undefined,
+                        presetName: includePreset ? profile.preset : undefined,
+                        instructSettings: includeInstruct ? instructSettings : undefined,
+                    }, extractData, signal);
+                }
+                default: {
+                    throw new Error(`Unknown API type ${selectedApiMap.selected}`);
+                }
+            }
         } catch (error) {
             throw new Error('API request failed', { cause: error });
         }
     }
 
     /**
-    * Returns the prompt unchanged after validating the connection profile.
+    * If using text completion, return a formatted prompt string given an array of messages, a given profile ID, and optional instruct settings.
+    * If using chat completion, simply return the given prompt as-is.
     * @param {ChatCompletionMessage[]} prompt An array of prompt messages.
     * @param {string} profileId ID of a given connection profile (from which to infer a completion preset).
-    * @param {InstructSettings} [_instructSettings] Ignored; kept for upstream compatibility.
+    * @param {InstructSettings} instructSettings optional instruct settings
     */
-    static constructPrompt(prompt, profileId, _instructSettings = null) {
-        this.validateProfile(this.getProfile(profileId));
-        return prompt;
+    static constructPrompt(prompt, profileId, instructSettings = null) {
+        const context = SillyTavern.getContext();
+        const profile = this.getProfile(profileId);
+        const selectedApiMap = this.validateProfile(profile);
+        const instructName = profile.instruct;
+
+        switch (selectedApiMap.selected) {
+            case 'openai':
+                return prompt;
+            case 'textgenerationwebui':
+                return context.TextCompletionService.constructPrompt(prompt, instructName, instructSettings);
+            default:
+                throw new Error(`Unknown API type ${selectedApiMap.selected}`);
+        }
     }
 
     /**
@@ -427,11 +481,11 @@ export class ConnectionManagerRequestService {
         }
 
         const apiMap = CONNECT_API_MAP[profile.api];
-        if (!Object.hasOwn(this.getAllowedTypes(), apiMap.selected)) {
+        if (!apiMap || !Object.hasOwn(this.getAllowedTypes(), apiMap.selected)) {
             return false;
         }
 
-        return !!apiMap.source;
+        return Boolean(getApiEndpointKey(apiMap));
     }
 
     /**
@@ -452,11 +506,12 @@ export class ConnectionManagerRequestService {
         if (!selectedApiMap) {
             throw new Error(`Unknown API type ${profile.api}`);
         }
-        if (!Object.hasOwn(this.getAllowedTypes(), selectedApiMap.selected)) {
-            throw new Error(`API type ${selectedApiMap.selected} is not supported. Supported types: ${Object.values(this.getAllowedTypes()).join(', ')}`);
+        const allowedTypes = this.getAllowedTypes();
+        if (!Object.hasOwn(allowedTypes, selectedApiMap.selected)) {
+            throw new Error(`API type ${selectedApiMap.selected} is not supported. Supported types: ${Object.values(allowedTypes).join(', ')}`);
         }
-        if (!selectedApiMap.source) {
-            throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
+        if (!getApiEndpointKey(selectedApiMap)) {
+            throw new Error(`API type ${selectedApiMap.selected} does not support ${profile.api}`);
         }
 
         return selectedApiMap;

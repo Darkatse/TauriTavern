@@ -35,8 +35,17 @@ pub trait TextCompletionRepository: Send + Sync {
         path: &str,
     ) -> Result<Value, DomainError>;
 
-    /// Sends a short control request, such as stopping a generation.
+    /// Sends a short request.
     async fn post(
+        &self,
+        endpoint: &TextCompletionEndpoint,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, DomainError>;
+
+    /// Asks the server to download a model. It answers only when the download ends, so the request
+    /// has no time limit.
+    async fn download(
         &self,
         endpoint: &TextCompletionEndpoint,
         path: &str,

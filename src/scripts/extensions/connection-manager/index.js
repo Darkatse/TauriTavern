@@ -963,6 +963,11 @@ async function applyConnectionProfile(profile) {
                         continue;
                     }
 
+                    if (command === 'api') {
+                        await requireManagedCommand('api', argument);
+                        continue;
+                    }
+
                     try {
                         const commandArgs = allowEmpty ? { force: 'true' } : {};
                         if (command === 'api-url') {

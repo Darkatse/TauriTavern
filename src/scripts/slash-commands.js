@@ -1,4 +1,5 @@
 import { Fuse, DOMPurify } from '../lib.js';
+import { isMainApiAvailable } from '../tauri/main/adapters/st/main-api-selector-option-parking.js';
 import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight, resolveAvatarData } from './utils.js';
 
 import {
@@ -372,6 +373,10 @@ export function initDefaultSlashCommands() {
             const apiConfig = CONNECT_API_MAP[text?.toString()?.toLowerCase() ?? ''];
             if (!apiConfig) {
                 toastr.error(t`Error: ${text} is not a valid API`);
+                return '';
+            }
+            if (!isMainApiAvailable(apiConfig.selected)) {
+                toastr.error(t`Error: ${text} is not available`);
                 return '';
             }
 

@@ -77,6 +77,66 @@ test('a saved key rejects on refresh failure and clears the input to avoid a dup
     expect($('#api_key_openai').val()).toBe('');
 });
 
+test('Connection Manager text completion uses quiet errors, profile api_type and host main-api availability', async () => {
+    const { CONNECT_API_MAP, initDefaultSlashCommands } = (await load('scripts/slash-commands.js'));
+    if (Object.keys(CONNECT_API_MAP).length === 0) {
+        initDefaultSlashCommands();
+    }
+    const { ConnectionManagerRequestService } = (await load('scripts/extensions/shared.js'));
+    const { TextCompletionService } = (await load('scripts/custom-request.js'));
+    const { extension_settings } = (await load('scripts/extensions.js'));
+    const previousFetch = window.fetch;
+    const previousProfiles = extension_settings.connectionManager.profiles;
+    const previousType = textgen.textgenerationwebui_settings.type;
+    const previousOllamaModel = textgen.textgenerationwebui_settings.ollama_model;
+    const previousIosPolicy = window.__TAURITAVERN__.iosPolicy;
+    let seenBody;
+
+    try {
+        extension_settings.connectionManager.profiles = [
+            { id: 'cm-tc', name: 'CM TC', mode: 'tc', api: 'koboldcpp', 'api-url': 'http://127.0.0.1:5001' },
+            { id: 'cm-cc', name: 'CM CC', mode: 'cc', api: 'openai' },
+        ];
+        window.fetch = async (url, options) => {
+            expect(url).toBe('/api/backends/text-completions/generate');
+            seenBody = JSON.parse(options.body);
+            return window.Response.json({ error: true, status: 401, response: 'Invalid API key' });
+        };
+
+        let thrown;
+        try {
+            await ConnectionManagerRequestService.sendRequest('cm-tc', [{ role: 'user', content: 'Hi' }], 16, { includePreset: false });
+        } catch (error) {
+            thrown = error;
+        }
+        expect(thrown?.cause?.message).toBe('Invalid API key');
+        expect(seenBody?.type).toBe('quiet');
+
+        textgen.textgenerationwebui_settings.type = textgen.textgen_types.OLLAMA;
+        textgen.textgenerationwebui_settings.ollama_model = '';
+        const payload = TextCompletionService.presetToGeneratePayload(
+            { genamt: 32, temp: 0.5 },
+            {},
+            { api_type: textgen.textgen_types.KOBOLDCPP, api_server: 'http://127.0.0.1:5001', prompt: 'Hi' },
+        );
+        expect(payload.api_type).toBe(textgen.textgen_types.KOBOLDCPP);
+
+        window.__TAURITAVERN__.iosPolicy = {
+            scope: 'ios',
+            profile: 'ios_external_beta',
+            capabilities: { llm: { text_completions: { enabled: false } } },
+            overridden_capabilities: [],
+        };
+        expect(ConnectionManagerRequestService.getSupportedProfiles().map(profile => profile.id)).toEqual(['cm-cc']);
+    } finally {
+        window.fetch = previousFetch;
+        extension_settings.connectionManager.profiles = previousProfiles;
+        textgen.textgenerationwebui_settings.type = previousType;
+        textgen.textgenerationwebui_settings.ollama_model = previousOllamaModel;
+        window.__TAURITAVERN__.iosPolicy = previousIosPolicy;
+    }
+});
+
 afterAll(() => {
     script.cancelPendingSettingsSave();
     close();

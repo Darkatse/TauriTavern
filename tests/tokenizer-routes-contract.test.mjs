@@ -201,3 +201,35 @@ test('Tokenizer operational failures preserve upstream empty results and expose 
         error: 'model unavailable',
     });
 });
+
+test('Remote text completion tokenization keeps the count and fails as upstream does', async () => {
+    let failure = null;
+    const router = createTokenizerRouter({
+        async safeInvoke(command) {
+            assert.equal(command, 'encode_text_completion_tokens');
+            if (failure) {
+                throw failure;
+            }
+            return { count: 2, ids: [15043, 3186] };
+        },
+    });
+    const encode = () => router.handle(tokenizerRequest(
+        '/api/tokenizers/remote/textgenerationwebui/encode',
+        { text: 'Hello world', api_type: 'koboldcpp', url: 'http://127.0.0.1:5001' },
+    ));
+
+    const tokens = await encode();
+    assert.equal(tokens.status, 200);
+    assert.deepEqual(await tokens.json(), { count: 2, ids: [15043, 3186], fallback: false });
+
+    failure = { Unauthorized: 'KoboldCpp endpoint rejected the API key' };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+        const failed = await encode();
+        assert.equal(failed.status, 200);
+        assert.deepEqual(await failed.json(), { error: true });
+    } finally {
+        console.warn = originalWarn;
+    }
+});

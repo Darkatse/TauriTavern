@@ -18,16 +18,17 @@
 - **有新计数时写入**：离开聊天、保存聊天、应用转入后台或退出（生命周期 flush `token-cache`）。
 - **桶的载入、写入与删除按发出的顺序进行**，桶是最后一次操作留下的样子。
 - **随聊天删除**：`CHAT_DELETED` / `GROUP_CHAT_DELETED` 删除聊天的桶；`CHAT_RENAMED` 删除旧名字的桶，聊天在新名字下重新计数。
-- **回退计数不进缓存**：分词器失败后的估算（字节估算或改用其他分词器），以及后端在模型分词器下载不了时用回退分词器算出的计数（计数响应的 `fallback: true`）。
+- **键由实际分词器与内容组成**：best match 与“当前 API”在查缓存之前解析，缓存与计数用同一个分词器；文本补全服务器的分词器另加它所服务的模型。
+- **只缓存分词器自己的计数**：计数响应写明 `fallback`，缓存只收下 `fallback: false` 的计数；分词器失败后改用的估算或其他分词器也不缓存。
 
 ### 兼容性边界
 
-- 缓存只影响性能：键是模型与内容的哈希，任何桶都不会给出错误的计数。
+- 缓存只影响性能，任何桶都不会给出错误的计数。
 - 上游导出的 `saveTokenCache()` 写入正在使用的桶。
 
 ### 关键代码位置
 
-- `src/scripts/tokenizers.js`：`TokenCacheState`、`readCachedCount` / `rememberCount`、`writeTokenCache`、`removeTokenCache`、`initTokenizers()` 的事件与生命周期挂载
+- `src/scripts/tokenizers.js`：`resolveTokenizer` 与 `getTextTokenCacheKey`、`TokenCacheState`、`readCachedCount` / `rememberCount`、`writeTokenCache`、`removeTokenCache`、`initTokenizers()` 的事件与生命周期挂载
 - 回退标记：`tt-ports` 的 `Estimated`，`tt-adapter-tokenization` 的 `estimate_with`
 
 ---

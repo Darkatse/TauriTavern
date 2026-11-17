@@ -6659,7 +6659,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         let imageUrls = extractImagesFromData(data, requestContext);
         const reasoningSignature = extractReasoningSignatureFromData(data, requestContext);
         const native = data?.choices?.[0]?.message?.native ?? null;
-        const promptCache = getPromptCacheUsage(data?.usage);
+        const promptCache = getPromptCacheUsage({ ...data?.timings, ...data?.usage });
         const hasToolCalls = canPerformToolCalls && ToolManager.hasToolCalls(data);
         const providerReplay = requestContext ? { ...requestContext, text: getMessage } : null;
         kobold_horde_model = title;

@@ -14,7 +14,7 @@ use tt_ports::repositories::text_completion_repository::{
     TextCompletionEndpoint, TextCompletionRepository, TextCompletionStreamFormat,
 };
 
-/// Records generations; metadata and control requests are not logged.
+/// Records generations only.
 pub struct LoggingTextCompletionRepository {
     inner: Arc<dyn TextCompletionRepository>,
     store: Arc<LlmApiLogStore>,
@@ -60,6 +60,15 @@ impl TextCompletionRepository for LoggingTextCompletionRepository {
         body: &Value,
     ) -> Result<Value, DomainError> {
         self.inner.post(endpoint, path, body).await
+    }
+
+    async fn download(
+        &self,
+        endpoint: &TextCompletionEndpoint,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, DomainError> {
+        self.inner.download(endpoint, path, body).await
     }
 
     async fn generate(

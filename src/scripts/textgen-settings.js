@@ -1272,7 +1272,7 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
         let logprobs = null;
         const swipes = [];
         const toolCalls = [];
-        const state = { reasoning: '' };
+        const state = { reasoning: '', usage: {} };
         while (true) {
             const { done, value } = await reader.read();
             if (done) return;
@@ -1294,6 +1294,7 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
                 text += newText;
                 logprobs = parseTextgenLogprobs(newText, data.choices?.[0]?.logprobs || data?.completion_probabilities);
                 state.reasoning += data?.choices?.[0]?.reasoning ?? data?.choices?.[0]?.thinking ?? '';
+                Object.assign(state.usage, data?.timings, data?.usage);
             }
 
             yield { text, swipes, logprobs, toolCalls, state };

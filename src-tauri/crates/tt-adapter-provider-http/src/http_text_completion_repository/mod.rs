@@ -101,6 +101,22 @@ impl TextCompletionRepository for HttpTextCompletionRepository {
         .await
     }
 
+    async fn download(
+        &self,
+        endpoint: &TextCompletionEndpoint,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, DomainError> {
+        self.send_json(
+            HttpClientProfile::GenerationStream,
+            endpoint,
+            Method::POST,
+            path,
+            Some(body),
+        )
+        .await
+    }
+
     async fn generate(
         &self,
         endpoint: &TextCompletionEndpoint,

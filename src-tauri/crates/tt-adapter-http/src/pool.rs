@@ -332,6 +332,8 @@ fn build_profile_client(
         HttpClientProfile::Generation => builder
             .connect_timeout(GENERATION_CONNECT_TIMEOUT)
             .timeout(GENERATION_NON_STREAM_REQUEST_TIMEOUT),
+        // No read limit: a stream may pause between tokens, and a text completion model download
+        // answers only when it ends.
         HttpClientProfile::GenerationStream => builder.connect_timeout(GENERATION_CONNECT_TIMEOUT),
         HttpClientProfile::ChatCompletionWebSocket => builder
             .http1_only()

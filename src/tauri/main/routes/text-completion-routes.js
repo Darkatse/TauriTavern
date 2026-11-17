@@ -57,6 +57,22 @@ export function registerTextCompletionRoutes(router, context, { jsonResponse }, 
         }));
     });
 
+    router.post('/api/backends/text-completions/ollama/download', async (/** @type {{ body: unknown }} */ { body }) => {
+        await context.safeInvoke('download_ollama_model', {
+            dto: body,
+            locale: getSillyTavernLocale(),
+        });
+        return jsonResponse({ ok: true });
+    });
+
+    router.post('/api/backends/text-completions/tabby/download', async (/** @type {{ body: unknown }} */ { body }) => {
+        await context.safeInvoke('download_tabby_model', {
+            dto: body,
+            locale: getSillyTavernLocale(),
+        });
+        return jsonResponse({ ok: true });
+    });
+
     router.post('/api/backends/text-completions/generate', (
         /** @type {{ body: unknown; init?: RequestInit }} */ { body, init },
     ) => {

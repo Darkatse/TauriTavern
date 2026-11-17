@@ -558,6 +558,37 @@ function currentRemoteTokenizerAPI() {
 }
 
 /**
+ * Best match and the current API's tokenizer depend on the main API and its connection, so a count
+ * resolves them once, before its cache lookup.
+ * @param {number} selection
+ * @returns {number}
+ */
+function resolveTokenizer(selection) {
+    switch (selection) {
+        case tokenizers.BEST_MATCH:
+            return getTokenizerBestMatch(main_api);
+        case tokenizers.API_CURRENT:
+            return currentRemoteTokenizerAPI();
+        default:
+            return selection;
+    }
+}
+
+/**
+ * A text completion server tokenizes with the model it serves.
+ * @param {number} tokenizerType Resolved tokenizer type.
+ * @param {string} str
+ * @param {number} padding
+ * @returns {string}
+ */
+function getTextTokenCacheKey(tokenizerType, str, padding) {
+    const modelHash = tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI
+        ? getStringHash(getTextGenModel() || online_status).toString()
+        : '';
+    return `${tokenizerType}-${getStringHash(str)}${modelHash}+${padding}`;
+}
+
+/**
  * A text's count, and whether a fallback made it in place of the tokenizer: a guesstimate or
  * another tokenizer after the tokenizer failed, or the backend's fallback tokenizer while the
  * model's own cannot be downloaded.
@@ -566,7 +597,7 @@ function currentRemoteTokenizerAPI() {
 
 /**
  * Calls the underlying tokenizer model to the token count for a string.
- * @param {number} type Tokenizer type.
+ * @param {number} type Tokenizer type, resolved.
  * @param {string} str String to tokenize.
  * @returns {TextTokenCount} Token count.
  */
@@ -574,8 +605,6 @@ function callTokenizer(type, str) {
     if (type === tokenizers.NONE) return { count: guesstimate(str), fallback: false };
 
     switch (type) {
-        case tokenizers.API_CURRENT:
-            return callTokenizer(currentRemoteTokenizerAPI(), str);
         case tokenizers.API_KOBOLD:
             return countTokensFromKoboldAPI(str);
         case tokenizers.API_TEXTGENERATIONWEBUI:
@@ -593,7 +622,7 @@ function callTokenizer(type, str) {
 
 /**
  * Calls the underlying tokenizer model to the token count for a string.
- * @param {number} type Tokenizer type.
+ * @param {number} type Tokenizer type, resolved.
  * @param {string} str String to tokenize.
  * @returns {Promise<TextTokenCount>} Token count.
  */
@@ -604,8 +633,6 @@ function callTokenizerAsync(type, str) {
         }
 
         switch (type) {
-            case tokenizers.API_CURRENT:
-                return callTokenizerAsync(currentRemoteTokenizerAPI(), str).then(resolve);
             case tokenizers.API_KOBOLD:
                 return countTokensFromKoboldAPI(str, resolve);
             case tokenizers.API_TEXTGENERATIONWEBUI:
@@ -634,7 +661,6 @@ export async function getTokenCountAsync(str, padding = undefined) {
     }
 
     let tokenizerType = power_user.tokenizer;
-    let modelHash = '';
 
     if (main_api === 'openai') {
         if (padding === power_user.token_padding) {
@@ -646,13 +672,7 @@ export async function getTokenCountAsync(str, padding = undefined) {
         }
     }
 
-    if (tokenizerType === tokenizers.BEST_MATCH) {
-        tokenizerType = getTokenizerBestMatch(main_api);
-    }
-
-    if (tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI) {
-        modelHash = getStringHash(getTextGenModel() || online_status).toString();
-    }
+    tokenizerType = resolveTokenizer(tokenizerType);
 
     if (padding === undefined) {
         padding = 0;
@@ -660,8 +680,7 @@ export async function getTokenCountAsync(str, padding = undefined) {
 
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
     await cacheState.loaded;
-    const hash = getStringHash(str);
-    const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
+    const cacheKey = getTextTokenCacheKey(tokenizerType, str, padding);
     const cachedCount = readCachedCount(cacheState, cacheKey);
     if (cachedCount !== undefined) {
         return cachedCount;
@@ -694,7 +713,6 @@ export function getTokenCount(str, padding = undefined) {
     }
 
     let tokenizerType = power_user.tokenizer;
-    let modelHash = '';
 
     if (main_api === 'openai') {
         if (padding === power_user.token_padding) {
@@ -706,21 +724,14 @@ export function getTokenCount(str, padding = undefined) {
         }
     }
 
-    if (tokenizerType === tokenizers.BEST_MATCH) {
-        tokenizerType = getTokenizerBestMatch(main_api);
-    }
-
-    if (tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI) {
-        modelHash = getStringHash(getTextGenModel() || online_status).toString();
-    }
+    tokenizerType = resolveTokenizer(tokenizerType);
 
     if (padding === undefined) {
         padding = 0;
     }
 
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-    const hash = getStringHash(str);
-    const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
+    const cacheKey = getTextTokenCacheKey(tokenizerType, str, padding);
     const cachedCount = readCachedCount(cacheState, cacheKey);
     if (cachedCount !== undefined) {
         return cachedCount;
