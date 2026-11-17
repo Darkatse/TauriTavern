@@ -1,6 +1,6 @@
 // @ts-check
 
-import { extractErrorText } from '../../kernel/host-error-response.js';
+import { extractErrorText } from '../../../../scripts/util/command-error-utils.js';
 import { createFileStagingService } from '../files/file-staging-service.js';
 
 /**

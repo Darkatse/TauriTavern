@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { textResponse, jsonResponse } from '../src/tauri/main/http-utils.js';
-import { resolveHostErrorResponse } from '../src/tauri/main/kernel/host-error-response.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerCharacterRoutes } from '../src/tauri/main/routes/character-routes.js';
 import { createCharacterService } from '../src/tauri/main/services/characters/character-service.js';

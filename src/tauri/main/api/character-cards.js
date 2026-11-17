@@ -1,5 +1,6 @@
 // @ts-check
 
+import { commandErrorStatus, extractErrorText } from '../../../scripts/util/command-error-utils.js';
 import { StagedFile } from '../services/files/staged-file.js';
 import { expectCharacter, stageUrlContent, takeUrlContent } from '../services/files/url-content.js';
 import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
@@ -76,8 +77,8 @@ function createCharacterCardsApi({
             invalidateCharacterCache();
             return result;
         } catch (error) {
-            if (error instanceof Error && error.message.startsWith('Conflict:')) {
-                throw new LorebookAdoptionConflictError(error.message);
+            if (commandErrorStatus(error) === 409) {
+                throw new LorebookAdoptionConflictError(extractErrorText(error));
             }
             throw error;
         }

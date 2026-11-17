@@ -16,7 +16,7 @@ import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compa
 import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
 import { installDialogPolyfillCoverage } from './compat/dialog/dialog-polyfill-coverage.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
-import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
+import { commandErrorResponse } from '../../scripts/util/command-error-utils.js';
 import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
@@ -317,8 +317,7 @@ export function bootstrapTauriMain() {
                 throw error;
             }
 
-            const message = extractErrorText(error);
-            const resolved = resolveHostErrorResponse(message);
+            const resolved = commandErrorResponse(error);
             const finalResponse = textResponse(resolved.body, resolved.status);
             finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
             const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
@@ -327,7 +326,7 @@ export function bootstrapTauriMain() {
                 method,
                 path: url.pathname,
                 durationMs,
-                message,
+                message: resolved.body,
                 error,
             });
             return finalResponse;

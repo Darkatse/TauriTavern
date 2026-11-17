@@ -1,5 +1,5 @@
 import { createTokenCountBroker } from '../brokers/token-count-broker.js';
-import { getErrorMessage } from './ai-error-presenter.js';
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
 
 const MAX_TOKEN_ID = 0xFFFF_FFFF;
 const LOCAL_TOKENIZER_MODELS = Object.freeze([
@@ -45,7 +45,7 @@ function registerCodecRoutes(router, context, jsonResponse, basePath, resolveMod
             return jsonResponse(await context.safeInvoke('count_text_tokens', { dto: { model, text } }));
         } catch (error) {
             console.warn(`Failed to count tokens with '${model}':`, error);
-            return jsonResponse({ error: getErrorMessage(error) }, 500);
+            return jsonResponse({ error: extractErrorText(error) }, 500);
         }
     });
 
@@ -61,7 +61,7 @@ function registerCodecRoutes(router, context, jsonResponse, basePath, resolveMod
         try {
             return jsonResponse(await context.safeInvoke('encode_tokens', { dto }));
         } catch (error) {
-            const message = getErrorMessage(error);
+            const message = extractErrorText(error);
             console.error(`Failed to encode tokens with '${model}':`, error);
             return jsonResponse({ ids: [], count: 0, chunks: [], error: message });
         }
@@ -80,7 +80,7 @@ function registerCodecRoutes(router, context, jsonResponse, basePath, resolveMod
         try {
             return jsonResponse(await context.safeInvoke('decode_tokens', { dto }));
         } catch (error) {
-            const message = getErrorMessage(error);
+            const message = extractErrorText(error);
             console.error(`Failed to decode tokens with '${model}':`, error);
             return jsonResponse({ text: '', chunks: [], error: message });
         }
@@ -111,7 +111,7 @@ export function registerTokenizerRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ token_count: await tokenCountBroker.count({ model, messages: body }) });
         } catch (error) {
             console.warn('OpenAI token count failed:', error);
-            return jsonResponse({ error: getErrorMessage(error) }, 500);
+            return jsonResponse({ error: extractErrorText(error) }, 500);
         }
     });
 
@@ -125,7 +125,7 @@ export function registerTokenizerRoutes(router, context, { jsonResponse }) {
             return jsonResponse(await context.safeInvoke('count_openai_tokens_batch', { dto }));
         } catch (error) {
             console.warn('OpenAI token count batch failed:', error);
-            return jsonResponse({ error: getErrorMessage(error) }, 500);
+            return jsonResponse({ error: extractErrorText(error) }, 500);
         }
     });
 
@@ -142,7 +142,7 @@ export function registerTokenizerRoutes(router, context, { jsonResponse }) {
             return jsonResponse(await context.safeInvoke('count_openai_token_prefixes', { dto }));
         } catch (error) {
             console.warn('OpenAI token prefix count failed:', error);
-            return jsonResponse({ error: getErrorMessage(error) }, 500);
+            return jsonResponse({ error: extractErrorText(error) }, 500);
         }
     });
 

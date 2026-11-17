@@ -1,6 +1,7 @@
 // @ts-check
 
 import { t } from '../../i18n.js';
+import { extractErrorText } from '../../util/command-error-utils.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { sanitizePortableAgentProfile } from '../../tauritavern/agent/agent-profile-portable.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from '../agent-skills/reminders.js';
@@ -376,7 +377,7 @@ async function previewAndPromptEmbeddedProfiles({ items, sourceLabel, storageKey
  */
 function reportEmbeddedProfileError(error) {
     console.error('Agent Profile embedded import failed', error);
-    const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+    const message = extractErrorText(error) || t`Unknown error`;
     getToastr().error(message, t`Agent Profile import failed`);
 }
 

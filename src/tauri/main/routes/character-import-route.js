@@ -1,5 +1,5 @@
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
-import { badRequestBody, isNotFoundError } from './character-route-utils.js';
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 
 /**
  * @param {any} character
@@ -33,7 +33,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             try {
                 preserveFileName = assertCharacterAvatarFileName(requestedPreservedName, 'preserved_name', { required: true });
             } catch (error) {
-                return jsonResponse(badRequestBody(error), 400);
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
 
             replacementName = preserveFileName.slice(0, -'.png'.length);
@@ -63,7 +63,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
                     });
                     replaced = true;
                 } catch (error) {
-                    if (!isNotFoundError(error)) {
+                    if (commandErrorStatus(error) !== 404) {
                         throw error;
                     }
                 }

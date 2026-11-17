@@ -1,8 +1,8 @@
 import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
-import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
+import { commandErrorResponse } from '../../../scripts/util/command-error-utils.js';
 
-function errorTextResponse(message, textResponse) {
-    const resolved = resolveHostErrorResponse(message);
+function errorTextResponse(error, textResponse) {
+    const resolved = commandErrorResponse(error);
     return textResponse(resolved.body, resolved.status, resolved.body);
 }
 
@@ -17,7 +17,7 @@ export function registerSearchRoutes(router, context, { textResponse }) {
                 headers: { 'Content-Type': 'text/html; charset=utf-8' },
             });
         } catch (error) {
-            return errorTextResponse(extractErrorText(error), textResponse);
+            return errorTextResponse(error, textResponse);
         }
     });
 }

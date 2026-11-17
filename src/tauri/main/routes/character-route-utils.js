@@ -1,27 +1,11 @@
-/** @param {unknown} error */
-export function badRequestBody(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { error: message.replace(/^Bad request:\s*/i, '') };
-}
-
-/** @param {unknown} error */
-export function isBadRequestError(error) {
-    const message = error instanceof Error ? error.message : String(error || '');
-    return /^Bad request:/i.test(message);
-}
-
-/** @param {unknown} error */
-export function isNotFoundError(error) {
-    const message = error instanceof Error ? error.message : String(error || '');
-    return /(?:^|\b)(?:not found:|entity not found:)/i.test(message);
-}
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 
 export async function resolveRouteCharacterId(context, options) {
     try {
         return { characterId: await context.resolveCharacterId(options) };
     } catch (error) {
-        if (isBadRequestError(error)) {
-            return { responseBody: badRequestBody(error) };
+        if (commandErrorStatus(error) === 400) {
+            return { responseBody: { error: getCommandErrorMessage(error) } };
         }
         throw error;
     }
@@ -31,8 +15,8 @@ export async function resolveExistingRouteCharacterId(context, options) {
     try {
         return { characterId: await context.resolveExistingCharacterId(options) };
     } catch (error) {
-        if (isBadRequestError(error)) {
-            return { responseBody: badRequestBody(error) };
+        if (commandErrorStatus(error) === 400) {
+            return { responseBody: { error: getCommandErrorMessage(error) } };
         }
         throw error;
     }

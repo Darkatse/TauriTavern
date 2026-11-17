@@ -1,9 +1,8 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
 import { CHARACTER_CREATE_WARNINGS } from '../services/characters/character-create-service.js';
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 import {
-    badRequestBody,
-    isBadRequestError,
     resolveExistingRouteCharacterId,
     resolveRouteCharacterId,
 } from './character-route-utils.js';
@@ -64,8 +63,8 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
         try {
             character = await context.getSingleCharacter(body);
         } catch (error) {
-            if (isBadRequestError(error)) {
-                return jsonResponse(badRequestBody(error), 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
             throw error;
         }
@@ -209,7 +208,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
         try {
             avatar = assertCharacterAvatarFileName(avatar, 'avatar_url', { required: true });
         } catch (error) {
-            return jsonResponse(badRequestBody(error), 400);
+            return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
         }
 
         const resolved = await resolveExistingRouteCharacterId(context, { avatar });
@@ -246,7 +245,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
                     avatars = avatars.map((avatar, index) =>
                         assertCharacterAvatarFileName(avatar, `avatars[${index}]`, { required: true }));
                 } catch (error) {
-                    return jsonResponse(badRequestBody(error), 400);
+                    return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
                 }
             }
 
@@ -267,7 +266,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
                 const fieldName = Object.prototype.hasOwnProperty.call(body, 'avatar') ? 'avatar' : 'avatar_url';
                 avatar = assertCharacterAvatarFileName(avatar, fieldName);
             } catch (error) {
-                return jsonResponse(badRequestBody(error), 400);
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
         }
 

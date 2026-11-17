@@ -1,4 +1,4 @@
-import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
+import { commandErrorResponse } from '../../../scripts/util/command-error-utils.js';
 
 export function registerUserRoutes(router, context, { jsonResponse }) {
     router.post('/api/users/backup', async ({ body }) => {
@@ -10,7 +10,7 @@ export function registerUserRoutes(router, context, { jsonResponse }) {
             const result = await context.safeInvoke('export_user_backup_archive', { handle });
             return jsonResponse({ ok: true, delivered: result.delivered, includes_secrets: result.includes_secrets });
         } catch (error) {
-            const resolved = resolveHostErrorResponse(extractErrorText(error));
+            const resolved = commandErrorResponse(error);
             return jsonResponse({ error: resolved.body }, resolved.status);
         }
     });

@@ -10,13 +10,12 @@ import { createSystemNotificationService } from '../services/notifications/syste
 import {
     asUpstreamFailureDetails,
     buildLegacyErrorPayload,
-    getErrorMessage,
     getUpstreamFailureDetails,
     getUserFacingErrorMessage,
     translateApiErrorLabel,
 } from './ai-error-presenter.js';
 import { registerCaptionRoutes } from './caption-routes.js';
-import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
+import { isCommandCancelled, stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
 function asObject(value) {
@@ -182,8 +181,7 @@ function isQuietRequest(payload) {
 }
 
 function isRequestCancelled(error) {
-    return isAbortError(error)
-        || /(?:generation|endpoint authorization) cancelled by user/i.test(getErrorMessage(error));
+    return isAbortError(error) || isCommandCancelled(error);
 }
 
 function getCompletionModel(payload) {

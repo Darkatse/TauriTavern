@@ -1,6 +1,7 @@
 // @ts-check
 
 import { t } from '../i18n.js';
+import { extractErrorText } from '../util/command-error-utils.js';
 
 /**
  * @typedef {object} ImportedCharacterAgentAssetScanOptions
@@ -112,7 +113,7 @@ function getToastr() {
  */
 function reportImportedCharacterAgentAssetError(error) {
     console.error('Failed to start embedded Agent asset import prompt for character', error);
-    const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+    const message = extractErrorText(error) || t`Unknown error`;
     getToastr().error(message, t`Agent embedded import failed`);
 }
 

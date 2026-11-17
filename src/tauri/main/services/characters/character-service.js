@@ -1,5 +1,6 @@
 // @ts-check
 
+import { commandErrorStatus } from '../../../../scripts/util/command-error-utils.js';
 import {
     assertCharacterAvatarFileName,
     characterAvatarFileNameFromStem,
@@ -213,12 +214,6 @@ export function createCharacterService({ safeInvoke }) {
             && Object.prototype.hasOwnProperty.call(body, fieldName));
     }
 
-    /** @param {unknown} error */
-    function isNotFoundError(error) {
-        const message = error instanceof Error ? error.message : String(error || '');
-        return /^\s*(not found:|entity not found:)/i.test(message);
-    }
-
     /** @param {any} character */
     function getCharacterId(character) {
         if (!character || typeof character !== 'object') {
@@ -351,7 +346,7 @@ export function createCharacterService({ safeInvoke }) {
         try {
             character = await safeInvoke('get_character', { name: characterId });
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return null;
             }
             throw error;

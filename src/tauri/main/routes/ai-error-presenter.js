@@ -1,4 +1,4 @@
-import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
+import { getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import {
     asUpstreamFailureDetails,
@@ -7,18 +7,6 @@ import {
 } from '../kernel/upstream-failure.js';
 
 export { asUpstreamFailureDetails };
-
-export function getErrorMessage(error) {
-    if (!error) {
-        return 'Unknown error';
-    }
-
-    if (typeof error === 'string') {
-        return error;
-    }
-
-    return error.message || error.toString?.() || 'Unknown error';
-}
 
 export function getUpstreamFailureDetails(error) {
     return findUpstreamFailureDetails(error);
@@ -31,7 +19,7 @@ export function translateApiErrorLabel() {
 export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat completion request failed') {
     const details = getUpstreamFailureDetails(error);
     if (!details) {
-        return stripCommandErrorPrefixes(getErrorMessage(error)) || fallbackMessage;
+        return getCommandErrorMessage(error) || fallbackMessage;
     }
 
     const lines = [upstreamFailureMessage(details, translateSillyTavern)];

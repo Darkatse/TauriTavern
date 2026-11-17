@@ -60,6 +60,8 @@ TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中�
 
 页面也不能替用户确认。让宿主数据或密钥离开本机或交给页面的信任决定，例如[用户端点与导入来源](CurrentState/UserEndpointAccess.md)的授权、[同步配对](CurrentState/Sync.md#lan-发现与信任)、开启密钥显示（`set_keys_exposure`）和启用 Request Proxy（`set_request_proxy`），只由 Rust 原生对话框作出。对话框的文案与对象由宿主组装，页面只提供 locale。用户取消时命令返回 `Cancelled`，这是正常结果，不按错误显示。
 
+宿主错误写成 `<种类>: <消息>`，例如 `Not found: …`，种类决定路由的 HTTP 状态；`Cancelled` 不写进文本。原始拒绝值与 `safeInvoke` 交出的 `Error`，都经 `scripts/util/command-error-utils.js` 读成同一段文本与状态，也由它判断取消；其他代码不自行拼接或解析这些文本。
+
 ## 3. 目录结构（前端集成相关）
 
 ```text

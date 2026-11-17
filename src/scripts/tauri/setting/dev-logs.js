@@ -1,5 +1,6 @@
 import { POPUP_TYPE } from '../../popup.js';
 import { translate } from '../../i18n.js';
+import { extractErrorText } from '../../util/command-error-utils.js';
 import { trimFrontendLogEntriesInPlace } from '../../../tauri/main/services/dev-logging/frontend-log-retention.js';
 import { writeClipboardText } from '../../../tauri-bridge.js';
 import { openFullscreenTextViewer } from './text-viewer-popup.js';
@@ -115,7 +116,7 @@ export async function openLlmApiLogsPanel() {
         } catch (error) {
             initialPreview = {
                 id: currentId,
-                error: String(error),
+                error: extractErrorText(error),
             };
         }
     }

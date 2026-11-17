@@ -242,7 +242,7 @@ for (const route of [
             },
             {
                 status: 500,
-                body: { error: route.failure, details: '{"InternalServerError":"Could not read integrity metadata"}' },
+                body: { error: route.failure, details: 'Internal server error: Could not read integrity metadata' },
                 finishError: { InternalServerError: 'Could not read integrity metadata' },
             },
         ]) {

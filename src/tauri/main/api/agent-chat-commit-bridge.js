@@ -1,5 +1,6 @@
 // @ts-check
 
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
 import { assertCurrentChat } from './agent-chat-identity.js';
 import {
     assertActiveAgentMessage,
@@ -233,7 +234,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         resolution = { messageId: String(messageId) };
     } catch (error) {
         resolution = {
-            error: String(error?.message ?? error),
+            error: extractErrorText(error),
         };
     }
     if (!resolution.error) {
@@ -445,7 +446,7 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
             dto: {
                 runId: state.runId,
                 updateId,
-                error: String(error?.message ?? error),
+                error: extractErrorText(error),
             },
         });
     }

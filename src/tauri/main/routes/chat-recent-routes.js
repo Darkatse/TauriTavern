@@ -1,3 +1,5 @@
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
+
 function normalizePinnedChats(value) {
     if (!Array.isArray(value)) {
         return [];
@@ -192,7 +194,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to load recent chats',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );

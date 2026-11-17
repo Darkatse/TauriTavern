@@ -1,4 +1,5 @@
 import { invoke } from '../../../tauri-bridge.js';
+import { extractErrorText } from '../../util/command-error-utils.js';
 import { commitBytes } from '../../../tauri/main/services/files/byte-commit.js';
 import { jsonlRecordsToByteChunks, serializeChatPayload } from './jsonl.js';
 import { coldSourceForPayload } from './cold-swipes.js';
@@ -17,7 +18,7 @@ function toChatCommitError(error) {
     if (error?.BadRequest === INTEGRITY) {
         return Object.assign(new Error(INTEGRITY, { cause: error }), { code: INTEGRITY });
     }
-    return new Error(typeof error === 'string' ? error : JSON.stringify(error), { cause: error });
+    return new Error(extractErrorText(error), { cause: error });
 }
 
 function invokeChatCommit(...args) {

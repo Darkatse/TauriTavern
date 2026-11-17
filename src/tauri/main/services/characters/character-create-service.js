@@ -1,6 +1,6 @@
 // @ts-check
 
-import { extractErrorText } from '../../kernel/host-error-response.js';
+import { extractErrorText } from '../../../../scripts/util/command-error-utils.js';
 import { formDataToCreateCharacterDto, payloadToCreateCharacterDto } from './character-create-mapper.js';
 import { parseCropParam } from './character-request-utils.js';
 
