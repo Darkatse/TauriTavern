@@ -9,7 +9,9 @@ use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
-use crate::services::generation_runtime::{GenerationRuntime, until_cancelled};
+use crate::services::generation_runtime::{
+    GenerationRuntime, RegisteredRequest, notifies_completion, until_cancelled,
+};
 use crate::services::hashing::hex_lower;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::claude_model::supports_one_hour_prompt_cache;
@@ -500,12 +502,12 @@ impl ChatCompletionService {
 
     pub async fn generate_request(
         &self,
-        request_id: &str,
+        request: RegisteredRequest<'_>,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<Value, ApplicationError> {
-        let notify_completion = !Self::is_quiet_request(&dto);
+        let notify_completion = notifies_completion(&dto.payload);
         self.generation_runtime
-            .run_request(request_id, notify_completion, async {
+            .run_request(request, notify_completion, None, async {
                 Ok(self.execute_generate(dto, None).await?.body)
             })
             .await
@@ -551,18 +553,18 @@ impl ChatCompletionService {
         stream_id: String,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<(), ApplicationError> {
-        let notify_completion = !Self::is_quiet_request(&dto);
+        let notify_completion = notifies_completion(&dto.payload);
         let service = self.clone();
         self.generation_runtime
-            .start_stream(stream_id, notify_completion, move |sender, cancel| async move {
-                service.generate_stream(dto, sender, cancel).await
-            })
+            .start_stream(
+                stream_id,
+                notify_completion,
+                None,
+                move |sender, cancel| async move {
+                    service.generate_stream(dto, sender, cancel).await
+                },
+            )
             .await
-    }
-
-    fn is_quiet_request(dto: &ChatCompletionGenerateRequestDto) -> bool {
-        dto.get_string("type")
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case("quiet"))
     }
 
     pub async fn close_provider_session(&self, session_id: &str) {

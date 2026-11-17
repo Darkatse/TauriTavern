@@ -24,7 +24,7 @@ pub(super) fn install(
     app.manage(backend_error_hub.clone());
 
     // LLM API logs are both a managed command dependency and the runtime sink
-    // used by chat-completion repositories built later in AppState.
+    // used by the generation repositories built later in AppState.
     let llm_api_log_store = Arc::new(llm_api_logs::LlmApiLogStore::new(
         app_handle.clone(),
         runtime_paths.log_root.clone(),

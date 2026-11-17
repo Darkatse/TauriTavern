@@ -189,6 +189,9 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 - `llm.chat_completion_features.web_search` / `llm.chat_completion_features.request_images`
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
+- `llm.text_completions.enabled`
+  - Service：`src-tauri/crates/tt-application/src/services/text_completion_service/mod.rs`
+  - 行为：禁用时拒绝文本补全的全部命令
 - `network.request_proxy`
   - 启动期：`src-tauri/crates/tauritavern/src/app/host/setup.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 应用继续启动，但 HTTP pool 保持 fail-closed，直到用户在 Settings 中关闭 proxy
   - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:set_request_proxy` 禁止启用 proxy
@@ -203,8 +206,8 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - 前端系统扩展 `tauritavern-version` 在 `APP_READY` 时检查 capability 并跳过启动更新检查
   - 实现：`src/scripts/extensions/tauritavern-version/index.js`
 - `llm.text_completions.enabled`
-  - 若用户 settings 里 `main_api === "textgenerationwebui"`，iOS policy 禁用时会在加载 settings 后强制切回 chat completion（并 toast 提示）
-  - 实现：`src/script.js`
+  - 主 API 选择器去掉文本补全；settings 里 `main_api === "textgenerationwebui"` 时，加载 settings 时切回 chat completion 并提示
+  - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`（主 API 的可用集合只在这里决定）
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）
 
@@ -224,7 +227,6 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - `llm.endpoint_overrides=false`：隐藏 reverse proxy / custom endpoint 相关 UI
   - `llm.chat_completion_features.web_search=false`：隐藏 web search 开关
   - `llm.chat_completion_features.request_images=false`：隐藏 request images block
-  - `llm.text_completions.enabled=false`：移除 Text Completion option 并隐藏 panel
   - `ai.image_generation=false`：隐藏 `#bg_chat_hint`（避免 SD 相关提示露出）
 - Settings 面板投影：`src/scripts/tauri/setting/settings-app/SettingsSystemSection.tsx`
   - `network.request_proxy=false`：默认隐藏 Request Proxy details；若已有启用配置则保留只允许关闭的修复入口

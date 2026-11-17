@@ -12,8 +12,8 @@ use tt_ports::repositories::chat_completion_repository::{
 use super::HttpChatCompletionRepository;
 use super::gemini;
 use super::normalizers;
-use super::response_body::read_upstream_json_body;
 use crate::endpoint_url::append_google_api_path;
+use crate::provider_response::{self, read_upstream_json_body};
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -48,12 +48,9 @@ pub(super) async fn list_models(
         let request =
             HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
         let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-        let response = HttpChatCompletionRepository::send_checked(
-            request,
-            "Google Gemini",
-            "Failed to list models",
-        )
-        .await?;
+        let response =
+            provider_response::send_checked(request, "Google Gemini", "Failed to list models")
+                .await?;
         let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
         let page: ModelsPage = serde_json::from_value(body).map_err(|error| {
             DomainError::InvalidData(format!("Invalid Google Gemini models page: {error}"))
@@ -132,12 +129,9 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        "Google Gemini",
-        "Generation request failed",
-    )
-    .await?;
+    let response =
+        provider_response::send_checked(request, "Google Gemini", "Generation request failed")
+            .await?;
 
     let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
@@ -206,12 +200,7 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    HttpChatCompletionRepository::send_checked(
-        request,
-        "Google Gemini",
-        "Generation request failed",
-    )
-    .await
+    provider_response::send_checked(request, "Google Gemini", "Generation request failed").await
 }
 
 fn normalize_gemini_model(model: &str) -> String {

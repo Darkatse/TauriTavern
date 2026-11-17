@@ -1,6 +1,5 @@
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Map, Value, json};
-use tokio::sync::mpsc;
 
 use tt_domain::errors::DomainError;
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
@@ -9,9 +8,9 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::normalizers;
-use super::response_body::read_upstream_json_body;
 use super::{HttpChatCompletionRepository, current_unix_timestamp};
 use crate::endpoint_url::append_google_api_path;
+use crate::provider_response::{self, read_upstream_json_body};
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -456,12 +455,9 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        provider_name,
-        "Generation request failed",
-    )
-    .await?;
+    let response =
+        provider_response::send_checked(request, provider_name, "Generation request failed")
+            .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -487,16 +483,9 @@ pub(super) async fn generate_stream(
     let mut state = InteractionsStreamState::new(model);
     let cancelled = cancel.clone();
 
-    let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
-    drop(dummy_receiver);
-
-    HttpChatCompletionRepository::stream_sse_response_with_hook(
-        provider_name,
-        response,
-        dummy_sender,
-        cancel,
-        |payload| state.handle_event(Some(&sender), payload, &mut |_| {}),
-    )
+    provider_response::consume_sse_until_cancelled(provider_name, response, cancel, |payload| {
+        state.handle_event(Some(&sender), payload, &mut |_| {})
+    })
     .await?;
 
     let was_cancelled = *cancelled.borrow();
@@ -520,7 +509,7 @@ pub(super) async fn generate_with_deltas(
         .to_string();
     let mut state = InteractionsStreamState::new(model);
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+    provider_response::consume_sse_response(provider_name, response, |event| {
         state.handle_event(None, event, on_delta)
     })
     .await?;
@@ -548,8 +537,7 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
-        .await
+    provider_response::send_checked(request, provider_name, "Generation request failed").await
 }
 
 fn apply_gemini_auth(

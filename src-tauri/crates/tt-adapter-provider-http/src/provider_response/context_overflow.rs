@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use regex::{RegexSet, RegexSetBuilder};
 use tt_domain::errors::DomainError;
 
-pub(super) fn context_overflow_or(
+pub(crate) fn context_overflow_or(
     error: impl Display,
     message: String,
     otherwise: impl FnOnce(String) -> DomainError,
@@ -62,6 +62,6 @@ fn is_context_overflow(text: &str) -> bool {
     !EXCLUDED.is_match(text) && OVERFLOW.is_match(text)
 }
 
-pub(super) fn context_overflow_error(message: impl Display) -> DomainError {
+pub(crate) fn context_overflow_error(message: impl Display) -> DomainError {
     DomainError::InvalidData(format!("model.context_overflow: {message}"))
 }

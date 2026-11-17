@@ -9538,12 +9538,6 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
             settings.main_api = 'openai';
         }
 
-        const iosCaps = getActiveIosPolicyCapabilities();
-        if (iosCaps && iosCaps.llm?.text_completions?.enabled === false && settings.main_api === 'textgenerationwebui') {
-            settings.main_api = 'openai';
-            globalThis.toastr?.warning?.('Text Completion is disabled by your iOS policy. Switched to Chat Completion.');
-        }
-
         main_api = settings.main_api;
         $('#main_api').val(main_api);
         $(`#main_api option[value=${main_api}]`).attr('selected', 'true');

@@ -97,5 +97,5 @@ Custom 变体在设置中保存为 `chat_completion_source="custom"`，格式记
 
 - 格式判定：[`exchange.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/exchange.rs)
 - 请求构建：[`payload/`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload)，扩展字段投影在 `extension_fields.rs`，工具调用与结果的共用规则在 `tool_calls.rs`，Custom 分流在 `custom.rs`，模型事实在 [`model_capabilities.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/model_capabilities.rs)
-- 传输、流式与归一化：[`http_chat_completion_repository/`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository)，按 endpoint 分流在 `mod.rs`，响应归一化在 `normalizers.rs`
+- 传输、流式与归一化：[`http_chat_completion_repository/`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository)，按 endpoint 分流在 `mod.rs`，响应归一化在 `normalizers.rs`；HTTP 错误映射、超窗判定与 SSE 分帧在 [`provider_response/`](../../src-tauri/crates/tt-adapter-provider-http/src/provider_response)，与文本补全共用
 - 前端：[`openai.js`](../../src/scripts/openai.js) 负责格式选择、流式解析与工具回合组装，[`provider-replay.js`](../../src/scripts/tauritavern/provider-replay.js) 负责回放核对

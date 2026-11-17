@@ -393,6 +393,11 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
+        // Text completion commands
+        super::text_completion_commands::get_text_completions_status,
+        super::text_completion_commands::get_text_completions_props,
+        super::text_completion_commands::generate_text_completion,
+        super::text_completion_commands::start_text_completion_stream,
         // Generation commands shared by every API family
         super::generation_commands::read_generation_stream,
         super::generation_commands::close_generation_stream,

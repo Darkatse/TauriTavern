@@ -4,7 +4,7 @@ use tt_domain::errors::DomainError;
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
 
-use super::HttpChatCompletionRepository;
+use crate::provider_response;
 
 pub(super) async fn consume_generate_content_stream(
     provider_name: &str,
@@ -13,7 +13,7 @@ pub(super) async fn consume_generate_content_stream(
 ) -> Result<Value, DomainError> {
     let mut accumulator = GeminiStreamAccumulator::default();
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+    provider_response::consume_sse_response(provider_name, response, |event| {
         accumulator.apply_event(event, on_delta)
     })
     .await?;
@@ -28,12 +28,14 @@ pub(super) async fn stream_generate_content_with_native(
     cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let mut accumulator = GeminiStreamAccumulator::default();
-    HttpChatCompletionRepository::stream_sse_response_with_hook(
+    provider_response::consume_sse_until_cancelled(
         provider_name,
         response,
-        sender.clone(),
         cancel.clone(),
-        |event| accumulator.apply_event(event, &mut |_| {}),
+        |event| {
+            accumulator.apply_event(event, &mut |_| {})?;
+            provider_response::send_event(&sender, event)
+        },
     )
     .await?;
     if *cancel.borrow() {

@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -21,8 +21,8 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::normalizers;
-use super::response_body::{log_upstream_body_parse_failure, read_upstream_json_body};
 use super::{HttpChatCompletionRepository, current_unix_timestamp};
+use crate::provider_response::{self, log_upstream_body_parse_failure, read_upstream_json_body};
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
 
@@ -407,12 +407,9 @@ async fn generate_http(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        provider_name,
-        "Generation request failed",
-    )
-    .await?;
+    let response =
+        provider_response::send_checked(request, provider_name, "Generation request failed")
+            .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
     validate_terminal_response(&body)?;
@@ -466,7 +463,7 @@ pub(super) async fn generate_with_deltas(
     let mut observer = ResponsesDeltaObserver::default();
     let mut completed_response = None;
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |payload| {
+    provider_response::consume_sse_response(provider_name, response, |payload| {
         if payload == b"[DONE]" {
             return Ok(());
         }
@@ -507,22 +504,13 @@ async fn generate_stream_http(
     let mut state = ResponsesStreamState::new(model);
     let cancelled = cancel.clone();
 
-    let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
-    drop(dummy_receiver);
-
-    HttpChatCompletionRepository::stream_sse_response_with_hook(
-        provider_name,
-        response,
-        dummy_sender,
-        cancel,
-        |payload| {
-            if payload == b"[DONE]" {
-                return Ok(());
-            }
-            let event = parse_sse_event(payload, OPERATION_GENERATE_STREAM_HTTP)?;
-            state.handle_event(&sender, &event)
-        },
-    )
+    provider_response::consume_sse_until_cancelled(provider_name, response, cancel, |payload| {
+        if payload == b"[DONE]" {
+            return Ok(());
+        }
+        let event = parse_sse_event(payload, OPERATION_GENERATE_STREAM_HTTP)?;
+        state.handle_event(&sender, &event)
+    })
     .await?;
 
     let was_cancelled = *cancelled.borrow();
@@ -548,8 +536,7 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
-        .await
+    provider_response::send_checked(request, provider_name, "Generation request failed").await
 }
 
 async fn generate_persistent_ws(
@@ -663,7 +650,7 @@ async fn connect_responses_ws(
         .map_err(upstream::request_failure)?;
 
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(HttpChatCompletionRepository::map_error_response(
+        return Err(provider_response::map_error_response(
             "OpenAI Responses WebSocket",
             response,
             "OpenAI Responses WebSocket upgrade failed",
@@ -892,7 +879,7 @@ fn terminal_response_from_event(event: &Value) -> Result<Option<&Value>, DomainE
             &event.get("response").unwrap_or(event)["error"],
         )),
         "error" => Err(response_failure_error(
-            super::response_body::provider_error(event).unwrap_or(event),
+            provider_response::provider_error(event).unwrap_or(event),
         )),
         _ => Ok(None),
     }
@@ -943,11 +930,7 @@ fn response_failure_error(error: &Value) -> DomainError {
         .and_then(Value::as_str)
         .unwrap_or("OpenAI Responses response failed");
 
-    super::context_overflow::context_overflow_or(
-        error,
-        message.to_string(),
-        DomainError::InternalError,
-    )
+    provider_response::context_overflow_or(error, message.to_string(), DomainError::InternalError)
 }
 
 fn parse_ws_event(payload: &[u8], operation: &str) -> Result<Value, DomainError> {
@@ -987,6 +970,7 @@ mod tests {
     use std::collections::HashMap;
 
     use serde_json::json;
+    use tokio::sync::mpsc;
 
     use super::*;
     use tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode;

@@ -104,6 +104,17 @@ export function commandErrorStatus(value) {
 }
 
 /**
+ * The `CommandError` for an HTTP status; a status with no kind of its own is an internal error.
+ * @param {unknown} status
+ * @param {string} message
+ * @returns {Record<string, string>}
+ */
+export function commandErrorForStatus(status, message) {
+    const kind = KINDS.find(candidate => candidate.status === Number(status));
+    return { [kind?.variant ?? 'InternalServerError']: message };
+}
+
+/**
  * @param {unknown} value
  * @returns {{ status: number, body: string }}
  */

@@ -14,7 +14,7 @@ use tt_ports::repositories::chat_completion_repository::{
 
 use super::HttpChatCompletionRepository;
 use super::normalizers;
-use super::response_body::read_upstream_json_body;
+use crate::provider_response::{self, read_upstream_json_body};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";
@@ -40,8 +40,7 @@ pub(super) async fn list_models(
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
     let response =
-        HttpChatCompletionRepository::send_checked(request, "Claude", "Failed to list models")
-            .await?;
+        provider_response::send_checked(request, "Claude", "Failed to list models").await?;
 
     read_upstream_json_body("Claude", "list_models", response).await
 }
@@ -73,12 +72,9 @@ pub(super) async fn generate(
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        provider_name,
-        "Generation request failed",
-    )
-    .await?;
+    let response =
+        provider_response::send_checked(request, provider_name, "Generation request failed")
+            .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -117,8 +113,7 @@ pub(super) async fn generate_stream(
         )
         .await
     } else {
-        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
-            .await
+        provider_response::stream_sse_response(provider_name, response, sender, cancel).await
     }
 }
 
@@ -150,7 +145,7 @@ pub(super) async fn consume_message_stream(
     let mut accumulator = ClaudeMessageAccumulator::default();
     let mut completed = None;
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+    provider_response::consume_sse_response(provider_name, response, |event| {
         if let Some(message) = accumulator.apply_event(event, on_delta)? {
             completed = Some(message);
         }
@@ -185,8 +180,7 @@ async fn send_stream_request(
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
-        .await
+    provider_response::send_checked(request, provider_name, "Generation request failed").await
 }
 
 #[derive(Deserialize)]

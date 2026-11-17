@@ -53,6 +53,10 @@ pub async fn generate_chat_completion(
     let request_id = normalize_request_id(&request_id)?;
     log_command(format!("generate_chat_completion {}", request_id));
 
+    let request = app_state
+        .services
+        .generation_runtime
+        .register_request(&request_id)?;
     let endpoint = app_state
         .services
         .chat_completion_service
@@ -68,7 +72,7 @@ pub async fn generate_chat_completion(
     app_state
         .services
         .chat_completion_service
-        .generate_request(&request_id, dto)
+        .generate_request(request, dto)
         .await
         .map_err(map_command_error("Failed to generate chat completion"))
 }

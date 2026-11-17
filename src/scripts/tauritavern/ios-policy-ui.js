@@ -1,4 +1,5 @@
 import { allowlistSettingAllows, getActiveIosPolicyActivationReport } from './ios-policy.js';
+import { syncMainApiOptionParking } from '../../tauri/main/adapters/st/main-api-selector-option-parking.js';
 
 const STYLE_ID = 'tt-ios-policy-ui-projection';
 
@@ -196,14 +197,11 @@ export function applyIosPolicyUiProjection() {
         hideElement(requireElement('#request_images_block'));
     }
 
-    if (caps.llm?.text_completions?.enabled === false) {
-        document.querySelector('#main_api option[value="textgenerationwebui"]')?.remove();
-        hideElement(requireElement('#textgenerationwebui_api'));
-    }
-
     if (caps.ai?.image_generation === false) {
         hideElement(requireElement('#bg_chat_hint'));
     }
+
+    syncMainApiOptionParking();
 
     const style = ensureStyleElement();
     style.textContent = cssRules.join('\n');

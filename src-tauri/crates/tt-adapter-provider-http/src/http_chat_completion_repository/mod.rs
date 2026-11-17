@@ -4,10 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, RequestBuilder, StatusCode, Url};
+use reqwest::{Client, RequestBuilder, Url};
 use serde_json::Value;
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
@@ -16,10 +16,11 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionSource, ChatCompletionStreamDelta,
 };
 
+use crate::provider_response;
+
 mod aws_bedrock;
 mod claude;
 mod cohere;
-mod context_overflow;
 mod gemini;
 mod gemini_interactions;
 mod makersuite;
@@ -29,7 +30,6 @@ mod normalizers;
 mod openai;
 mod openai_responses;
 mod pollinations;
-mod response_body;
 mod vertexai;
 pub(crate) mod vertexai_auth;
 mod workers_ai;
@@ -45,65 +45,6 @@ struct PromptCachePerformanceUsage {
 pub struct HttpChatCompletionRepository {
     http_clients: Arc<HttpClientPool>,
     openai_responses_ws_sessions: openai_responses::ResponsesWsSessionPool,
-}
-
-#[derive(Default)]
-struct SseEventAccumulator {
-    data: Vec<u8>,
-}
-
-impl SseEventAccumulator {
-    fn on_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
-        &mut self,
-        line: &[u8],
-        on_event: &mut F,
-    ) -> Result<(), DomainError> {
-        if line.is_empty() {
-            return self.dispatch(on_event);
-        }
-
-        if line.first().is_some_and(|byte| *byte == b':') {
-            return Ok(());
-        }
-
-        let (field, value) = split_sse_field(line);
-        if field == b"data" {
-            if !self.data.is_empty() {
-                self.data.push(b'\n');
-            }
-            self.data.extend_from_slice(value);
-        }
-
-        Ok(())
-    }
-
-    fn dispatch<F: FnMut(&[u8]) -> Result<(), DomainError>>(
-        &mut self,
-        on_event: &mut F,
-    ) -> Result<(), DomainError> {
-        if self.data.is_empty() {
-            return Ok(());
-        }
-
-        let payload = std::mem::take(&mut self.data);
-        on_event(payload.as_slice())
-    }
-}
-
-fn split_sse_field(line: &[u8]) -> (&[u8], &[u8]) {
-    let Some(colon_index) = line.iter().position(|byte| *byte == b':') else {
-        return (line, b"");
-    };
-
-    let field = &line[..colon_index];
-    let mut value = &line[colon_index + 1..];
-    let value_start = value
-        .iter()
-        .position(|byte| *byte != b' ' && *byte != b'\t')
-        .unwrap_or(value.len());
-    value = &value[value_start..];
-
-    (field, value)
 }
 
 impl HttpChatCompletionRepository {
@@ -243,122 +184,6 @@ impl HttpChatCompletionRepository {
         }
     }
 
-    async fn send_checked(
-        request: RequestBuilder,
-        provider_name: &str,
-        error_context: &str,
-    ) -> Result<reqwest::Response, DomainError> {
-        let response = request.send().await.map_err(upstream::request_failure)?;
-
-        if !response.status().is_success() {
-            return Err(Self::map_error_response(provider_name, response, error_context).await);
-        }
-
-        Ok(response)
-    }
-
-    async fn map_error_response(
-        provider_name: &str,
-        response: reqwest::Response,
-        default_message: &str,
-    ) -> DomainError {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        Self::map_error_status(provider_name, status, &body, default_message)
-    }
-
-    fn map_error_status(
-        provider_name: &str,
-        status: StatusCode,
-        body: &str,
-        default_message: &str,
-    ) -> DomainError {
-        let body = body.trim();
-        let parsed = serde_json::from_str::<Value>(body).ok();
-        let error = parsed.as_ref().and_then(response_body::provider_error);
-        let message = parsed
-            .as_ref()
-            .and_then(|value| match error {
-                Some(error) => Some(response_body::provider_error_message(error, value)),
-                None => value
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            })
-            .unwrap_or_else(|| {
-                if body.is_empty() {
-                    default_message
-                } else {
-                    body
-                }
-                .to_string()
-            });
-
-        let status_error = |message: String| match status {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                DomainError::AuthenticationError(message)
-            }
-            StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
-            StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
-                "{provider_name} endpoint failed with status {}: {message}",
-                status.as_u16()
-            )),
-            status if is_retryable_status(status) => DomainError::transient(format!(
-                "{provider_name} endpoint failed with status {}: {message}",
-                status.as_u16()
-            )),
-            _ => DomainError::InternalError(format!(
-                "{provider_name} endpoint failed with status {}: {message}",
-                status.as_u16()
-            )),
-        };
-
-        match status {
-            StatusCode::PAYLOAD_TOO_LARGE => context_overflow::context_overflow_error(message),
-            StatusCode::BAD_REQUEST => {
-                let error = error.map_or_else(|| body.to_owned(), Value::to_string);
-                context_overflow::context_overflow_or(error, message, status_error)
-            }
-            _ => status_error(message),
-        }
-    }
-
-    async fn stream_sse_response(
-        provider_name: &str,
-        response: reqwest::Response,
-        sender: GenerationStreamSender,
-        cancel: GenerationCancelReceiver,
-    ) -> Result<(), DomainError> {
-        Self::stream_sse_response_with_hook(provider_name, response, sender, cancel, |_| Ok(()))
-            .await
-    }
-
-    async fn stream_sse_response_with_hook<F>(
-        provider_name: &str,
-        response: reqwest::Response,
-        sender: GenerationStreamSender,
-        mut cancel: GenerationCancelReceiver,
-        mut hook: F,
-    ) -> Result<(), DomainError>
-    where
-        F: FnMut(&[u8]) -> Result<(), DomainError>,
-    {
-        let consume = Self::consume_sse_response(provider_name, response, |payload| {
-            hook(payload)?;
-            let payload = std::str::from_utf8(payload).map_err(|error| {
-                DomainError::InternalError(format!("SSE payload is not valid UTF-8: {error}"))
-            })?;
-            let _ = sender.send(payload.to_string());
-            Ok(())
-        });
-        tokio::pin!(consume);
-
-        tokio::select! {
-            result = &mut consume => result,
-            Ok(_) = cancel.wait_for(|cancelled| *cancelled) => Ok(()),
-        }
-    }
-
     async fn stream_sse_response_with_cache_logging(
         provider_name: &str,
         model: String,
@@ -367,109 +192,31 @@ impl HttpChatCompletionRepository {
         cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
         let mut logged = false;
-        Self::stream_sse_response_with_hook(
-            provider_name,
-            response,
-            sender,
-            cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
-
-                let has_cache_usage = [
-                    b"cache_read_input_tokens".as_slice(),
-                    b"cache_creation_input_tokens".as_slice(),
-                ]
-                .into_iter()
-                .any(|field| payload.windows(field.len()).any(|window| window == field));
-                if !has_cache_usage {
-                    return Ok(());
-                }
-
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
-                logged = log_prompt_cache_performance_if_present(
-                    provider_name,
-                    Some(model.as_str()),
-                    &value,
-                );
-                Ok(())
-            },
-        )
+        provider_response::consume_sse_until_cancelled(provider_name, response, cancel, |payload| {
+            if !logged {
+                logged = log_prompt_cache_performance_in_event(provider_name, &model, payload);
+            }
+            provider_response::send_event(&sender, payload)
+        })
         .await
     }
+}
 
-    async fn consume_sse_response<F>(
-        provider_name: &str,
-        mut response: reqwest::Response,
-        mut on_event: F,
-    ) -> Result<(), DomainError>
-    where
-        F: FnMut(&[u8]) -> Result<(), DomainError>,
-    {
-        let mut buffer = Vec::<u8>::new();
-        let mut accumulator = SseEventAccumulator::default();
-        let endpoint = response.url().clone();
-
-        loop {
-            let chunk = response
-                .chunk()
-                .await
-                .map_err(|error| upstream::body_failure(error, &endpoint))?;
-
-            let Some(chunk) = chunk else {
-                break;
-            };
-
-            buffer.extend_from_slice(&chunk);
-            Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
-        }
-
-        // An event cut off by the end of the stream is never dispatched (SSE).
-        let discarded_bytes = buffer.len() + accumulator.data.len();
-        if discarded_bytes > 0 {
-            tracing::warn!(
-                provider = provider_name,
-                operation = "stream",
-                endpoint = upstream::sanitize_endpoint(&endpoint),
-                discarded_bytes,
-                "upstream stream ended mid-event",
-            );
-        }
-        Ok(())
+fn log_prompt_cache_performance_in_event(provider_name: &str, model: &str, payload: &[u8]) -> bool {
+    let has_cache_usage = [
+        b"cache_read_input_tokens".as_slice(),
+        b"cache_creation_input_tokens".as_slice(),
+    ]
+    .into_iter()
+    .any(|field| payload.windows(field.len()).any(|window| window == field));
+    if !has_cache_usage {
+        return false;
     }
 
-    fn forward_sse_events<F: FnMut(&[u8]) -> Result<(), DomainError>>(
-        buffer: &mut Vec<u8>,
-        accumulator: &mut SseEventAccumulator,
-        on_event: &mut F,
-    ) -> Result<(), DomainError> {
-        let mut line_start = 0_usize;
-        let mut consumed = 0_usize;
-
-        for (index, byte) in buffer.iter().enumerate() {
-            if *byte != b'\n' {
-                continue;
-            }
-
-            let mut line = &buffer[line_start..index];
-            if line.last().is_some_and(|byte| *byte == b'\r') {
-                line = &line[..line.len() - 1];
-            }
-
-            accumulator.on_line(line, on_event)?;
-            consumed = index + 1;
-            line_start = consumed;
-        }
-
-        if consumed > 0 {
-            buffer.drain(..consumed);
-        }
-
-        Ok(())
-    }
+    let Ok(value) = serde_json::from_slice::<Value>(payload) else {
+        return false;
+    };
+    log_prompt_cache_performance_if_present(provider_name, Some(model), &value)
 }
 
 fn payload_contains_cache_control(value: &Value) -> bool {
@@ -481,10 +228,6 @@ fn payload_contains_cache_control(value: &Value) -> bool {
         Value::Array(array) => array.iter().any(payload_contains_cache_control),
         _ => false,
     }
-}
-
-fn is_retryable_status(status: StatusCode) -> bool {
-    matches!(status.as_u16(), 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
 fn current_unix_timestamp() -> u64 {
@@ -971,7 +714,6 @@ mod tests {
     use reqwest::Client;
     use reqwest::header::AUTHORIZATION;
 
-    use tt_domain::errors::DomainError;
     use tt_ports::repositories::chat_completion_repository::{
         ChatCompletionApiConfig, ChatCompletionSource,
     };
@@ -1078,152 +820,5 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(values, vec!["Bearer final"]);
-    }
-
-    #[test]
-    fn error_status_classification_preserves_recovery_semantics() {
-        for (status, body, overflow) in [
-            (
-                400,
-                "prompt is too long: 213462 tokens > 200000 maximum",
-                true,
-            ),
-            (
-                400,
-                "input length and `max_tokens` exceed context limit: 190000 + 32768 > 200000",
-                true,
-            ),
-            (
-                400,
-                "Your input exceeds the context window of this model",
-                true,
-            ),
-            (
-                400,
-                "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens",
-                true,
-            ),
-            (
-                400,
-                "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
-                true,
-            ),
-            (
-                400,
-                r#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
-                true,
-            ),
-            (400, r#"{"message":"prompt is too long"}"#, true),
-            (413, "<html>Request Entity Too Large</html>", true),
-            (
-                400,
-                "Request payload size exceeds the limit: 20971520 bytes.",
-                true,
-            ),
-            (400, "Invalid value for temperature", false),
-            (400, "rate limit: too many tokens", false),
-            (
-                429,
-                "ThrottlingException: Too many tokens, please wait before trying again.",
-                false,
-            ),
-            (502, "upstream unavailable", false),
-        ] {
-            let error = HttpChatCompletionRepository::map_error_status(
-                "Provider",
-                reqwest::StatusCode::from_u16(status).unwrap(),
-                body,
-                "Generation request failed",
-            );
-            assert_eq!(
-                matches!(&error, DomainError::InvalidData(message) if message.starts_with("model.context_overflow:")),
-                overflow,
-                "{status}: {body}: {error}"
-            );
-            match status {
-                429 => assert!(matches!(error, DomainError::RateLimited { .. })),
-                502 => assert!(matches!(error, DomainError::Transient(_))),
-                _ => assert!(matches!(error, DomainError::InvalidData(_))),
-            }
-        }
-    }
-
-    #[test]
-    fn forward_sse_events_extracts_data_payloads() {
-        let mut events = Vec::<Vec<u8>>::new();
-        let mut buffer =
-            b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n\n".to_vec();
-
-        let mut on_event = |event: &[u8]| {
-            events.push(event.to_vec());
-            Ok(())
-        };
-        let mut accumulator = super::SseEventAccumulator::default();
-        let result = HttpChatCompletionRepository::forward_sse_events(
-            &mut buffer,
-            &mut accumulator,
-            &mut on_event,
-        );
-        assert!(result.is_ok());
-
-        assert_eq!(events, [b"{\"chunk\":1}".to_vec(), b"[DONE]".to_vec()]);
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn forward_sse_events_keeps_partial_line_in_buffer() {
-        let mut events = Vec::<Vec<u8>>::new();
-        let mut buffer = b"data: {\"chunk\":1}".to_vec();
-
-        let mut on_event = |event: &[u8]| {
-            events.push(event.to_vec());
-            Ok(())
-        };
-        let mut accumulator = super::SseEventAccumulator::default();
-        let result = HttpChatCompletionRepository::forward_sse_events(
-            &mut buffer,
-            &mut accumulator,
-            &mut on_event,
-        );
-        assert!(result.is_ok());
-        assert!(events.is_empty());
-        assert_eq!(buffer, b"data: {\"chunk\":1}".to_vec());
-    }
-
-    #[test]
-    fn forward_sse_events_combines_multiline_data_fields() {
-        let mut events = Vec::<Vec<u8>>::new();
-        let mut buffer = b"data: first\ndata: second\n\n".to_vec();
-
-        let mut on_event = |event: &[u8]| {
-            events.push(event.to_vec());
-            Ok(())
-        };
-        let mut accumulator = super::SseEventAccumulator::default();
-        HttpChatCompletionRepository::forward_sse_events(
-            &mut buffer,
-            &mut accumulator,
-            &mut on_event,
-        )
-        .unwrap();
-
-        assert_eq!(events, [b"first\nsecond".to_vec()]);
-        assert!(buffer.is_empty());
-    }
-
-    #[tokio::test]
-    async fn consume_sse_response_discards_an_event_cut_off_by_end_of_stream() {
-        for body in ["data: a\n\ndata: b\n", "data: a\n\ndata: b"] {
-            let response = reqwest::Response::from(http::Response::new(body));
-            let mut events = Vec::<Vec<u8>>::new();
-            HttpChatCompletionRepository::consume_sse_response("test", response, |event| {
-                events.push(event.to_vec());
-                Ok(())
-            })
-            .await
-            .unwrap();
-
-            assert_eq!(events, [b"a".to_vec()], "{body:?}");
-        }
     }
 }

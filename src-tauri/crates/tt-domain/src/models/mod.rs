@@ -24,6 +24,7 @@ pub mod safe_mode;
 pub mod secret;
 pub mod settings;
 pub mod skill;
+pub mod text_completion_type;
 pub mod theme;
 pub mod tool;
 pub mod tt_sync;

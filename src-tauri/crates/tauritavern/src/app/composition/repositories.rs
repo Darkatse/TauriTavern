@@ -5,7 +5,9 @@ use crate::app::startup_profile::initial_tauritavern_settings;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::builtin_skills::materialize_builtin_skills;
-use crate::infrastructure::logging::llm_api_logs::LoggingChatCompletionRepository;
+use crate::infrastructure::logging::llm_api_logs::{
+    LoggingChatCompletionRepository, LoggingTextCompletionRepository,
+};
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use tt_adapter_extension::FileExtensionRepository;
@@ -15,7 +17,7 @@ use tt_adapter_media::{
 use tt_adapter_provider_http::{
     HttpChatCompletionRepository, HttpCorsProxyRepository, HttpEmbeddingRepository,
     HttpProviderMetadataRepository, HttpSearxngSearchRepository, HttpStableDiffusionRepository,
-    HttpTranslateRepository, HttpTtsRepository,
+    HttpTextCompletionRepository, HttpTranslateRepository, HttpTtsRepository,
 };
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
@@ -66,6 +68,7 @@ use tt_ports::repositories::settings_repository::SettingsRepository;
 use tt_ports::repositories::skill_repository::SkillRepository;
 use tt_ports::repositories::sprite_repository::SpriteRepository;
 use tt_ports::repositories::stable_diffusion_repository::StableDiffusionRepository;
+use tt_ports::repositories::text_completion_repository::TextCompletionRepository;
 use tt_ports::repositories::theme_repository::ThemeRepository;
 use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 use tt_ports::repositories::translate_repository::TranslateRepository;
@@ -120,6 +123,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) mcp_server_repository: Arc<dyn McpServerRepository>,
     pub(in crate::app::composition) workspace_repository: Arc<dyn WorkspaceRepository>,
     pub(in crate::app::composition) chat_completion_repository: Arc<dyn ChatCompletionRepository>,
+    pub(in crate::app::composition) text_completion_repository: Arc<dyn TextCompletionRepository>,
     pub(in crate::app::composition) provider_metadata_repository:
         Arc<dyn ProviderMetadataRepository>,
     pub(in crate::app::composition) searxng_search_repository: Arc<dyn SearxngSearchRepository>,
@@ -346,6 +350,11 @@ pub(super) async fn build(
             Arc::new(HttpChatCompletionRepository::new(http_client_pool.clone())),
             environment.llm_api_log_store.clone(),
         ));
+    let text_completion_repository: Arc<dyn TextCompletionRepository> =
+        Arc::new(LoggingTextCompletionRepository::new(
+            Arc::new(HttpTextCompletionRepository::new(http_client_pool.clone())),
+            environment.llm_api_log_store.clone(),
+        ));
     let provider_metadata_repository: Arc<dyn ProviderMetadataRepository> = Arc::new(
         HttpProviderMetadataRepository::new(http_client_pool.clone()),
     );
@@ -428,6 +437,7 @@ pub(super) async fn build(
         mcp_server_repository,
         workspace_repository,
         chat_completion_repository,
+        text_completion_repository,
         provider_metadata_repository,
         searxng_search_repository,
         cors_proxy_repository,

@@ -9,6 +9,7 @@ use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::selected_secret::{read_selected_secret, requested_secret_id};
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_domain::models::endpoint_url::{
     HostLabel, append_endpoint_segments, parse_user_http_endpoint,
@@ -115,7 +116,7 @@ pub(super) async fn resolve_status_api_config(
             pollinations_endpoint: dto.pollinations_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
             aws_bedrock_region: dto.aws_bedrock_region.trim(),
-            secret_id: normalize_secret_id(dto.secret_id.as_deref()),
+            secret_id: requested_secret_id(dto.secret_id.as_deref()),
             ..Default::default()
         },
         ApiConfigPurpose::Status,
@@ -227,9 +228,13 @@ async fn resolve_api_config(
             let api_key = if uses_reverse_proxy {
                 proxy_password.to_string()
             } else {
-                read_optional_secret(secret_repository, SecretKeys::CUSTOM, hints.secret_id)
-                    .await?
-                    .unwrap_or_default()
+                read_selected_secret(
+                    secret_repository.as_ref(),
+                    SecretKeys::CUSTOM,
+                    hints.secret_id,
+                )
+                .await?
+                .unwrap_or_default()
             };
 
             Ok(ChatCompletionApiConfig {
@@ -383,7 +388,7 @@ fn get_payload_optional_string(
 ) -> Result<Option<String>, ApplicationError> {
     match payload.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(normalize_secret_id(Some(value)).map(str::to_string)),
+        Some(Value::String(value)) => Ok(requested_secret_id(Some(value)).map(str::to_string)),
         Some(_) => Err(ApplicationError::ValidationError(format!(
             "Chat completion request field must be a string: {}",
             key
@@ -406,19 +411,14 @@ fn get_payload_bool(
     }
 }
 
-fn normalize_secret_id(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
 async fn read_required_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
     secret_id: Option<&str>,
     source_name: &str,
 ) -> Result<String, ApplicationError> {
-    read_selected_secret(secret_repository, secret_key, secret_id)
+    read_selected_secret(secret_repository.as_ref(), secret_key, secret_id)
         .await?
-        .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
             let selector = secret_id
                 .map(|id| format!(" for secret_id {id}"))
@@ -428,34 +428,6 @@ async fn read_required_secret(
                 source_name, selector, secret_key
             ))
         })
-}
-
-async fn read_optional_secret(
-    secret_repository: &Arc<dyn SecretRepository>,
-    secret_key: &str,
-    secret_id: Option<&str>,
-) -> Result<Option<String>, ApplicationError> {
-    Ok(
-        read_selected_secret(secret_repository, secret_key, secret_id)
-            .await?
-            .filter(|value| !value.trim().is_empty()),
-    )
-}
-
-async fn read_selected_secret(
-    secret_repository: &Arc<dyn SecretRepository>,
-    secret_key: &str,
-    secret_id: Option<&str>,
-) -> Result<Option<String>, ApplicationError> {
-    let secret = secret_repository.read_secret(secret_key, secret_id).await?;
-    if let (Some(id), None) = (secret_id, secret.as_ref()) {
-        return Err(ApplicationError::ValidationError(format!(
-            "Secret id not found for {}: {}",
-            secret_key, id
-        )));
-    }
-
-    Ok(secret)
 }
 
 fn default_base_url(

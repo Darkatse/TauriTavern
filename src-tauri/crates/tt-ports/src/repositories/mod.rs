@@ -33,6 +33,7 @@ pub mod settings_repository;
 pub mod skill_repository;
 pub mod sprite_repository;
 pub mod stable_diffusion_repository;
+pub mod text_completion_repository;
 pub mod theme_repository;
 pub mod tokenizer_repository;
 pub mod translate_repository;

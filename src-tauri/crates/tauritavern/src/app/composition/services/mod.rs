@@ -44,6 +44,7 @@ use tt_application::services::settings_service::{RequestProxyRuntime, SettingsSe
 use tt_application::services::skill_service::SkillService;
 use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
+use tt_application::services::text_completion_service::TextCompletionService;
 use tt_application::services::theme_service::ThemeService;
 use tt_application::services::tokenization_service::TokenizationService;
 use tt_application::services::translate_service::TranslateService;
@@ -147,6 +148,12 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         repositories.settings_repository.clone(),
         repositories.prompt_cache_repository.clone(),
+        generation_runtime.clone(),
+        ios_policy.clone(),
+    ));
+    let text_completion_service = Arc::new(TextCompletionService::new(
+        repositories.text_completion_repository.clone(),
+        repositories.secret_repository.clone(),
         generation_runtime.clone(),
         ios_policy.clone(),
     ));
@@ -310,6 +317,7 @@ pub(super) async fn build(
         agent_runtime_service: agent_services.agent_runtime_service,
         generation_runtime,
         chat_completion_service,
+        text_completion_service,
         llm_connection_service,
         user_endpoint_access_service,
         import_source_access_service,

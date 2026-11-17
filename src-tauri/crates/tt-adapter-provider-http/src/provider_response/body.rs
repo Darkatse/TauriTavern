@@ -13,13 +13,12 @@ use super::context_overflow::context_overflow_or;
 /// Maximum number of bytes from a non-JSON upstream body to capture in the
 /// diagnostic log. Anything larger is truncated; the full `body_len` is still
 /// emitted so log readers know how much was elided.
-pub(super) const BODY_PREVIEW_BYTES: usize = 512;
+const BODY_PREVIEW_BYTES: usize = 512;
 
-/// Emit a structured `error!` event describing why a chat-completion upstream
-/// body could not be parsed as JSON. Always truncates the body to
-/// [`BODY_PREVIEW_BYTES`] so we don't blow up the log pipeline on huge HTML
-/// challenges, plain-text errors, or runaway bodies.
-pub(super) fn log_upstream_body_parse_failure(
+/// Emit a structured `error!` event describing why an upstream response body could not be parsed
+/// as JSON. Always truncates the body to [`BODY_PREVIEW_BYTES`] so we don't blow up the log
+/// pipeline on huge HTML challenges, plain-text errors, or runaway bodies.
+pub(crate) fn log_upstream_body_parse_failure(
     provider_name: &str,
     operation: &str,
     status: StatusCode,
@@ -38,12 +37,12 @@ pub(super) fn log_upstream_body_parse_failure(
         body_len,
         body_preview = %body_preview,
         error = %error,
-        "upstream returned non-JSON body for chat completion",
+        "upstream returned non-JSON response body",
     );
 }
 
 /// Lossy UTF-8 preview of the first [`BODY_PREVIEW_BYTES`] of a body.
-pub(super) fn body_preview_string(body: &[u8]) -> String {
+fn body_preview_string(body: &[u8]) -> String {
     let preview_bytes = &body[..body.len().min(BODY_PREVIEW_BYTES)];
     String::from_utf8_lossy(preview_bytes).into_owned()
 }
@@ -58,7 +57,7 @@ pub(super) fn body_preview_string(body: &[u8]) -> String {
 /// because in practice they are caused by upstream-side hiccups (CDN
 /// challenges, proxy timeouts mid-body, plain-text 200 errors) that are worth
 /// retrying rather than tearing the run down as a fatal `agent.internal_error`.
-pub(super) async fn read_upstream_json_body(
+pub(crate) async fn read_upstream_json_body(
     provider_name: &str,
     operation: &str,
     response: Response,
@@ -86,7 +85,7 @@ pub(super) async fn read_upstream_json_body(
     )
 }
 
-pub(super) fn parse_upstream_json_body(
+pub(crate) fn parse_upstream_json_body(
     provider_name: &str,
     operation: &str,
     status: StatusCode,
@@ -120,14 +119,14 @@ pub(super) fn parse_upstream_json_body(
 }
 
 /// Provider-declared errors can arrive in a successful HTTP response.
-pub(super) fn provider_error(value: &Value) -> Option<&Value> {
+pub(crate) fn provider_error(value: &Value) -> Option<&Value> {
     value
         .get("error")
         .or_else(|| value.pointer("/detail/error"))
         .filter(|error| !error.is_null() && **error != Value::Bool(false))
 }
 
-pub(super) fn provider_error_message(error: &Value, envelope: &Value) -> String {
+pub(crate) fn provider_error_message(error: &Value, envelope: &Value) -> String {
     let message = if error.is_string() {
         error
     } else {

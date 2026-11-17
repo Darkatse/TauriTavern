@@ -49,13 +49,22 @@ impl CancellationRegistry {
     }
 }
 
-pub(crate) struct RegisteredRequest<'a> {
+/// A request the page can cancel by its ID until this is dropped.
+pub struct RegisteredRequest<'a> {
     registry: &'a CancellationRegistry,
     request_id: String,
     cancel: watch::Receiver<bool>,
 }
 
 impl RegisteredRequest<'_> {
+    pub(crate) fn id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        *self.cancel.borrow()
+    }
+
     pub(crate) fn receiver(&self) -> watch::Receiver<bool> {
         self.cancel.clone()
     }

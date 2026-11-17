@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
+use super::super::recording::StreamReadable;
 use super::reasoning::collect_visible_reasoning_texts;
 
 pub(in crate::infrastructure::logging::llm_api_logs) struct StreamReadableCollector {
@@ -18,22 +19,6 @@ impl StreamReadableCollector {
             source,
             text_buffer: String::new(),
             reasoning_buffer: String::new(),
-        }
-    }
-
-    pub(in crate::infrastructure::logging::llm_api_logs) fn push(&mut self, chunk: &str) {
-        let trimmed = chunk.trim();
-        if trimmed.is_empty() || trimmed == "[DONE]" {
-            return;
-        }
-
-        match self.source {
-            ChatCompletionSource::Claude => self.push_claude(trimmed),
-            ChatCompletionSource::Cohere => self.push_cohere(trimmed),
-            ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => {
-                self.push_gemini_like(trimmed)
-            }
-            _ => self.push_openai_like(trimmed),
         }
     }
 
@@ -181,18 +166,39 @@ impl StreamReadableCollector {
             }
         }
     }
+}
 
-    pub(in crate::infrastructure::logging::llm_api_logs) fn into_string(self) -> String {
-        let reasoning_is_empty = self.reasoning_buffer.trim().is_empty();
-        let text_is_empty = self.text_buffer.trim().is_empty();
-        match (reasoning_is_empty, text_is_empty) {
-            (true, true) => String::new(),
-            (true, false) => self.text_buffer,
-            (false, true) => format!("[reasoning]\n{}", self.reasoning_buffer),
-            (false, false) => format!(
-                "[reasoning]\n{}\n\n[assistant]\n{}",
-                self.reasoning_buffer, self.text_buffer
-            ),
+impl StreamReadable for StreamReadableCollector {
+    fn push(&mut self, chunk: &str) {
+        let trimmed = chunk.trim();
+        if trimmed.is_empty() || trimmed == "[DONE]" {
+            return;
         }
+
+        match self.source {
+            ChatCompletionSource::Claude => self.push_claude(trimmed),
+            ChatCompletionSource::Cohere => self.push_cohere(trimmed),
+            ChatCompletionSource::Makersuite | ChatCompletionSource::VertexAi => {
+                self.push_gemini_like(trimmed)
+            }
+            _ => self.push_openai_like(trimmed),
+        }
+    }
+
+    fn into_string(self) -> String {
+        readable_output(&self.reasoning_buffer, &self.text_buffer)
+    }
+}
+
+/// Reasoning, when there is any, is shown before the output text.
+pub(in crate::infrastructure::logging::llm_api_logs) fn readable_output(
+    reasoning: &str,
+    text: &str,
+) -> String {
+    match (reasoning.trim().is_empty(), text.trim().is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => text.to_string(),
+        (false, true) => format!("[reasoning]\n{reasoning}"),
+        (false, false) => format!("[reasoning]\n{reasoning}\n\n[assistant]\n{text}"),
     }
 }

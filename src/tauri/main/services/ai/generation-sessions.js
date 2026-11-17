@@ -5,9 +5,14 @@ import { confirmAiNotificationPermissionRationale } from '../../adapters/st/ai-n
 import { estimateTokenCount } from '../../brokers/token-count-broker.js';
 import { createAbortError, isAbortError } from '../../kernel/abort-error.js';
 import { createRandomId } from '../../kernel/random-id.js';
+import { jsonResponse } from '../../http-utils.js';
 import { isCommandCancelled } from '../../../../scripts/util/command-error-utils.js';
 import { createSystemNotificationService } from '../notifications/system-notification-service.js';
-import { formatAssistantErrorText, getUserFacingErrorMessage } from './ai-error-presenter.js';
+import {
+    buildLegacyErrorPayload,
+    formatAssistantErrorText,
+    getUserFacingErrorMessage,
+} from './ai-error-presenter.js';
 import { createGenerationLifecycleService } from './generation-lifecycle-service.js';
 import {
     getGenerationNotificationTexts,
@@ -56,6 +61,27 @@ function encodeSseDataFrame(text) {
 }
 
 /**
+ * Shallow-copies a plain object payload and normalizes non-objects to `{}`.
+ * @param {unknown} value
+ * @returns {Record<string, unknown>}
+ */
+export function copyGenerationPayload(value) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? { .../** @type {Record<string, unknown>} */ (value) }
+        : {};
+}
+
+/**
+ * A quiet generation, such as a summary, runs for the page itself and fails with an error response
+ * instead of an assistant reply.
+ * @param {Record<string, unknown>} payload
+ * @returns {boolean}
+ */
+function isQuietRequest(payload) {
+    return String(payload.type || '').trim().toLowerCase() === 'quiet';
+}
+
+/**
  * @param {unknown} error
  * @returns {boolean}
  */
@@ -68,7 +94,7 @@ export function isRequestCancelled(error) {
  * @param {unknown} chunk
  * @returns {Response}
  */
-export function createErrorStreamResponse(chunk) {
+function createErrorStreamResponse(chunk) {
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
         start(controller) {
@@ -85,10 +111,8 @@ export function createErrorStreamResponse(chunk) {
 }
 
 /**
- * Generations run in Rust for every API family. A family supplies its commands, its error chunk
- * and how to read output text from its stream events; cancellation, stream replay and the
- * lifecycle notifications are the same. Create one per route registry, so one lifecycle counts
- * every running generation.
+ * Generations run in Rust for every API family, and every family's generate route is served by
+ * `generate`. Create one per route registry, so one lifecycle counts every running generation.
  *
  * @param {{ safeInvoke: (command: TauriInvokeCommand, args?: any) => Promise<any> }} context
  */
@@ -160,8 +184,8 @@ export function createGenerationSessions(context) {
 
     /**
      * Starts a Rust stream session and serves it as SSE. `start(streamId)` must resolve before a
-     * streaming `Response` is returned so pre-stream errors and cancellations flow through the
-     * route's error path. `errorChunk(assistantText)` wraps a formatted failure for that family.
+     * streaming `Response` is returned so pre-stream errors and cancellations flow through
+     * `generate`'s error path. `errorChunk(assistantText)` wraps a formatted failure for that family.
      *
      * @param {{
      *   start: (streamId: string) => Promise<unknown>;
@@ -394,10 +418,70 @@ export function createGenerationSessions(context) {
         });
     }
 
-    return {
-        /** @param {{ quiet: boolean; chunkText: (data: string) => string }} params */
-        createLifecycle: (params) => lifecycles.createLifecycle(params),
-        request,
-        streamResponse,
-    };
+    /**
+     * Serves a generate route. The family supplies how to start its stream and run its request,
+     * how to read output text from its stream events, and its error shapes. A failure becomes an
+     * assistant reply, except for a quiet request: that answers `502 { error: { message } }`, or
+     * `quietErrorResponse` when a non-stream one fails.
+     * @param {{
+     *   payload: Record<string, unknown>;
+     *   signal?: AbortSignal | null | undefined;
+     *   chunkText: (data: string) => string;
+     *   startStream: (streamId: string) => Promise<unknown>;
+     *   runRequest: () => Promise<unknown>;
+     *   errorChunk: (assistantText: string) => unknown;
+     *   errorCompletion: (assistantText: string) => unknown;
+     *   quietErrorResponse?: ((error: unknown, errorMessage: string) => Response) | undefined;
+     *   label: string;
+     * }} params
+     */
+    async function generate({
+        payload,
+        signal,
+        chunkText,
+        startStream,
+        runRequest,
+        errorChunk,
+        errorCompletion,
+        quietErrorResponse,
+        label,
+    }) {
+        const wantsStream = Boolean(payload.stream);
+        const quiet = isQuietRequest(payload);
+        const lifecycle = lifecycles.createLifecycle({ quiet, chunkText });
+        lifecycle.begin();
+
+        try {
+            if (wantsStream) {
+                return await streamResponse({ start: startStream, errorChunk, signal, lifecycle });
+            }
+
+            const completion = await runRequest();
+            lifecycle.finish({ success: true });
+            return jsonResponse(completion ?? {});
+        } catch (error) {
+            const aborted = isRequestCancelled(error);
+            const errorMessage = aborted ? '' : getUserFacingErrorMessage(error);
+
+            lifecycle.finish({ success: false, errorMessage, notifyFailure: !aborted });
+
+            if (aborted) {
+                throw createAbortError();
+            }
+
+            console.error(`${label} generation failed:`, error);
+            if (quiet) {
+                return !wantsStream && quietErrorResponse
+                    ? quietErrorResponse(error, errorMessage)
+                    : jsonResponse(buildLegacyErrorPayload(error), 502);
+            }
+
+            const assistantText = formatAssistantErrorText(errorMessage);
+            return wantsStream
+                ? createErrorStreamResponse(errorChunk(assistantText))
+                : jsonResponse(errorCompletion(assistantText));
+        }
+    }
+
+    return { generate, request };
 }

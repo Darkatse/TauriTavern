@@ -18,7 +18,7 @@
 ## 授权与传输
 
 - 授权单位是来源（scheme、host、port），写法与浏览器相同，例如 `https://example.com:8443`，只接受 HTTP(S)。授权覆盖该来源下的任意路径与查询串。
-- 各入口自己校验输入：chat completion 与 SearXNG 的基址拒绝 userinfo、query 与 fragment；CORS 代理的目标可以是该来源下的任意地址。
+- 各入口自己校验输入：chat completion、文本补全与 SearXNG 的基址拒绝 userinfo、query 与 fragment；CORS 代理的目标可以是该来源下的任意地址。
 - 命令在发送前询问。不经过命令的请求（Agent 的模型请求与 MCP 工具调用）不询问。
 - 请求经 `HttpClientPool::user_endpoint_client` 发送，pool 按每次请求的来源检查授权，未授权即拒绝。
 - 显式 loopback、RFC1918、IPv6 ULA 地址与 `localhost` 直连，其余遵循 Request Proxy 设置。授权与直连都不看 DNS 解析结果。

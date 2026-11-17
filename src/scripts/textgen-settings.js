@@ -1072,7 +1072,9 @@ export function initTextGenSettings() {
             ];
 
             for (const key of keys) {
-                const keyValue = String($(`#${key.id}`).val()).trim();
+                // Panel Runtime parks the forms of the other types, so their inputs can be absent.
+                const rawValue = $(`#${key.id}`).val();
+                const keyValue = typeof rawValue === 'string' ? rawValue.trim() : '';
                 if (keyValue.length) {
                     await writeSecret(key.secret, keyValue);
                 }
@@ -1555,6 +1557,7 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
         : undefined;
 
     let params = {
+        'type': type,
         'prompt': finalPrompt,
         'model': model,
         'max_new_tokens': maxTokens,

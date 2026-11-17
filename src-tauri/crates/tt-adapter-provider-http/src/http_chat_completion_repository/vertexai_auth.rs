@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 
-use super::HttpChatCompletionRepository;
+use crate::provider_response;
 
 const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 const GOOGLE_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -163,7 +163,7 @@ async fn request_access_token(
         .map_err(upstream::request_failure)?;
 
     if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
+        return Err(provider_response::map_error_response(
             "Google OAuth",
             response,
             "Vertex AI service account access token request failed",

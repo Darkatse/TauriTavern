@@ -1,46 +1,38 @@
+// @ts-check
+
 import { mustGetSillyTavernContext } from '../adapters/st/active-chat-ref.js';
 import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import {
-    buildLegacyErrorPayload,
-    formatAssistantErrorText,
     getUpstreamFailureDetails,
     getUserFacingErrorMessage,
 } from '../services/ai/ai-error-presenter.js';
 import { registerCaptionRoutes } from './caption-routes.js';
-import { createErrorStreamResponse, isRequestCancelled } from '../services/ai/generation-sessions.js';
-import { createAbortError } from '../kernel/abort-error.js';
+import { copyGenerationPayload, isRequestCancelled } from '../services/ai/generation-sessions.js';
 import { createRandomId } from '../kernel/random-id.js';
 
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
 const OPENCODE_STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
 
-function asObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
+/** @param {Record<string, unknown>} payload */
 function getChatCompletionSource(payload) {
-    return String(asObject(payload).chat_completion_source || '').trim().toLowerCase();
+    return String(payload.chat_completion_source || '').trim().toLowerCase();
 }
 
-function isQuietRequest(payload) {
-    return String(asObject(payload).type || '').trim().toLowerCase() === 'quiet';
-}
-
+/** @param {Record<string, unknown>} payload */
 function getCompletionModel(payload) {
-    const source = asObject(payload);
     const candidates = [
-        source.model,
-        source.openai_model,
-        source.custom_model,
-        source.claude_model,
-        source.google_model,
-        source.vertexai_model,
-        source.deepseek_model,
-        source.moonshot_model,
-        source.siliconflow_model,
-        source.minimax_model,
-        source.aws_bedrock_model,
-        source.zai_model,
+        payload.model,
+        payload.openai_model,
+        payload.custom_model,
+        payload.claude_model,
+        payload.google_model,
+        payload.vertexai_model,
+        payload.deepseek_model,
+        payload.moonshot_model,
+        payload.siliconflow_model,
+        payload.minimax_model,
+        payload.aws_bedrock_model,
+        payload.zai_model,
     ];
 
     for (const candidate of candidates) {
@@ -52,26 +44,43 @@ function getCompletionModel(payload) {
     return DEFAULT_COMPLETION_MODEL;
 }
 
+/** @param {Record<string, unknown>} payload */
 function isVertexAiClaudePayload(payload) {
     return getChatCompletionSource(payload) === 'vertexai'
         && getCompletionModel(payload).toLowerCase().startsWith('claude-');
 }
 
+/**
+ * @param {Record<string, unknown>} payload
+ * @param {string} format
+ */
 function isOpenCodeFormat(payload, format) {
     return getChatCompletionSource(payload) === 'opencode'
-        && String(asObject(payload).opencode_api_format || '').trim() === format;
+        && String(payload.opencode_api_format || '').trim() === format;
 }
 
+/** @param {Record<string, unknown>} payload */
 async function attachOpenCodeStableChatId(payload) {
     if (getChatCompletionSource(payload) !== 'opencode') {
         return;
     }
 
-    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = mustGetSillyTavernContext().getCurrentChatId()
-        ? await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId()
-        : createRandomId();
+    if (!mustGetSillyTavernContext().getCurrentChatId()) {
+        payload[OPENCODE_STABLE_CHAT_ID_FIELD] = createRandomId();
+        return;
+    }
+
+    const chatApi = (/** @type {Window} */ (/** @type {unknown} */ (globalThis))).__TAURITAVERN__?.api?.chat;
+    if (!chatApi) {
+        throw new Error('TauriTavern host ABI is not initialized');
+    }
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await chatApi.current.handle().stableId();
 }
 
+/**
+ * @param {string} content
+ * @param {Record<string, unknown>} payload
+ */
 function buildErrorCompletionPayload(content, payload) {
     const timestamp = Math.floor(Date.now() / 1000);
 
@@ -98,6 +107,10 @@ function buildErrorCompletionPayload(content, payload) {
     };
 }
 
+/**
+ * @param {string} content
+ * @param {Record<string, unknown>} payload
+ */
 function buildOpenAiStyleErrorChunk(content, payload) {
     const timestamp = Math.floor(Date.now() / 1000);
     return {
@@ -117,6 +130,10 @@ function buildOpenAiStyleErrorChunk(content, payload) {
     };
 }
 
+/**
+ * @param {string} content
+ * @param {Record<string, unknown>} payload
+ */
 function buildErrorStreamChunk(content, payload) {
     const source = getChatCompletionSource(payload);
 
@@ -158,15 +175,20 @@ function buildErrorStreamChunk(content, payload) {
 }
 
 /**
- * @param {unknown} data
+ * @param {string} data
  * @returns {string}
  */
 function extractOpenAiChunkText(data) {
-    const parsed = JSON.parse(String(data || ''));
+    const parsed = JSON.parse(data);
     const delta = parsed?.choices?.[0]?.delta;
     return typeof delta?.content === 'string' ? delta.content : '';
 }
 
+/**
+ * @param {ReturnType<import('../services/ai/generation-sessions.js').createGenerationSessions>} generation
+ * @param {Record<string, unknown>} payload
+ * @param {AbortSignal | null | undefined} [signal]
+ */
 async function requestChatCompletion(generation, payload, signal) {
     await attachOpenCodeStableChatId(payload);
     return generation.request({
@@ -176,32 +198,23 @@ async function requestChatCompletion(generation, payload, signal) {
     });
 }
 
-function streamChatCompletion(context, generation, payload, signal, lifecycle) {
-    return generation.streamResponse({
-        start: async (streamId) => {
-            await attachOpenCodeStableChatId(payload);
-            return context.safeInvoke('start_chat_completion_stream', {
-                streamId,
-                dto: payload,
-                locale: getSillyTavernLocale(),
-            });
-        },
-        errorChunk: (content) => buildErrorStreamChunk(content, payload),
-        signal,
-        lifecycle,
-    });
-}
-
 /**
+ * @param {any} router
+ * @param {{ safeInvoke: (command: import('../context/types.js').TauriInvokeCommand, args?: any) => Promise<any> }} context
+ * @param {{ jsonResponse: (data: unknown, status?: number) => Response }} responses
  * @param {ReturnType<import('../services/ai/generation-sessions.js').createGenerationSessions>} generation
  */
 export function registerAiRoutes(router, context, { jsonResponse }, generation) {
     registerCaptionRoutes(router, {
         jsonResponse,
-        invokeChatCompletion: (payload, signal) => requestChatCompletion(generation, payload, signal),
+        invokeChatCompletion: (/** @type {unknown} */ payload, /** @type {AbortSignal | null | undefined} */ signal) => requestChatCompletion(
+            generation,
+            copyGenerationPayload(payload),
+            signal,
+        ),
     });
 
-    router.post('/api/backends/chat-completions/status', async ({ body }) => {
+    router.post('/api/backends/chat-completions/status', async (/** @type {{ body: unknown }} */ { body }) => {
         try {
             const result = await context.safeInvoke('get_chat_completions_status', {
                 dto: body,
@@ -231,48 +244,27 @@ export function registerAiRoutes(router, context, { jsonResponse }, generation) 
         }
     });
 
-    router.post('/api/backends/chat-completions/generate', async ({ body, init }) => {
-        const payload = { ...asObject(body) };
-        const wantsStream = Boolean(payload.stream);
-        const lifecycle = generation.createLifecycle({
-            quiet: isQuietRequest(payload),
+    router.post('/api/backends/chat-completions/generate', (
+        /** @type {{ body: unknown; init?: RequestInit }} */ { body, init },
+    ) => {
+        const payload = copyGenerationPayload(body);
+
+        return generation.generate({
+            payload,
+            signal: init?.signal,
             chunkText: extractOpenAiChunkText,
+            startStream: async (streamId) => {
+                await attachOpenCodeStableChatId(payload);
+                return context.safeInvoke('start_chat_completion_stream', {
+                    streamId,
+                    dto: payload,
+                    locale: getSillyTavernLocale(),
+                });
+            },
+            runRequest: () => requestChatCompletion(generation, payload, init?.signal),
+            errorChunk: (content) => buildErrorStreamChunk(content, payload),
+            errorCompletion: (content) => buildErrorCompletionPayload(content, payload),
+            label: 'Chat completion',
         });
-        lifecycle.begin();
-
-        try {
-            if (wantsStream) {
-                return await streamChatCompletion(context, generation, payload, init?.signal, lifecycle);
-            }
-
-            const completion = await requestChatCompletion(generation, payload, init?.signal);
-            lifecycle.finish({ success: true });
-            return jsonResponse(completion || {});
-        } catch (error) {
-            const aborted = isRequestCancelled(error);
-            const errorMessage = aborted ? '' : getUserFacingErrorMessage(error);
-
-            lifecycle.finish({
-                success: false,
-                errorMessage,
-                notifyFailure: !aborted,
-            });
-
-            if (aborted) {
-                throw createAbortError();
-            }
-
-            console.error('Chat completion generation failed:', error);
-            if (isQuietRequest(payload)) {
-                return jsonResponse(buildLegacyErrorPayload(error), 502);
-            }
-
-            const assistantText = formatAssistantErrorText(errorMessage);
-            if (wantsStream) {
-                return createErrorStreamResponse(buildErrorStreamChunk(assistantText, payload));
-            }
-
-            return jsonResponse(buildErrorCompletionPayload(assistantText, payload));
-        }
     });
 }

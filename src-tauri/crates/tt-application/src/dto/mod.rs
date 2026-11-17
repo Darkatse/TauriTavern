@@ -21,6 +21,7 @@ pub mod secret_dto;
 pub mod settings_dto;
 pub mod sprite_dto;
 pub mod stable_diffusion_dto;
+pub mod text_completion_dto;
 pub mod theme_dto;
 pub mod tokenization_dto;
 pub mod tts_dto;

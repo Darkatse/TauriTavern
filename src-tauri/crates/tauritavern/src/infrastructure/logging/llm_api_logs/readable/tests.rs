@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use super::super::recording::StreamReadable;
 use super::*;
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionSource,
@@ -253,5 +254,34 @@ fn stream_readable_collector_separates_gemini_thought_parts() {
     assert_eq!(
         collector.into_string(),
         "[reasoning]\nNeed file.\n\n[assistant]\nDone."
+    );
+}
+
+#[test]
+fn text_completion_readable_formats_llamacpp_arrays_and_candidate_zero_streams() {
+    let llamacpp_multi = json!([
+        { "content": "First", "thinking": "Step 1" },
+        { "content": "Second" }
+    ]);
+    assert_eq!(
+        format_completion(&llamacpp_multi),
+        "[reasoning]\nStep 1\n\n[assistant]\nFirst\n\nSecond"
+    );
+
+    let ollama_single = json!({ "response": "Hello", "thinking": "Plan" });
+    assert_eq!(
+        format_completion(&ollama_single),
+        "[reasoning]\nPlan\n\n[assistant]\nHello"
+    );
+
+    let mut collector = CompletionStreamReadable::default();
+    collector.push(r#"{"choices":[{"index":0,"text":"A","thinking":"T"}]}"#);
+    collector.push(r#"{"choices":[{"index":1,"text":"IGNORED"}]}"#);
+    collector.push(r#"{"index":0,"content":"B","thinking":"U"}"#);
+    collector.push(r#"{"index":1,"content":"IGNORED"}"#);
+
+    assert_eq!(
+        collector.into_string(),
+        "[reasoning]\nTU\n\n[assistant]\nAB"
     );
 }

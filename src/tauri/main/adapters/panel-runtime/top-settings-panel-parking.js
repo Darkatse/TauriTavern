@@ -46,11 +46,14 @@ const LEFT_NAV_MAIN_API_BLOCKS = Object.freeze({
 const LEFT_NAV_REQUIRED_ANCHORS = Object.freeze([
     '#range_block_openai', // onModelChange reads max through the DOM; parking yields NaN.
     '#openai_reasoning_effort_block', // The assistant reads data-source after APP_READY.
+    '#common-gen-settings-block', // Text completion props updates #max_context via restoreNumericInput.
+    '#textgenerationwebui_api-settings', // Switching types or presets updates controls via restoreNumericInput.
 ]);
 
 // `compat` only: keep these selectable while parked, for third-party scripts.
 const LEFT_NAV_COMPAT_ANCHORS = Object.freeze([
     '#openai_api-presets',
+    '#textgenerationwebui_api-presets',
     '#completion_prompt_manager',
 ]);
 
