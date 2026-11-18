@@ -1,8 +1,9 @@
 import { expect, onTestFinished, test } from '@rstest/core';
 import { captureBrowserErrors, createFrontend } from '../helpers/frontend.mjs';
+import { HOSTS } from '../helpers/host-identity.mjs';
 
-async function openChat() {
-    const { window, host, fixture, load, startHost, close } = await createFrontend();
+async function openChat(identity) {
+    const { window, host, fixture, load, startHost, close } = await createFrontend({ identity });
     onTestFinished(close);
     const { errors, failed } = captureBrowserErrors(window);
     await startHost();
@@ -68,5 +69,20 @@ test('an edit session ends with its editor, and Done finishes the session it sta
     await Promise.race([done, failed]);
     await Promise.race([host.exit(), failed]);
     expect(saved()).toBe('Edited');
+    expect(errors).toEqual([]);
+});
+
+test('on a mobile host the chat input area gives way to the message editor until it closes', async () => {
+    const { window, main, eventSource, event_types, errors, failed, message } = await openChat(HOSTS.android);
+    const inputArea = window.document.getElementById('form_sheld');
+    await main.messageEdit(0);
+    expect(inputArea.checkVisibility()).toBe(false);
+
+    // Done removes the focused editor.
+    const updated = new Promise(resolve => eventSource.once(event_types.MESSAGE_UPDATED, resolve));
+    window.jQuery(message).find('.mes_edit_done').trigger('click');
+    await Promise.race([updated, failed]);
+    expect(message.querySelector('#curEditTextarea')).toBeNull();
+    expect(inputArea.checkVisibility()).toBe(true);
     expect(errors).toEqual([]);
 });

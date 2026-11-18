@@ -950,6 +950,12 @@ body .panelControlBar {
     z-index: 30;
 }
 
+/* Mobile hosts mark #chat when a text field in it takes focus. A field can lose focus without a
+   focusout (removed while focused, or the WebView losing focus), so focus must also still be in #chat. */
+#chat[data-tt-text-focus]:focus-within ~ #form_sheld {
+    display: none;
+}
+
 /* special case for desktop Safari to allow #sheld resizing */
 @media only screen and (min-width: 1024px) and (-webkit-min-device-pixel-ratio: 2) and (pointer: fine) {
     #form_sheld {

@@ -57,6 +57,7 @@ import {
     ChatInputFocusIntent,
     focusChatInput,
     installChatInputFocusKeeper,
+    installChatInputYield,
 } from './scripts/chat-input-focus.js';
 import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
 import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
@@ -13059,6 +13060,7 @@ jQuery(async function () {
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
     installChatInputFocusKeeper();
+    installChatInputYield();
     $('#send_textarea').on('input', syncChatInputState);
     subscribeAgentRunState(syncChatInputState);
     syncChatInputState();
