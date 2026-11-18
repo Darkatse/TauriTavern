@@ -29,16 +29,17 @@ CI 只比较 Linux。
 - 前端卡：按生态卡的常见结构合成，回复含思考、正文、变量更新与状态栏。最近两层的状态栏约 80 KB，由 Code Render 渲染成 iframe；iframe 与页面同在一个渲染线程，其工作一并计入。
 - 应用内助手：一个会话，440 条消息、约 2 MB 历史。
 - Prompt Manager：预设里有一对关闭的工具调用与工具响应条目，组装不带它们。
+- Agent：一个前台流式 Run，先把正文写进聊天，再在展开的 Timeline 里显示推理。场景经 `__perfAgent` 的 `push()` 送入实时投影、`event()` 追加日志事件，每次推送是一个输入。
 
 启动（`app/startup`）是同一用户的第二次启动：页面先加载一次，第二次启动看到第一次留下的宿主状态与浏览器存储；后端同样先重放第一次启动，再计量第二次。
 
 改数据或 fixture 时单独提交，并重新记录基线。
 
-新增场景时导出 `async (app) => {}`，用 `app.measure(name, ...inputs)` 计量一组输入。每个输入之后页面先静默下来，所以输入的划分决定哪些工作合并：流式回复每次推送的文本是一个输入（经 `__perfReply` 的 `push()`、`think()`、`end()` 送入），连续打字放进同一个输入，用 `app.frame()` 隔开。点击坐标在步骤之前用 `app.centerOf(locator)` 取得，步骤里用 `page.mouse`、`page.keyboard` 发送真实输入。依赖配置才会发生的工作（如卡的正则、Code Render），在步骤之后核对产物。写完后在 Linux 上用 6 倍 CPU 限速确认计数不变。
+新增场景时导出 `async (app) => {}`，并在 `frontend.mjs` 的 `SCENARIOS` 里排定顺序：场景共用一个页面与数据，各自还原改过的界面；会留下其他场景要读的数据的场景（如 Agent 模式设置与 Run 存下的聊天）排在它们之后。用 `app.measure(name, ...inputs)` 计量一组输入。每个输入之后页面先静默下来，所以输入的划分决定哪些工作合并：流式回复每次推送的文本是一个输入（经 `__perfReply` 的 `push()`、`think()`、`end()` 送入），连续打字放进同一个输入，用 `app.frame()` 隔开。点击坐标在步骤之前用 `app.centerOf(locator)` 取得，步骤里用 `page.mouse`、`page.keyboard` 发送真实输入。依赖配置才会发生的工作（如卡的正则、Code Render），在步骤之后核对产物。写完后在 Linux 上用 6 倍 CPU 限速确认计数不变。
 
 ## 前端层
 
-在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目；Web Host 没有的原生命令（分词、助手会话、更新检查）按原生的结果应答。首次运行前安装浏览器：`pnpm exec playwright install --only-shell chromium`。
+在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目；Web Host 没有的原生命令（分词、助手会话、更新检查、Agent Run）按原生的结果应答。Agent Run 的日志读到末尾时，等下一条事件再返回，事件轮询因此不会让页面一直忙碌。首次运行前安装浏览器：`pnpm exec playwright install --only-shell chromium`。
 
 每个步骤计：
 
@@ -64,7 +65,7 @@ CI 只比较 Linux。
 
 - 每次运行从一份新复制的数据开始：`tt-perf prepare` 在后端启动后把数据文件的修改时间设为同一时刻，再重放第一次启动；`tt-perf measure` 在同一目录里计量其余部分。缓存记录了文件的变更时间，所以中途不再复制。
 - `app/startup` 从后端启动之前开始计，包括启动记录、启动配置、应用状态与默认内容的初始化。
-- 宿主签发的值（会话 id、修订号、读取器）取自重放时的实际结果。插件、网络、通知与回调页面的命令不重放。
+- 宿主签发的值（会话 id、修订号、读取器）取自重放时的实际结果。插件、网络、通知与回调页面的命令不重放；启动 Agent Run 要调用模型，也不重放。传入了不重放命令所签发值的调用同样不重放，例如这个 Run 的事件读取与实时订阅。
 
 每个步骤都计结果字节与分配。tt-perf 运行在自己的全局分配器上（`src/perf/allocator.rs`），系统分配器包在几个固定名字的函数后，由它们记下分配与重新分配的次数和请求的字节数。此外：
 

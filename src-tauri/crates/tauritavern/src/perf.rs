@@ -45,7 +45,7 @@ struct Call {
 }
 
 /// Skips calls whose work lies outside the backend's code: Tauri plugins, the host shell's startup handshake,
-/// callbacks into the page, the network and the OS.
+/// callbacks into the page, the network and the OS. An Agent run calls its model over the network.
 fn replayed(call: &Call) -> bool {
     !call.command.starts_with("plugin:")
         && !matches!(
@@ -53,6 +53,7 @@ fn replayed(call: &Call) -> bool {
             "backend_error_bridge_ready"
                 | "wait_for_backend_ready"
                 | "register_agent_extension_tool"
+                | "start_agent_run"
                 | "check_for_update"
                 | "get_chat_completions_status"
                 | "generate_chat_completion"
@@ -120,37 +121,63 @@ async fn prepare(root: &Path, trace: &Trace, repo: &Path) -> Result<(), String> 
     let (app, window) = environment::mock_app(repo)?;
     environment::start_backend(&app, root).await?;
     set_file_times(&root.join("data"))?;
-    replay(&window, &trace.previous_launch, None)
+    let plan = Plan::new(&trace.previous_launch);
+    replay(&window, &trace.previous_launch, &plan, None)
         .await
         .map_err(|error| format!("previous launch: {error}"))
 }
 
-/// The launch's step opens before the backend starts.
+/// The launch's step opens before the backend starts; the replay's plan is settled before it.
 async fn measure(
     root: &Path,
     trace: &Trace,
     repo: &Path,
 ) -> Result<(BTreeMap<String, counters::Counters>, Vec<Value>), String> {
     let (app, window) = environment::mock_app(repo)?;
+    let plan = Plan::new(&trace.calls);
     let mut steps = Steps::default();
     steps.enter(trace.calls.first().and_then(|call| call.step.as_deref()))?;
     environment::start_backend(&app, root).await?;
-    replay(&window, &trace.calls, Some(&mut steps)).await?;
+    replay(&window, &trace.calls, &plan, Some(&mut steps)).await?;
     steps.finish()
+}
+
+/// What a replay settles before its first call: the calls it skips, and the calls whose results later ones pass on.
+struct Plan {
+    skipped: Vec<bool>,
+    referenced: HashSet<usize>,
+}
+
+impl Plan {
+    /// Skips the calls `replayed` rejects, and every call that passes a value a skipped call issued, such as an
+    /// Agent run's id: it addresses what the replay never created.
+    fn new(calls: &[Call]) -> Self {
+        let mut skipped = Vec::with_capacity(calls.len());
+        let mut referenced = HashSet::new();
+        for call in calls {
+            let references = call_references(call);
+            skipped.push(!replayed(call) || references.iter().any(|&other| skipped[other]));
+            referenced.extend(references);
+        }
+        Self {
+            skipped,
+            referenced,
+        }
+    }
 }
 
 async fn replay(
     window: &WebviewWindow<MockRuntime>,
     calls: &[Call],
+    plan: &Plan,
     mut steps: Option<&mut Steps>,
 ) -> Result<(), String> {
-    let referenced = referenced_calls(calls);
     let mut results = BTreeMap::new();
     for (index, call) in calls.iter().enumerate() {
         if let Some(steps) = steps.as_deref_mut() {
             steps.enter(call.step.as_deref())?;
         }
-        if !replayed(call) {
+        if plan.skipped[index] {
             continue;
         }
         let response = invoke(window, call, &results)
@@ -159,7 +186,7 @@ async fn replay(
         if let Some(steps) = steps.as_deref_mut() {
             steps.count_result(&response);
         }
-        if referenced.contains(&index) {
+        if plan.referenced.contains(&index) {
             results.insert(
                 index,
                 parsed(response).map_err(|error| format!("call {index}: {error}"))?,
@@ -349,7 +376,8 @@ fn resolve(value: &Value, results: &BTreeMap<usize, Value>) -> Result<Value, Str
     })
 }
 
-fn referenced_calls(calls: &[Call]) -> HashSet<usize> {
+/// The earlier calls whose results this call passes on.
+fn call_references(call: &Call) -> HashSet<usize> {
     fn collect(value: &Value, found: &mut HashSet<usize>) {
         if let Some((call, _)) = reference(value) {
             found.insert(call);
@@ -360,9 +388,7 @@ fn referenced_calls(calls: &[Call]) -> HashSet<usize> {
         }
     }
     let mut found = HashSet::new();
-    for call in calls {
-        collect(&call.args, &mut found);
-        collect(&call.headers, &mut found);
-    }
+    collect(&call.args, &mut found);
+    collect(&call.headers, &mut found);
     found
 }

@@ -287,6 +287,36 @@ function rememberIssued(issued, index, value, opensResource, at = []) {
         for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, opensResource, [...at, key]);
     }
 }
+// The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal and
+// push() sends a live projection update to every subscriber. Until the run ends, a read past the journal's last
+// event waits for the next one, so the run's event pollers wait instead of polling while the page settles.
+const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], channels: new Set(), ended: false };
+const agentRunEnded = new Promise(resolve => { agentRun.end = resolve; });
+globalThis.__perfAgent = {
+    event(type) {
+        const seq = agentRun.events.length + 1;
+        agentRun.events.push({ seq, id: \`agent-event-\${seq}\`, runId: agentRun.runId, timestamp: '2026-01-01T00:00:00Z', level: 'info', type, payload: {} });
+        if (['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed'].includes(type)) {
+            agentRun.ended = true;
+            agentRun.end();
+        }
+        for (const wake of agentRun.waiting.splice(0)) wake();
+    },
+    push: update => agentRun.channels.forEach(channel => channel.onmessage(update)),
+    subscribers: () => agentRun.channels.size,
+};
+function readAgentRunEvents(dto) {
+    const after = dto.afterSeq ?? 0, before = dto.beforeSeq ?? Infinity;
+    const page = () => {
+        const events = agentRun.events.filter(event => event.seq > after && event.seq < before);
+        return {
+            events: dto.beforeSeq == null ? events.slice(0, dto.limit) : events.slice(-dto.limit),
+            ...(dto.includeTimelineProjection ? { timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] } } : {}),
+        };
+    };
+    if (agentRun.ended || dto.beforeSeq != null || agentRun.events.length > after) return page();
+    return new Promise(resolve => agentRun.waiting.push(() => resolve(page())));
+}
 // Native commands the Web Host lacks, answered as the native host would.
 const { session, messages, runs } = data.assistant;
 const nativeOnly = {
@@ -302,16 +332,32 @@ const nativeOnly = {
         return { session, messages: more ? page.slice(1) : page, lastSeq: messages.length, nextBeforeSeq: more ? page[1].seq : null, activeRun: null };
     },
     read_agent_run_events({ dto }) {
+        if (dto.runId === agentRun.runId) return readAgentRunEvents(dto);
         const events = runs.find(({ run }) => run.id === dto.runId).events
             .filter(event => event.seq > (dto.afterSeq ?? 0) && event.seq < (dto.beforeSeq ?? Infinity));
         return { events: dto.beforeSeq == null ? events.slice(0, dto.limit) : events.slice(-dto.limit) };
     },
     // The catalog only fills the assistant's settings view.
     list_agent_tools: () => ({ tools: [], diagnostics: [] }),
+    // The run reads its profile for the model it binds; the default profile uses the current connection.
+    load_agent_profile: ({ dto }) => ({ profile: { id: dto.profileId } }),
+    start_agent_run({ dto }) {
+        globalThis.__perfAgent.event('run_started');
+        return { runId: agentRun.runId, workspaceId: 'workspace_perf', stableChatId: dto.stableChatId, generationType: dto.generationType, status: 'running' };
+    },
+    subscribe_agent_run_live_projection({ channel }) {
+        channel.onmessage({ type: 'snapshot', calls: [], responses: [] });
+        agentRun.channels.add(channel);
+        return agentRunEnded.then(() => {
+            agentRun.channels.delete(channel);
+            return null;
+        });
+    },
+    finish_agent_run_presentation: () => null,
 };
 const webHostInvoke = window.__TAURI__.core.invoke;
 const invoke = async (command, args, options) => Object.hasOwn(nativeOnly, command)
-    ? structuredClone(nativeOnly[command](args))
+    ? structuredClone(await nativeOnly[command](args))
     : webHostInvoke(command, args, options);
 window.__TAURI__.core.invoke = async (command, args, options) => {
     const host = globalThis.__perfHost;
@@ -435,8 +481,9 @@ function countEngineWork(events) {
 async function openFrontend({ allocations = false } = {}) {
     const quietWithinMs = allocations ? 30_000 : 5000;
     const server = await serve();
-    // Animations, including smooth scrolling, would make frame counts follow elapsed time instead of work.
-    const args = ['--disable-smooth-scrolling', '--force-prefers-reduced-motion'];
+    // Animations, including smooth scrolling, would make frame counts follow elapsed time instead of work. The page
+    // also asks for reduced motion, below.
+    const args = ['--disable-smooth-scrolling'];
     // Background compilation would let machine speed decide which allocations optimized code removes.
     if (allocations) args.push('--js-flags=--single-threaded');
     // On Linux, headless Chromium hints web fonts in full by default and rounds their glyph advances to whole
@@ -450,7 +497,9 @@ async function openFrontend({ allocations = false } = {}) {
     const browser = await chromium.launch({ args });
     // The page takes its language and time zone from the machine otherwise, and the UI translates and formats
     // dates by them.
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale: 'en-US', timezoneId: 'UTC' });
+    const page = await browser.newPage({
+        viewport: { width: 1280, height: 800 }, locale: 'en-US', timezoneId: 'UTC', reducedMotion: 'reduce',
+    });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
     let frameQueue = Promise.resolve(), measuring = false, open = true;
@@ -711,12 +760,21 @@ async function openFrontend({ allocations = false } = {}) {
     };
 }
 
+// Scenarios share one page and its data, and run in this order. Each restores the view it changed; one that leaves
+// data the others read, as the Agent run leaves its chat and Agent mode settings, runs after them.
+const SCENARIOS = ['assistant', 'character', 'chat', 'frontend-card', 'prompt-manager', 'world-info', 'agent'];
+
 async function runScenarios(options) {
     const directory = new URL('./', import.meta.url);
+    const files = (await readdir(directory)).filter(name => name.endsWith('.perf.mjs')).sort();
+    const listed = SCENARIOS.map(name => `${name}.perf.mjs`).sort();
+    if (files.join() !== listed.join()) {
+        throw new Error(`tests/perf scenarios are ${files.join(', ')}, but SCENARIOS lists ${listed.join(', ')}`);
+    }
     const app = await openFrontend(options);
     try {
-        for (const file of (await readdir(directory)).filter(name => name.endsWith('.perf.mjs')).sort()) {
-            const { default: scenario } = await import(new URL(file, directory));
+        for (const name of SCENARIOS) {
+            const { default: scenario } = await import(new URL(`${name}.perf.mjs`, directory));
             await scenario(app);
         }
         app.calls = await app.hostCalls();

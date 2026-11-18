@@ -610,6 +610,50 @@
                 "eventListeners": 3923,
                 "jsAllocatedBytes": 3290696
             }
+        },
+        "agent/stream-chat-write": {
+            "frontend": {
+                "eventDispatches": 1,
+                "styleRecalcs": 13,
+                "forcedStyleRecalcs": 0,
+                "elementsRestyled": 167,
+                "layouts": 14,
+                "forcedLayouts": 0,
+                "layoutObjectsLaidOut": 257,
+                "frames": 13,
+                "compositorUpdates": 0,
+                "requests": 1,
+                "consoleMessages": 1,
+                "hostBytes": 0,
+                "elements": 15717,
+                "scrollContainers": 88,
+                "liveNodes": 53813,
+                "layoutObjects": 4329,
+                "eventListeners": 3923,
+                "jsAllocatedBytes": 7323940
+            }
+        },
+        "agent/stream-timeline-reasoning": {
+            "frontend": {
+                "eventDispatches": 0,
+                "styleRecalcs": 3,
+                "forcedStyleRecalcs": 0,
+                "elementsRestyled": 29,
+                "layouts": 6,
+                "forcedLayouts": 0,
+                "layoutObjectsLaidOut": 150,
+                "frames": 6,
+                "compositorUpdates": 4,
+                "requests": 1,
+                "consoleMessages": 0,
+                "hostBytes": 0,
+                "elements": 15741,
+                "scrollContainers": 89,
+                "liveNodes": 53862,
+                "layoutObjects": 4387,
+                "eventListeners": 3932,
+                "jsAllocatedBytes": 365360
+            }
         }
     }
 }

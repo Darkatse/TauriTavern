@@ -26,4 +26,7 @@ export default async function worldInfo({ page, measure, frame, centerOf }) {
     await toggles.first().scrollIntoViewIfNeeded();
     const close = await centerOf(toggles.first());
     await measure('world-info/close-entry', () => page.mouse.click(close.x, close.y));
+    // Later scenarios start with the drawer closed.
+    await page.mouse.click(drawer.x, drawer.y);
+    await page.locator('#WorldInfo').waitFor({ state: 'hidden' });
 }

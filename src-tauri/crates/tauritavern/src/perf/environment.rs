@@ -58,6 +58,7 @@ pub(super) fn mock_app(
             c::extension_store_commands::append_extension_store_commit_chunk,
             c::extension_store_commands::finish_extension_store_commit,
             c::agent_commands::list_agent_profiles,
+            c::agent_commands::load_agent_profile,
             c::skill_commands::list_skills,
             c::mcp_commands::list_mcp_servers,
             c::mcp_commands::create_mcp_server,
