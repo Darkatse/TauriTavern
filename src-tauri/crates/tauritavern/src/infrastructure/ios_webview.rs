@@ -15,6 +15,7 @@ pub fn configure_main_wkwebview(window: &WebviewWindow) -> tauri::Result<()> {
         let wkwebview = &*wkwebview_ptr.cast::<AnyObject>();
         super::apple_webview_refresh_rate::enable_native_refresh_rate(wkwebview);
         disable_content_inset_adjustment(wkwebview);
+        disable_text_autosizing(wkwebview);
         crate::platform::ios_window_layout::install(
             &*wkwebview_ptr.cast::<objc2_ui_kit::UIView>(),
             host_window,
@@ -36,4 +37,15 @@ unsafe fn disable_content_inset_adjustment(wkwebview: &objc2::runtime::AnyObject
     scroll_view.setContentInset(zero_insets);
     scroll_view.setScrollIndicatorInsets(zero_insets);
     scroll_view.setAutomaticallyAdjustsScrollIndicatorInsets(false);
+}
+
+/// Page text keeps the size its CSS sets, at any view width.
+unsafe fn disable_text_autosizing(wkwebview: &objc2::runtime::AnyObject) {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, Bool};
+
+    let configuration: Retained<AnyObject> = unsafe { msg_send![wkwebview, configuration] };
+    let preferences: Retained<AnyObject> = unsafe { msg_send![&*configuration, preferences] };
+    let _: () = unsafe { msg_send![&*preferences, _setTextAutosizingEnabled: Bool::NO] };
 }

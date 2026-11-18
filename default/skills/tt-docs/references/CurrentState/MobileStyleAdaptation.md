@@ -33,6 +33,7 @@
 - WKWebView 上、左、右约束到宿主的内容 guide，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 keyboard guide 停在底部安全区。
 - iOS 没有沉浸模式，政策避让就是内容 guide：平时等于安全区；有抽屉栏时页面没有顶栏，上边改用纵向角落适配的安全区（`safeAreaLayoutRegionWithCornerAdaptation:`），避开显示圆角。快照的 insets 读同一个 guide。
 - 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
+- 关闭 WebKit 的文字自动缩放（`_textAutosizingEnabled`），字号只由页面与用户设置决定。它在 WebView 宽于主屏竖放宽度时放大正文，横屏与 iPhone Duo 展开都满足这个条件。
 - 主窗口隐藏 WebKit 表单附属栏（`disableInputAccessoryView`）。收键盘手势由宿主内的全窗口 `KeyboardScrollView` 提供：UIKit `.interactive`，与网页内部滚动视图的 pan 同时识别，不取消内容触摸，网页控件操作与键盘跟手可以同时发生。容器没有滚动内容，`setContentOffset:` 固定为零，`alwaysBounceVertical` 只用来让 pan 能够开始。
 - WKWebView 是容器的子视图，约束对象仍是宿主的 guide。UIKit 在键盘动画块里一次设定 guide；交互拖动不同，guide 跟手变化，所以容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随。iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，逐帧跟随的代价尤其高。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
