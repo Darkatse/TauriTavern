@@ -242,7 +242,7 @@ test('prepared content survives projection changes and commits before runtime cl
         expect(evaluations).toBe(count);
         prepare = async (_context, renderBase) => `<pre>${await renderBase()}</pre>`;
         controller.project({ indices: [] });
-        surface.setContentTransient(messages[0], false);
+        await surface.finishContent(0);
         controller.project({ indices: [0] });
         await preparation.ready([0]);
         expect(evaluations).toBe(count + 1);

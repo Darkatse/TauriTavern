@@ -116,11 +116,17 @@ function createFakeStreamingCommitScript() {
             message.swipe_info[message.swipe_id].extra = structuredClone(message.extra);
             return true;
         },
-        updateMessageBlock(messageId, message, options) {
-            renders.push({ messageId, text: message.mes, options });
+        getStoppingStrings() {
+            return [];
+        },
+        balanceStreamingMarkup(text) {
+            return text;
+        },
+        createStreamingMesTextWriter() {
+            return (messageId, text) => renders.push({ kind: 'preview', messageId, text });
         },
         async finalizeMessageContent(messageId, event, ...args) {
-            script.updateMessageBlock(messageId, script.chat[messageId], { transient: false });
+            renders.push({ kind: 'final', messageId, text: script.chat[messageId].mes });
             if (event) await script.eventSource.emit(event, messageId, ...args);
         },
     };
@@ -166,6 +172,12 @@ function liveWriteCall(content, overrides = {}) {
         contentWords: 0,
         ...overrides,
     };
+}
+
+// Runs each scheduled live render in a microtask.
+function renderInMicrotask(render) {
+    queueMicrotask(render);
+    return () => {};
 }
 
 async function installHarness(options = {}) {
@@ -591,394 +603,353 @@ test('api.agent.listRuns fails fast on invalid history filters', async () => {
 test('agent live write keeps one real partial chat message and saves it on failure', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
     let suspendFrames = false;
     let cancelledFrames = 0;
-    globalThis.requestAnimationFrame = callback => {
-        if (!suspendFrames) queueMicrotask(() => callback(0));
-        return 1;
-    };
-    globalThis.cancelAnimationFrame = () => { cancelledFrames += 1; };
+    const { script, events, renders } = createFakeStreamingCommitScript();
+    let durableListener = null;
+    let liveListener = null;
+    let durableStopped = false;
+    let liveStopped = false;
+    let persistCount = 0;
+    attachHostCommitBridge({
+        runId: 'run-live-partial',
+        chatRef,
+        stableChatId: 'stable-live-partial',
+        generationType: 'normal',
+        safeInvoke: async () => {},
+        readWorkspaceFile: async () => {},
+        subscribe(_runId, handler) {
+            durableListener = handler;
+            return () => { durableStopped = true; };
+        },
+        subscribeLiveProjection(_runId, handler) {
+            let active = true;
+            liveListener = update => { if (active) handler(update); };
+            return () => {
+                active = false;
+                liveStopped = true;
+            };
+        },
+        loadScript: async () => script,
+        persistChat: async () => { persistCount += 1; },
+        scheduleRender(render) {
+            if (!suspendFrames) queueMicrotask(render);
+            return () => { cancelledFrames += 1; };
+        },
+    });
 
-    try {
-        const { script, events, renders } = createFakeStreamingCommitScript();
-        let durableListener = null;
-        let liveListener = null;
-        let durableStopped = false;
-        let liveStopped = false;
-        let persistCount = 0;
-        attachHostCommitBridge({
-            runId: 'run-live-partial',
-            chatRef,
-            stableChatId: 'stable-live-partial',
-            generationType: 'normal',
-            safeInvoke: async () => {},
-            readWorkspaceFile: async () => {},
-            subscribe(_runId, handler) {
-                durableListener = handler;
-                return () => { durableStopped = true; };
-            },
-            subscribeLiveProjection(_runId, handler) {
-                let active = true;
-                liveListener = update => { if (active) handler(update); };
-                return () => {
-                    active = false;
-                    liveStopped = true;
-                };
-            },
-            loadScript: async () => script,
-            persistChat: async () => { persistCount += 1; },
-        });
+    liveListener({
+        type: 'replace',
+        call: liveWriteCall('partial'),
+    });
+    await waitFor(() => script.chat[0]?.mes === 'partial');
+    const message = script.chat[0];
+    assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
+    liveListener({ type: 'responseReplace', response: {
+        invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', round: 1, attempt: 1, text: 'Response body', reasoning: 'Plan', toolIds: [],
+    } });
+    liveListener({ type: 'responseAppend', toolIds: [], invocationId: 'inv_root', text: '', reasoning: ' the edit' });
+    liveListener({ type: 'responseRemove', invocationId: 'inv_root' });
+    assert.equal(message.mes, 'partial');
 
-        liveListener({
-            type: 'replace',
-            call: liveWriteCall('partial'),
-        });
-        await waitFor(() => script.chat[0]?.mes === 'partial');
-        const message = script.chat[0];
-        assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
-        liveListener({ type: 'responseReplace', response: {
-            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', round: 1, attempt: 1, text: 'Response body', reasoning: 'Plan', toolIds: [],
-        } });
-        liveListener({ type: 'responseAppend', toolIds: [], invocationId: 'inv_root', text: '', reasoning: ' the edit' });
-        liveListener({ type: 'responseRemove', invocationId: 'inv_root' });
-        assert.equal(message.mes, 'partial');
-
-        suspendFrames = true;
-        liveListener({
-            type: 'replace',
-            call: liveWriteCall('child content', {
-                invocationId: 'inv_background_child',
-                invocationExitPolicy: 'task_return_required',
-                path: 'output/child.md',
-            }),
-        });
-        liveListener({
-            type: 'append',
-            invocationId: 'inv_root',
-            toolCallIndex: 0,
-            field: 'content',
-            text: ' answer',
-            wordDelta: 1,
-        });
-        liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
-        liveListener({
-            type: 'replace',
-            call: liveWriteCall('handoff', {
-                invocationId: 'inv_handoff_before_journal_poll',
-            }),
-        });
-        liveListener({
-            type: 'append',
+    suspendFrames = true;
+    liveListener({
+        type: 'replace',
+        call: liveWriteCall('child content', {
+            invocationId: 'inv_background_child',
+            invocationExitPolicy: 'task_return_required',
+            path: 'output/child.md',
+        }),
+    });
+    liveListener({
+        type: 'append',
+        invocationId: 'inv_root',
+        toolCallIndex: 0,
+        field: 'content',
+        text: ' answer',
+        wordDelta: 1,
+    });
+    liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+    liveListener({
+        type: 'replace',
+        call: liveWriteCall('handoff', {
             invocationId: 'inv_handoff_before_journal_poll',
-            toolCallIndex: 0,
-            field: 'content',
-            text: ' answer',
-            wordDelta: 1,
-        });
+        }),
+    });
+    liveListener({
+        type: 'append',
+        invocationId: 'inv_handoff_before_journal_poll',
+        toolCallIndex: 0,
+        field: 'content',
+        text: ' answer',
+        wordDelta: 1,
+    });
 
-        durableListener({ type: 'run_failed', payload: {} });
-        await waitFor(() => persistCount === 1);
-        assert.equal(cancelledFrames, 1);
-        assert.equal(script.chat.length, 1);
-        assert.ok(renders.some(render => render.options.transient));
-        assert.deepEqual(renders.at(-1).options, { transient: false });
-        assert.equal(script.chat[0], message);
-        assert.equal(message.mes, 'handoff answer');
-        assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
-        assert.deepEqual(events.slice(-2), [
-            ['message_received', 0, 'normal'],
-            ['character_message_rendered', 0, 'normal'],
-        ]);
-        assert.equal(durableStopped, true);
-        assert.equal(liveStopped, true);
-    } finally {
-        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-        globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-    }
+    durableListener({ type: 'run_failed', payload: {} });
+    await waitFor(() => persistCount === 1);
+    assert.equal(cancelledFrames, 1);
+    assert.equal(script.chat.length, 1);
+    assert.ok(renders.some(render => render.kind === 'preview'));
+    assert.equal(renders.at(-1).kind, 'final');
+    assert.equal(script.chat[0], message);
+    assert.equal(message.mes, 'handoff answer');
+    assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
+    assert.deepEqual(events.slice(-2), [
+        ['message_received', 0, 'normal'],
+        ['character_message_rendered', 0, 'normal'],
+    ]);
+    assert.equal(durableStopped, true);
+    assert.equal(liveStopped, true);
 });
 
 test('agent live swipe keeps prior commit metadata on the prior swipe only', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    globalThis.requestAnimationFrame = callback => {
-        queueMicrotask(() => callback(0));
-        return 1;
+
+    const { script } = createFakeStreamingCommitScript();
+    const oldExtra = {
+        reasoning: '',
+        tauritavern: { agent: { runId: 'run-old', commitId: 'commit-old' } },
     };
+    script.chat.push({
+        mes: 'old answer',
+        extra: structuredClone(oldExtra),
+        swipe_id: 1,
+        swipes: ['old answer'],
+        swipe_info: [{ extra: structuredClone(oldExtra) }],
+    });
+    let liveListener = null;
+    attachHostCommitBridge({
+        runId: 'run-live-swipe',
+        chatRef,
+        stableChatId: 'stable-live-swipe',
+        generationType: 'swipe',
+        safeInvoke: async () => {},
+        readWorkspaceFile: async () => {},
+        subscribe() { return () => {}; },
+        subscribeLiveProjection(_runId, handler) {
+            liveListener = handler;
+            return () => {};
+        },
+        loadScript: async () => script,
+        persistChat: async () => {},
+        scheduleRender: renderInMicrotask,
+    });
 
-    try {
-        const { script } = createFakeStreamingCommitScript();
-        const oldExtra = {
-            reasoning: '',
-            tauritavern: { agent: { runId: 'run-old', commitId: 'commit-old' } },
-        };
-        script.chat.push({
-            mes: 'old answer',
-            extra: structuredClone(oldExtra),
-            swipe_id: 1,
-            swipes: ['old answer'],
-            swipe_info: [{ extra: structuredClone(oldExtra) }],
-        });
-        let liveListener = null;
-        attachHostCommitBridge({
-            runId: 'run-live-swipe',
-            chatRef,
-            stableChatId: 'stable-live-swipe',
-            generationType: 'swipe',
-            safeInvoke: async () => {},
-            readWorkspaceFile: async () => {},
-            subscribe() { return () => {}; },
-            subscribeLiveProjection(_runId, handler) {
-                liveListener = handler;
-                return () => {};
-            },
-            loadScript: async () => script,
-            persistChat: async () => {},
-        });
-
-        liveListener({
-            type: 'replace',
-            call: liveWriteCall('new swipe'),
-        });
-        await waitFor(() => script.chat[0].mes === 'new swipe');
-        assert.equal(script.chat.length, 1);
-        assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-swipe');
-        assert.equal(script.chat[0].swipe_info[1].extra.tauritavern.agent.runId, 'run-live-swipe');
-        assert.equal(script.chat[0].swipe_info[0].extra.tauritavern.agent.runId, 'run-old');
-    } finally {
-        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-    }
+    liveListener({
+        type: 'replace',
+        call: liveWriteCall('new swipe'),
+    });
+    await waitFor(() => script.chat[0].mes === 'new swipe');
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-swipe');
+    assert.equal(script.chat[0].swipe_info[1].extra.tauritavern.agent.runId, 'run-live-swipe');
+    assert.equal(script.chat[0].swipe_info[0].extra.tauritavern.agent.runId, 'run-old');
 });
 
 test('agent live write reuses auto checkpoints and stops after the first explicit commit', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    globalThis.requestAnimationFrame = callback => {
-        queueMicrotask(() => callback(0));
-        return 1;
-    };
 
-    try {
-        const { script } = createFakeStreamingCommitScript();
-        const files = [workspaceFile('patched'), workspaceFile('final')];
-        const resolutions = [];
-        let durableListener = null;
-        let liveListener = null;
-        let liveStopped = false;
-        let persistCount = 0;
-        attachHostCommitBridge({
+    const { script } = createFakeStreamingCommitScript();
+    const files = [workspaceFile('patched'), workspaceFile('final')];
+    const resolutions = [];
+    let durableListener = null;
+    let liveListener = null;
+    let liveStopped = false;
+    let persistCount = 0;
+    attachHostCommitBridge({
+        runId: 'run-live-commit',
+        chatRef,
+        stableChatId: 'stable-live-commit',
+        generationType: 'normal',
+        safeInvoke: async (command, args) => {
+            if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
+        },
+        readWorkspaceFile: async () => files.shift(),
+        subscribe(_runId, handler) {
+            durableListener = handler;
+            return () => {};
+        },
+        subscribeLiveProjection(_runId, handler) {
+            let active = true;
+            liveListener = update => { if (active) handler(update); };
+            return () => {
+                active = false;
+                liveStopped = true;
+            };
+        },
+        loadScript: async () => script,
+        persistChat: async () => { persistCount += 1; },
+        scheduleRender: renderInMicrotask,
+    });
+
+    const replace = content => liveListener({
+        type: 'replace',
+        call: liveWriteCall(content),
+    });
+    replace('draft');
+    await waitFor(() => script.chat[0]?.mes === 'draft');
+    const message = script.chat[0];
+
+    durableListener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
             runId: 'run-live-commit',
-            chatRef,
+            commitId: 'commit-auto',
             stableChatId: 'stable-live-commit',
-            generationType: 'normal',
-            safeInvoke: async (command, args) => {
-                if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
-            },
-            readWorkspaceFile: async () => files.shift(),
-            subscribe(_runId, handler) {
-                durableListener = handler;
-                return () => {};
-            },
-            subscribeLiveProjection(_runId, handler) {
-                let active = true;
-                liveListener = update => { if (active) handler(update); };
-                return () => {
-                    active = false;
-                    liveStopped = true;
-                };
-            },
-            loadScript: async () => script,
-            persistChat: async () => { persistCount += 1; },
-        });
+            sha256: 'sha-7',
+            isExplicit: false,
+        }),
+    });
+    await waitFor(() => resolutions.length === 1);
+    assert.equal(message.mes, 'patched');
+    assert.equal(liveStopped, false);
 
-        const replace = content => liveListener({
-            type: 'replace',
-            call: liveWriteCall(content),
-        });
-        replace('draft');
-        await waitFor(() => script.chat[0]?.mes === 'draft');
-        const message = script.chat[0];
+    replace('after checkpoint');
+    await waitFor(() => message.mes === 'after checkpoint');
+    assert.equal(script.chat[0], message);
+    assert.equal(script.chat.length, 1);
+    assert.equal(message.extra.tauritavern.agent.commitId, 'commit-auto');
+    assert.equal(message.extra.tauritavern.agent.artifacts[0].sha256, 'sha-7');
 
-        durableListener({
-            type: 'chat_commit_requested',
-            payload: agentCommitPayload(chatRef, {
-                runId: 'run-live-commit',
-                commitId: 'commit-auto',
-                stableChatId: 'stable-live-commit',
-                sha256: 'sha-7',
-                isExplicit: false,
-            }),
-        });
-        await waitFor(() => resolutions.length === 1);
-        assert.equal(message.mes, 'patched');
-        assert.equal(liveStopped, false);
+    durableListener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
+            runId: 'run-live-commit',
+            commitId: 'commit-explicit',
+            stableChatId: 'stable-live-commit',
+            sha256: 'sha-5',
+            isExplicit: true,
+        }),
+    });
+    await waitFor(() => resolutions.length === 2);
+    assert.equal(message.mes, 'final');
+    assert.equal(liveStopped, true);
+    assert.equal(persistCount, 2);
 
-        replace('after checkpoint');
-        await waitFor(() => message.mes === 'after checkpoint');
-        assert.equal(script.chat[0], message);
-        assert.equal(script.chat.length, 1);
-        assert.equal(message.extra.tauritavern.agent.commitId, 'commit-auto');
-        assert.equal(message.extra.tauritavern.agent.artifacts[0].sha256, 'sha-7');
-
-        durableListener({
-            type: 'chat_commit_requested',
-            payload: agentCommitPayload(chatRef, {
-                runId: 'run-live-commit',
-                commitId: 'commit-explicit',
-                stableChatId: 'stable-live-commit',
-                sha256: 'sha-5',
-                isExplicit: true,
-            }),
-        });
-        await waitFor(() => resolutions.length === 2);
-        assert.equal(message.mes, 'final');
-        assert.equal(liveStopped, true);
-        assert.equal(persistCount, 2);
-
-        replace('ignored');
-        await Promise.resolve();
-        await Promise.resolve();
-        assert.equal(message.mes, 'final');
-    } finally {
-        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-    }
+    replace('ignored');
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(message.mes, 'final');
 });
 
 test('agent live write emits generated-message events once when commit persistence fails', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    globalThis.requestAnimationFrame = callback => {
-        queueMicrotask(() => callback(0));
-        return 1;
-    };
 
-    try {
-        const { script, events } = createFakeStreamingCommitScript();
-        const resolutions = [];
-        let durableListener = null;
-        let liveListener = null;
-        let persistAttempts = 0;
-        attachHostCommitBridge({
+    const { script, events } = createFakeStreamingCommitScript();
+    const resolutions = [];
+    let durableListener = null;
+    let liveListener = null;
+    let persistAttempts = 0;
+    attachHostCommitBridge({
+        runId: 'run-live-persist-failure',
+        chatRef,
+        stableChatId: 'stable-live-persist-failure',
+        generationType: 'normal',
+        safeInvoke: async (command, args) => {
+            if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
+        },
+        readWorkspaceFile: async () => workspaceFile('draft'),
+        subscribe(_runId, handler) {
+            durableListener = handler;
+            return () => {};
+        },
+        subscribeLiveProjection(_runId, handler) {
+            liveListener = handler;
+            return () => {};
+        },
+        loadScript: async () => script,
+        persistChat: async () => {
+            persistAttempts += 1;
+            if (persistAttempts === 1) throw new Error('chat persistence failed');
+        },
+        scheduleRender: renderInMicrotask,
+    });
+
+    liveListener({
+        type: 'replace',
+        call: liveWriteCall('draft'),
+    });
+    await waitFor(() => script.chat[0]?.mes === 'draft');
+    durableListener({
+        type: 'chat_commit_requested',
+        payload: agentCommitPayload(chatRef, {
             runId: 'run-live-persist-failure',
-            chatRef,
+            commitId: 'commit-persist-failure',
             stableChatId: 'stable-live-persist-failure',
-            generationType: 'normal',
-            safeInvoke: async (command, args) => {
-                if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
-            },
-            readWorkspaceFile: async () => workspaceFile('draft'),
-            subscribe(_runId, handler) {
-                durableListener = handler;
-                return () => {};
-            },
-            subscribeLiveProjection(_runId, handler) {
-                liveListener = handler;
-                return () => {};
-            },
-            loadScript: async () => script,
-            persistChat: async () => {
-                persistAttempts += 1;
-                if (persistAttempts === 1) throw new Error('chat persistence failed');
-            },
-        });
+            sha256: 'sha-5',
+        }),
+    });
+    await waitFor(() => resolutions.length === 1);
+    assert.match(resolutions[0].error, /chat persistence failed/);
+    assert.equal(events.length, 2);
 
-        liveListener({
-            type: 'replace',
-            call: liveWriteCall('draft'),
-        });
-        await waitFor(() => script.chat[0]?.mes === 'draft');
-        durableListener({
-            type: 'chat_commit_requested',
-            payload: agentCommitPayload(chatRef, {
-                runId: 'run-live-persist-failure',
-                commitId: 'commit-persist-failure',
-                stableChatId: 'stable-live-persist-failure',
-                sha256: 'sha-5',
-            }),
-        });
-        await waitFor(() => resolutions.length === 1);
-        assert.match(resolutions[0].error, /chat persistence failed/);
-        assert.equal(events.length, 2);
-
-        durableListener({ type: 'run_failed', payload: {} });
-        await waitFor(() => persistAttempts === 2);
-        assert.equal(events.length, 2);
-        assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-persist-failure');
-    } finally {
-        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-    }
+    durableListener({ type: 'run_failed', payload: {} });
+    await waitFor(() => persistAttempts === 2);
+    assert.equal(events.length, 2);
+    assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-persist-failure');
 });
 
 test('agent live write ends with its call and ignores a later patch at the same position', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-    globalThis.requestAnimationFrame = callback => {
-        queueMicrotask(() => callback(0));
-        return 1;
-    };
 
-    try {
-        const { script, saveCalls } = createFakeStreamingCommitScript();
-        let durableListener = null;
-        let liveListener = null;
-        let persistCount = 0;
-        attachHostCommitBridge({
-            runId: 'run-live-next-round',
-            chatRef,
-            stableChatId: 'stable-live-next-round',
-            generationType: 'normal',
-            safeInvoke: async () => {},
-            readWorkspaceFile: async () => {},
-            subscribe(_runId, handler) {
-                durableListener = handler;
-                return () => {};
-            },
-            subscribeLiveProjection(_runId, handler) {
-                liveListener = handler;
-                return () => {};
-            },
-            loadScript: async () => script,
-            persistChat: async () => { persistCount += 1; },
-        });
-        const append = (field, text) => liveListener({
-            type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field, text, wordDelta: 1,
-        });
+    const { script, saveCalls } = createFakeStreamingCommitScript();
+    let durableListener = null;
+    let liveListener = null;
+    let persistCount = 0;
+    attachHostCommitBridge({
+        runId: 'run-live-next-round',
+        chatRef,
+        stableChatId: 'stable-live-next-round',
+        generationType: 'normal',
+        safeInvoke: async () => {},
+        readWorkspaceFile: async () => {},
+        subscribe(_runId, handler) {
+            durableListener = handler;
+            return () => {};
+        },
+        subscribeLiveProjection(_runId, handler) {
+            liveListener = handler;
+            return () => {};
+        },
+        loadScript: async () => script,
+        persistChat: async () => { persistCount += 1; },
+        scheduleRender: renderInMicrotask,
+    });
+    const append = (field, text) => liveListener({
+        type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field, text, wordDelta: 1,
+    });
 
-        liveListener({ type: 'replace', call: liveWriteCall('draft') });
-        append('content', ' ending');
-        await waitFor(() => script.chat[0]?.mes === 'draft ending');
-        liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
-        liveListener({
-            type: 'replace',
-            call: {
-                toolId: 'builtin:workspace.apply_patch',
-                invocationId: 'inv_root',
-                invocationExitPolicy: 'run_finish_allowed',
-                toolCallIndex: 0,
-                path: '',
-                oldString: '',
-                newString: '',
-                oldStringWords: 0,
-                newStringWords: 0,
-            },
-        });
-        append('path', 'output/main.md');
-        append('oldString', 'ending');
-        append('newString', 'revision');
+    liveListener({ type: 'replace', call: liveWriteCall('draft') });
+    append('content', ' ending');
+    await waitFor(() => script.chat[0]?.mes === 'draft ending');
+    liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+    liveListener({
+        type: 'replace',
+        call: {
+            toolId: 'builtin:workspace.apply_patch',
+            invocationId: 'inv_root',
+            invocationExitPolicy: 'run_finish_allowed',
+            toolCallIndex: 0,
+            path: '',
+            oldString: '',
+            newString: '',
+            oldStringWords: 0,
+            newStringWords: 0,
+        },
+    });
+    append('path', 'output/main.md');
+    append('oldString', 'ending');
+    append('newString', 'revision');
 
-        durableListener({ type: 'run_failed', payload: {} });
-        await waitFor(() => persistCount === 1);
-        assert.equal(script.chat.length, 1);
-        assert.equal(script.chat[0].mes, 'draft ending');
-        assert.equal(saveCalls.at(-1).getMessage, 'draft ending');
-    } finally {
-        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-    }
+    durableListener({ type: 'run_failed', payload: {} });
+    await waitFor(() => persistCount === 1);
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].mes, 'draft ending');
+    assert.equal(saveCalls.at(-1).getMessage, 'draft ending');
 });
 
 test('agent chat commit bridge runs generated output cleanup before saving', async () => {
@@ -1285,11 +1256,6 @@ test('Agent presentation survives a stop and reload without duplicating text or 
 test('Agent stop retains the last raw frame and retries a failed chat save', async t => {
     const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
     installCurrentChatRef(chatRef);
-    const request = globalThis.requestAnimationFrame;
-    const cancel = globalThis.cancelAnimationFrame;
-    globalThis.requestAnimationFrame = () => 1;
-    globalThis.cancelAnimationFrame = () => {};
-    t.after(() => { globalThis.requestAnimationFrame = request; globalThis.cancelAnimationFrame = cancel; });
     const reported = captureAsyncError(t, /disk full/);
     const { script, events } = createFakeStreamingCommitScript();
     let live;
@@ -1303,6 +1269,7 @@ test('Agent stop retains the last raw frame and retries a failed chat save', asy
         subscribeLiveProjection(_runId, handler) { live = handler; return () => {}; },
         loadScript: async () => script,
         persistChat: async () => { if (failSave) throw new Error('disk full'); },
+        scheduleRender: () => () => {},
         finishPresentation: async dto => { saved = dto; },
     });
     live({ type: 'replace', call: liveWriteCall('last') });

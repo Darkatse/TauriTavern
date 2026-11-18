@@ -2793,6 +2793,41 @@ export function createStreamingMessageFormatter() {
 }
 
 /**
+ * Creates the writer of one streaming message's preview. Each write formats a version of the message text with
+ * {@link createStreamingMessageFormatter} and writes the blocks that changed into the message's `.mes_text` as
+ * transient content. A message that is not mounted is not written.
+ * @returns {(messageId: number, text: string) => void}
+ */
+export function createStreamingMesTextWriter() {
+    const format = createStreamingMessageFormatter();
+    const content = createBlockContent();
+    return (messageId, text) => {
+        const element = chatSurface.getMessageElement(messageId);
+        if (!element) {
+            return;
+        }
+        const { name, is_system, is_user } = chat[messageId];
+        writeStreamingMesText(element, content, format(text, name, is_system, is_user, messageId), {
+            fadeIn: power_user.stream_fade_in,
+        });
+    };
+}
+
+/**
+ * Closes the emphasis, quotes and code fences a streaming text leaves open, so its preview renders them closed.
+ * @param {string} text Display text of an unfinished reply.
+ * @returns {string}
+ */
+export function balanceStreamingMarkup(text) {
+    for (const mark of ['*', '"', '```', '~~~']) {
+        if (isOdd(countOccurrences(text, mark))) {
+            text = text.trimEnd() + (mark.length > 1 ? '\n' : '') + mark;
+        }
+    }
+    return text;
+}
+
+/**
  * Creates an Image element for the given API/model icon.
  * The image references the matching SVG file from `/img/` and includes a tooltip with API and model info.
  * The caller is responsible for appending the image to the DOM and optionally calling `SVGInject` on it.
@@ -2851,26 +2886,17 @@ function insertSVGIcon(mes, extra) {
  * @param {object} message Message object
  * @param {object} [options={}] Optional arguments
  * @param {boolean} [options.rerenderMessage=true] Whether to re-render the message content (inside <c>.mes_text</c>)
- * @param {boolean} [options.transient=false] Whether to defer decorators and embedded runtimes until final content
  */
-export function updateMessageBlock(messageId, message, { rerenderMessage = true, transient = false } = {}) {
-    if (rerenderMessage) chatSurface.setContentTransient(message, transient);
+export function updateMessageBlock(messageId, message, { rerenderMessage = true } = {}) {
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (messageElement.length === 0) {
         return;
     }
     if (rerenderMessage) {
-        const replace = transient
-            ? replaceTransientMesTextHtmlWithRuntimePolicy
-            : replaceMesTextHtmlWithRuntimePolicy;
-        replace(
+        replaceMesTextHtmlWithRuntimePolicy(
             /** @type {HTMLElement} */ (messageElement[0]),
             getMessageTextHTML(message, { messageId }),
         );
-    }
-
-    if (transient) {
-        return;
     }
 
     const { tokenRate } = formatGenerationTimer(message.gen_started, message.gen_finished, message.extra?.token_count);
@@ -4403,8 +4429,7 @@ class StreamingProcessor {
         this.messageDom = null;
         /** @type {HTMLElement} */
         this.messageTextDom = null;
-        this.formatMessage = createStreamingMessageFormatter();
-        this.messageContent = createBlockContent();
+        this.writeMesText = createStreamingMesTextWriter();
         /** @type {HTMLElement} */
         this.messageTimerDom = null;
         /** @type {HTMLElement} */
@@ -4514,12 +4539,8 @@ class StreamingProcessor {
             stoppingStrings: this.stoppingStrings,
         });
 
-        const charsToBalance = ['*', '"', '```', '~~~'];
-        for (const char of charsToBalance) {
-            if (!isFinal && isOdd(countOccurrences(processedText, char))) {
-                const separator = char.length > 1 ? '\n' : '';
-                processedText = processedText.trimEnd() + separator + char;
-            }
+        if (!isFinal) {
+            processedText = balanceStreamingMarkup(processedText);
         }
 
         if (isImpersonate) {
@@ -4563,13 +4584,11 @@ class StreamingProcessor {
             }
 
             if (this.messageDom instanceof HTMLElement && this.messageTextDom instanceof HTMLElement) {
-                const { name, is_system, is_user } = chat[messageId];
                 if (isFinal) {
+                    const { name, is_system, is_user } = chat[messageId];
                     replaceTransientMesTextHtmlWithRuntimePolicy(this.messageDom, messageFormatting(processedText, name, is_system, is_user, messageId));
                 } else {
-                    writeStreamingMesText(this.messageDom, this.messageContent, this.formatMessage(processedText, name, is_system, is_user, messageId), {
-                        fadeIn: power_user.stream_fade_in,
-                    });
+                    this.writeMesText(messageId, processedText);
                 }
             }
 

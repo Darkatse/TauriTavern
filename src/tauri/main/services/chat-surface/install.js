@@ -289,6 +289,5 @@ export function installChatSurfaceRuntime({
         resetEpoch,
         scroll: activeController.scroll,
         setProjectionHeld,
-        setContentTransient: contentPreparation.setTransient,
     });
 }
