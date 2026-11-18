@@ -45,6 +45,7 @@ function harness() {
         skill: { isDirectoryImportAvailable: () => true } as TauriTavernSkillApi,
         models: { getSnapshot: () => models, subscribe: () => () => {} },
         supportsReasoningEffort: () => true, presetReasoningEffort: () => 'auto',
+        presetContext: () => ({ context: 128_000, reply: 32_768 }), setPresetContext: () => Promise.resolve(),
         contentWidthPercent: 100, saveContentWidth: () => Promise.resolve(),
         copy: () => Promise.resolve(), openLink: () => Promise.resolve(), markdown: text => text,
         isMobile: () => true, shouldSendOnEnter: () => true,
@@ -300,6 +301,26 @@ for (const { visible, deny, checked, nextVisible, nextDeny } of [
     fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ skills: { visible: nextVisible, deny: nextDeny } })));
+    drawer.dispose();
+});
+
+test('the preset context is entered in thousands and written to the preset when settings are saved', async () => {
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
+    const h = harness();
+    const saveProfile = rs.fn(() => Promise.resolve());
+    const setPresetContext = rs.fn(() => Promise.resolve());
+    h.controller.saveProfile = saveProfile;
+    h.actions.setPresetContext = setPresetContext;
+    render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant settings' }));
+    const context = await screen.findByRole<HTMLInputElement>('spinbutton', { name: /^Context/ });
+    expect(context.value).toBe('128');
+    fireEvent.change(context, { target: { value: '200' } });
+    expect(setPresetContext, 'Editing stays in the draft until Save').not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(setPresetContext).toHaveBeenCalledWith('Agent', 200_000));
+    expect(saveProfile).not.toHaveBeenCalled();
     drawer.dispose();
 });
 

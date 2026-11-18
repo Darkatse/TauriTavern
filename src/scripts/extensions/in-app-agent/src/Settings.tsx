@@ -1,14 +1,17 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import type { AssistantActions, SettingsOptions } from './host';
+import type { AssistantActions, PresetContext, SettingsOptions } from './host';
 import { Disclosure, ErrorNotice } from './components';
 import { SkillImport } from './SkillImport';
 import { toolName, toolDescription } from './Transcript';
 import { tr } from './i18n';
 
 type Profile = TauriTavernAgentProfileDefinition;
-export function Settings({ draft, setDraft, options, actions, busy, error, dirty, contentWidth, onContentWidthChange, onSave, onCancel, refreshOptions }: {
+/** The context of the selected preset in thousands of tokens, as typed. */
+export type ContextField = { text: string; preset: PresetContext } | { error: unknown } | null;
+export function Settings({ draft, setDraft, options, actions, busy, error, dirty, contentWidth, onContentWidthChange, context, onContextChange, onSave, onCancel, refreshOptions }: {
     draft: Profile; setDraft: Dispatch<SetStateAction<Profile>>; options: SettingsOptions; actions: AssistantActions;
     contentWidth: number; onContentWidthChange: (value: number) => void;
+    context: ContextField; onContextChange: (text: string) => void;
     busy: boolean; error: unknown; dirty: boolean; onSave: () => void; onCancel: () => void; refreshOptions: () => void;
 }) {
     const [search, setSearch] = useState('');
@@ -40,13 +43,22 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
     const skillSelected = (name: string) => !draft.skills.deny?.some(value => value === '*' || value === name)
         && draft.skills.visible.some(value => value === '*' || value === name);
     const selectedSkillCount = skillNames.filter(skillSelected).length;
+    const presetName = draft.preset.ref?.name ?? '';
     return <form className="ttia-settings" onSubmit={event => { event.preventDefault(); onSave(); }}>
         <fieldset className="ttia-settings-scroll" disabled={busy}>
-            <label className="ttia-field"><span>{tr('preset')}</span><select value={draft.preset.ref?.name ?? ''}
-                onChange={event => setDraft({ ...draft, preset: { ...draft.preset, ref: { apiId: 'openai', name: event.target.value } } })}>
-                {draft.preset.ref?.name && !options.presets.includes(draft.preset.ref.name) && <option value={draft.preset.ref.name}>{draft.preset.ref.name} · {tr('unavailable')}</option>}
-                {options.presets.map(name => <option key={name}>{name}</option>)}
-            </select></label>
+            <div className="ttia-preset-row">
+                <label className="ttia-field"><span>{tr('preset')}</span><select className="text_pole" value={presetName}
+                    onChange={event => setDraft({ ...draft, preset: { ...draft.preset, ref: { apiId: 'openai', name: event.target.value } } })}>
+                    {presetName && !options.presets.includes(presetName) && <option value={presetName}>{presetName} · {tr('unavailable')}</option>}
+                    {options.presets.map(name => <option key={name}>{name}</option>)}
+                </select></label>
+                {context && ('error' in context
+                    ? <div className="ttia-field"><span>{tr('context')}</span><ErrorNotice error={context.error} /></div>
+                    : <label className="ttia-field"><span>{tr('context')}</span><span className="ttia-context-input">
+                        <input className="text_pole" type="number" inputMode="decimal" required step="any" min={Math.ceil((context.preset.reply + 1) / 1000)}
+                            value={context.text} onChange={event => onContextChange(event.target.value)} /><span aria-hidden="true">k</span>
+                    </span></label>)}
+            </div>
             {!actions.isMobile() && <label className="ttia-field ttia-desktop-width">
                 <span>{tr('contentWidth')}<span>{contentWidth}%</span></span>
                 <input type="range" min={40} max={100} step={5} value={contentWidth} aria-label={tr('contentWidth')}
@@ -54,7 +66,7 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
                 <small className="ttia-muted">{tr('contentWidthHelp')}</small>
             </label>}
             <Disclosure className="ttia-settings-section" label={<><span>{tr('tools')}</span><small>{tr('selected', { count: draft.tools.allow.filter(selected).length })}</small></>}>
-                <input type="search" aria-label={tr('searchTools')} placeholder={tr('searchTools')} value={search} onChange={event => setSearch(event.target.value)} />
+                <input className="text_pole" type="search" aria-label={tr('searchTools')} placeholder={tr('searchTools')} value={search} onChange={event => setSearch(event.target.value)} />
                 {groups.map(name => {
                     const tools = matching.filter(tool => group(tool) === name);
                     return tools.length ? <fieldset key={name}><legend>{tr(name)}</legend>{tools.map(tool => <label className="ttia-choice" key={tool.id}>
@@ -84,7 +96,7 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
             </Disclosure>
             <Disclosure className="ttia-settings-section" label={tr('advancedSettings')}>
                 <label className="ttia-choice"><input type="checkbox" checked={draft.run.stream} onChange={event => setDraft({ ...draft, run: { ...draft.run, stream: event.target.checked } })} /><span>{tr('stream')}</span></label>
-                <label className="ttia-field"><span>{tr('instructions')}</span><textarea rows={10} value={draft.instructions.agentSystemPrompt ?? ''}
+                <label className="ttia-field"><span>{tr('instructions')}</span><textarea className="text_pole" rows={10} value={draft.instructions.agentSystemPrompt ?? ''}
                     onChange={event => setDraft({ ...draft, instructions: { ...draft.instructions, agentSystemPrompt: event.target.value } })} /></label>
             </Disclosure>
             {error != null && <ErrorNotice error={error} />}

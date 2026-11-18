@@ -29,6 +29,14 @@ export type SettingsOptions = {
     diagnostics: Awaited<ReturnType<TauriTavernAgentToolsApi['list']>>['diagnostics'];
     skills: TauriTavernSkillIndexEntry[];
 };
+type CompletionPreset = {
+    reasoning_effort?: string;
+    openai_max_context?: unknown;
+    openai_max_tokens?: unknown;
+    extensions?: Record<string, unknown>;
+};
+/** A preset's context window and the share of it kept for the reply, in tokens. */
+export type PresetContext = { context: number; reply: number };
 const MODEL_TARGET_EVENTS = ['MODEL_TARGET_CREATED', 'MODEL_TARGET_UPDATED', 'MODEL_TARGET_DELETED'] as const;
 export type AssistantContext = {
     scrollChatSurfaceTo: (options: ScrollToOptions) => void;
@@ -43,7 +51,9 @@ export type AssistantContext = {
     getPresetManager: (api: string) => {
         getAllPresets: () => string[];
         findPreset: (name: string) => unknown;
-        getCompletionPresetByName: (name: string) => { reasoning_effort?: string; extensions?: Record<string, unknown> } | undefined;
+        getSelectedPresetName: () => string;
+        getCompletionPresetByName: (name: string) => CompletionPreset | undefined;
+        savePreset: (name: string, settings: CompletionPreset, options: { skipUpdate: boolean }) => Promise<void>;
     };
     Popup: {
         show: { confirm: (title: string, message: string) => Promise<unknown> };
@@ -123,6 +133,29 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
             if (!manager.getAllPresets().includes(name)) return null;
             const preset = manager.getCompletionPresetByName(name);
             return !preset?.reasoning_effort || getOmittedParams(preset).includes('reasoning_effort') ? 'auto' : preset.reasoning_effort;
+        },
+        presetContext(name: string): PresetContext | null {
+            const manager = context.getPresetManager('openai');
+            if (!manager.getAllPresets().includes(name)) return null;
+            const preset = manager.getCompletionPresetByName(name);
+            const size = preset?.openai_max_context, reply = preset?.openai_max_tokens;
+            if (!Number.isSafeInteger(size) || !Number.isSafeInteger(reply)) {
+                throw new Error(`in-app-agent: preset "${name}" has no valid context or reply length`);
+            }
+            return { context: size as number, reply: reply as number };
+        },
+        // The selected preset is also live in the connection panel, so its slider takes the value the way user input does.
+        async setPresetContext(name: string, tokens: number): Promise<void> {
+            const manager = context.getPresetManager('openai');
+            const preset = manager.getCompletionPresetByName(name);
+            if (!preset) throw new Error(`in-app-agent: preset "${name}" is unavailable`);
+            await manager.savePreset(name, { ...preset, openai_max_context: tokens }, { skipUpdate: true });
+            preset.openai_max_context = tokens;
+            if (manager.getSelectedPresetName() !== name) return;
+            const slider = document.getElementById('openai_max_context');
+            if (!(slider instanceof HTMLInputElement)) throw new Error('in-app-agent: the context length slider is unavailable');
+            slider.value = String(tokens);
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
         },
         contentWidthPercent,
         saveContentWidth: (value: number) => store.setJson({ ...CONTENT_WIDTH, value }),

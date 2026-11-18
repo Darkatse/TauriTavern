@@ -8,6 +8,7 @@
 - 一个 React root 对应一个 controller；首次打开读取配置和历史，隐藏保留视图与订阅，卸载释放订阅但不取消原生 Run。
 - 首次选择模型时保存 Profile，引用内置 `openai/Agent` 预设，默认开启 `app.snapshot`、`app.interact`、`app.capture`、`app.evaluate`、`app.read_logs` 及 `workspace.read_file`、`workspace.list_files`、`workspace.search_files`；其他工具按需选入。预设取值与取舍见[内置 Agent 预设](../Agent/ProfilesAndPreset.md#内置-agent-预设)。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
 - 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
+- 设置中预设旁的上下文是该预设的上下文长度，以千词符为单位输入，须大于最大回复长度；它与其他设置一起保存，保存时写入预设。该预设也是连接面板当前预设时，面板滑块按用户输入的方式同步。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
 - Skill 来自内置与助手 Profile 作用域，同名时 Profile 覆盖内置包。新 Profile 默认 `visible: ['*']`，取消勾选加入 `deny`；已有显式名单保持原样，设置按相同的可见性规则显示和修改。安装与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
 - 内置知识位于 [default/skills/](../../default/skills/)，正文按需读取；内置包只读，来源与宏规则见 [Skill](../Agent/Skill.md)。

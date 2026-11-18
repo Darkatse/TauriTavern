@@ -331,6 +331,10 @@
 .ttia-field > :is(span, label):first-child { font-weight: 500; font-size: .9em; }
 .ttia-desktop-width > span { display: flex; justify-content: space-between; }
 .ttia-desktop-width input { width: 100%; margin: 0; accent-color: var(--ttia-ink); }
+.ttia-preset-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6.5rem, .42fr); column-gap: 12px; }
+.ttia-preset-row > :only-child { grid-column: 1 / -1; }
+.ttia-context-input { display: flex; align-items: center; gap: 7px; }
+.ttia-context-input > span { color: var(--ttia-muted); }
 .ttia-root .ttia-link { align-self: flex-start; font-size: .78em; color: var(--ttia-muted); padding: 2px 0; min-height: 24px; }
 .ttia-link i { font-size: .75em; }
 .ttia-settings-section { border-top: 1px solid var(--ttia-line); padding-block: 8px; }
