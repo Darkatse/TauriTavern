@@ -208,6 +208,7 @@ export function createRspackConfigs(mode = 'production') {
       settings: './src/scripts/tauri/setting/settings-app/SettingsApp.tsx',
       'dev-logs': './src/scripts/tauri/setting/dev-logs-app/DevLogsApp.tsx',
       sync: './src/scripts/tauri/setting/sync-app/index.ts',
+      'web-storage': './src/scripts/tauri/setting/web-storage-app/WebStorageApp.tsx',
     },
     output: {
       filename: '[name].bundle.js',

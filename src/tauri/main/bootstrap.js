@@ -52,6 +52,7 @@ import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/e
 import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
 import { registerLifecycleFlushHandler } from './services/lifecycle/lifecycle-flush-service.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
+import { runScheduledWebStorageCleanup } from './services/web-storage/web-storage.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 2;
 
@@ -241,6 +242,7 @@ export function bootstrapTauriMain() {
         return;
     }
     bootstrapped = true;
+    const webStorageCleanup = runScheduledWebStorageCleanup();
 
     const perfEnabled = isPerfHudEnabled();
     let perfReadyPromise = null;
@@ -364,14 +366,18 @@ export function bootstrapTauriMain() {
     });
     if (isMobile) installMobileWindowOpenCompat();
     preinstallPanelRuntime();
-    const readyPromise = initializeTauriIntegration(
-        context,
-        interceptors,
-        downloadBridge,
-        perfEnabled,
-        perfReadyPromise,
-        safePerfMark,
-    );
+    const readyPromise = Promise.all([
+        initializeTauriIntegration(
+            context,
+            interceptors,
+            downloadBridge,
+            perfEnabled,
+            perfReadyPromise,
+            safePerfMark,
+        ),
+        // Extensions load after readiness, so none of them can reopen a database scheduled for deletion.
+        webStorageCleanup.catch(() => null),
+    ]).then(() => undefined);
     const runAfterTauriReady = (callback) => {
         void readyPromise.then(callback, () => {});
     };
@@ -389,6 +395,11 @@ export function bootstrapTauriMain() {
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     eventSource.once(event_types.APP_READY, restoreAgentAssemblyBridges);
+    eventSource.once(event_types.APP_READY, () => {
+        void import('../../scripts/tauri/setting/web-storage.js')
+            .then(({ installWebStorage }) => installWebStorage(webStorageCleanup))
+            .catch((error) => { console.error('TauriTavern: Failed to install web storage:', error); });
+    });
     // This panel imports application state as well as rendering it.
     eventSource.once(event_types.APP_READY, () => {
         void import('../../scripts/tauri/generation-params/panel.js')

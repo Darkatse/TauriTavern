@@ -9,7 +9,7 @@ First-party UI 包含：
 - Agent System；
 - In-App Assistant；
 - MCP Manager；
-- Tauri Settings、Dev Logs 与 Sync。
+- Tauri Settings、Dev Logs、Sync 与 Web Storage。
 
 这些界面统一使用 React、React DOM 与 strict TypeScript/TSX。上游 SillyTavern 前端、第三方扩展和由 WebView 直接加载的宿主脚本不属于 React 组件源码。
 
@@ -41,6 +41,7 @@ src/scripts/extensions/mcp-manager/src
 src/scripts/tauri/setting/settings-app
 src/scripts/tauri/setting/dev-logs-app
 src/scripts/tauri/setting/sync-app
+src/scripts/tauri/setting/web-storage-app
 ```
 
 入口和稳定输出如下：
@@ -53,6 +54,7 @@ src/scripts/tauri/setting/sync-app
 | Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
 | Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
 | Sync | `sync-app/index.ts` | `setting/dist/sync.bundle.js` | Sync popup 与 listener 外壳 |
+| Web Storage | `web-storage-app/WebStorageApp.tsx` | `setting/dist/web-storage.bundle.js` | `setting/web-storage.js` |
 
 In-App Assistant 的 manifest 加载构建生成的 `dist/index.bundle.css`，因为光标样式要从 app-use 包导入；Agent System 与 MCP Manager 的 manifest 直接加载 `style.css`。所以改了助手的 `style.css`，要经 rspack 重新构建才会生效。
 
@@ -86,12 +88,12 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 - `index.tsx` 负责挂载；`host.ts` 负责 Host 与 SillyTavern 边界。
 - Manager、server dialog 与 test-call dialog 保持 feature-local，不依赖 Agent 或 Settings 的 UI runtime。
 
-### Settings、Dev Logs 与 Sync
+### Settings、Dev Logs、Sync 与 Web Storage
 
 - Raw Settings 外壳创建 Popup、读取 Host 数据并向 React root 注入 typed options、actions 与 translator。
 - React root 不读取外壳内部状态；外壳也不依赖 React component instance，只持有公开 mount handle。
 - 扩展菜单快捷入口是设备本地的展示偏好；Raw Settings 外壳复用上游 Popup 管理选择，并由 DOM adapter 投影到既有 `#extensionsMenu`，不新增 React root 或后端设置。
-- 三个功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。
+- 这些功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。
 
 ## 5. 宿主调用契约
 
@@ -104,6 +106,7 @@ Settings 系列 bundle 通过 named export 暴露挂载函数：
 | `mountTauriTavernSyncApp()` | `refresh()`、`refreshAutomationStatus()`、`unmount()` |
 | `mountTauriTavernSyncProgressApp()` | `update()`、`unmount()` |
 | `mountTauriTavernSyncScopeApp()` | `getSelection()`、`unmount()` |
+| `mountTauriTavernWebStorageApp()` | `unmount()` |
 
 挂载参数在 JS/TS 边界校验。外壳只通过这些 handle 与 island 交互；新增能力应优先扩展对应 feature contract，而不是读取 React DOM 或组件内部状态。
 

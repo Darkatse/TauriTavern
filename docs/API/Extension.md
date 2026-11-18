@@ -4,6 +4,8 @@ TauriTavern 为第三方扩展提供的**全局**持久化能力，可选KV JSON
 
 数据存储在 `data_root/_tauritavern/extension-store/` 下，可随数据根目录一起备份/迁移/清理。
 
+WebView 的 localStorage 由所有扩展共用，约 5 MB；localStorage 与 IndexedDB 都只留在本机，不随数据目录备份或同步。需要保留、随用户迁移的数据请写入本 API。用户可在 用户设置 → 杂项 → 网页存储 查看并清理。
+
 ## 0. 快速上手
 
 ```js
