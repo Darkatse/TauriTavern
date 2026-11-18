@@ -913,6 +913,74 @@ test('agent live write emits generated-message events once when commit persisten
     }
 });
 
+test('agent live write ends with its call and ignores a later patch at the same position', async () => {
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = callback => {
+        queueMicrotask(() => callback(0));
+        return 1;
+    };
+
+    try {
+        const { script, saveCalls } = createFakeStreamingCommitScript();
+        let durableListener = null;
+        let liveListener = null;
+        let persistCount = 0;
+        attachHostCommitBridge({
+            runId: 'run-live-next-round',
+            chatRef,
+            stableChatId: 'stable-live-next-round',
+            generationType: 'normal',
+            safeInvoke: async () => {},
+            readWorkspaceFile: async () => {},
+            subscribe(_runId, handler) {
+                durableListener = handler;
+                return () => {};
+            },
+            subscribeLiveProjection(_runId, handler) {
+                liveListener = handler;
+                return () => {};
+            },
+            loadScript: async () => script,
+            persistChat: async () => { persistCount += 1; },
+        });
+        const append = (field, text) => liveListener({
+            type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field, text, wordDelta: 1,
+        });
+
+        liveListener({ type: 'replace', call: liveWriteCall('draft') });
+        append('content', ' ending');
+        await waitFor(() => script.chat[0]?.mes === 'draft ending');
+        liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+        liveListener({
+            type: 'replace',
+            call: {
+                toolId: 'builtin:workspace.apply_patch',
+                invocationId: 'inv_root',
+                invocationExitPolicy: 'run_finish_allowed',
+                toolCallIndex: 0,
+                path: '',
+                oldString: '',
+                newString: '',
+                oldStringWords: 0,
+                newStringWords: 0,
+            },
+        });
+        append('path', 'output/main.md');
+        append('oldString', 'ending');
+        append('newString', 'revision');
+
+        durableListener({ type: 'run_failed', payload: {} });
+        await waitFor(() => persistCount === 1);
+        assert.equal(script.chat.length, 1);
+        assert.equal(script.chat[0].mes, 'draft ending');
+        assert.equal(saveCalls.at(-1).getMessage, 'draft ending');
+    } finally {
+        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
+});
+
 test('agent chat commit bridge runs generated output cleanup before saving', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);

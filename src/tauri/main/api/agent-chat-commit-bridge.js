@@ -65,7 +65,11 @@ export function attachHostCommitBridge({
         rawCommittedText: '',
         commitSeq: 0,
         reasoning: createCommitReasoningState(),
-        current: null,
+        // The projected write shown in chat. It stays after its projection ends,
+        // until a commit or the terminal save takes it over.
+        liveWrite: null,
+        // The projected call whose appends still extend `liveWrite`.
+        liveCall: null,
         pendingWrite: null,
         pendingFrame: null,
         liveMessageEventsEmitted: false,
@@ -203,7 +207,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             assertActiveAgentMessage(script.chat, state);
             // `getMessage` is the complete cleaned target, not an append
             // fragment. Use appendFinal to rewrite this run's chat message.
-            const firstPublishedOutput = state.commitSeq === 0 && state.current != null;
+            const firstPublishedOutput = state.commitSeq === 0 && state.liveWrite != null;
             await script.saveReply({
                 type: 'appendFinal',
                 getMessage,
@@ -238,7 +242,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         };
     }
     if (!resolution.error) {
-        state.current = null;
+        endLiveWrite(state);
         state.pendingWrite = null;
         if (isExplicit) {
             stopLiveProjection(state);
@@ -253,60 +257,71 @@ function applyLiveProjectionUpdate(state, update) {
     switch (update.type) {
         case 'snapshot': {
             for (const call of update.calls) {
-                const write = liveWriteFromCall(call);
-                if (write) {
-                    state.current = write;
-                }
+                acceptLiveCall(state, call);
             }
             scheduleLiveWriteFrame(state);
             return;
         }
         case 'replace': {
-            const write = liveWriteFromCall(update.call);
-            if (write) {
-                state.current = write;
+            if (acceptLiveCall(state, update.call)) {
                 scheduleLiveWriteFrame(state);
             }
             return;
         }
         case 'append': {
-            if (!sameLiveCall(state.current, update)) return;
+            const call = state.liveCall;
+            if (!sameLiveCall(call, update)) return;
             if (update.field === 'path') {
-                state.current.path += update.text;
+                call.path += update.text;
             } else if (update.field === 'content') {
-                state.current.content += update.text;
+                call.content += update.text;
             } else {
                 throw new Error(`agent.live_write_field_invalid: unsupported write field ${update.field}`);
             }
             scheduleLiveWriteFrame(state);
             return;
         }
+        case 'remove':
+            // Removal ends the call, not the content the user has already received.
+            if (sameLiveCall(state.liveCall, update)) {
+                state.liveCall = null;
+            }
+            return;
         case 'responseReplace':
         case 'responseAppend':
         case 'responseRemove':
-        case 'remove':
-            // Removal means the live projection no longer owns this call. It
-            // does not revoke content the user has already received.
             return;
         default:
             throw new Error(`agent.live_update_invalid: unsupported update ${update.type}`);
     }
 }
 
-function liveWriteFromCall(call) {
-    return call.toolId === 'builtin:workspace.write_file'
-        && call.invocationExitPolicy === 'run_finish_allowed'
-        ? call
-        : null;
+/** @returns {boolean} Whether the call is a write this bridge now shows */
+function acceptLiveCall(state, call) {
+    if (call.toolId === 'builtin:workspace.write_file'
+        && call.invocationExitPolicy === 'run_finish_allowed') {
+        state.liveWrite = call;
+        state.liveCall = call;
+        return true;
+    }
+    if (sameLiveCall(state.liveCall, call)) {
+        state.liveCall = null;
+    }
+    return false;
 }
 
-function sameLiveCall(current, update) {
-    return current?.invocationId === update.invocationId
-        && current?.toolCallIndex === update.toolCallIndex;
+function endLiveWrite(state) {
+    state.liveWrite = null;
+    state.liveCall = null;
+}
+
+function sameLiveCall(call, update) {
+    return call?.invocationId === update.invocationId
+        && call?.toolCallIndex === update.toolCallIndex;
 }
 
 function scheduleLiveWriteFrame(state) {
-    if (state.pendingFrame || !state.current) return;
+    if (state.pendingFrame || !state.liveWrite) return;
     /** @type {{ id: number | null; release: (() => void) | null; promise: Promise<void> | null }} */
     const frame = { id: null, release: null, promise: null };
     const ready = new Promise(resolve => {
@@ -341,7 +356,7 @@ async function flushLiveWriteFrame(state) {
 }
 
 async function renderCurrentLiveWrite(state) {
-    const current = state.current;
+    const current = state.liveWrite;
     if (!current
         || !isAutoCommitTextPath(current.path)) {
         return;
@@ -363,7 +378,7 @@ async function renderCurrentLiveWrite(state) {
         captureMessageTarget(state, script.chat, messageId, lengthBefore);
     }
 
-    const latest = state.current;
+    const latest = state.liveWrite;
     if (!latest
         || !isAutoCommitTextPath(latest.path)) {
         return;
@@ -386,7 +401,7 @@ async function renderCurrentLiveWrite(state) {
 }
 
 async function finalizeLivePartial(state) {
-    if (!state.current) return;
+    if (!state.liveWrite) return;
     await flushLiveWriteFrame(state);
     if (state.messageId == null) return;
 
@@ -404,7 +419,7 @@ async function finalizeLivePartial(state) {
         await finalizeLiveMessage(state, script, messageId, state.generationType);
     }
     await state.persistChat(script, CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
-    state.current = null;
+    endLiveWrite(state);
 }
 
 async function finalizeLiveMessage(state, script, messageId, generationType) {
@@ -419,7 +434,7 @@ function stopLiveProjection(state) {
         state.stopLive();
         state.stopLive = null;
     }
-    state.current = null;
+    endLiveWrite(state);
 }
 
 async function handlePersistentStateMetadataUpdateRequested({ state, event, safeInvoke }) {

@@ -74,7 +74,7 @@ export async function finishHostPresentation(state, finalizePartial, detach) {
         // the runtime owns whether their effects are safe to resume.
         await state.pendingMutation.catch(() => {});
         const script = await state.loadScript();
-        const pendingWrite = state.current ? structuredClone(state.current) : state.pendingWrite ?? null;
+        const pendingWrite = state.liveWrite ? structuredClone(state.liveWrite) : state.pendingWrite ?? null;
         if (state.messageId != null) {
             const saved = captureHostPresentation(state, script, pendingWrite);
             state.messageRef = (await restoreHostPresentation(state.runId, saved, script)).messageRef;
