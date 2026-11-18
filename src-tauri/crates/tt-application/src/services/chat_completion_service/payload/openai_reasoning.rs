@@ -37,7 +37,8 @@ const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
 const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] =
     &["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
-const OPENAI_NO_NONE_REASONING_EFFORT_MODELS: &[&str] = &["gpt-6-astra", "gpt-6.1-sol"];
+const OPENAI_NO_NONE_REASONING_EFFORT_MODELS: &[&str] =
+    &["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"];
 
 // OpenAI documents xhigh as starting at gpt-5.1-codex-max and later GPT models.
 const OPENAI_XHIGH_REASONING_THRESHOLD: &str = "gpt-5.1-codex-max";

@@ -339,6 +339,8 @@ mod tests {
             ("gpt-6-luna", "none"),
             ("gpt-6.1-sol", "low"),
             ("gpt-6.1-terra", "none"),
+            ("gpt-6.2-astra", "low"),
+            ("gpt-6.2-sol", "low"),
         ] {
             for (effort, expected) in [("min", minimum_effort), ("max", "max")] {
                 let payload = json!({
