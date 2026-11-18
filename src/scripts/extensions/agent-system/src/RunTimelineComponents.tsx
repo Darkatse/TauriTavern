@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, type CSSProperties, type RefObject } from 'react';
 
 import type { AgentSystemTr } from './i18n';
 import type {
@@ -31,24 +31,30 @@ export type TimelineEventListProps = {
     emptyText: string;
     items: readonly TimelineItem[];
     virtualItems: TimelineVirtualWindow;
-    live?: { items: readonly TimelineItem[]; onToggle: (id: string) => void };
+    liveItems?: readonly TimelineItem[];
+    onToggleLive?: (item: TimelineItem) => void;
     selectedSeq: number | null;
     latestSeq: number | null;
     activeSeq: number | null;
+    autoStick: boolean;
     onSelect: (item: TimelineItem) => void;
     onTopReached: () => void;
     onViewport: (viewport: TimelineViewport) => void;
 };
 
-export function RunTimelineEventList(props: TimelineEventListProps) {
+export const RunTimelineEventList = memo(function RunTimelineEventList(props: TimelineEventListProps) {
     const {
         scrollerRef,
+        autoStick,
+        onToggleLive,
         onTopReached,
         onViewport,
     } = props;
+    const listRef = useRef<HTMLOListElement>(null);
+    const autoStickRef = useRef(autoStick);
+    const hasList = props.items.length > 0;
 
-    const live = props.live;
-    function renderItem(item: TimelineItem, onActivate: () => void) {
+    function renderItem(item: TimelineItem, onActivate: (item: TimelineItem) => void) {
         return <RunTimelineEvent
             key={item.id}
             item={item}
@@ -59,6 +65,24 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
             onActivate={onActivate}
         />;
     }
+
+    useLayoutEffect(() => {
+        autoStickRef.current = autoStick;
+    }, [autoStick]);
+
+    // Sizes are settled when the observer runs, so following the bottom here forces no extra layout.
+    useLayoutEffect(() => {
+        const scroller = scrollerRef.current;
+        if (!scroller) return;
+        const observer = new ResizeObserver(() => {
+            if (!scroller.offsetParent) return;
+            if (autoStickRef.current) scroller.scrollTop = scroller.scrollHeight;
+            onViewport(readTimelineViewport(scroller));
+        });
+        observer.observe(scroller);
+        if (listRef.current) observer.observe(listRef.current);
+        return () => observer.disconnect();
+    }, [hasList, onViewport, scrollerRef]);
 
     useEffect(() => {
         const scroller = scrollerRef.current;
@@ -86,7 +110,7 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                     <span>{props.emptyText}</span>
                 </div>
             ) : (
-                <ol className={`ttas-run-events is-windowed${props.listClass ? ` ${props.listClass}` : ''}`}>
+                <ol ref={listRef} className={`ttas-run-events is-windowed${props.listClass ? ` ${props.listClass}` : ''}`}>
                     {props.loadingOlder && (
                         <li className="ttas-run-event-loader" aria-live="polite">
                             <i className="fa-solid fa-spinner fa-spin"></i>
@@ -100,7 +124,7 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                             aria-hidden="true"
                         ></li>
                     )}
-                    {props.virtualItems.items.map(item => renderItem(item, () => props.onSelect(item)))}
+                    {props.virtualItems.items.map(item => renderItem(item, props.onSelect))}
                     {props.virtualItems.bottomPadding > 0 && (
                         <li
                             className="ttas-run-event-spacer"
@@ -108,12 +132,12 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                             aria-hidden="true"
                         ></li>
                     )}
-                    {live?.items.map(item => renderItem(item, () => live.onToggle(item.id)))}
+                    {onToggleLive && props.liveItems?.map(item => renderItem(item, onToggleLive))}
                 </ol>
             )}
         </div>
     );
-}
+});
 
 export type TimelineDetailPaneProps = {
     tr: AgentSystemTr;
@@ -267,7 +291,7 @@ export function RunTimelineDetailPane(props: TimelineDetailPaneProps) {
     );
 }
 
-export function SubAgentTray(props: {
+export const SubAgentTray = memo(function SubAgentTray(props: {
     tr: AgentSystemTr;
     expanded: boolean;
     tasks: readonly SubAgentTask[];
@@ -319,4 +343,4 @@ export function SubAgentTray(props: {
             )}
         </aside>
     );
-}
+});

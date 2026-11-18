@@ -305,6 +305,7 @@ test('active mode removes transient writes immediately and detaches at terminal'
         scheduleFrame: callback => callback(),
     });
     await controller.init();
+    controller.toggleCollapsed();
     expect(liveHandler).not.toBeNull();
     const emit = (update: TauriTavernAgentRunLiveUpdate) => liveHandler?.(update);
 
@@ -358,4 +359,42 @@ test('active mode removes transient writes immediately and detaches at terminal'
     controller.dispose();
     expect(state.unsubscribed).toBe(3);
     expect(liveUnsubscribed).toBe(2);
+});
+
+test('active mode reads the live projection only while the event list is shown', async () => {
+    const handlers: Array<(update: TauriTavernAgentRunLiveUpdate) => void> = [];
+    let unsubscribed = 0;
+    const write = (content: string): TauriTavernAgentRunLiveToolCall => ({
+        toolId: 'builtin:workspace.write_file',
+        invocationId: 'inv_root',
+        invocationExitPolicy: 'run_finish_allowed',
+        toolCallIndex: 0,
+        path: 'reply.md',
+        content,
+        contentWords: 0,
+    });
+    const { controller } = activeHarness({
+        subscribeLiveProjection: (_runId, handler) => {
+            handlers.push(handler);
+            return () => { unsubscribed += 1; };
+        },
+        scheduleFrame: callback => callback(),
+    });
+    await controller.init();
+    expect(handlers).toHaveLength(0);
+
+    controller.toggleCollapsed();
+    expect(handlers).toHaveLength(1);
+    handlers[0]?.({ type: 'snapshot', calls: [write('Hello')], responses: [] });
+    expect(controller.getSnapshot().liveItems[0]?.live?.tail).toBe('Hello');
+
+    controller.toggleCollapsed();
+    expect(unsubscribed).toBe(1);
+    expect(controller.getSnapshot().liveItems).toEqual([]);
+
+    controller.toggleCollapsed();
+    expect(handlers).toHaveLength(2);
+    handlers[1]?.({ type: 'snapshot', calls: [write('Hello world')], responses: [] });
+    expect(controller.getSnapshot().liveItems[0]?.live?.tail).toBe('Hello world');
+    controller.dispose();
 });

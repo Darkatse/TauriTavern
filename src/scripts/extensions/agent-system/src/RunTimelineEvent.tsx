@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 
 import type { AgentSystemTr } from './i18n';
 import type { TimelineItem, TimelineLiveContent } from './RunTimelineContract';
@@ -11,10 +11,10 @@ type TimelineEventProps = {
     selected: boolean;
     latest: boolean;
     active: boolean;
-    onActivate: () => void;
+    onActivate: (item: TimelineItem) => void;
 };
 
-export function RunTimelineEvent({ item, tr, selected, latest, active, onActivate }: TimelineEventProps) {
+export const RunTimelineEvent = memo(function RunTimelineEvent({ item, tr, selected, latest, active, onActivate }: TimelineEventProps) {
     const live = item.live;
     const time = timelineItemTime(item);
     const style = {
@@ -59,13 +59,13 @@ export function RunTimelineEvent({ item, tr, selected, latest, active, onActivat
                 <details className="ttas-run-event-card" open={live.expanded}>
                     <summary
                         aria-expanded={live.expanded}
-                        onClick={event => { event.preventDefault(); onActivate(); }}
+                        onClick={event => { event.preventDefault(); onActivate(item); }}
                     >
                         {header}
                         {!live.expanded && (
                             <span className={`ttas-run-event-live is-streaming is-${live.streamTone}`} aria-hidden="true">
                                 <span className="ttas-run-event-live-stream" data-ttas-truncated={live.truncated ? '' : undefined}>
-                                    {live.tail}
+                                    <TimelineLiveText text={live.tail} />
                                 </span>
                             </span>
                         )}
@@ -73,15 +73,25 @@ export function RunTimelineEvent({ item, tr, selected, latest, active, onActivat
                     {live.expanded && live.blocks.map((block, index) => block.text && (
                         <div className={`ttas-run-event-live is-${block.streamTone}${block.streamTone === live.streamTone ? ' is-streaming' : ''}`} key={index}>
                             {block.labelKey && <small className="ttas-run-event-live-label">{tr(block.labelKey)}</small>}
-                            <span className="ttas-run-event-live-stream">{block.text}</span>
+                            <span className="ttas-run-event-live-stream"><TimelineLiveText text={block.text} /></span>
                         </div>
                     ))}
                 </details>
             ) : (
-                <button className="ttas-run-event-card" type="button" onClick={onActivate}>{header}</button>
+                <button className="ttas-run-event-card" type="button" onClick={() => onActivate(item)}>{header}</button>
             )}
         </li>
     );
+});
+
+// Each paragraph is its own block, so text growing at the end lays out only the last one.
+function TimelineLiveText({ text }: { text: string }) {
+    const paragraphs = text.split('\n\n');
+    return paragraphs.map((paragraph, index) => (
+        <span className="ttas-run-event-live-text" key={index}>
+            {index < paragraphs.length - 1 ? `${paragraph}\n\n` : paragraph}
+        </span>
+    ));
 }
 
 function TimelineLiveMetric({ live, tr }: { live: TimelineLiveContent; tr: AgentSystemTr }) {

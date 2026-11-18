@@ -44,7 +44,7 @@ import {
     shouldCancelRunTimelineViewGesture,
     type RunTimelineViewGesture,
 } from './run-timeline-view-gesture';
-import { virtualizeTimelineItems } from './run-timeline-virtual-list';
+import { createTimelineWindow } from './run-timeline-virtual-list';
 
 const ACTIVE_ROOT_ID = 'ttas_agent_run_timeline';
 
@@ -93,6 +93,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     let derivedEventBase: { subAgentTasks: SubAgentTask[]; eventItems: TimelineItem[] } | null = null;
     let derivedLiveVersion = liveLane.version();
     let derived: DerivedTimeline = deriveMain();
+    const eventWindow = createTimelineWindow<TimelineItem>();
     let selectionItemsRef: readonly TimelineItem[] | null = null;
     let selectionEventsRef: readonly TauriTavernAgentRunEvent[] | null = null;
     let selectionSeqRef: number | null = null;
@@ -158,7 +159,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             visible: options.mode === 'history' || settings?.agentModeEnabled === true,
             displayItems: view.items,
             // Keep the small active tail mounted so expanded rows use natural browser height.
-            virtualItems: virtualizeTimelineItems(view.eventItems, viewport.scrollTop, viewport.viewportHeight),
+            virtualItems: eventWindow(view.eventItems, viewport.scrollTop, viewport.viewportHeight),
             liveItems: view.liveItems,
             selectedItem,
             selectedSeq: selectedItem?.seq ?? null,
@@ -192,8 +193,16 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         };
     }
 
+    // The live projection is read only while the panel shows the event list of a run in progress.
+    function syncLiveLane(): void {
+        if (options.mode === 'active' && settings?.agentModeEnabled === true && !collapsed && !detailsOpen
+            && currentRun && !main.terminalEvent) liveLane.attach(currentRun.runId);
+        else liveLane.detach();
+    }
+
     function publish(): void {
         if (disposed) return;
+        syncLiveLane();
         snapshot = buildSnapshot();
         listeners.forEach(listener => listener());
     }
@@ -229,7 +238,6 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         viewGesture = null;
         detail.reset();
         subAgent.reset();
-        liveLane.attach(run.runId);
         await loadEventPage('initial');
     }
 
@@ -256,9 +264,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             selectedSeq = null;
             detailsOpen = false;
             detail.reset();
-            liveLane.attach(event.runId);
         }
-        if (added && main.terminalEvent === event) liveLane.detach();
         if (added && options.mode === 'active' && ['run_failed', 'run_cancelled', 'run_partial_success'].includes(event.type)) {
             collapsed = false;
             selectedSeq = event.seq;
@@ -417,10 +423,9 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             }
         },
         setTimelineViewport(next) {
-            if (viewport.scrollTop === next.scrollTop && viewport.viewportHeight === next.viewportHeight
-                && viewport.nearBottom === next.nearBottom) return;
             viewport = next;
-            publish();
+            const shown = eventWindow(currentDerived().eventItems, next.scrollTop, next.viewportHeight);
+            if (shown !== snapshot.virtualItems || next.nearBottom !== snapshot.autoStick) publish();
         },
         setSubAgentViewport: next => subAgent.setViewport(next),
         startViewGesture(event) {

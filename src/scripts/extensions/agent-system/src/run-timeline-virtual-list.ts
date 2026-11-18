@@ -43,6 +43,19 @@ export function virtualizeTimelineItems<T extends TimelineVirtualItem>(
     };
 }
 
+/** Virtualizes successive views of one list; a window equal to the previous one keeps its object. */
+export function createTimelineWindow<T extends TimelineVirtualItem>() {
+    let current: TimelineVirtualResult<T> | null = null;
+    return (items: readonly T[], scrollTop: number, viewportHeight: number): TimelineVirtualResult<T> => {
+        const next = virtualizeTimelineItems(items, scrollTop, viewportHeight);
+        if (!current || current.topPadding !== next.topPadding || current.bottomPadding !== next.bottomPadding
+            || current.items.length !== next.items.length || current.items.some((item, index) => item !== next.items[index])) {
+            current = next;
+        }
+        return current;
+    };
+}
+
 function timelineItemOffsets(items: readonly TimelineVirtualItem[]): number[] {
     const offsets = [0];
     for (const item of items) offsets.push(offsetAt(offsets, offsets.length - 1) + timelineItemHeightPx(item));

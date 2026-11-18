@@ -3,7 +3,7 @@ import { displayToolLabel, displayToolName } from './run-tool-labels';
 
 // Non-authoritative previews of streaming tool arguments and reasoning.
 // Durable journal events remain independent. This lane owns subscription,
-// projection, and per-frame publish coalescing.
+// projection, and publish coalescing at the injected cadence.
 //
 // Only `run_finish_allowed` calls are presented, so the main lane never shows
 // SubAgent internals. The chat consumer separately selects write_file content.
@@ -284,6 +284,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         attach(nextRunId) {
             const normalized = nextRunId.trim();
             if (!normalized) throw new Error('Agent run id is required.');
+            if (normalized === runId && unsubscribe) return;
             detachInternal();
             runId = normalized;
             if (!subscribe || disposed) return;
