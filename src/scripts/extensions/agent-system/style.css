@@ -1162,12 +1162,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 
 /*
  * The caret, the active row's dots and the live icon step with the panel's 175 ms beat (data-ttas-beat6 and
- * data-ttas-beat9, see RunTimelineApp); each beat shows the value of the original animation at that time. Without a
- * beat they rest fully shown.
+ * data-ttas-beat9, see RunTimelineApp); each beat shows the value of the original animation at that time. A running
+ * SubAgent's color dot takes the live icon's values. Without a beat they rest fully shown.
  */
-.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-event-live-text::after,
-.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-event-live-text::after,
-.ttas-run-panel[data-ttas-beat6="5"] .ttas-run-event-live-text::after {
+.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-event-live-text:last-child::after,
+.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-event-live-text:last-child::after,
+.ttas-run-panel[data-ttas-beat6="5"] .ttas-run-event-live-text:last-child::after {
     opacity: 0;
 }
 
@@ -1205,22 +1205,30 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 }
 
 .ttas-run-panel[data-ttas-beat9="1"] .ttas-run-event.is-live .ttas-run-event-icon,
-.ttas-run-panel[data-ttas-beat9="8"] .ttas-run-event.is-live .ttas-run-event-icon {
+.ttas-run-panel[data-ttas-beat9="8"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="1"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="8"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
     opacity: 0.95;
 }
 
 .ttas-run-panel[data-ttas-beat9="2"] .ttas-run-event.is-live .ttas-run-event-icon,
-.ttas-run-panel[data-ttas-beat9="7"] .ttas-run-event.is-live .ttas-run-event-icon {
+.ttas-run-panel[data-ttas-beat9="7"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="2"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="7"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
     opacity: 0.82;
 }
 
 .ttas-run-panel[data-ttas-beat9="3"] .ttas-run-event.is-live .ttas-run-event-icon,
-.ttas-run-panel[data-ttas-beat9="6"] .ttas-run-event.is-live .ttas-run-event-icon {
+.ttas-run-panel[data-ttas-beat9="6"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="3"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="6"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
     opacity: 0.65;
 }
 
 .ttas-run-panel[data-ttas-beat9="4"] .ttas-run-event.is-live .ttas-run-event-icon,
-.ttas-run-panel[data-ttas-beat9="5"] .ttas-run-event.is-live .ttas-run-event-icon {
+.ttas-run-panel[data-ttas-beat9="5"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="4"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="5"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
     opacity: 0.56;
 }
 
@@ -1352,10 +1360,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     border-radius: 50%;
     background-color: var(--ttas-subagent-color, var(--ttas-run-panel-accent));
     box-shadow: 0 0 12px color-mix(in srgb, var(--ttas-subagent-color, var(--ttas-run-panel-accent)) 34%, transparent);
-}
-
-.ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
-    animation: ttas-subagent-pulse 1.4s ease-in-out infinite;
 }
 
 .ttas-subagent-copy {
@@ -2067,18 +2071,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     to {
         opacity: 1;
         transform: translateY(0);
-    }
-}
-
-@keyframes ttas-subagent-pulse {
-    0%, 100% {
-        opacity: 0.62;
-        transform: scale(0.82);
-    }
-
-    50% {
-        opacity: 1;
-        transform: scale(1.12);
     }
 }
 
