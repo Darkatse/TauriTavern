@@ -6,7 +6,7 @@ import type {
     TimelineDetailAction,
     TimelineDetailSection,
     TimelineItem,
-    TimelineViewport,
+    TimelineViewportReport,
     TimelineVirtualWindow,
 } from './RunTimelineContract';
 import { readTimelineViewport } from './RunTimelineDom';
@@ -39,7 +39,7 @@ export type TimelineEventListProps = {
     autoStick: boolean;
     onSelect: (item: TimelineItem) => void;
     onTopReached: () => void;
-    onViewport: (viewport: TimelineViewport) => void;
+    onViewport: (viewport: TimelineViewportReport) => void;
 };
 
 export const RunTimelineEventList = memo(function RunTimelineEventList(props: TimelineEventListProps) {
@@ -70,14 +70,16 @@ export const RunTimelineEventList = memo(function RunTimelineEventList(props: Ti
         autoStickRef.current = autoStick;
     }, [autoStick]);
 
-    // Sizes are settled when the observer runs, so following the bottom here forces no extra layout.
+    // Sizes are settled when the observer runs, so following the bottom here forces no extra layout. A resize does not
+    // report whether the list is at its bottom; only scrolling does.
     useLayoutEffect(() => {
         const scroller = scrollerRef.current;
         if (!scroller) return;
         const observer = new ResizeObserver(() => {
             if (!scroller.offsetParent) return;
             if (autoStickRef.current) scroller.scrollTop = scroller.scrollHeight;
-            onViewport(readTimelineViewport(scroller));
+            const { scrollTop, viewportHeight } = readTimelineViewport(scroller);
+            onViewport({ scrollTop, viewportHeight });
         });
         observer.observe(scroller);
         if (listRef.current) observer.observe(listRef.current);

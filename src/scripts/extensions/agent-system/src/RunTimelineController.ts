@@ -421,9 +421,9 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             }
         },
         setTimelineViewport(next) {
-            viewport = next;
-            const shown = eventWindow(currentDerived().eventItems, next.scrollTop, next.viewportHeight);
-            if (shown !== snapshot.virtualItems || next.nearBottom !== snapshot.autoStick) publish();
+            viewport = { ...viewport, ...next };
+            const shown = eventWindow(currentDerived().eventItems, viewport.scrollTop, viewport.viewportHeight);
+            if (shown !== snapshot.virtualItems || viewport.nearBottom !== snapshot.autoStick) publish();
         },
         setSubAgentViewport: next => subAgent.setViewport(next),
         startViewGesture(event) {

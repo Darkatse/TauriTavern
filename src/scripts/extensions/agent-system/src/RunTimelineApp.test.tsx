@@ -23,6 +23,13 @@ function settings(agentModeEnabled = true): AgentSystemSettings {
     };
 }
 
+/** Resize observations and the scroll events they cause are delivered within the next two frames. */
+function afterResizeObservations(): Promise<void> {
+    return act(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+}
+
 function fileEvent(seq: number): TauriTavernAgentRunEvent {
     return {
         seq,
@@ -337,6 +344,11 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     render(<RunTimelineApp controller={controller} tr={tr} />);
     await act(() => controller.init());
     await userEvent.setup().click(screen.getByRole('button', { name: 'expandTimeline' }));
+    // The list fits in its scroller, which therefore stays at its bottom as a preview opens and grows.
+    const scroller = document.querySelector<HTMLElement>('.ttas-run-event-scroll');
+    if (!scroller) throw new Error('expected event scroller');
+    scroller.style.flex = '0 0 600px';
+    await afterResizeObservations();
 
     act(() => {
         liveHandler?.({
@@ -381,6 +393,8 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line\nline 2\nline 3\nline 4');
     act(() => liveHandler?.({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0,
         field: 'content', text: '\nline 5', wordDelta: 2 }));
+    await afterResizeObservations();
+    expect(controller.getSnapshot().autoStick).toBe(false);
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toContain('line 4\nline 5');
     await user.click(disclosure);
     expect(disclosure.getAttribute('aria-expanded')).toBe('false');

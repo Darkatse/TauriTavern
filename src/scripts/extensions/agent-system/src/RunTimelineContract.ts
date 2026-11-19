@@ -205,6 +205,9 @@ export type TimelineViewport = {
     nearBottom: boolean;
 };
 
+/** Only scrolling reports `nearBottom`; after a resize the list keeps following its bottom or not. */
+export type TimelineViewportReport = TimelineViewport | Omit<TimelineViewport, 'nearBottom'>;
+
 export type SubAgentTask = {
     taskId: string;
     targetInvocationId: string;
@@ -296,8 +299,8 @@ export type RunTimelineController = {
     selectSubAgentItem: (seq: number) => void;
     invokeDetailAction: (action: TimelineDetailAction) => void;
     retryPresentation: () => Promise<void>;
-    setTimelineViewport: (viewport: TimelineViewport) => void;
-    setSubAgentViewport: (viewport: TimelineViewport) => void;
+    setTimelineViewport: (viewport: TimelineViewportReport) => void;
+    setSubAgentViewport: (viewport: TimelineViewportReport) => void;
     startViewGesture: (event: PointerEvent) => void;
     trackViewGesture: (event: PointerEvent) => void;
     finishViewGesture: (event: PointerEvent) => void;

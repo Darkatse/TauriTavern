@@ -6,6 +6,7 @@ import type {
     TimelineReadInput,
     TimelineReadResult,
     TimelineViewport,
+    TimelineViewportReport,
 } from './RunTimelineContract';
 import {
     buildEventDetailTargets,
@@ -171,9 +172,9 @@ export function createSubAgentTimelineController(deps: {
             selectedSeq = seq;
             void loadDetails();
         },
-        setViewport(next: TimelineViewport): void {
-            viewport = next;
-            if (currentEventWindow() !== previous?.virtualItems || next.nearBottom !== previous.autoStick) deps.onChange();
+        setViewport(next: TimelineViewportReport): void {
+            viewport = { ...viewport, ...next };
+            if (currentEventWindow() !== previous?.virtualItems || viewport.nearBottom !== previous.autoStick) deps.onChange();
         },
         dispose(): void {
             reset();
