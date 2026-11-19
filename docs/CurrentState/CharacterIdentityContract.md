@@ -145,7 +145,7 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 
 这样两个 repository 不再各自持有独立 alias cache，避免并发懒发现时互相覆盖 alias 文件。
 
-生产 bootstrap 会显式创建 shared alias store 和 shared `FileChatRepository`，再通过 `with_chat_repository(...)` 注入给 character repository。`new(...)` 只是 isolated/single-repository 便捷构造；当同一运行时同时创建 character/chat repositories 时，必须共享同一个 `FileChatRepository`。
+生产 bootstrap 与测试均显式创建 shared alias store 和 shared `FileChatRepository`，再通过 `with_chat_repository(...)` 注入给 character repository，使两者共享同一套聊天摘要与别名缓存。
 
 ---
 
