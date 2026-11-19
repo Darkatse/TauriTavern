@@ -25,7 +25,6 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
-crc32fast = "1"
 flate2 = "1.1.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rand = { workspace = true }

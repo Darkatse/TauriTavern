@@ -1,5 +1,4 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use crc32fast::Hasher;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +14,9 @@ use crate::png_card_metadata::{
     write_character_data_to_png,
 };
 use tt_adapter_storage_core::{
-    FileChatRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
+    FileChatRepository,
+    chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
+    png_metadata::{replace_text_chunks, write_text_chunk},
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
@@ -54,35 +55,6 @@ fn build_distinct_png() -> Vec<u8> {
         .write_to(&mut cursor, ImageFormat::Png)
         .expect("should build png image");
     output
-}
-
-fn build_text_chunk(keyword: &str, text: &str) -> Vec<u8> {
-    let mut data = Vec::with_capacity(keyword.len() + 1 + text.len());
-    data.extend_from_slice(keyword.as_bytes());
-    data.push(0);
-    data.extend_from_slice(text.as_bytes());
-
-    let chunk_type = *b"tEXt";
-    let mut chunk = Vec::with_capacity(data.len() + 12);
-    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    chunk.extend_from_slice(&chunk_type);
-    chunk.extend_from_slice(&data);
-
-    let mut hasher = Hasher::new();
-    hasher.update(&chunk_type);
-    hasher.update(&data);
-    chunk.extend_from_slice(&hasher.finalize().to_be_bytes());
-    chunk
-}
-
-fn insert_text_chunk_before_iend(mut png: Vec<u8>, keyword: &str, text: &str) -> Vec<u8> {
-    let iend_start = png
-        .len()
-        .checked_sub(12)
-        .expect("minimal png should contain IEND");
-    let text_chunk = build_text_chunk(keyword, text);
-    png.splice(iend_start..iend_start, text_chunk);
-    png
 }
 
 /// Keeps PNG bytes and rejects anything else.
@@ -274,8 +246,10 @@ async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
     let selected_json =
         read_character_data_from_png(&clean_png).expect("extract selected character data");
     let stale_json = r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Dirty Chunks","description":"stale"}"#;
+    let mut stale_chunk = Vec::new();
+    write_text_chunk(&mut stale_chunk, "chara", &BASE64.encode(stale_json));
     let dirty_png =
-        insert_text_chunk_before_iend(clean_png, "chara", &BASE64.encode(stale_json.as_bytes()));
+        replace_text_chunks(&clean_png, &[], &stale_chunk).expect("append stale chara chunk");
     fs::write(&character_path, dirty_png)
         .await
         .expect("write dirty metadata chunks");
