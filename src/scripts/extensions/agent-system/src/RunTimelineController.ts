@@ -105,7 +105,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         tr: deps.tr,
         onChange: publish,
     });
-    let snapshot = buildSnapshot();
+    let snapshot = buildSnapshot(false); // No run is active before init().
 
     function deriveMain(): DerivedTimeline {
         if (!derivedEventBase || derivedEventRef !== main.events || derivedProjectionRef !== main.timelineProjection) {
@@ -145,12 +145,11 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         return selectionCache;
     }
 
-    function buildSnapshot(): RunTimelineSnapshot {
+    function buildSnapshot(isRunning: boolean): RunTimelineSnapshot {
         const view = currentDerived();
         const { item: selectedItem, targets } = currentSelection(view);
         const latest = view.items.at(-1) ?? null;
         const terminalType = main.terminalEvent?.type ?? '';
-        const isRunning = Boolean(activeRun?.runId && currentRun?.runId === activeRun.runId);
         const heading = runTimelineHeading(terminalType, isRunning, Boolean(currentRun?.runId), deps.tr);
         const subTask = view.subAgentTasks.find(task => task.targetInvocationId === subAgent.invocationId()) ?? null;
         return {
@@ -194,16 +193,17 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     }
 
     // The live projection is read only while the panel shows the event list of a run in progress.
-    function syncLiveLane(): void {
+    function syncLiveLane(isRunning: boolean): void {
         if (options.mode === 'active' && settings?.agentModeEnabled === true && !collapsed && !detailsOpen
-            && currentRun && !main.terminalEvent) liveLane.attach(currentRun.runId);
+            && isRunning && !main.terminalEvent && currentRun) liveLane.attach(currentRun.runId);
         else liveLane.detach();
     }
 
     function publish(): void {
         if (disposed) return;
-        syncLiveLane();
-        snapshot = buildSnapshot();
+        const isRunning = Boolean(activeRun?.runId && currentRun?.runId === activeRun.runId);
+        syncLiveLane(isRunning);
+        snapshot = buildSnapshot(isRunning);
         listeners.forEach(listener => listener());
     }
 
