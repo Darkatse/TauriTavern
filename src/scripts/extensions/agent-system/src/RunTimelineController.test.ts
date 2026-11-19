@@ -130,6 +130,7 @@ function activeHarness(overrides: Partial<ActiveTimelineOptions['deps']> = {}) {
             state.eventListener = listener;
             return unsubscribe;
         },
+        liveSource: { subscribe: () => () => undefined, scheduleFrame: callback => { callback(); return () => {}; } },
         retryFailure: () => {
             state.retries += 1;
             return Promise.resolve();
@@ -296,13 +297,15 @@ test('active mode removes transient writes immediately and detaches at terminal'
         contentWords: 0,
     };
     const { controller, state } = activeHarness({
-        subscribeLiveProjection: (_runId, handler) => {
-            liveHandler = handler;
-            return () => {
-                liveUnsubscribed += 1;
-            };
+        liveSource: {
+            subscribe: (_runId, handler) => {
+                liveHandler = handler;
+                return () => {
+                    liveUnsubscribed += 1;
+                };
+            },
+            scheduleFrame: callback => { callback(); return () => {}; },
         },
-        scheduleFrame: callback => callback(),
     });
     await controller.init();
     controller.toggleCollapsed();
@@ -374,11 +377,13 @@ test('active mode reads the live projection only while the event list is shown',
         contentWords: 0,
     });
     const { controller } = activeHarness({
-        subscribeLiveProjection: (_runId, handler) => {
-            handlers.push(handler);
-            return () => { unsubscribed += 1; };
+        liveSource: {
+            subscribe: (_runId, handler) => {
+                handlers.push(handler);
+                return () => { unsubscribed += 1; };
+            },
+            scheduleFrame: callback => { callback(); return () => {}; },
         },
-        scheduleFrame: callback => callback(),
     });
     await controller.init();
     expect(handlers).toHaveLength(0);

@@ -316,6 +316,13 @@ type SharedTimelineDeps = {
     tr: AgentSystemTr;
 };
 
+/** A run's live projection and the cadence its previews publish at. */
+export type RunTimelineLiveSource = {
+    subscribe: TauriTavernAgentApi['subscribeLiveProjection'];
+    /** Runs the callback at the next streaming render and returns a function that cancels it. */
+    scheduleFrame: (callback: () => void) => () => void;
+};
+
 export type ActiveTimelineOptions = {
     mode: 'active';
     deps: SharedTimelineDeps & {
@@ -332,8 +339,7 @@ export type ActiveTimelineOptions = {
             presentationError?: string;
         }) => void) => () => void;
         subscribeRunEvents: (listener: (event: TauriTavernAgentRunEvent) => void) => () => void;
-        subscribeLiveProjection?: TauriTavernAgentApi['subscribeLiveProjection'];
-        scheduleFrame?: (callback: () => void) => void;
+        liveSource: RunTimelineLiveSource;
         retryFailure: (input: {
             run: TimelineRun | null;
             events: readonly TauriTavernAgentRunEvent[];

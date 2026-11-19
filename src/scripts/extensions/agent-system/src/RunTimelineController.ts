@@ -80,10 +80,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     let projectionTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
     let initPromise: Promise<void> | null = null;
-    const liveDeps = options.mode === 'active' ? options.deps : null;
     const liveLane = createRunTimelineLiveLane({
-        subscribeLiveProjection: liveDeps?.subscribeLiveProjection,
-        scheduleFrame: liveDeps?.scheduleFrame,
+        liveSource: options.mode === 'active' ? options.deps.liveSource : null,
         onChange: publish,
         onError: deps.reportError,
     });

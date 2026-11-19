@@ -109,8 +109,10 @@ export async function mountAgentRunTimelinePanel(): Promise<void> {
             getActiveRun: () => getActiveAgentRun(),
             subscribeRunState: listener => subscribeAgentRunState(listener),
             subscribeRunEvents: listener => subscribeAgentRunEvents(listener),
-            subscribeLiveProjection: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
-            scheduleFrame: createStreamingRenderScheduler(readStreamingFps),
+            liveSource: {
+                subscribe: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
+                scheduleFrame: createStreamingRenderScheduler(readStreamingFps),
+            },
             retryFailure: input => retryAgentRunFailure(input),
             resumeRun: runId => resumeAgentRun(runId),
             retryPresentation: runId => retryAgentRunPresentation(runId),

@@ -35,6 +35,10 @@ test('presentation save failures remain visible and can be retried without resta
             getActiveRun: () => ({ runId: 'run-1' }),
             subscribeRunState: listener => { runState = listener; return () => undefined; },
             subscribeRunEvents: () => () => undefined,
+            liveSource: {
+                subscribe: () => () => undefined,
+                scheduleFrame: callback => { callback(); return () => {}; },
+            },
             retryFailure: () => Promise.resolve(),
             resumeRun: runId => { resumed.push(runId); return Promise.resolve(); },
             retryPresentation: runId => {

@@ -1,10 +1,11 @@
 import { expect, test } from '@rstest/core';
 
+import type { RunTimelineLiveSource } from './RunTimelineContract';
 import { createRunTimelineLiveLane, type RunTimelineLiveLane } from './run-timeline-live-lane';
 
 type LiveHandler = (update: TauriTavernAgentRunLiveUpdate) => void;
 
-function harness(overrides: Partial<Parameters<typeof createRunTimelineLiveLane>[0]> = {}) {
+function harness(scheduleFrame: RunTimelineLiveSource['scheduleFrame'] = callback => { callback(); return () => {}; }) {
     const state = {
         handler: null as LiveHandler | null,
         subscribedRunId: '',
@@ -13,21 +14,22 @@ function harness(overrides: Partial<Parameters<typeof createRunTimelineLiveLane>
         errors: [] as unknown[],
     };
     const lane = createRunTimelineLiveLane({
-        subscribeLiveProjection: (runId, handler) => {
-            state.subscribedRunId = runId;
-            state.handler = handler;
-            return () => {
-                state.unsubscribed += 1;
-            };
+        liveSource: {
+            subscribe: (runId, handler) => {
+                state.subscribedRunId = runId;
+                state.handler = handler;
+                return () => {
+                    state.unsubscribed += 1;
+                };
+            },
+            scheduleFrame,
         },
-        scheduleFrame: callback => callback(),
         onChange: () => {
             state.changes += 1;
         },
         onError: error => {
             state.errors.push(error);
         },
-        ...overrides,
     });
     return { lane, state };
 }
@@ -100,10 +102,9 @@ test('streams a foreground write call with a line-based tail', () => {
 
 test('publishes at most once per scheduled frame regardless of update volume', () => {
     const scheduled: Array<() => void> = [];
-    const { lane, state } = harness({
-        scheduleFrame: callback => {
-            scheduled.push(callback);
-        },
+    const { lane, state } = harness(callback => {
+        scheduled.push(callback);
+        return () => {};
     });
     const handler = streamingWrite(lane, state);
     handler({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'a', wordDelta: 1 });

@@ -70,6 +70,7 @@ test('active hide/show and timeline/detail switches preserve the mounted event s
         getActiveRun: () => ({ runId: 'run-1', generationType: 'normal' }),
         subscribeRunState: () => () => undefined,
         subscribeRunEvents: () => () => undefined,
+        liveSource: { subscribe: () => () => undefined, scheduleFrame: callback => { callback(); return () => {}; } },
         retryFailure: () => Promise.resolve(),
         retryPresentation: async () => {},
         resumeRun: () => Promise.resolve(),
@@ -320,11 +321,13 @@ test('active timeline renders a streaming write card with tail and metric', asyn
         getActiveRun: () => ({ runId: 'run-1', generationType: 'normal' }),
         subscribeRunState: () => () => undefined,
         subscribeRunEvents: () => () => undefined,
-        subscribeLiveProjection: (_runId, handler) => {
-            liveHandler = handler;
-            return () => undefined;
+        liveSource: {
+            subscribe: (_runId, handler) => {
+                liveHandler = handler;
+                return () => undefined;
+            },
+            scheduleFrame: callback => { callback(); return () => {}; },
         },
-        scheduleFrame: callback => callback(),
         retryFailure: () => Promise.resolve(),
         retryPresentation: async () => {},
         resumeRun: () => Promise.resolve(),
@@ -444,6 +447,10 @@ test('SubAgent tray opens and closes its native dialog through controller-local 
             getActiveRun: () => ({ runId: 'run-1' }),
             subscribeRunState: () => () => undefined,
             subscribeRunEvents: () => () => undefined,
+            liveSource: {
+                subscribe: () => () => undefined,
+                scheduleFrame: callback => { callback(); return () => {}; },
+            },
             retryFailure: () => Promise.resolve(),
             retryPresentation: async () => {},
             resumeRun: () => Promise.resolve(),
