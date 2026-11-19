@@ -1,8 +1,9 @@
+use super::avatar_image_dto::ImageCropDto;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use tt_domain::models::character::{Character, CharacterExtensions};
 use tt_ports::repositories::character_repository::{
-    CharacterChat, CharacterCreateResult, CharacterCreateWarning, ImageCrop,
+    CharacterChat, CharacterCreateResult, CharacterCreateWarning,
 };
 
 /// Character response DTO
@@ -257,16 +258,6 @@ pub struct CreateWithAvatarDto {
     pub crop: Option<ImageCropDto>,
 }
 
-/// Image crop DTO
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageCropDto {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub want_resize: bool,
-}
-
 /// Character chat DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterChatDto {
@@ -428,19 +419,6 @@ impl From<CharacterChat> for CharacterChatDto {
             chat_items: chat.chat_items,
             last_message: chat.last_message,
             last_message_date: chat.last_message_date,
-        }
-    }
-}
-
-/// Convert from DTO to domain model
-impl From<ImageCropDto> for ImageCrop {
-    fn from(dto: ImageCropDto) -> Self {
-        Self {
-            x: dto.x,
-            y: dto.y,
-            width: dto.width,
-            height: dto.height,
-            want_resize: dto.want_resize,
         }
     }
 }

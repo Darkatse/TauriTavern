@@ -146,6 +146,7 @@ async fn character_service_with_world_repository(
         default_user.join("characters"),
         default_user.join("chats"),
         default_avatar,
+        Arc::new(tt_adapter_media::MediaAvatarImageProcessor),
         aliases,
         file_chat_repository.clone(),
     ));

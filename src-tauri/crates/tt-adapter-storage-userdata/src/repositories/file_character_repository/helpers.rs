@@ -1,6 +1,4 @@
-use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::Value;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -378,7 +376,7 @@ impl FileCharacterRepository {
                     "Default avatar not found at {:?}, using generated placeholder image",
                     self.default_avatar_path
                 );
-                Self::generate_placeholder_avatar_png()
+                Ok(PLACEHOLDER_AVATAR_PNG.to_vec())
             }
             Err(error) => {
                 tracing::error!("Failed to read default avatar: {}", error);
@@ -389,16 +387,13 @@ impl FileCharacterRepository {
             }
         }
     }
-
-    pub(crate) fn generate_placeholder_avatar_png() -> Result<Vec<u8>, DomainError> {
-        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 0])));
-        let mut output = Vec::new();
-        let mut cursor = Cursor::new(&mut output);
-
-        image.write_to(&mut cursor, ImageFormat::Png).map_err(|e| {
-            DomainError::InternalError(format!("Failed to create fallback avatar: {}", e))
-        })?;
-
-        Ok(output)
-    }
 }
+
+/// 1x1 transparent RGBA PNG used when the configured default avatar file is missing.
+const PLACEHOLDER_AVATAR_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x60, 0x00, 0x02, 0x00,
+    0x00, 0x05, 0x00, 0x01, 0xe9, 0xfa, 0xdc, 0xd8, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+    0xae, 0x42, 0x60, 0x82,
+];

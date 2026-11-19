@@ -15,6 +15,8 @@ use tt_adapter_storage_core::png_metadata::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::persona::{Persona, Personas, take_personas};
 
+use crate::avatar_images::avatar_png;
+
 const KEYWORD: &str = "persona";
 const DEFAULT_AVATAR: &[u8] = include_bytes!("../../../../default/content/user-default.png");
 
@@ -93,13 +95,7 @@ pub(crate) fn with_persona(image: &[u8], persona: &Persona) -> Result<Vec<u8>, D
     } else {
         // Old imports can contain JPEG/WebP bytes under an existing avatar id.
         // Preserve that id and normalize the carrier only when it is written.
-        let decoded = image::load_from_memory(image)
-            .map_err(|error| DomainError::InvalidData(format!("Invalid Persona image: {error}")))?;
-        let mut buffer = Cursor::new(Vec::new());
-        decoded
-            .write_to(&mut buffer, image::ImageFormat::Png)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        normalized = buffer.into_inner();
+        normalized = avatar_png(image.to_vec(), None)?;
         &normalized
     };
     let text = serde_json::to_string(persona)

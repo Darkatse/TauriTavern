@@ -1,20 +1,17 @@
 use async_trait::async_trait;
-use image::ImageFormat;
 use mime_guess::from_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::fs as tokio_fs;
 
+use crate::avatar_images::avatar_png;
 use crate::persona_cards;
 use tt_domain::errors::DomainError;
-use tt_domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
+use tt_domain::models::avatar::{Avatar, AvatarUploadResult};
 use tt_domain::models::persona::{Persona, Personas};
+use tt_ports::avatar_images::ImageCrop;
 use tt_ports::repositories::avatar_repository::AvatarRepository;
-
-// Constants for avatar dimensions
-const AVATAR_WIDTH: u32 = 400;
-const AVATAR_HEIGHT: u32 = 600;
 
 /// File-based implementation of AvatarRepository
 pub struct FileAvatarRepository {
@@ -32,46 +29,6 @@ impl FileAvatarRepository {
             avatars_dir,
             persona_cache: Arc::default(),
         }
-    }
-
-    /// Process an image file with optional cropping
-    fn process_image(img_data: &[u8], crop_info: Option<CropInfo>) -> Result<Vec<u8>, DomainError> {
-        // Load the image
-        let mut img = image::load_from_memory(img_data)
-            .map_err(|e| DomainError::InternalError(format!("Failed to load image: {}", e)))?;
-
-        // Apply cropping if specified
-        if let Some(crop) = crop_info
-            && crop.x >= 0
-            && crop.y >= 0
-            && crop.width > 0
-            && crop.height > 0
-            && (crop.x as u32) < img.width()
-            && (crop.y as u32) < img.height()
-        {
-            img = img.crop_imm(
-                crop.x as u32,
-                crop.y as u32,
-                crop.width as u32,
-                crop.height as u32,
-            );
-        }
-
-        // Resize the image to the standard avatar dimensions
-        let resized_img = img.resize_exact(
-            AVATAR_WIDTH,
-            AVATAR_HEIGHT,
-            image::imageops::FilterType::Lanczos3,
-        );
-
-        // Convert the image to PNG format
-        let mut buffer = Vec::new();
-        let mut cursor = std::io::Cursor::new(&mut buffer);
-        resized_img
-            .write_to(&mut cursor, ImageFormat::Png)
-            .map_err(|e| DomainError::InternalError(format!("Failed to encode image: {}", e)))?;
-
-        Ok(buffer)
     }
 
     /// Sanitize a filename
@@ -203,7 +160,7 @@ impl AvatarRepository for FileAvatarRepository {
         &self,
         file_path: &Path,
         overwrite_name: Option<String>,
-        crop_info: Option<CropInfo>,
+        crop: Option<ImageCrop>,
     ) -> Result<AvatarUploadResult, DomainError> {
         tracing::debug!("Uploading avatar: {:?}", file_path);
 
@@ -225,7 +182,7 @@ impl AvatarRepository for FileAvatarRepository {
                 Err(error) => return Err(DomainError::InternalError(error.to_string())),
             }
             .unwrap_or_default();
-            let image = Self::process_image(&input, crop_info)?;
+            let image = avatar_png(input, crop.as_ref())?;
             persona_cards::publish(
                 &avatar_path,
                 &persona_cards::with_persona(&image, &persona)?,

@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use std::path::Path;
+
+use crate::avatar_images::ImageCrop;
 pub use tt_contracts::character::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
-    CharacterCreateWarning, ImageCrop,
+    CharacterCreateWarning,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;

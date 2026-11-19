@@ -5,17 +5,18 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::png_card_metadata::{
-    is_png_bytes, process_avatar_image, read_character_data_from_png,
-    read_character_data_from_png_file, write_character_data_to_png,
+    is_png_bytes, read_character_data_from_png, read_character_data_from_png_file,
+    write_character_data_to_png,
 };
 use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::character::Character;
+use tt_ports::avatar_images::ImageCrop;
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
-    CharacterCreateWarning, CharacterRepository, ImageCrop,
+    CharacterCreateWarning, CharacterRepository,
 };
 
 use super::{FileCharacterRepository, importer::CharacterImportMode};
@@ -99,17 +100,9 @@ impl FileCharacterRepository {
             }
         };
 
-        if crop.is_none() && is_png_bytes(&file_data) {
-            return Ok(CreateAvatarCarrier {
-                image_data: file_data,
-                can_fallback_to_default: true,
-                warnings: Vec::new(),
-            });
-        }
-
         let raw_png_candidate = is_png_bytes(&file_data).then(|| file_data.clone());
 
-        match process_avatar_image(file_data, crop).await {
+        match self.avatar_images.process(file_data, crop).await {
             Ok(image_data) => Ok(CreateAvatarCarrier {
                 image_data,
                 can_fallback_to_default: true,
@@ -420,7 +413,7 @@ impl CharacterRepository for FileCharacterRepository {
                 DomainError::InternalError(format!("Failed to read avatar file: {}", e))
             })?;
 
-            process_avatar_image(file_data, crop).await?
+            self.avatar_images.process(file_data, crop).await?
         } else {
             fs::read(&file_path).await.map_err(|e| {
                 tracing::error!("Failed to read character file: {}", e);

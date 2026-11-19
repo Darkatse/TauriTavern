@@ -921,7 +921,7 @@ mod tests {
             &self,
             _: &std::path::Path,
             _: Option<String>,
-            _: Option<tt_domain::models::avatar::CropInfo>,
+            _: Option<tt_ports::avatar_images::ImageCrop>,
         ) -> Result<tt_domain::models::avatar::AvatarUploadResult, DomainError> {
             unreachable!()
         }

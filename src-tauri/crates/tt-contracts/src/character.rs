@@ -14,16 +14,6 @@ pub struct CharacterCreateResult {
     pub warnings: Vec<CharacterCreateWarning>,
 }
 
-/// Image crop parameters
-#[derive(Debug, Clone)]
-pub struct ImageCrop {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub want_resize: bool,
-}
-
 /// Character chat information
 #[derive(Debug, Clone)]
 pub struct CharacterChat {

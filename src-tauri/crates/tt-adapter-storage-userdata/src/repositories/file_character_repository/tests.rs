@@ -4,18 +4,22 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
 
 use crate::png_card_metadata::{
-    read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
+    is_png_bytes, read_character_data_from_png, read_text_chunks_from_png,
+    write_character_data_to_png,
 };
 use tt_adapter_storage_core::{
     FileChatRepository, chat_directory_identity::new_shared_chat_alias_store_for_user_dir,
 };
+use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
+use tt_ports::avatar_images::{AvatarImageProcessor, ImageCrop};
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
 };
@@ -81,6 +85,25 @@ fn insert_text_chunk_before_iend(mut png: Vec<u8>, keyword: &str, text: &str) ->
     png
 }
 
+/// Keeps PNG bytes and rejects anything else.
+struct PngAvatarImages;
+
+#[async_trait]
+impl AvatarImageProcessor for PngAvatarImages {
+    async fn process(
+        &self,
+        image: Vec<u8>,
+        crop: Option<ImageCrop>,
+    ) -> Result<Vec<u8>, DomainError> {
+        assert!(crop.is_none(), "character repository tests do not crop");
+        if is_png_bytes(&image) {
+            Ok(image)
+        } else {
+            Err(DomainError::InvalidData("Not a PNG avatar".into()))
+        }
+    }
+}
+
 async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     let characters_dir = root.join("characters");
     let chats_dir = root.join("chats");
@@ -109,6 +132,7 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
         characters_dir,
         chats_dir,
         default_avatar,
+        Arc::new(PngAvatarImages),
         chat_aliases,
         chat_repository,
     )

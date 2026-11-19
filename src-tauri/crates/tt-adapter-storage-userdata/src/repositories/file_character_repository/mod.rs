@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
+use tt_ports::avatar_images::AvatarImageProcessor;
 
 use self::cache::{CharacterShallowIndexCache, MemoryCache};
 use tt_adapter_storage_core::{
@@ -26,6 +27,7 @@ pub struct FileCharacterRepository {
     characters_dir: PathBuf,
     chats_dir: PathBuf,
     default_avatar_path: PathBuf,
+    avatar_images: Arc<dyn AvatarImageProcessor>,
     shallow_index_path: PathBuf,
     memory_cache: Arc<Mutex<MemoryCache>>,
     shallow_index_cache: Arc<Mutex<Option<CharacterShallowIndexCache>>>,
@@ -40,13 +42,24 @@ impl FileCharacterRepository {
     /// bootstrap constructs character and chat repositories together and must
     /// call `with_chat_repository` so both projections share one chat cache.
     #[allow(dead_code)]
-    pub fn new(characters_dir: PathBuf, chats_dir: PathBuf, default_avatar_path: PathBuf) -> Self {
+    pub fn new(
+        characters_dir: PathBuf,
+        chats_dir: PathBuf,
+        default_avatar_path: PathBuf,
+        avatar_images: Arc<dyn AvatarImageProcessor>,
+    ) -> Self {
         let chat_aliases_path = chats_dir
             .parent()
             .map(chat_alias_path_for_user_dir)
             .unwrap_or_else(|| chats_dir.join("chat_aliases_v1.json"));
         let chat_aliases = new_shared_chat_alias_store(chat_aliases_path);
-        Self::with_chat_aliases(characters_dir, chats_dir, default_avatar_path, chat_aliases)
+        Self::with_chat_aliases(
+            characters_dir,
+            chats_dir,
+            default_avatar_path,
+            avatar_images,
+            chat_aliases,
+        )
     }
 
     /// Create a repository with the shared character/chat alias store.
@@ -58,6 +71,7 @@ impl FileCharacterRepository {
         characters_dir: PathBuf,
         chats_dir: PathBuf,
         default_avatar_path: PathBuf,
+        avatar_images: Arc<dyn AvatarImageProcessor>,
         chat_aliases: SharedChatAliasStore,
     ) -> Self {
         let default_user_dir = characters_dir
@@ -76,6 +90,7 @@ impl FileCharacterRepository {
             characters_dir,
             chats_dir,
             default_avatar_path,
+            avatar_images,
             chat_aliases,
             chat_repository,
         )
@@ -85,6 +100,7 @@ impl FileCharacterRepository {
         characters_dir: PathBuf,
         chats_dir: PathBuf,
         default_avatar_path: PathBuf,
+        avatar_images: Arc<dyn AvatarImageProcessor>,
         chat_aliases: SharedChatAliasStore,
         chat_repository: Arc<FileChatRepository>,
     ) -> Self {
@@ -99,6 +115,7 @@ impl FileCharacterRepository {
             characters_dir,
             chats_dir,
             default_avatar_path,
+            avatar_images,
             shallow_index_path,
             memory_cache,
             shallow_index_cache,

@@ -13,6 +13,7 @@ use crate::infrastructure::repositories::file_preset_repository::FilePresetRepos
 use tt_adapter_extension::FileExtensionRepository;
 use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
+    MediaAvatarImageProcessor,
 };
 use tt_adapter_provider_http::{
     HttpChatCompletionRepository, HttpCorsProxyRepository, HttpEmbeddingRepository,
@@ -230,6 +231,7 @@ pub(super) async fn build(
             data_directory.characters().to_path_buf(),
             data_directory.chats().to_path_buf(),
             data_directory.default_avatar().to_path_buf(),
+            Arc::new(MediaAvatarImageProcessor),
             chat_aliases,
             file_chat_repository.clone(),
         ));

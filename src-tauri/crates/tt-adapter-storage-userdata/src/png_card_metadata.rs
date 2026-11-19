@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use image::ImageFormat;
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::Arc;
 #[cfg(test)]
 use tt_adapter_storage_core::png_metadata::write_chunk;
 #[cfg(test)]
@@ -14,8 +14,8 @@ use tt_adapter_storage_core::png_metadata::{
 };
 pub use tt_adapter_storage_core::png_metadata::{TextChunk, read_text_chunks_from_png};
 use tt_domain::errors::DomainError;
+use tt_ports::avatar_images::AvatarImageProcessor;
 use tt_ports::external_import::CharacterCardEmbedder;
-use tt_ports::repositories::character_repository::ImageCrop;
 
 /// PNG text keys used for character data.
 const CHUNK_NAME_V2: &str = "chara";
@@ -80,7 +80,15 @@ pub(crate) fn is_png_bytes(image_data: &[u8]) -> bool {
     image_data.starts_with(&PNG_SIGNATURE)
 }
 
-pub struct PngCharacterCardEmbedder;
+pub struct PngCharacterCardEmbedder {
+    avatar_images: Arc<dyn AvatarImageProcessor>,
+}
+
+impl PngCharacterCardEmbedder {
+    pub fn new(avatar_images: Arc<dyn AvatarImageProcessor>) -> Self {
+        Self { avatar_images }
+    }
+}
 
 #[async_trait]
 impl CharacterCardEmbedder for PngCharacterCardEmbedder {
@@ -88,81 +96,12 @@ impl CharacterCardEmbedder for PngCharacterCardEmbedder {
         let image_data = tokio::fs::read(image).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to read card image: {error}"))
         })?;
-        let png = if is_png_bytes(&image_data) {
-            image_data
-        } else {
-            process_avatar_image(image_data, None).await?
-        };
+        let png = self.avatar_images.process(image_data, None).await?;
         let card = write_character_data_to_png(&png, card_json)?;
         tokio::fs::write(image, card).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to write character card: {error}"))
         })
     }
-}
-
-/// Process an image for use as a character avatar.
-pub async fn process_avatar_image(
-    image_data: Vec<u8>,
-    crop: Option<ImageCrop>,
-) -> Result<Vec<u8>, DomainError> {
-    tracing::debug!("Processing avatar image");
-
-    tokio::task::spawn_blocking(move || process_avatar_image_sync(&image_data, crop))
-        .await
-        .map_err(|error| {
-            DomainError::InternalError(format!("Failed to join avatar image processor: {}", error))
-        })?
-}
-
-fn process_avatar_image_sync(
-    image_data: &[u8],
-    crop: Option<ImageCrop>,
-) -> Result<Vec<u8>, DomainError> {
-    // Load the image
-    let mut img = image::load_from_memory(image_data)
-        .map_err(|e| DomainError::InvalidData(format!("Failed to load image: {}", e)))?;
-
-    // Apply crop if defined
-    if let Some(crop_params) = crop {
-        if crop_params.x >= 0
-            && crop_params.y >= 0
-            && crop_params.width > 0
-            && crop_params.height > 0
-            && (crop_params.x as u32 + crop_params.width as u32) <= img.width()
-            && (crop_params.y as u32 + crop_params.height as u32) <= img.height()
-        {
-            img = img.crop(
-                crop_params.x as u32,
-                crop_params.y as u32,
-                crop_params.width as u32,
-                crop_params.height as u32,
-            );
-
-            // Apply standard resize if requested
-            if crop_params.want_resize {
-                // Use the standard avatar dimensions from SillyTavern
-                const AVATAR_WIDTH: u32 = 400;
-                const AVATAR_HEIGHT: u32 = 600;
-
-                img = img.resize_to_fill(
-                    AVATAR_WIDTH,
-                    AVATAR_HEIGHT,
-                    image::imageops::FilterType::Lanczos3,
-                );
-            }
-        } else {
-            tracing::warn!("Invalid crop parameters, ignoring crop");
-        }
-    }
-
-    // Convert to PNG
-    let mut output = Vec::new();
-    let mut cursor = Cursor::new(&mut output);
-
-    img.write_to(&mut cursor, ImageFormat::Png)
-        .map_err(|e| DomainError::InternalError(format!("Failed to write PNG image: {}", e)))?;
-
-    Ok(output)
 }
 
 fn encode_base64(data: &str) -> String {

@@ -88,7 +88,9 @@ pub(super) async fn build(
         Arc::new(SiteImportContentResolver::new(
             external_import_downloader.clone(),
         )),
-        Arc::new(PngCharacterCardEmbedder),
+        Arc::new(PngCharacterCardEmbedder::new(Arc::new(
+            tt_adapter_media::MediaAvatarImageProcessor,
+        ))),
     ));
     let asset_service = Arc::new(AssetService::new(
         repositories.asset_repository.clone(),

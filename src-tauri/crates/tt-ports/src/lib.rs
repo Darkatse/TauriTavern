@@ -1,3 +1,4 @@
+pub mod avatar_images;
 pub mod bundled_template;
 pub mod byte_reader;
 pub mod data_archive;

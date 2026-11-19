@@ -222,7 +222,7 @@ export function createCharacterFormService({
             const uploaded = await safeInvoke('upload_avatar', {
                 file_path: fileInfo.filePath,
                 overwrite_name: overwriteName,
-                crop: crop ? JSON.stringify(crop) : null,
+                crop: crop || null,
             });
             return uploaded;
         } finally {

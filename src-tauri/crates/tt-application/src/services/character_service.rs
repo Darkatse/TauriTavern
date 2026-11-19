@@ -23,7 +23,8 @@ use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::{merge_json_value, merge_json_value_with_unset};
 use tt_domain::models::character::Character;
-use tt_ports::repositories::character_repository::{CharacterRepository, ImageCrop};
+use tt_ports::avatar_images::ImageCrop;
+use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
