@@ -11,7 +11,7 @@ use crate::presentation::errors::CommandError;
 
 const CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
-struct SwipeSourceResource(Arc<dyn ChatSwipeSource>);
+pub(crate) struct SwipeSourceResource(Arc<dyn ChatSwipeSource>);
 impl Resource for SwipeSourceResource {}
 
 #[derive(Serialize)]
@@ -80,17 +80,4 @@ pub async fn open_cold_swipe_record(
     Ok(webview
         .resources_table()
         .add(ByteResource::new(reader, CHUNK_BYTES)))
-}
-
-/// A page reload cannot await JS cleanup. In-flight operations retain their own Arc.
-pub(crate) fn close_page_chat_resources(webview: &Webview) {
-    let mut table = webview.resources_table();
-    let ids: Vec<_> = table
-        .names()
-        .map(|(rid, _)| rid)
-        .filter(|rid| table.get::<SwipeSourceResource>(*rid).is_ok())
-        .collect();
-    for rid in ids {
-        let _ = table.close(rid);
-    }
 }

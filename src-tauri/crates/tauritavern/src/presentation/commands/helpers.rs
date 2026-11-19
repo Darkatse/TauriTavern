@@ -1,6 +1,22 @@
 use std::fmt::Display;
 
+use tauri::{Manager, Resource, Webview};
+
 use crate::presentation::errors::CommandError;
+
+/// A page reload cannot await JS cleanup, so the host closes the page's resources of type `T`. In-flight operations
+/// retain their own Arc.
+pub(crate) fn close_page_resources<T: Resource>(webview: &Webview) {
+    let mut table = webview.resources_table();
+    let ids: Vec<_> = table
+        .names()
+        .map(|(rid, _)| rid)
+        .filter(|rid| table.get::<T>(*rid).is_ok())
+        .collect();
+    for rid in ids {
+        let _ = table.close(rid);
+    }
+}
 
 pub fn ensure_ios_policy_allows(
     ios_policy: &tt_domain::ios_policy::IosPolicyActivationReport,

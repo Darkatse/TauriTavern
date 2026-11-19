@@ -10,7 +10,7 @@ use super::helpers::map_command_error;
 use crate::presentation::errors::CommandError;
 
 /// Closing cancels a pending read, so the reader is released even when its source stalls.
-pub(super) struct ByteResource {
+pub(crate) struct ByteResource {
     reader: Mutex<Box<dyn ByteReader>>,
     chunk_bytes: usize,
     closed: CancellationToken,
@@ -58,19 +58,6 @@ pub async fn read_bytes<R: Runtime>(
         .await
         .map_err(map_command_error("Failed to read bytes"))?;
     Ok(tauri::ipc::Response::new(bytes))
-}
-
-/// Page reloads cannot await JS cancellation.
-pub(crate) fn close_page_byte_readers(webview: &Webview) {
-    let mut table = webview.resources_table();
-    let ids: Vec<_> = table
-        .names()
-        .map(|(rid, _)| rid)
-        .filter(|rid| table.get::<ByteResource>(*rid).is_ok())
-        .collect();
-    for rid in ids {
-        let _ = table.close(rid);
-    }
 }
 
 #[cfg(test)]

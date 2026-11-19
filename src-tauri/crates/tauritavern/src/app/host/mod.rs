@@ -21,6 +21,9 @@ use tauri::Manager;
 use tt_adapter_storage_core::commit_stage::PageGeneration;
 
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
+use crate::presentation::commands::byte_reader_commands::ByteResource;
+use crate::presentation::commands::chat_swipe_commands::SwipeSourceResource;
+use crate::presentation::commands::helpers::close_page_resources;
 use crate::presentation::commands::registry::invoke_handler;
 use crate::presentation::web_resources::tauri_resource_adapter::read_host_resource_paths_as_empty_assets;
 
@@ -50,12 +53,8 @@ pub(crate) fn run() {
                         .state::<Arc<AgentExtensionTools>>()
                         .clear_page(webview.label());
                 }
-                crate::presentation::commands::byte_reader_commands::close_page_byte_readers(
-                    webview,
-                );
-                crate::presentation::commands::chat_swipe_commands::close_page_chat_resources(
-                    webview,
-                );
+                close_page_resources::<ByteResource>(webview);
+                close_page_resources::<SwipeSourceResource>(webview);
             }
         })
         .build(context)
