@@ -39,10 +39,10 @@ export function getStreamingRenderInterval({ configuredFps, hidden }) {
 
 /**
  * Paces the renders of one streaming preview by the streaming render interval. A scheduled render waits until the
- * interval has passed since this preview's previous render ran, then runs on the next animation frame, so a hidden
- * document does not render.
+ * interval has passed since this preview's previous render finished, then runs on the next animation frame, so a
+ * hidden document does not render.
  * @param {() => unknown} readConfiguredFps Reads the user-configured streaming FPS.
- * @returns {(render: () => void) => () => void} Schedules a render and returns a function that cancels it.
+ * @returns {(render: () => unknown) => () => void} Schedules a render and returns a function that cancels it.
  */
 export function createStreamingRenderScheduler(readConfiguredFps) {
     let lastRender = Number.NEGATIVE_INFINITY;
@@ -57,12 +57,23 @@ export function createStreamingRenderScheduler(readConfiguredFps) {
         const requestFrame = () => {
             frame = requestAnimationFrame(() => {
                 frame = null;
-                render();
-                lastRender = performance.now();
+                const finish = () => {
+                    lastRender = performance.now();
+                };
+                let asyncRender = false;
+                try {
+                    const result = render();
+                    if (result && typeof /** @type {{ then?: unknown }} */ (result).then === 'function') {
+                        asyncRender = true;
+                        Promise.resolve(result).then(finish, finish);
+                    }
+                } finally {
+                    if (!asyncRender) finish();
+                }
             });
         };
         const configured = readConfiguredFps();
-        if (!streamingFps || configured !== configuredFps) {
+        if (!streamingFps || !Object.is(configured, configuredFps)) {
             configuredFps = configured;
             streamingFps = normalizeStreamingFps(configured);
         }

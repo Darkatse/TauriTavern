@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+    createStreamingRenderScheduler,
     getStreamingRenderInterval,
     normalizeStreamingFps,
 } from '../src/scripts/tauri/perf/streaming-render-policy.js';
@@ -50,4 +51,37 @@ test('valid FPS is normalized without warning', () => {
     }
 
     assert.deepEqual(warnings, []);
+});
+
+test('a streaming preview waits a full interval after its previous render finished', async () => {
+    const originals = {
+        document: globalThis.document,
+        performance: globalThis.performance,
+        setTimeout: globalThis.setTimeout,
+        requestAnimationFrame: globalThis.requestAnimationFrame,
+    };
+    let now = 0;
+    const frames = [];
+    const delays = [];
+    Object.assign(globalThis, {
+        document: { hidden: false },
+        performance: { now: () => now },
+        setTimeout: (_callback, delay) => delays.push(delay),
+        requestAnimationFrame: callback => frames.push(callback),
+    });
+    try {
+        const schedule = createStreamingRenderScheduler(() => 30);
+        let finishRender;
+        schedule(() => new Promise(resolve => { finishRender = resolve; }));
+        frames.shift()();
+        now = 50;
+        finishRender();
+        await new Promise(resolve => originals.setTimeout(resolve, 0));
+
+        now = 60;
+        schedule(() => {});
+        assert.deepEqual(delays, [50 + 1000 / 30 - 60]);
+    } finally {
+        Object.assign(globalThis, originals);
+    }
 });
