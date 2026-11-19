@@ -244,42 +244,60 @@ test('Agent event unsubscribe suppresses in-flight results, errors and the remai
     }
 });
 
-test('Agent live projection subscription owns Channel callbacks and detaches idempotently', async () => {
+test('Agent live projection subscription streams its own host handle over a Channel and closes the handle once', async () => {
     const { createAgentRunLiveSubscribe } = await import(pathToFileURL(path.join(
         REPO_ROOT,
         'src/tauri/main/api/agent-run-live-subscription.js',
     )));
-    let onmessage;
-    let resolveInvoke;
-    const invokeCompletion = new Promise((resolve) => {
-        resolveInvoke = resolve;
-    });
     const calls = [];
-    const updates = [];
+    const streams = [];
+    const channels = [];
+    let nextRid = 0;
     const subscribe = createAgentRunLiveSubscribe({
         safeInvoke(command, args) {
-            calls.push({ command, args });
-            return invokeCompletion;
+            calls.push([command, args]);
+            if (command === 'open_agent_run_live_projection') return Promise.resolve(++nextRid);
+            if (command === 'stream_agent_run_live_projection') {
+                return new Promise(resolve => streams.push({ channel: args.channel, end: resolve }));
+            }
+            return Promise.resolve(null);
         },
-        channelFactory(handler) {
-            onmessage = handler;
-            return { kind: 'test-channel' };
+        channelFactory(onmessage) {
+            channels.push({ onmessage });
+            return channels.at(-1);
         },
     });
 
+    const updates = [];
     const unsubscribe = subscribe(' run-live ', updates.push.bind(updates));
-    assert.equal(calls[0].command, 'subscribe_agent_run_live_projection');
-    assert.deepEqual(calls[0].args, {
-        dto: { runId: 'run-live' },
-        channel: { kind: 'test-channel' },
-    });
-    onmessage({ type: 'snapshot', calls: [], responses: [] });
+    await waitFor(() => streams.length === 1);
+    assert.deepEqual(calls, [
+        ['open_agent_run_live_projection', { dto: { runId: 'run-live' } }],
+        ['stream_agent_run_live_projection', { rid: 1, channel: streams[0].channel }],
+    ]);
+    streams[0].channel.onmessage({ type: 'snapshot', calls: [], responses: [] });
     unsubscribe();
     unsubscribe();
-    onmessage({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
-    resolveInvoke();
-    await Promise.resolve();
+    streams[0].channel.onmessage({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
     assert.deepEqual(updates, [{ type: 'snapshot', calls: [], responses: [] }]);
+    // Closing the handle ends its host stream.
+    assert.deepEqual(calls.at(-1), ['plugin:resources|close', { rid: 1 }]);
+    streams[0].end();
+
+    subscribe('run-live', () => {});
+    await waitFor(() => streams.length === 2);
+    streams[1].end();
+    await waitFor(() => calls.length === 6);
+
+    // Unsubscribing before the handle opens streams nothing, so no Channel callback outlives the subscription.
+    subscribe('run-live', () => {})();
+    await waitFor(() => calls.length === 8);
+    assert.deepEqual(calls.filter(([command]) => command === 'plugin:resources|close'), [
+        ['plugin:resources|close', { rid: 1 }],
+        ['plugin:resources|close', { rid: 2 }],
+        ['plugin:resources|close', { rid: 3 }],
+    ]);
+    assert.equal(channels.length, 2);
 });
 
 test('Agent live projection subscription reports command rejection', async () => {
@@ -288,20 +306,19 @@ test('Agent live projection subscription reports command rejection', async () =>
         'src/tauri/main/api/agent-run-live-subscription.js',
     )));
     const errors = [];
-    const channelFactory = () => ({});
+    let channels = 0;
 
     createAgentRunLiveSubscribe({
         safeInvoke: async () => {
-            throw new Error('channel failed');
+            throw new Error('open failed');
         },
-        channelFactory,
+        channelFactory: () => ({ id: ++channels }),
     })('run-error', () => {}, { onError: error => errors.push(error.message) });
 
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.deepEqual(errors, ['channel failed']);
+    await waitFor(() => errors.length === 1);
+    assert.deepEqual(errors, ['open failed']);
+    assert.equal(channels, 0);
 });
-
 
 test('api.agent.profiles publishes profile change events after successful mutations', async () => {
     const { agent } = await installHarness();
@@ -423,7 +440,7 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
     assert.equal(savedConnections.length, 1);
     assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
     assert.ok(sequence.indexOf('llm_connections.save') < sequence.indexOf('start_agent_run'));
-    await waitFor(() => sequence.includes('subscribe_agent_run_live_projection'));
+    await waitFor(() => sequence.includes('stream_agent_run_live_projection'));
     await waitFor(() => sequence.includes('read_agent_run_events'));
 });
 

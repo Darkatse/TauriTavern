@@ -21,6 +21,7 @@ use tauri::Manager;
 use tt_adapter_storage_core::commit_stage::PageGeneration;
 
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
+use crate::presentation::commands::agent_live_projection::AgentRunLiveProjectionResource;
 use crate::presentation::commands::byte_reader_commands::ByteResource;
 use crate::presentation::commands::chat_swipe_commands::SwipeSourceResource;
 use crate::presentation::commands::helpers::close_page_resources;
@@ -55,6 +56,7 @@ pub(crate) fn run() {
                 }
                 close_page_resources::<ByteResource>(webview);
                 close_page_resources::<SwipeSourceResource>(webview);
+                close_page_resources::<AgentRunLiveProjectionResource>(webview);
             }
         })
         .build(context)

@@ -490,7 +490,7 @@ pub struct AgentFinishRunPresentationDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentSubscribeRunLiveProjectionDto {
+pub struct AgentOpenRunLiveProjectionDto {
     pub run_id: String,
 }
 

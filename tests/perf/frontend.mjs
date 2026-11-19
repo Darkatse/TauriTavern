@@ -288,9 +288,10 @@ function rememberIssued(issued, index, value, opensResource, at = []) {
     }
 }
 // The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal and
-// push() sends a live projection update to every subscriber. Until the run ends, a read past the journal's last
+// push() sends a live projection update to every open stream. Until the run ends, a read past the journal's last
 // event waits for the next one, so the run's event pollers wait instead of polling while the page settles.
-const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], channels: new Set(), ended: false };
+// Live projection resource ids stay clear of the Web Host's own resource ids.
+const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false };
 const agentRunEnded = new Promise(resolve => { agentRun.end = resolve; });
 globalThis.__perfAgent = {
     event(type) {
@@ -302,8 +303,8 @@ globalThis.__perfAgent = {
         }
         for (const wake of agentRun.waiting.splice(0)) wake();
     },
-    push: update => agentRun.channels.forEach(channel => channel.onmessage(update)),
-    subscribers: () => agentRun.channels.size,
+    push: update => agentRun.resources.forEach(resource => resource.channel?.onmessage(update)),
+    subscribers: () => [...agentRun.resources.values()].filter(resource => resource.channel).length,
 };
 function readAgentRunEvents(dto) {
     const after = dto.afterSeq ?? 0, before = dto.beforeSeq ?? Infinity;
@@ -345,13 +346,29 @@ const nativeOnly = {
         globalThis.__perfAgent.event('run_started');
         return { runId: agentRun.runId, workspaceId: 'workspace_perf', stableChatId: dto.stableChatId, generationType: dto.generationType, status: 'running' };
     },
-    subscribe_agent_run_live_projection({ channel }) {
+    open_agent_run_live_projection() {
+        const rid = ++agentRun.lastRid;
+        agentRun.resources.set(rid, { channel: null, close: null });
+        return rid;
+    },
+    stream_agent_run_live_projection({ rid, channel }) {
+        const resource = agentRun.resources.get(rid);
         channel.onmessage({ type: 'snapshot', calls: [], responses: [] });
-        agentRun.channels.add(channel);
-        return agentRunEnded.then(() => {
-            agentRun.channels.delete(channel);
+        resource.channel = channel;
+        return new Promise(resolve => {
+            resource.close = resolve;
+            agentRunEnded.then(resolve);
+        }).then(() => {
+            resource.channel = null;
             return null;
         });
+    },
+    'plugin:resources|close'(args) {
+        const resource = agentRun.resources.get(args.rid);
+        if (!resource) return webHostInvoke('plugin:resources|close', args);
+        agentRun.resources.delete(args.rid);
+        resource.close?.();
+        return null;
     },
     finish_agent_run_presentation: () => null,
 };
