@@ -121,7 +121,7 @@ async fn prepare(root: &Path, trace: &Trace, repo: &Path) -> Result<(), String> 
     let (app, window) = environment::mock_app(repo)?;
     environment::start_backend(&app, root).await?;
     set_file_times(&root.join("data"))?;
-    let plan = Plan::new(&trace.previous_launch);
+    let plan = Plan::new(&trace.previous_launch)?;
     replay(&window, &trace.previous_launch, &plan, None)
         .await
         .map_err(|error| format!("previous launch: {error}"))
@@ -134,7 +134,7 @@ async fn measure(
     repo: &Path,
 ) -> Result<(BTreeMap<String, counters::Counters>, Vec<Value>), String> {
     let (app, window) = environment::mock_app(repo)?;
-    let plan = Plan::new(&trace.calls);
+    let plan = Plan::new(&trace.calls)?;
     let mut steps = Steps::default();
     steps.enter(trace.calls.first().and_then(|call| call.step.as_deref()))?;
     environment::start_backend(&app, root).await?;
@@ -151,18 +151,31 @@ struct Plan {
 impl Plan {
     /// Skips the calls `replayed` rejects, and every call that passes a value a skipped call issued, such as an
     /// Agent run's id: it addresses what the replay never created.
-    fn new(calls: &[Call]) -> Self {
+    fn new(calls: &[Call]) -> Result<Self, String> {
         let mut skipped = Vec::with_capacity(calls.len());
         let mut referenced = HashSet::new();
-        for call in calls {
+        for (index, call) in calls.iter().enumerate() {
             let references = call_references(call);
-            skipped.push(!replayed(call) || references.iter().any(|&other| skipped[other]));
-            referenced.extend(references);
+            let mut references_skipped = false;
+            for &other in &references {
+                let Some(&other_skipped) = skipped.get(other) else {
+                    return Err(format!(
+                        "call {index} ({}) references call {other}, which has not run yet",
+                        call.command
+                    ));
+                };
+                references_skipped |= other_skipped;
+            }
+            let skip = !replayed(call) || references_skipped;
+            skipped.push(skip);
+            if !skip {
+                referenced.extend(references);
+            }
         }
-        Self {
+        Ok(Self {
             skipped,
             referenced,
-        }
+        })
     }
 }
 

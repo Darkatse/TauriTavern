@@ -40,6 +40,12 @@ export default async function agent({ page, measure }) {
             type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text, wordDelta: words(text),
         })),
     );
+    const renderedChatText = await page.locator('#chat .mes:last-child .mes_text').textContent();
+    if (!renderedChatText?.includes('page 19 of the log')) {
+        throw new Error('Expected streamed Agent reply to render into the active chat message');
+    }
+    // End round 1's write_file call before round 2 reasoning starts so the live projection reflects round 2 only.
+    await page.evaluate(() => globalThis.__perfAgent.push({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 }));
 
     // The timeline reads the live projection while it shows its event list.
     await toggle.click();
@@ -53,6 +59,10 @@ export default async function agent({ page, measure }) {
         push({ type: 'responseReplace', response }),
         ...chunks(reasoning).map(text => push({ type: 'responseAppend', invocationId: 'inv_root', text: '', reasoning: text, toolIds: [] })),
     );
+    const renderedReasoning = await page.locator('#ttas_agent_run_timeline .ttas-run-event-live-stream').last().textContent();
+    if (!renderedReasoning?.includes('page 5 of the log')) {
+        throw new Error('Expected streamed Agent reasoning to render into the run timeline');
+    }
 
     // The run ends and saves its reply.
     await page.evaluate(async () => {

@@ -257,7 +257,8 @@ function hostBytes(value) {
     return (text === undefined ? 0 : utf8.encode(text).length) + binary;
 }
 const bytesOf = value => value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-const issuedToken = value => typeof value === 'string' && value.length >= 16 && /[0-9]/.test(value) && /[a-z]/i.test(value);
+const ISO_TIMESTAMP = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$/;
+const issuedToken = value => typeof value === 'string' && value.length >= 16 && /[0-9]/.test(value) && /[a-z]/i.test(value) && !ISO_TIMESTAMP.test(value);
 function base64(bytes) {
     let text = '';
     for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -290,6 +291,7 @@ function rememberIssued(issued, index, value, opensResource, at = []) {
 // The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal and
 // push() sends a live projection update to every open stream. Until the run ends, a read past the journal's last
 // event waits for the next one, so the run's event pollers wait instead of polling while the page settles.
+// \`runId\` satisfies \`issuedToken\` so backend replay skips every call referencing this un-replayed mock run.
 // Live projection resource ids stay clear of the Web Host's own resource ids.
 const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false };
 const agentRunEnded = new Promise(resolve => { agentRun.end = resolve; });
@@ -343,7 +345,7 @@ const nativeOnly = {
     // The run reads its profile for the model it binds; the default profile uses the current connection.
     load_agent_profile: ({ dto }) => ({ profile: { id: dto.profileId } }),
     start_agent_run({ dto }) {
-        globalThis.__perfAgent.event('run_started');
+        globalThis.__perfAgent.event('run_created');
         return { runId: agentRun.runId, workspaceId: 'workspace_perf', stableChatId: dto.stableChatId, generationType: dto.generationType, status: 'running' };
     },
     open_agent_run_live_projection() {
