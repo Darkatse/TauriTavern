@@ -1,13 +1,11 @@
 #![cfg(target_os = "ios")]
 
 use block2::RcBlock;
-use objc2::runtime::{Bool, ProtocolObject};
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly};
-use objc2_foundation::{NSArray, NSError, NSItemProvider, NSString, NSURL};
-use objc2_ui_kit::{
-    UIActivityItemsConfiguration, UIActivityItemsConfigurationReading, UIActivityType,
-    UIActivityViewController,
-};
+use objc2::rc::Retained;
+use objc2::runtime::Bool;
+use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2_foundation::{NSArray, NSError, NSString, NSURL};
+use objc2_ui_kit::{UIActivityType, UIActivityViewController};
 use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 
@@ -19,20 +17,12 @@ enum ShareOutcome {
     Failed(String),
 }
 
+/// Presents the Share Sheet for a file; `true` when an activity completed.
 pub async fn share_file(
     window: &WebviewWindow,
     file_path: &std::path::Path,
-    suggested_name: &str,
 ) -> Result<bool, DomainError> {
-    if !file_path.is_file() {
-        return Err(DomainError::NotFound(format!(
-            "Shared file not found: {}",
-            file_path.display()
-        )));
-    }
-
     let file_path_string = file_path.to_string_lossy().to_string();
-    let suggested_name = suggested_name.to_owned();
     let (sender, receiver) = oneshot::channel::<ShareOutcome>();
 
     window
@@ -64,27 +54,14 @@ pub async fn share_file(
 
             let ns_path = NSString::from_str(&file_path_string);
             let url = NSURL::fileURLWithPath(&ns_path);
-            let Some(provider) = (unsafe {
-                NSItemProvider::initWithContentsOfURL(NSItemProvider::alloc(), Some(&url))
-            }) else {
-                send_failure(
-                    &mut sender,
-                    "Failed to create an iOS file share provider".to_string(),
-                );
-                return;
+            let activity_items = NSArray::from_retained_slice(&[Retained::from(url)]);
+            let controller = unsafe {
+                UIActivityViewController::initWithActivityItems_applicationActivities(
+                    UIActivityViewController::alloc(mtm),
+                    &activity_items,
+                    None,
+                )
             };
-            provider.setSuggestedName(Some(&NSString::from_str(&suggested_name)));
-            let providers = NSArray::from_retained_slice(&[provider]);
-            let configuration =
-                UIActivityItemsConfiguration::activityItemsConfigurationWithItemProviders(
-                    &providers, mtm,
-                );
-            let configuration: &ProtocolObject<dyn UIActivityItemsConfigurationReading> =
-                ProtocolObject::from_ref(&*configuration);
-            let controller = UIActivityViewController::initWithActivityItemsConfiguration(
-                UIActivityViewController::alloc(mtm),
-                configuration,
-            );
 
             let completion_sender = std::cell::RefCell::new(sender.take());
             let completion_block: RcBlock<

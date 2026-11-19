@@ -3,8 +3,8 @@
 //! The staging root is cleared at startup and has two areas. The page area
 //! holds every file whose path the page holds, and only content the page may
 //! read: its own bytes, what the user picked or shared, and content downloaded
-//! under an import-source grant. The host area holds files the host keeps for
-//! the page without naming them to it.
+//! under an import-source grant. The host area holds files whose paths the
+//! host never names to the page.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -30,6 +30,10 @@ fn staging_root(app: &AppHandle) -> Result<PathBuf, DomainError> {
 
 fn page_area(app: &AppHandle) -> Result<PathBuf, DomainError> {
     Ok(staging_root(app)?.join(PAGE_AREA))
+}
+
+fn host_area(app: &AppHandle) -> Result<PathBuf, DomainError> {
+    Ok(staging_root(app)?.join(HOST_AREA))
 }
 
 fn kind_directory(app: &AppHandle, kind: &str) -> Result<PathBuf, DomainError> {
@@ -85,17 +89,28 @@ pub async fn create_staged_file(
     create_file(kind_directory(app, kind)?, extension).await
 }
 
-/// An empty directory in the page area.
-#[cfg(desktop)]
-pub async fn create_staged_directory(app: &AppHandle, kind: &str) -> Result<PathBuf, DomainError> {
-    let directory = kind_directory(app, kind)?.join(uuid::Uuid::new_v4().simple().to_string());
+#[cfg(any(desktop, target_os = "ios"))]
+async fn create_unique_directory(parent: PathBuf) -> Result<PathBuf, DomainError> {
+    let directory = parent.join(uuid::Uuid::new_v4().simple().to_string());
     create_directory(&directory).await?;
     Ok(directory)
 }
 
+/// An empty directory in the page area.
+#[cfg(desktop)]
+pub async fn create_staged_directory(app: &AppHandle, kind: &str) -> Result<PathBuf, DomainError> {
+    create_unique_directory(kind_directory(app, kind)?).await
+}
+
 /// An empty file in the host area.
 pub async fn create_host_file(app: &AppHandle, extension: &str) -> Result<PathBuf, DomainError> {
-    create_file(staging_root(app)?.join(HOST_AREA), extension).await
+    create_file(host_area(app)?, extension).await
+}
+
+/// An empty directory in the host area.
+#[cfg(target_os = "ios")]
+pub async fn create_host_directory(app: &AppHandle) -> Result<PathBuf, DomainError> {
+    create_unique_directory(host_area(app)?).await
 }
 
 /// The path a page names, when it lies in the page area.

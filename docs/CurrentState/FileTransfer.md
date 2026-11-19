@@ -18,18 +18,20 @@
 | --- | --- | --- |
 | Windows / macOS / Linux | dialog 插件返回路径，复制进暂存；数据归档与数据目录原地使用；Skill 目录只复制其中的 Skill 包 | 保存面板；同卷时移动，跨卷时复制 |
 | Android / OpenHarmony | dialog 插件返回带授权的 URI，通过 fs 插件打开 fd 后复制进暂存 | 保存面板授权目标 URI，通过 fd 写入 |
-| iOS | Document Picker 生成副本，移动进暂存 | Share Sheet |
+| iOS | Document Picker 生成副本，移动进暂存 | Share Sheet；源文件以交付名移入宿主区的独立目录后交接 |
 
 Android 的 content URI 不带文件名，由 `ContentUriPlugin` 查询 `DISPLAY_NAME` 得到。分享给应用的 PNG 卡由 Kotlin 记下 URI，页面只收到分享 id；`stage_shared_file` 凭 id 向 `ContentUriPlugin` 取回 URI，在分享授权有效期间复制进暂存。
 
 Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自己的表转换；系统不认识的扩展名不声明具体类型。保存面板会按类型推导后缀，自行指定的类型可能与系统的表不一致，例如 ColorOS 会把 `application/octet-stream` 的 `.jsonl` 存成 `.bin`。
+
+iOS 的 Share Sheet 交接文件本身，接收方按文件名命名，不采用 `NSItemProvider` 的建议名。
 
 ## 3. 暂存
 
 | 暂存 | 位置 | 内容 |
 | --- | --- | --- |
 | 页面区 | `app_cache/tauritavern-staging/page/<kind>/` | WebView 字节（上传与 Blob 导出）、选取与分享的文件、Skill 目录副本、经来源授权下载的 URL 内容 |
-| 宿主区 | `app_cache/tauritavern-staging/host/` | 保存图片时的下载、调试包 |
+| 宿主区 | `app_cache/tauritavern-staging/host/` | 保存图片时的下载、调试包、iOS 交接中的文件 |
 | 归档 | `archive_imports_root/incoming`、`archive_exports_root` | 数据归档、用户备份 |
 
 - 页面持有路径的文件都在页面区，页面区只放页面可读的内容。页面交来的路径须是页面区内不含 `..` 的绝对路径；读取、导入、交付与删除命令先按此校验（`infrastructure/staging.rs` 的 `validate_staged_path`）。

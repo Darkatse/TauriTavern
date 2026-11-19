@@ -51,7 +51,7 @@ Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符�
 iOS 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现：
 
 - 选取：Document Picker 以 `asCopy` 生成副本，宿主把副本移动进暂存；
-- 交付：使用 Share Sheet，建议文件名由 `NSItemProvider` 提供。
+- 交付：Share Sheet 交接以交付名命名的文件。
 
 UIKit 界面在主线程上展示；在 iPad 上，popover 必须指定 sourceView/sourceRect。实现见 `platform/ios_document_picker.rs` 与 `platform/ios_share_sheet.rs`。
 
