@@ -24,6 +24,7 @@ export function createLiveWriteScheduler() {
 export function applyLiveProjectionUpdate(state, update) {
     switch (update.type) {
         case 'snapshot': {
+            state.liveCall = null;
             for (const call of update.calls) {
                 acceptLiveCall(state, call);
             }
@@ -90,36 +91,36 @@ function sameLiveCall(call, update) {
 
 function scheduleLiveWriteFrame(state) {
     if (state.pendingFrame || !state.liveWrite) return;
-    /** @type {{ cancel: (() => void) | null; release: (() => void) | null; promise: Promise<void> | null }} */
-    const frame = { cancel: null, release: null, promise: null };
-    const ready = new Promise(resolve => {
-        frame.release = resolve;
-        frame.cancel = state.scheduleRender(() => {
-            frame.cancel = null;
-            resolve();
-        });
-    });
-    frame.promise = ready
-        .then(() => renderCurrentLiveWrite(state))
-        .finally(() => {
+    /** `cancel` is set until the render starts. @type {{ cancel: (() => void) | null; promise: Promise<void> | null }} */
+    const frame = { cancel: null, promise: null };
+    state.pendingFrame = frame;
+    frame.cancel = state.scheduleRender(() => {
+        frame.cancel = null;
+        frame.promise = renderCurrentLiveWrite(state).finally(() => {
             if (state.pendingFrame === frame) {
                 state.pendingFrame = null;
             }
         });
-    state.pendingFrame = frame;
-    void frame.promise.catch(reportAsyncError);
+        void frame.promise.catch(reportAsyncError);
+        return frame.promise;
+    });
+}
+
+/**
+ * Cancels the frame if its render has not started.
+ * @returns {Promise<void> | null} The render in progress, if any.
+ */
+function cancelPendingLiveWriteFrame(state) {
+    const frame = state.pendingFrame;
+    if (!frame) return null;
+    if (!frame.cancel) return frame.promise;
+    frame.cancel();
+    state.pendingFrame = null;
+    return null;
 }
 
 export async function flushLiveWriteFrame(state) {
-    const frame = state.pendingFrame;
-    if (frame?.cancel) {
-        frame.cancel();
-        frame.cancel = null;
-        frame.release?.();
-    }
-    if (frame?.promise) {
-        await frame.promise;
-    }
+    await cancelPendingLiveWriteFrame(state);
     await renderCurrentLiveWrite(state);
 }
 
@@ -201,6 +202,7 @@ export function stopLiveProjection(state) {
         state.stopLive();
         state.stopLive = null;
     }
+    cancelPendingLiveWriteFrame(state);
     endLiveWrite(state);
 }
 

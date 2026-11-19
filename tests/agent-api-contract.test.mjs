@@ -176,8 +176,13 @@ function liveWriteCall(content, overrides = {}) {
 
 // Runs each scheduled live render in a microtask.
 function renderInMicrotask(render) {
-    queueMicrotask(render);
-    return () => {};
+    let cancelled = false;
+    queueMicrotask(() => {
+        if (!cancelled) render();
+    });
+    return () => {
+        cancelled = true;
+    };
 }
 
 async function installHarness(options = {}) {
@@ -650,8 +655,12 @@ test('agent live write keeps one real partial chat message and saves it on failu
         loadScript: async () => script,
         persistChat: async () => { persistCount += 1; },
         scheduleRender(render) {
-            if (!suspendFrames) queueMicrotask(render);
-            return () => { cancelledFrames += 1; };
+            let cancelled = false;
+            if (!suspendFrames) queueMicrotask(() => { if (!cancelled) render(); });
+            return () => {
+                cancelled = true;
+                cancelledFrames += 1;
+            };
         },
     });
 
@@ -706,7 +715,10 @@ test('agent live write keeps one real partial chat message and saves it on failu
     await waitFor(() => persistCount === 1);
     assert.equal(cancelledFrames, 1);
     assert.equal(script.chat.length, 1);
-    assert.ok(renders.some(render => render.kind === 'preview'));
+    assert.deepEqual(
+        renders.filter(render => render.kind === 'preview').map(render => render.text),
+        ['partial', 'handoff answer'],
+    );
     assert.equal(renders.at(-1).kind, 'final');
     assert.equal(script.chat[0], message);
     assert.equal(message.mes, 'handoff answer');
