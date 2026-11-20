@@ -19,6 +19,7 @@ import {
     chat,
     getFirstDisplayedMessageId,
     saveSettings,
+    flushPendingSettingsSave,
     saveChatConditional,
     setAnimationDuration,
     ANIMATION_DURATION_DEFAULT,
@@ -77,6 +78,7 @@ import { extractDominantColor, generateThemePalette, deriveBackgroundName } from
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 import { CHAT_LAYOUT_CHANGED_EVENT } from '../tauri/main/services/chat-surface/install.js';
 import { resolveThemeBinding } from './theme-binding-policy.js';
+import { getMountedCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
 export { CHAT_LAYOUT_CHANGED_EVENT };
 
@@ -179,6 +181,7 @@ export const power_user = {
     sort_order: 'asc',
     sort_rule: null,
     font_scale: 1,
+    chat_font_scale: 1,
     blur_strength: 10,
     shadow_width: 2,
 
@@ -1135,21 +1138,89 @@ function applyShadowWidth() {
 
 }
 
-function applyFontScale(type) {
-    //this is to allow forced setting on page load, theme swap, etc
-    if (type === 'forced') {
-        document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
-        notifyChatLayoutChanged();
-    } else {
-        //this is to prevent the slider from updating page in real time
-        $('#font_scale').off('mouseup touchend').on('mouseup touchend', () => {
-            document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
-            notifyChatLayoutChanged();
-        });
-    }
+const fontScaleProperties = {
+    font_scale: '--fontScale',
+    chat_font_scale: '--chatFontScale',
+};
+let fontScaleFrame = 0;
 
-    $('#font_scale_counter').val(power_user.font_scale);
-    $('#font_scale').val(power_user.font_scale);
+function validateFontScale(key, value) {
+    const input = document.getElementById(key);
+    if (Number.isFinite(value) && value >= Number(input.min) && value <= Number(input.max)) {
+        return value;
+    }
+    console.warn(`Invalid ${key}, restoring 100%`, value);
+    toastr.warning(t`An invalid font size was restored to 100%.`);
+    return 1;
+}
+
+function syncFontScaleControl(key) {
+    const value = power_user[key] ?? power_user.font_scale;
+    const percent = new Intl.NumberFormat(document.documentElement.lang || undefined, {
+        style: 'percent', maximumFractionDigits: 2,
+    }).format(value);
+    $(`#${key}`).val(value).attr('aria-valuetext', percent);
+    $(`#${key}_counter`).val(value);
+    $(`#${key}_percent`).text(percent);
+}
+
+function applyFontScales() {
+    cancelAnimationFrame(fontScaleFrame);
+    fontScaleFrame = 0;
+    const style = document.documentElement.style;
+    let changed = false;
+    for (const [key, property] of Object.entries(fontScaleProperties)) {
+        // Until the initial theme resolves, legacy chats follow the UI scale.
+        const value = String(power_user[key] ?? power_user.font_scale);
+        if (style.getPropertyValue(property) !== value) {
+            style.setProperty(property, value);
+            changed = true;
+        }
+    }
+    if (changed) {
+        const editor = document.querySelector('.tt-chat-input-editor__textarea');
+        if (editor) getMountedCodeMirrorEditor(editor)?.requestMeasure();
+        notifyChatLayoutChanged();
+    }
+}
+
+export function finishLegacyFontScaleMigration() {
+    if (power_user.chat_font_scale !== undefined) return;
+    power_user.chat_font_scale = power_user.font_scale;
+    saveSettingsDebounced();
+}
+
+async function resetFontScales() {
+    if (!settingsReady) return false;
+    for (const key of Object.keys(fontScaleProperties)) {
+        $(`#${key}`).val(1).trigger('input');
+    }
+    applyFontScales();
+    return flushPendingSettingsSave(true);
+}
+
+export function installAndroidFontResetApi() {
+    /** @type {'pending' | 'saved' | 'failed' | null} */
+    let result = null;
+    window.__TAURITAVERN__.api.display = Object.freeze({
+        async resetFontScales() {
+            if (result === 'pending') return;
+            result = 'pending';
+            try {
+                result = await resetFontScales() ? 'saved' : 'failed';
+            } catch (error) {
+                console.error('Failed to restore font sizes', error);
+                result = 'failed';
+            }
+        },
+        getFontResetResult: () => result,
+        takeFontResetResult() {
+            if (result === 'pending') return null;
+            const completed = result;
+            result = null;
+            return completed;
+        },
+    });
 }
 
 /**
@@ -1231,7 +1302,10 @@ function applyTheme(name) {
         {
             key: 'font_scale',
             action: () => {
-                applyFontScale('forced');
+                power_user.font_scale = validateFontScale('font_scale', power_user.font_scale);
+                syncFontScaleControl('font_scale');
+                if (power_user.chat_font_scale === undefined) syncFontScaleControl('chat_font_scale');
+                applyFontScales();
             },
         },
         {
@@ -1644,7 +1718,8 @@ async function showDebugMenu() {
 
 export function applyPowerUserSettings() {
     switchUiMode();
-    applyFontScale('forced');
+    for (const key of Object.keys(fontScaleProperties)) syncFontScaleControl(key);
+    applyFontScales();
     applyThemeColor();
     applyChatWidth('forced');
     applyAvatarStyle();
@@ -1740,6 +1815,12 @@ export async function loadPowerUserSettings(settings, data) {
             power_user.theme_fallback = power_user.theme;
         }
     }
+
+    const savedFontScale = settings.power_user?.font_scale;
+    power_user.font_scale = savedFontScale === undefined ? 1 : validateFontScale('font_scale', savedFontScale);
+    power_user.chat_font_scale = settings.power_user?.chat_font_scale === undefined
+        ? undefined
+        : validateFontScale('chat_font_scale', settings.power_user.chat_font_scale);
 
     if (power_user.stscript === undefined) {
         power_user.stscript = defaultStscript;
@@ -1936,8 +2017,6 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#stream_fade_in').prop('checked', power_user.stream_fade_in);
 
-    $('#font_scale').val(power_user.font_scale);
-    $('#font_scale_counter').val(power_user.font_scale);
 
     $('#blur_strength').val(power_user.blur_strength);
     $('#blur_strength_counter').val(power_user.blur_strength);
@@ -3635,12 +3714,23 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('input[name="font_scale"]').on('input', async function (e, data) {
-        const applyMode = data?.forced ? 'forced' : 'normal';
-        power_user.font_scale = Number($(this).val());
-        $('#font_scale_counter').val(power_user.font_scale);
-        applyFontScale(applyMode);
-        saveSettingsDebounced();
+    $('#font_scale, #chat_font_scale').on('input', function () {
+        const value = validateFontScale(this.id, this.valueAsNumber);
+        if (power_user[this.id] !== value) {
+            power_user[this.id] = value;
+            saveSettingsDebounced();
+        }
+        syncFontScaleControl(this.id);
+        if (!fontScaleFrame) fontScaleFrame = requestAnimationFrame(applyFontScales);
+    });
+
+    $('#reset_font_scales').on('click', async function () {
+        this.disabled = true;
+        try {
+            if (await resetFontScales()) toastr.success(t`Font sizes restored.`);
+        } finally {
+            this.disabled = false;
+        }
     });
 
     $('input[name="blur_strength"]').on('input', async function (e) {
