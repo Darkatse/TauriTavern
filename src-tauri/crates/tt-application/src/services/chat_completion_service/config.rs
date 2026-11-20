@@ -356,7 +356,7 @@ pub(super) fn resolve_user_configured_endpoint(
                 "Custom endpoint is missing. Please configure custom_url.".to_string(),
             ));
         }
-        _ if supports_reverse_proxy(source) && !reverse_proxy.is_empty() => reverse_proxy,
+        _ if source.supports_reverse_proxy() && !reverse_proxy.is_empty() => reverse_proxy,
         _ => return Ok(None),
     };
 
@@ -514,20 +514,6 @@ fn source_secret_key(
         }
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
-}
-
-fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
-    matches!(
-        source,
-        ChatCompletionSource::OpenAi
-            | ChatCompletionSource::Claude
-            | ChatCompletionSource::Makersuite
-            | ChatCompletionSource::VertexAi
-            | ChatCompletionSource::DeepSeek
-            | ChatCompletionSource::Moonshot
-            | ChatCompletionSource::Zai
-            | ChatCompletionSource::Xai
-    )
 }
 
 fn siliconflow_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {

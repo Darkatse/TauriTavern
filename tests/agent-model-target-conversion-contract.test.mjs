@@ -212,8 +212,8 @@ test('Agent model target conversion rejects lossy or invalid targets', async () 
         /is not a chat-completion target/,
     );
     assert.throws(
-        () => buildLlmConnectionFromModelTarget(sampleTarget({ secretRef: null })),
-        /missing secret reference/,
+        () => buildLlmConnectionFromModelTarget(sampleTarget({ secretRef: { key: 'api_key_custom', id: '' } })),
+        /invalid secret reference/,
     );
     assert.throws(
         () => modelTargetConnectionRef({ id: 'x'.repeat(129) }),
@@ -231,6 +231,23 @@ test('Agent model targets preserve a named reverse proxy and the provider-specif
     assert.deepEqual(connection.routing, { reverseProxy: { preset: 'Team proxy' } });
     assert.equal(connection.provider.chatCompletionSource, 'makersuite');
     assert.equal(modelBindingFromTarget(target).modelId, '[v]gemini-custom');
-    assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, secretRef: undefined }).auth, {});
     assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, proxy: 'None' }).routing, {});
+});
+
+test('Agent model targets omit non-applicable proxy state and allow keyless or active-key auth', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    const customConnection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'custom', 'api-url': 'http://127.0.0.1:5001/v1', proxy: 'Deleted proxy', secretRef: undefined,
+    }));
+    assert.deepEqual(customConnection.auth, {});
+    assert.deepEqual(customConnection.routing, {});
+
+    const pollinationsConnection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'pollinations', 'api-url': 'anonymous', proxy: 'NONE', secretRef: undefined,
+    }));
+    assert.deepEqual(pollinationsConnection.auth, {});
+    assert.deepEqual(pollinationsConnection.routing, {});
+    assert.deepEqual(pollinationsConnection.endpoint, {
+        sourceSpecific: { pollinations_endpoint: 'anonymous' },
+    });
 });

@@ -148,4 +148,19 @@ impl ChatCompletionSource {
             Self::Pollinations => "Pollinations",
         }
     }
+
+    /// Sources whose requests go to the user's reverse proxy when one is set.
+    pub const fn supports_reverse_proxy(self) -> bool {
+        matches!(
+            self,
+            Self::OpenAi
+                | Self::Claude
+                | Self::Makersuite
+                | Self::VertexAi
+                | Self::DeepSeek
+                | Self::Moonshot
+                | Self::Zai
+                | Self::Xai
+        )
+    }
 }

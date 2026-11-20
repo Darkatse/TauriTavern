@@ -19,6 +19,7 @@ import { connectCurrentApi } from '../../slash-commands.js';
 import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
 import { ConnectionManagerRequestService } from '../shared.js';
+import { modelTargetSupportsReverseProxy } from '../../tauritavern/agent/model-target-llm-connection.js';
 import { formatReasoning } from '/scripts/reasoning.js';
 
 const MODULE_NAME = 'connection-manager';
@@ -506,7 +507,11 @@ async function readModelTargetFromCommands(target) {
 
     if (mode === 'cc') {
         setOptionalField(target, 'custom-api-format', await executeManagedCommand('custom-api-format'));
-        setOptionalField(target, 'proxy', await executeManagedCommand('proxy'));
+        if (modelTargetSupportsReverseProxy(target)) {
+            setOptionalField(target, 'proxy', await executeManagedCommand('proxy'));
+        } else {
+            delete target.proxy;
+        }
     } else {
         delete target['custom-api-format'];
         delete target.proxy;
@@ -812,7 +817,10 @@ function makeFancyProfile(profile) {
  */
 function makeFancyModelTarget(target) {
     const result = {};
-    const fields = ['api', 'custom-api-format', 'api-url', 'model', 'proxy'];
+    const fields = ['api', 'custom-api-format', 'api-url', 'model'];
+    if (modelTargetSupportsReverseProxy(target)) {
+        fields.push('proxy');
+    }
 
     result['Saved Object'] = t`Model`;
     for (const field of fields) {
@@ -903,10 +911,12 @@ async function applyModelTarget(target) {
                     await requireManagedCommand('secret-id', target.secretRef.id, { key: target.secretRef.key, quiet: 'true' });
                 }
 
-                if (target.proxy) {
-                    await requireManagedCommand('proxy', target.proxy);
-                } else {
-                    await requireManagedCommand('proxy', NO_PROXY_PRESET);
+                if (modelTargetSupportsReverseProxy(target)) {
+                    if (target.proxy) {
+                        await requireManagedCommand('proxy', target.proxy);
+                    } else {
+                        await requireManagedCommand('proxy', NO_PROXY_PRESET);
+                    }
                 }
 
                 await requireManagedCommand('model', target.model, { quiet: 'true' });
