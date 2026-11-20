@@ -177,17 +177,12 @@ fn is_forbidden_path_segment_char(character: char) -> bool {
 /// C1 controls are intentionally allowed for legacy mojibake filenames from
 /// migrated SillyTavern data. C0 controls and DEL remain rejected.
 pub fn validate_path_segment(segment: &str) -> bool {
-    if segment.is_empty()
+    !(segment.is_empty()
         || segment == "."
         || segment == ".."
         || segment.contains('/')
         || segment.contains('\\')
-        || segment.chars().any(is_forbidden_path_segment_char)
-    {
-        return false;
-    }
-
-    true
+        || segment.chars().any(is_forbidden_path_segment_char))
 }
 
 fn validate_third_party_segment(segment: &str) -> Result<(), ThirdPartyPathError> {
