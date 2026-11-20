@@ -7,7 +7,8 @@ fn assert_format_error(error: DomainError) {
 
 #[tokio::test]
 async fn commit_rejects_invalid_headers_even_when_forced_and_preserves_the_target() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     let valid = "\n\u{feff}\n{\"chat_metadata\":{\"integrity\":\" \\t\\n\"}}";
     commit_payload_bytes(&repository, target.clone(), valid.as_bytes(), false)
@@ -47,12 +48,12 @@ async fn commit_rejects_invalid_headers_even_when_forced_and_preserves_the_targe
         .await
         .unwrap();
     assert_eq!(fs::read(&path).await.unwrap(), valid.as_bytes());
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     commit_payload_bytes(&repository, target.clone(), b"{}", false)
         .await
@@ -169,13 +170,12 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             .chat_id,
         summary.chat_id
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_rewrite_history() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     for body in [b"not-json".as_slice(), b"[]", b"{\"mes\":\"\xff\"}"] {
         let payload = [
@@ -222,12 +222,12 @@ async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_r
             payload
         );
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn payload_reads_preserve_raw_records_and_reject_truncated_sources() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let header = r#"{ "chat_metadata": {"integrity": "old"}, "future": [true] }"#;
     let message = r#"{ "mes": "\u4f60", "number": 1.200e1, "swipes": ["旧内容", "当前内容"] }"#;
     let source = format!("\n\u{feff}\r\n{header}\r\n\n{message}");
@@ -256,5 +256,4 @@ async fn payload_reads_preserve_raw_records_and_reject_truncated_sources() {
     fs::write(&path, b"").await.unwrap();
     assert!(read_chat_stream_bytes(jsonl).await.is_err());
     assert!(read_chat_stream_bytes(json).await.is_err());
-    cleanup_repository(repository, root).await;
 }

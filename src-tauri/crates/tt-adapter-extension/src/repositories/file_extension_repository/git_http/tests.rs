@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use gix_transport::client::blocking_io::http::{Http, PostBodyDataKind};
 use tt_adapter_http::HttpClientPool;
-use uuid::Uuid;
 
 use super::{GitHttp, carried_upstream_failure, shares_authority_or_upgrades_scheme};
 use crate::repositories::file_extension_repository::git_remote::{advertise_refs, fetch_exact};
@@ -555,9 +554,9 @@ fn pinned_gix_high_level_fetch_reaches_bounded_fetch_post() {
         _ => respond(stream, "500 Expected Test Stop", &[], b""),
     });
     let remote = format!("{}/repo", server.base_url);
-    let repo_path = std::env::temp_dir().join(format!("tt-gix-fetch-{}", Uuid::new_v4()));
+    let temp = tempfile::tempdir().expect("create temp dir");
     let mut repo = gix::ThreadSafeRepository::init_opts(
-        &repo_path,
+        temp.path(),
         gix::create::Kind::Bare,
         gix::create::Options::default(),
         gix::open::Options::isolated(),
@@ -596,7 +595,6 @@ fn pinned_gix_high_level_fetch_reaches_bounded_fetch_post() {
     );
 
     server.finish();
-    std::fs::remove_dir_all(repo_path).expect("remove test repository");
 }
 
 fn packet_lines(lines: &[&[u8]]) -> Vec<u8> {

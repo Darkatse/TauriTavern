@@ -2,9 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
-    let root = temp_root("agent-mcp-integration");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![model_tool_call(
                 "call_mcp",
@@ -174,15 +175,14 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
     assert_eq!(read_result.structured["fullRead"], true);
     assert_eq!(read_result.content.matches('界').count(), 60_000);
     assert!(read_result.content.contains("End of result."));
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
-    let root = temp_root("agent-mcp-outcome-unknown");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "call_unknown",
@@ -252,8 +252,6 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
             .all(|event| { event.payload["callId"] != "call_after_unknown" })
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 1);
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
@@ -261,9 +259,10 @@ async fn mcp_images_keep_structured_projection_and_image_only_results_readable()
     use base64::{Engine, engine::general_purpose::STANDARD};
     use tt_ports::mcp::{McpCallDiagnostic, McpImageContent};
 
-    let root = temp_root("mcp-image-projection");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -364,7 +363,6 @@ async fn mcp_images_keep_structured_projection_and_image_only_results_readable()
         .unwrap();
     assert_eq!(image_only.images.len(), 1);
     assert!(!image_only.content.contains("without returning content"));
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 pub(super) async fn configure_mcp_profile(

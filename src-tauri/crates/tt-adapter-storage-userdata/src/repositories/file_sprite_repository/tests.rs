@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::sprite_repository::{SpriteName, SpriteRepository, SpriteSet};
@@ -9,29 +9,6 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use super::FileSpriteRepository;
-
-struct TempDirGuard(PathBuf);
-
-impl TempDirGuard {
-    fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "tauritavern-sprites-{name}-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&path).expect("create temp directory");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
     let file = File::create(path).expect("create zip");
@@ -50,7 +27,7 @@ fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
 
 #[tokio::test]
 async fn upload_list_replace_and_delete_follow_sprite_stem_semantics() {
-    let temp = TempDirGuard::new("lifecycle");
+    let temp = tempfile::tempdir().expect("create temp dir");
     let characters = temp.path().join("characters");
     let repository = FileSpriteRepository::new(characters.clone());
     let set = SpriteSet::parse("Alice/formal").expect("sprite set");
@@ -116,7 +93,7 @@ async fn upload_list_replace_and_delete_follow_sprite_stem_semantics() {
 
 #[tokio::test]
 async fn sprite_pack_flattens_images_and_ignores_unselected_limits() {
-    let temp = TempDirGuard::new("pack");
+    let temp = tempfile::tempdir().expect("create temp dir");
     let characters = temp.path().join("characters");
     let set_dir = characters.join("Alice");
     std::fs::create_dir_all(&set_dir).expect("create set");
@@ -150,7 +127,7 @@ async fn sprite_pack_flattens_images_and_ignores_unselected_limits() {
 
 #[tokio::test]
 async fn sprite_pack_rejects_unsafe_images_before_writing() {
-    let temp = TempDirGuard::new("invalid-pack");
+    let temp = tempfile::tempdir().expect("create temp dir");
     let characters = temp.path().join("characters");
     let repository = FileSpriteRepository::new(characters.clone());
     let set = SpriteSet::parse("Alice").expect("sprite set");

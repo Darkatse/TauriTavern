@@ -557,7 +557,6 @@ impl GroupRepository for FileGroupRepository {
 mod tests {
     use super::*;
     use serde_json::json;
-    use uuid::Uuid;
 
     fn base_group_manifest() -> Value {
         json!({
@@ -634,12 +633,9 @@ mod tests {
 
     #[tokio::test]
     async fn group_repository_loads_and_rewrites_legacy_group_manifest() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-file-group-repository-{}",
-            Uuid::new_v4()
-        ));
-        let groups_dir = root.join("groups");
-        let group_chats_dir = root.join("group chats");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let groups_dir = temp.path().join("groups");
+        let group_chats_dir = temp.path().join("group chats");
         // `update_group` derives the file name from the id, so the file must be named after it.
         let group_path = groups_dir.join("1701046282175.json");
 
@@ -689,7 +685,5 @@ mod tests {
         assert_eq!(persisted["vendor_extra"], json!("kept"));
         assert!(persisted.get("date_added").is_none());
         assert!(persisted.get("date_last_chat").is_none());
-
-        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

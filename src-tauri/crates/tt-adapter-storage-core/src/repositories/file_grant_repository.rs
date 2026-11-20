@@ -33,15 +33,12 @@ impl GrantRepository for FileGrantRepository {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
-    use crate::file_system::unique_temp_path;
 
     #[tokio::test]
     async fn missing_file_is_empty_and_grants_round_trip() {
-        let root = unique_temp_path(&std::env::temp_dir().join("grants"));
-        let path = root.join("grants.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("grants").join("grants.json");
         let repository = FileGrantRepository::new(path);
 
         assert!(repository.load().await.unwrap().is_empty());
@@ -50,6 +47,5 @@ mod tests {
         repository.replace(&grants).await.unwrap();
 
         assert_eq!(repository.load().await.unwrap(), grants);
-        fs::remove_dir_all(root).unwrap();
     }
 }

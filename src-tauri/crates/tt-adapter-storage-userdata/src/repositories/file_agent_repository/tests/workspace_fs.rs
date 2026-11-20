@@ -25,8 +25,8 @@ async fn initialize(repository: &FileAgentRepository, run: &AgentRun) -> Arc<dyn
 
 #[tokio::test]
 async fn binary_workspace_content_survives_append_and_copy_without_text_conversion() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let files = initialize(&repository, &sample_run()).await;
     let source = path("output/data");
     files
@@ -49,13 +49,12 @@ async fn binary_workspace_content_survives_append_and_copy_without_text_conversi
         files.read_file(&target, 3).await.is_err(),
         "a bounded read must reject excess bytes rather than truncate"
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn persistent_tree_preserves_deletion_moves_empty_directories_and_type_changes() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let base_run = sample_run_with_id("tree_base");
     let base = initialize(&repository, &base_run).await;
     for (name, text) in [
@@ -197,13 +196,12 @@ async fn persistent_tree_preserves_deletion_moves_empty_directories_and_type_cha
             .unwrap(),
         second
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn legacy_baseline_uses_immutable_directories_and_reuses_legacy_summary() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let base_run = sample_run_with_id("legacy_base");
     let files = initialize(&repository, &base_run).await;
     files
@@ -268,5 +266,4 @@ async fn legacy_baseline_uses_immutable_directories_and_reuses_legacy_summary() 
             path: "persist/empty".into()
         }]
     );
-    fs::remove_dir_all(root).await.unwrap();
 }

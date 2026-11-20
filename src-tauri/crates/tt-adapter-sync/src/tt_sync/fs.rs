@@ -181,21 +181,14 @@ fn normalize_relative_path(path: &Path) -> Result<String, DomainError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use rand::random;
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DatasetSelection};
     use ttsync_core::dataset::ResolvedDatasetPolicy;
 
     use super::scan_manifest_sync;
 
-    fn unique_temp_root() -> PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-tt-sync-{}", random::<u64>()))
-    }
-
     #[test]
     fn session_profile_index_history_and_workspace_remain_local_in_all_sync_presets() {
-        let root = unique_temp_root();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let chat_index = "_tauritavern/agent-workspaces/index/runs/chat-run.json";
         for relative in [
             chat_index,
@@ -207,7 +200,7 @@ mod tests {
             "_tauritavern/agent-workspaces/sessions/session/workspace/tmp/check.js",
             "_tauritavern/agent-workspaces/sessions/session/runs/session-run/run.json",
         ] {
-            let path = root.join(relative);
+            let path = temp.path().join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"{}").unwrap();
         }
@@ -216,7 +209,7 @@ mod tests {
             ttsync_core::dataset::tauri_tavern_full_selection(),
         ] {
             let policy = ResolvedDatasetPolicy::from_selection(&selection).unwrap();
-            let manifest = scan_manifest_sync(&root, &policy).unwrap();
+            let manifest = scan_manifest_sync(temp.path(), &policy).unwrap();
             let paths: Vec<_> = manifest
                 .entries
                 .iter()
@@ -224,7 +217,6 @@ mod tests {
                 .collect();
             assert_eq!(paths, [chat_index]);
         }
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -247,14 +239,18 @@ mod tests {
 
     #[test]
     fn scan_manifest_excludes_all_sync_state_files() {
-        let root = unique_temp_root();
-        let _ = std::fs::remove_dir_all(&root);
-        let lan_sync_dir = root.join("default-user").join("user").join("lan-sync");
-        let user_cache_dir = root.join("default-user").join("user").join("cache");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let lan_sync_dir = temp
+            .path()
+            .join("default-user")
+            .join("user")
+            .join("lan-sync");
+        let user_cache_dir = temp.path().join("default-user").join("user").join("cache");
 
-        std::fs::create_dir_all(root.join("default-user").join("chats"))
+        std::fs::create_dir_all(temp.path().join("default-user").join("chats"))
             .expect("create chats directory");
-        let chat_commit_staging = root
+        let chat_commit_staging = temp
+            .path()
             .join("default-user")
             .join(".staging")
             .join("chat-commits");
@@ -266,7 +262,10 @@ mod tests {
         std::fs::create_dir_all(&user_cache_dir).expect("create user cache directory");
 
         std::fs::write(
-            root.join("default-user").join("chats").join("chat.jsonl"),
+            temp.path()
+                .join("default-user")
+                .join("chats")
+                .join("chat.jsonl"),
             b"chat",
         )
         .expect("write included file");
@@ -291,13 +290,15 @@ mod tests {
             .expect("write excluded runtime cache state");
 
         std::fs::create_dir_all(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-profiles")
                 .join("profiles"),
         )
         .expect("create agent profile directory");
         std::fs::create_dir_all(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -305,10 +306,11 @@ mod tests {
                 .join("run-1"),
         )
         .expect("create agent persistent state directory");
-        std::fs::create_dir_all(root.join("_tauritavern").join("prompt-cache"))
+        std::fs::create_dir_all(temp.path().join("_tauritavern").join("prompt-cache"))
             .expect("create prompt cache directory");
         std::fs::create_dir_all(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -318,7 +320,8 @@ mod tests {
         )
         .expect("create terminal run input directory");
         std::fs::create_dir_all(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -328,7 +331,8 @@ mod tests {
         )
         .expect("create terminal run model responses directory");
         std::fs::create_dir_all(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("index")
                 .join("runs"),
@@ -336,7 +340,8 @@ mod tests {
         .expect("create run index directory");
 
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-profiles")
                 .join("profiles")
                 .join("writer.json"),
@@ -344,7 +349,8 @@ mod tests {
         )
         .expect("write agent profile");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -355,14 +361,16 @@ mod tests {
         )
         .expect("write agent persistent state");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("prompt-cache")
                 .join("cache.json"),
             b"{}",
         )
         .expect("write prompt cache");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -373,7 +381,8 @@ mod tests {
         )
         .expect("write terminal event");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -385,7 +394,8 @@ mod tests {
         )
         .expect("write terminal run input");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("chats")
                 .join("workspace")
@@ -397,7 +407,8 @@ mod tests {
         )
         .expect("write terminal run model response");
         std::fs::write(
-            root.join("_tauritavern")
+            temp.path()
+                .join("_tauritavern")
                 .join("agent-workspaces")
                 .join("index")
                 .join("runs")
@@ -407,7 +418,7 @@ mod tests {
         .expect("write terminal run index");
 
         let policy = ResolvedDatasetPolicy::tauri_tavern_default();
-        let manifest = scan_manifest_sync(&root, &policy).expect("scan manifest");
+        let manifest = scan_manifest_sync(temp.path(), &policy).expect("scan manifest");
         let paths = manifest
             .entries
             .into_iter()
@@ -468,7 +479,5 @@ mod tests {
         assert!(
             paths.contains(&"_tauritavern/agent-workspaces/index/runs/run-done.json".to_string())
         );
-
-        std::fs::remove_dir_all(&root).expect("remove temp root");
     }
 }

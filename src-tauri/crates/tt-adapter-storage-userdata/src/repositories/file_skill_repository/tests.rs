@@ -1,11 +1,8 @@
-#[cfg(unix)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::fs as tokio_fs;
-use uuid::Uuid;
 
 use super::*;
 use tt_domain::models::skill::{
@@ -17,15 +14,8 @@ use tt_domain::models::skill::{
 use tt_ports::repositories::skill_repository::SkillRepository;
 use tt_ports::workspace_fs::WorkspaceEntryKind;
 
-fn temp_root(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "tauritavern-skill-{label}-{}",
-        Uuid::new_v4().simple()
-    ))
-}
-
-fn test_repository(root: PathBuf) -> FileSkillRepository {
-    FileSkillRepository::new(root.clone(), root.join("builtin"))
+fn test_repository(root: &Path) -> FileSkillRepository {
+    FileSkillRepository::new(root.to_path_buf(), root.join("builtin"))
 }
 
 #[cfg(unix)]
@@ -122,8 +112,8 @@ fn inline_skill_with_source(
 
 #[tokio::test]
 async fn installs_inline_skill_and_reads_file() {
-    let root = temp_root("install");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     let result = repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -170,14 +160,12 @@ async fn installs_inline_skill_and_reads_file() {
     assert_eq!(read.total_chars, 5);
     assert_eq!(read.total_words, 1);
     assert_eq!(read.resource_ref, "skills/test-skill/references/a.md");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn raw_files_preserve_bytes_directories_and_current_installed_content() {
-    let root = temp_root("raw-files");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     let mut input = inline_skill("test-skill", vec![("references/a.md", "{{char}}")]);
     let SkillImportInput::InlineFiles { files, .. } = &mut input else {
         unreachable!()
@@ -298,12 +286,12 @@ async fn raw_files_preserve_bytes_directories_and_current_installed_content() {
             .await,
         Err(DomainError::NotFound(_))
     ));
-    tokio_fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn discovers_nested_skill_collections_in_directories_and_archives() {
-    let source_root = temp_root("discover-source");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let source_root = temp.path().join("source");
     for (path, content) in [
         ("one/SKILL.md", "---\nname: one\ndescription: Test.\n---\n"),
         (
@@ -325,8 +313,8 @@ async fn discovers_nested_skill_collections_in_directories_and_archives() {
             .expect("write SKILL.md");
     }
 
-    let repository_root = temp_root("discover-repository");
-    let repository = test_repository(repository_root.clone());
+    let repository_root = temp.path().join("repository");
+    let repository = test_repository(&repository_root);
     let picked = repository_root.join("picked");
     repository
         .copy_import_directory(&source_root, &picked)
@@ -405,19 +393,12 @@ async fn discovers_nested_skill_collections_in_directories_and_archives() {
             .expect("read staging entry")
             .is_none()
     );
-
-    tokio_fs::remove_dir_all(source_root)
-        .await
-        .expect("cleanup source");
-    tokio_fs::remove_dir_all(repository_root)
-        .await
-        .expect("cleanup repository");
 }
 
 #[tokio::test]
 async fn large_skill_reads_return_a_line_preview() {
-    let root = temp_root("read-budget");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     let long_content = "a".repeat(120_000);
     repository
         .install_import(SkillInstallRequest {
@@ -459,14 +440,12 @@ async fn large_skill_reads_return_a_line_preview() {
     assert_eq!(profile_sized_read.chars, 100_000);
     assert!(profile_sized_read.truncated);
     assert!(profile_sized_read.line_truncated);
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn write_skill_file_rejects_stale_expected_hash() {
-    let root = temp_root("write-stale");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -500,14 +479,12 @@ async fn write_skill_file_rejects_stale_expected_hash() {
         .await
         .expect("read after rejected write");
     assert_eq!(read.content, "hello");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn write_skill_file_rejects_skill_rename() {
-    let root = temp_root("write-rename");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -541,14 +518,12 @@ async fn write_skill_file_rejects_skill_rename() {
         .await
         .expect("read after rejected rename");
     assert!(read.content.contains("name: test-skill"));
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn requires_explicit_replace_on_conflict() {
-    let root = temp_root("conflict");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -577,14 +552,12 @@ async fn requires_explicit_replace_on_conflict() {
         .await
         .expect("replace skill");
     assert_eq!(replaced.action, SkillInstallAction::Replaced);
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn allows_same_skill_name_in_different_scopes() {
-    let root = temp_root("scoped-same-name");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -651,14 +624,12 @@ async fn allows_same_skill_name_in_different_scopes() {
             .len(),
         2
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn moves_skill_between_scopes() {
-    let root = temp_root("move-scope");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -706,14 +677,12 @@ async fn moves_skill_between_scopes() {
         .await
         .expect("read moved skill");
     assert_eq!(read.content, "moved");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn move_skill_recovers_matching_orphan_target() {
-    let root = temp_root("move-recover-matching-orphan");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     for scope in [preset_scope("openai", "Writer"), global_scope()] {
         repository
             .install_import(SkillInstallRequest {
@@ -754,14 +723,12 @@ async fn move_skill_recovers_matching_orphan_target() {
             .len(),
         1
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn move_skill_recovers_different_orphan_as_explicit_conflict() {
-    let root = temp_root("move-recover-different-orphan");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Writer"),
@@ -811,15 +778,13 @@ async fn move_skill_recovers_different_orphan_as_explicit_conflict() {
         .await
         .expect("replace recovered target");
     assert_eq!(moved.action, SkillInstallAction::Replaced);
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn move_skill_succeeds_when_source_cleanup_fails_after_commit() {
-    let root = temp_root("move-cleanup-fail");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -861,21 +826,19 @@ async fn move_skill_succeeds_when_source_cleanup_fails_after_commit() {
         1
     );
     assert!(source_scope_root.join("test-skill").exists());
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn install_rolls_back_target_when_index_save_fails() {
-    let root = temp_root("install-save-fail");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .list_skills(global_filter())
         .await
         .expect("initialize index");
 
-    set_dir_mode(&root.join("index"), 0o555);
+    set_dir_mode(&temp.path().join("index"), 0o555);
     let error = repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -884,7 +847,7 @@ async fn install_rolls_back_target_when_index_save_fails() {
         })
         .await
         .expect_err("index save should fail");
-    set_dir_mode(&root.join("index"), 0o755);
+    set_dir_mode(&temp.path().join("index"), 0o755);
 
     assert!(
         error
@@ -905,15 +868,13 @@ async fn install_rolls_back_target_when_index_save_fails() {
             .join("test-skill")
             .exists()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn move_replace_rolls_back_target_when_index_save_fails() {
-    let root = temp_root("move-replace-save-fail");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -931,7 +892,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
         .await
         .expect("install target skill");
 
-    set_dir_mode(&root.join("index"), 0o555);
+    set_dir_mode(&temp.path().join("index"), 0o555);
     let error = repository
         .move_skill(SkillMoveRequest {
             name: "test-skill".to_string(),
@@ -941,7 +902,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
         })
         .await
         .expect_err("index save should fail");
-    set_dir_mode(&root.join("index"), 0o755);
+    set_dir_mode(&temp.path().join("index"), 0o755);
 
     assert!(
         error
@@ -972,14 +933,12 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
         .expect("read target");
     assert_eq!(source.content, "source");
     assert_eq!(target.content, "target");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn retargets_preset_scope_and_source_refs() {
-    let root = temp_root("retarget-preset");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1057,14 +1016,12 @@ async fn retargets_preset_scope_and_source_refs() {
         .await
         .expect("read retargeted skill");
     assert_eq!(read.content, "preset");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn retarget_recovers_matching_orphan_target() {
-    let root = temp_root("retarget-recover-matching-orphan");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     for scope in [preset_scope("openai", "Old"), preset_scope("openai", "New")] {
         repository
             .install_import(SkillInstallRequest {
@@ -1106,14 +1063,12 @@ async fn retarget_recovers_matching_orphan_target() {
             .len(),
         1
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn retarget_rejects_different_target_content() {
-    let root = temp_root("retarget-conflict");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1159,15 +1114,13 @@ async fn retarget_rejects_different_target_content() {
             .len(),
         1
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
-    let root = temp_root("retarget-save-fail");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1189,7 +1142,7 @@ async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
         .expect("new root")
         .join("test-skill");
 
-    set_dir_mode(&root.join("index"), 0o555);
+    set_dir_mode(&temp.path().join("index"), 0o555);
     let error = repository
         .retarget_scope(SkillScopeRetargetRequest {
             from_scope: preset_scope("openai", "Old"),
@@ -1197,7 +1150,7 @@ async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
         })
         .await
         .expect_err("index save should fail");
-    set_dir_mode(&root.join("index"), 0o755);
+    set_dir_mode(&temp.path().join("index"), 0o755);
 
     assert!(
         error
@@ -1221,15 +1174,13 @@ async fn retarget_rolls_back_prepared_target_when_index_save_fails() {
             .expect("new scope")
             .is_empty()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn retarget_succeeds_when_source_cleanup_fails_after_index_commit() {
-    let root = temp_root("retarget-cleanup-fail");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: preset_scope("openai", "Old"),
@@ -1272,14 +1223,12 @@ async fn retarget_succeeds_when_source_cleanup_fails_after_index_commit() {
             .len(),
         1
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn retargets_character_scope() {
-    let root = temp_root("retarget-character");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: character_scope("Aurelia"),
@@ -1317,14 +1266,12 @@ async fn retargets_character_scope() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].source_refs[0].id, "character:Aurelia_Renamed");
     assert_eq!(listed[0].source_refs[0].label, "Aurelia_Renamed");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn deletes_skill_when_last_linked_source_is_deleted() {
-    let root = temp_root("delete-source-last");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1351,20 +1298,19 @@ async fn deletes_skill_when_last_linked_source_is_deleted() {
             .is_empty()
     );
     assert!(
-        !root
+        !temp
+            .path()
             .join("installed")
             .join("global")
             .join("test-skill")
             .exists()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn keeps_skill_until_all_linked_sources_are_deleted() {
-    let root = temp_root("delete-source-shared");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1412,14 +1358,12 @@ async fn keeps_skill_until_all_linked_sources_are_deleted() {
             .expect("list")
             .is_empty()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn replacing_skill_drops_previous_source_links() {
-    let root = temp_root("replace-source-links");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1454,14 +1398,12 @@ async fn replacing_skill_drops_previous_source_links() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].source_refs.len(), 1);
     assert_eq!(listed[0].source_refs[0].id, "character:Aurelia");
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn rejects_invalid_sidecar_schema() {
-    let root = temp_root("sidecar");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     let error = repository
         .preview_import(
             inline_skill(
@@ -1480,14 +1422,13 @@ async fn rejects_invalid_sidecar_schema() {
             .to_string()
             .contains("Invalid agents/tauritavern.json")
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn exported_skill_archive_can_be_reimported() {
-    let root = temp_root("export");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path().join("export");
+    let repository = test_repository(&root);
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1507,8 +1448,8 @@ async fn exported_skill_archive_can_be_reimported() {
         .await
         .expect("write archive");
 
-    let second_root = temp_root("reimport");
-    let second_repository = test_repository(second_root.clone());
+    let second_root = temp.path().join("reimport");
+    let second_repository = test_repository(&second_root);
     let preview = second_repository
         .preview_import(
             SkillImportInput::ArchiveFile {
@@ -1522,17 +1463,12 @@ async fn exported_skill_archive_can_be_reimported() {
         .expect("preview exported archive");
     assert_eq!(preview.skill.name, "test-skill");
     assert_eq!(preview.conflict.kind, SkillImportConflictKind::New);
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
-    tokio_fs::remove_dir_all(second_root)
-        .await
-        .expect("cleanup");
 }
 
 #[tokio::test]
 async fn migrates_v1_unscoped_index_to_global_scope() {
-    let root = temp_root("migrate-v1");
-    let skill_root = root.join("installed").join("legacy-skill");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let skill_root = temp.path().join("installed").join("legacy-skill");
     tokio_fs::create_dir_all(&skill_root)
         .await
         .expect("create legacy skill");
@@ -1542,11 +1478,11 @@ async fn migrates_v1_unscoped_index_to_global_scope() {
     )
     .await
     .expect("write legacy skill");
-    tokio_fs::create_dir_all(root.join("index"))
+    tokio_fs::create_dir_all(temp.path().join("index"))
         .await
         .expect("create index dir");
     tokio_fs::write(
-        root.join("index").join("skills.json"),
+        temp.path().join("index").join("skills.json"),
         serde_json::to_string_pretty(&json!({
             "version": 1,
             "skills": [{
@@ -1566,7 +1502,7 @@ async fn migrates_v1_unscoped_index_to_global_scope() {
     .await
     .expect("write v1 index");
 
-    let repository = test_repository(root.clone());
+    let repository = test_repository(temp.path());
     let listed = repository
         .list_skills(global_filter())
         .await
@@ -1574,21 +1510,20 @@ async fn migrates_v1_unscoped_index_to_global_scope() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].scope, global_scope());
-    assert!(!root.join("installed").join("legacy-skill").exists());
+    assert!(!temp.path().join("installed").join("legacy-skill").exists());
     assert!(
-        root.join("installed")
+        temp.path()
+            .join("installed")
             .join("global")
             .join("legacy-skill")
             .exists()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
-    let root = temp_root("migrate-v1-rollback");
-    let first_root = root.join("installed").join("legacy-one");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let first_root = temp.path().join("installed").join("legacy-one");
     tokio_fs::create_dir_all(&first_root)
         .await
         .expect("create first legacy skill");
@@ -1598,11 +1533,11 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
     )
     .await
     .expect("write first legacy skill");
-    tokio_fs::create_dir_all(root.join("index"))
+    tokio_fs::create_dir_all(temp.path().join("index"))
         .await
         .expect("create index dir");
     tokio_fs::write(
-        root.join("index").join("skills.json"),
+        temp.path().join("index").join("skills.json"),
         serde_json::to_string_pretty(&json!({
             "version": 1,
             "skills": [
@@ -1635,7 +1570,7 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
     .await
     .expect("write v1 index");
 
-    let repository = test_repository(root.clone());
+    let repository = test_repository(temp.path());
     let error = repository
         .list_skills(global_filter())
         .await
@@ -1646,26 +1581,29 @@ async fn migrate_v1_rolls_back_prepared_global_dirs_on_later_failure() {
             .to_string()
             .contains("Skill directory not found during v1 migration: missing-legacy")
     );
-    assert!(root.join("installed").join("legacy-one").exists());
+    assert!(temp.path().join("installed").join("legacy-one").exists());
     assert!(
-        !root
+        !temp
+            .path()
             .join("installed")
             .join("global")
             .join("legacy-one")
             .exists()
     );
-    let index_text = tokio_fs::read_to_string(root.join("index").join("skills.json"))
+    let index_text = tokio_fs::read_to_string(temp.path().join("index").join("skills.json"))
         .await
         .expect("read index");
     assert!(index_text.contains("\"version\": 1"));
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn migrate_v1_accepts_previously_moved_global_dir() {
-    let root = temp_root("migrate-v1-previously-moved");
-    let skill_root = root.join("installed").join("global").join("legacy-skill");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let skill_root = temp
+        .path()
+        .join("installed")
+        .join("global")
+        .join("legacy-skill");
     tokio_fs::create_dir_all(&skill_root)
         .await
         .expect("create moved global skill");
@@ -1675,11 +1613,11 @@ async fn migrate_v1_accepts_previously_moved_global_dir() {
     )
     .await
     .expect("write moved global skill");
-    tokio_fs::create_dir_all(root.join("index"))
+    tokio_fs::create_dir_all(temp.path().join("index"))
         .await
         .expect("create index dir");
     tokio_fs::write(
-        root.join("index").join("skills.json"),
+        temp.path().join("index").join("skills.json"),
         serde_json::to_string_pretty(&json!({
             "version": 1,
             "skills": [{
@@ -1699,7 +1637,7 @@ async fn migrate_v1_accepts_previously_moved_global_dir() {
     .await
     .expect("write v1 index");
 
-    let repository = test_repository(root.clone());
+    let repository = test_repository(temp.path());
     let listed = repository
         .list_skills(global_filter())
         .await
@@ -1707,25 +1645,24 @@ async fn migrate_v1_accepts_previously_moved_global_dir() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].scope, global_scope());
-    assert!(!root.join("installed").join("legacy-skill").exists());
+    assert!(!temp.path().join("installed").join("legacy-skill").exists());
     assert!(
-        root.join("installed")
+        temp.path()
+            .join("installed")
             .join("global")
             .join("legacy-skill")
             .exists()
     );
-    let index_text = tokio_fs::read_to_string(root.join("index").join("skills.json"))
+    let index_text = tokio_fs::read_to_string(temp.path().join("index").join("skills.json"))
         .await
         .expect("read migrated index");
     assert!(index_text.contains("\"version\": 2"));
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn migrate_v1_rejects_target_inside_legacy_source() {
-    let root = temp_root("migrate-v1-nested-target");
-    let skill_root = root.join("installed").join("global");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let skill_root = temp.path().join("installed").join("global");
     tokio_fs::create_dir_all(&skill_root)
         .await
         .expect("create legacy skill named global");
@@ -1735,11 +1672,11 @@ async fn migrate_v1_rejects_target_inside_legacy_source() {
     )
     .await
     .expect("write legacy skill");
-    tokio_fs::create_dir_all(root.join("index"))
+    tokio_fs::create_dir_all(temp.path().join("index"))
         .await
         .expect("create index dir");
     tokio_fs::write(
-        root.join("index").join("skills.json"),
+        temp.path().join("index").join("skills.json"),
         serde_json::to_string_pretty(&json!({
             "version": 1,
             "skills": [{
@@ -1759,7 +1696,7 @@ async fn migrate_v1_rejects_target_inside_legacy_source() {
     .await
     .expect("write v1 index");
 
-    let repository = test_repository(root.clone());
+    let repository = test_repository(temp.path());
     let error = repository
         .list_skills(global_filter())
         .await
@@ -1771,14 +1708,13 @@ async fn migrate_v1_rejects_target_inside_legacy_source() {
             .contains("Skill target directory cannot be inside source directory")
     );
     assert!(
-        !root
+        !temp
+            .path()
             .join("installed")
             .join("global")
             .join("global")
             .exists()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[cfg(unix)]
@@ -1786,8 +1722,8 @@ async fn migrate_v1_rejects_target_inside_legacy_source() {
 async fn read_rejects_symlink_escape_inside_installed_skill() {
     use std::os::unix::fs::symlink;
 
-    let root = temp_root("symlink-escape");
-    let repository = test_repository(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = test_repository(temp.path());
     repository
         .install_import(SkillInstallRequest {
             target_scope: global_scope(),
@@ -1797,8 +1733,12 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
         .await
         .expect("install skill");
 
-    let skill_root = root.join("installed").join("global").join("test-skill");
-    let outside = root.join("outside");
+    let skill_root = temp
+        .path()
+        .join("installed")
+        .join("global")
+        .join("test-skill");
+    let outside = temp.path().join("outside");
     tokio_fs::create_dir_all(&outside)
         .await
         .expect("create outside dir");
@@ -1841,19 +1781,17 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
             .await
             .is_err()
     );
-
-    tokio_fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn bundled_skills_are_valid_packages() {
-    let root = temp_root("builtin-packages");
+    let temp = tempfile::tempdir().expect("create temp dir");
     let builtin_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../default/skills");
     let directory_count = std::fs::read_dir(&builtin_root)
         .unwrap()
         .filter(|entry| entry.as_ref().unwrap().file_type().unwrap().is_dir())
         .count();
-    let repository = FileSkillRepository::new(root.clone(), builtin_root);
+    let repository = FileSkillRepository::new(temp.path().to_path_buf(), builtin_root);
     let skills = repository
         .list_skills(SkillScopeFilter::Builtin)
         .await
@@ -1872,13 +1810,12 @@ async fn bundled_skills_are_valid_packages() {
             .unwrap()
             .is_empty()
     );
-    tokio_fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn builtin_skills_reject_mutations_without_changing_files() {
-    let root = temp_root("builtin-read-only");
-    let builtin_root = root.join("builtin");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let builtin_root = temp.path().join("builtin");
     let skill_root = builtin_root.join("test-skill");
     tokio_fs::create_dir_all(&skill_root).await.unwrap();
     let content =
@@ -1886,7 +1823,7 @@ async fn builtin_skills_reject_mutations_without_changing_files() {
     tokio_fs::write(skill_root.join("SKILL.md"), content)
         .await
         .unwrap();
-    let repository = FileSkillRepository::new(root.join("user"), builtin_root);
+    let repository = FileSkillRepository::new(temp.path().join("user"), builtin_root);
     let before = repository
         .list_skills(SkillScopeFilter::Builtin)
         .await
@@ -1935,5 +1872,4 @@ async fn builtin_skills_reject_mutations_without_changing_files() {
         .await
         .unwrap();
     assert_eq!(read.content, content);
-    tokio_fs::remove_dir_all(root).await.unwrap();
 }

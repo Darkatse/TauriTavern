@@ -11,7 +11,8 @@ use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 #[tokio::test]
 async fn completed_legacy_revision_preserves_work_and_translates_only_affected_turns() {
-    let root = temp_root("agent-legacy-revision");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let mut responses = default_agent_responses();
     let original_call = responses[0]["choices"][0]["message"]["tool_calls"][0].clone();
     responses[0]["choices"][0]["message"]["native"] = json!({
@@ -21,7 +22,7 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
               "name": original_call["function"]["name"], "arguments": original_call["function"]["arguments"] }
         ] }
     });
-    let fixture = agent_runtime_fixture_with_responses(&root, responses);
+    let fixture = agent_runtime_fixture_with_responses(root, responses);
     let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
@@ -580,14 +581,14 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
             .as_str()
             .is_none_or(|id| !id.starts_with("legacy_"))
     }));
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn unfinished_legacy_checkpoint_cannot_resume_or_start_a_revision() {
-    let root = temp_root("agent-legacy-unfinished");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![Err(ApplicationError::ValidationError(
             "model unavailable".into(),
         ))],
@@ -650,7 +651,6 @@ async fn unfinished_legacy_checkpoint_cannot_resume_or_start_a_revision() {
         legacy_bytes
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 1);
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 async fn saved_checkpoint(fixture: &AgentRuntimeFixture, run_id: &str) -> Value {

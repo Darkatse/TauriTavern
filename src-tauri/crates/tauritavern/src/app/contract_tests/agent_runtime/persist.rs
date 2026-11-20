@@ -19,8 +19,9 @@ async fn missing_persist_requires_an_explicit_empty_start_before_creating_a_run(
             "Invalid agent storage segment persist_state_id",
         ),
     ] {
-        let root = temp_root(label);
-        let fixture = agent_runtime_fixture(&root);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let fixture = agent_runtime_fixture(root);
         let profile = resolve_contract_profile(&fixture).await;
         let mut chat = Chat::new("User", "Alice");
         chat.file_name = Some("story.jsonl".to_string());
@@ -99,6 +100,5 @@ async fn missing_persist_requires_an_explicit_empty_start_before_creating_a_run(
             serde_json::to_value(unchanged.messages).unwrap(),
             serde_json::to_value(chat.messages).unwrap()
         );
-        fs::remove_dir_all(root).await.unwrap();
     }
 }

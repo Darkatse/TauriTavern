@@ -456,25 +456,6 @@ mod tests {
 
     use super::*;
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-
     fn roots(root: &Path) -> HostResourceRoots {
         HostResourceRoots {
             user_css_file: root.join("_css").join("user.css"),
@@ -494,13 +475,13 @@ mod tests {
 
     #[test]
     fn third_party_assets_prefer_local_over_global() {
-        let temp = TempDirGuard::new("host-resources-third-party-local");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
         let local_file = temp
-            .path
+            .path()
             .join("default-user/extensions/mobile/manifest.json");
         let global_file = temp
-            .path
+            .path()
             .join("extensions/third-party/mobile/manifest.json");
         fs::create_dir_all(local_file.parent().expect("local parent")).expect("local dir");
         fs::create_dir_all(global_file.parent().expect("global parent")).expect("global dir");
@@ -521,10 +502,10 @@ mod tests {
 
     #[test]
     fn third_party_selection_and_revision_change_when_local_asset_is_removed() {
-        let temp = TempDirGuard::new("host-resources-third-party-max-len");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let local_file = temp.path.join("default-user/extensions/mobile/app.js");
-        let global_file = temp.path.join("extensions/third-party/mobile/app.js");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let local_file = temp.path().join("default-user/extensions/mobile/app.js");
+        let global_file = temp.path().join("extensions/third-party/mobile/app.js");
         fs::create_dir_all(local_file.parent().expect("local parent")).expect("local dir");
         fs::create_dir_all(global_file.parent().expect("global parent")).expect("global dir");
         fs::write(&local_file, b"large").expect("local file");
@@ -552,9 +533,9 @@ mod tests {
 
     #[test]
     fn user_data_range_reads_only_requested_bytes() {
-        let temp = TempDirGuard::new("host-resources-user-data-range");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("backgrounds").join("a.bin");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("backgrounds").join("a.bin");
         fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
         fs::write(&file, b"abcd").expect("background file");
 
@@ -574,11 +555,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn user_data_symlink_to_external_file_is_allowed() {
-        let temp = TempDirGuard::new("host-resources-user-data-symlink-allowed");
-        let external = TempDirGuard::new("host-resources-user-data-symlink-external");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let outside = external.path.join("outside.txt");
-        let link = temp.path.join("backgrounds").join("escape.txt");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let store = FilesystemHostResourceStore::new(roots(&data_root));
+        let outside = temp.path().join("outside.txt");
+        let link = data_root.join("backgrounds").join("escape.txt");
         fs::create_dir_all(link.parent().expect("background parent")).expect("background dir");
         fs::write(&outside, b"secret").expect("outside file");
         std::os::unix::fs::symlink(&outside, &link).expect("symlink");
@@ -597,9 +578,9 @@ mod tests {
 
     #[test]
     fn animated_thumbnail_requests_return_original_asset() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-original");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("characters").join("a.gif");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("characters").join("a.gif");
         fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
         fs::write(&file, b"gif").expect("gif file");
 
@@ -619,9 +600,9 @@ mod tests {
 
     #[test]
     fn static_thumbnail_returns_opened_cached_jpeg() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-generated");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("characters").join("a.png");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("characters").join("a.png");
         fs::create_dir_all(file.parent().expect("characters parent")).expect("characters dir");
         ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
             .save(&file)
@@ -643,9 +624,9 @@ mod tests {
 
     #[test]
     fn required_static_preview_decodes_an_animated_image_to_jpeg() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-required-static");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("backgrounds").join("a.gif");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("backgrounds").join("a.gif");
         fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
         let mut encoder = GifEncoder::new(fs::File::create(&file).expect("create gif"));
         encoder
@@ -676,9 +657,9 @@ mod tests {
 
     #[test]
     fn required_static_preview_fails_for_unsupported_video() {
-        let temp = TempDirGuard::new("host-resources-thumbnail-required-video");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("backgrounds").join("a.mp4");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("backgrounds").join("a.mp4");
         fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
         fs::write(&file, b"video").expect("video file");
         let request = ThumbnailAssetRequest {
@@ -697,10 +678,10 @@ mod tests {
 
     #[test]
     fn opened_handle_keeps_metadata_and_body_on_atomic_replacement() {
-        let temp = TempDirGuard::new("host-resources-open-handle-replacement");
-        let store = FilesystemHostResourceStore::new(roots(&temp.path));
-        let file = temp.path.join("backgrounds").join("a.bin");
-        let replacement = temp.path.join("backgrounds").join("replacement.bin");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemHostResourceStore::new(roots(temp.path()));
+        let file = temp.path().join("backgrounds").join("a.bin");
+        let replacement = temp.path().join("backgrounds").join("replacement.bin");
         fs::create_dir_all(file.parent().expect("background parent")).expect("background dir");
         fs::write(&file, b"old").expect("old file");
         fs::write(&replacement, b"newer").expect("new file");
@@ -722,8 +703,8 @@ mod tests {
     fn full_read_rejects_in_place_growth() {
         use std::io::Write as _;
 
-        let temp = TempDirGuard::new("host-resources-in-place-growth");
-        let file_path = temp.path.join("growing.bin");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file_path = temp.path().join("growing.bin");
         fs::write(&file_path, b"old").expect("initial file");
         let body = FileHostResourceBody {
             path: file_path.clone(),

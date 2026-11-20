@@ -201,32 +201,8 @@ mod tests {
     use super::FileAvatarRepository;
     use image::{ImageFormat, Rgba, RgbaImage};
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use tt_ports::repositories::avatar_repository::AvatarRepository;
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("tauritavern-avatar-test-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&path).expect("failed to create temp dir");
-
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     fn write_png(path: &Path) {
         let image = RgbaImage::from_pixel(1, 1, Rgba([255, 0, 0, 255]));
@@ -237,13 +213,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_avatars_ignores_non_images_and_sorts_names() {
-        let dir = TestDir::new();
-        write_png(&dir.path().join("b.png"));
-        write_png(&dir.path().join("a.png"));
-        fs::write(dir.path().join("notes.txt"), "not an image")
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_png(&temp.path().join("b.png"));
+        write_png(&temp.path().join("a.png"));
+        fs::write(temp.path().join("notes.txt"), "not an image")
             .expect("failed to write test text file");
 
-        let repository = FileAvatarRepository::new(dir.path().to_path_buf());
+        let repository = FileAvatarRepository::new(temp.path().to_path_buf());
         let avatars = repository.get_avatars().await.expect("get avatars failed");
         let names = avatars
             .into_iter()
@@ -272,8 +248,8 @@ mod tests {
         use tt_adapter_storage_core::png_metadata::replace_text_chunks;
         use tt_domain::models::persona::insert_personas;
 
-        let dir = TestDir::new();
-        let root = dir.path();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let avatars = root.join("User Avatars");
         fs::create_dir_all(&avatars).unwrap();
         let card_path = avatars.join("alice.png");
@@ -314,10 +290,10 @@ mod tests {
     async fn avatar_changes_preserve_personas_and_refresh_from_disk() {
         use crate::persona_cards;
         use tt_domain::models::persona::Persona;
-        let dir = TestDir::new();
-        let root = dir.path().join("default-user");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("default-user");
         let repository = FileAvatarRepository::new(root.join("User Avatars"));
-        let source = dir.path().join("incoming.png");
+        let source = temp.path().join("incoming.png");
         write_png(&source);
         let mut persona = Persona {
             name: Some("中文 🌸".into()),

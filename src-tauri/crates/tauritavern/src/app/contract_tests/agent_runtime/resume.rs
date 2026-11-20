@@ -6,8 +6,9 @@ use tt_application::dto::agent_dto::{
 
 #[tokio::test]
 async fn agent_runtime_checkpoint_publishes_terminal_state_after_host_presentation() {
-    let root = temp_root("agent-host-checkpoint");
-    let fixture = agent_runtime_fixture(&root);
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture(root);
     let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run_with_options(
         &fixture,
@@ -88,15 +89,14 @@ async fn agent_runtime_checkpoint_publishes_terminal_state_after_host_presentati
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
     assert_eq!(completed.terminal_seq, terminal_seq);
     assert_eq!(completed.presentation, Some(presentation));
-
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_model() {
-    let root = temp_root("agent-resume-metadata");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "write",
@@ -155,7 +155,7 @@ async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_m
     assert!(stopped.blocked_reason.is_none());
     drop(fixture);
 
-    let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
+    let fixture = agent_runtime_fixture_with_responses(root, Vec::new());
     resume_checkpoint(&fixture, &stopped).await;
     let retried = wait_for_event(
         &fixture,
@@ -192,15 +192,15 @@ async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_m
             .count(),
         1
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_the_call() {
     for blocked_directory in ["tool-args", "tool-results"] {
-        let root = temp_root("agent-tool-bookkeeping");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let fixture = agent_runtime_fixture_with_responses(
-            &root,
+            root,
             vec![model_tool_response(vec![
                 model_tool_call(
                     "append_once",
@@ -278,13 +278,13 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
                 "before:"
             }
         );
-        fs::remove_dir_all(root).await.unwrap();
     }
 }
 
 #[tokio::test]
 async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_publication() {
-    let root = temp_root("agent-completed-checkpoint");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let mut responses = default_agent_responses();
     let native = json!({
         "openai_responses": {
@@ -297,7 +297,7 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         }
     });
     responses[1]["choices"][0]["message"]["native"] = native.clone();
-    let fixture = agent_runtime_fixture_with_responses(&root, responses);
+    let fixture = agent_runtime_fixture_with_responses(root, responses);
     let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
@@ -413,13 +413,12 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         "status inspection and rejected resume do not migrate checkpoints"
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 2);
-
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_resume_after_restart_preserves_history_and_successful_tools() {
-    let root = temp_root("agent-resume-restart");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let mut first_response = model_tool_response(vec![model_tool_call(
         "call_append_first",
         "workspace_write_file",
@@ -436,7 +435,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
         }
     });
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![
             Ok(first_response),
             Err(ApplicationError::Transient(
@@ -461,7 +460,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "call_append_second",
@@ -480,14 +479,14 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
         previous_history
     );
     assert_eq!(read_output(&fixture, &handle.run_id).await, "first second");
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
-    let root = temp_root("agent-resume-tool-cursor");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "call_mcp",
@@ -533,7 +532,7 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
     assert_eq!(fixture.mcp_gateway.calls.lock().await.len(), 1);
     drop(fixture);
 
-    let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
+    let fixture = agent_runtime_fixture_with_responses(root, Vec::new());
     resume_checkpoint(&fixture, &stopped).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
@@ -543,16 +542,15 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
         read_output(&fixture, &handle.run_id).await,
         "continued original turn"
     );
-
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_resume_preserves_cancelled_child_progress() {
     for during_preparation in [false, true] {
-        let root = temp_root("agent-resume-child");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let fixture = agent_runtime_fixture_with_responses(
-            &root,
+            root,
             vec![model_tool_response(vec![
                 model_tool_call(
                     "call_delegate",
@@ -624,7 +622,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
         drop(fixture);
 
         let fixture = agent_runtime_fixture_with_responses(
-            &root,
+            root,
             if during_preparation {
                 vec![model_tool_response(vec![model_tool_call(
                     "call_finish",
@@ -709,16 +707,15 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                 .unwrap();
             assert_eq!(note.text, "Add rain. Frozen child");
         }
-
-        fs::remove_dir_all(root).await.unwrap();
     }
 }
 
 #[tokio::test]
 async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_work() {
-    let root = temp_root("agent-output-revision");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "write",
@@ -797,7 +794,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "read",
@@ -884,7 +881,6 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             .iter()
             .all(|invocation| invocation.status == AgentInvocationStatus::Completed)
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 pub(super) async fn revise_checkpoint(

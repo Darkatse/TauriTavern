@@ -152,9 +152,9 @@ mod tests {
     };
     use flate2::{Compression, write::ZlibEncoder};
     use image::{DynamicImage, ImageFormat, RgbaImage};
-    use rand::random;
     use serde_json::Value;
     use std::io::{Cursor, Write};
+    use std::path::Path;
     use tokio::fs;
 
     fn build_minimal_png() -> Vec<u8> {
@@ -167,14 +167,14 @@ mod tests {
         output
     }
 
-    async fn read_streamed_temp(png: &[u8]) -> Result<String, tt_domain::errors::DomainError> {
-        let path =
-            std::env::temp_dir().join(format!("tauritavern-png-stream-{}.png", random::<u64>()));
+    async fn read_streamed_temp(
+        dir: &Path,
+        png: &[u8],
+    ) -> Result<String, tt_domain::errors::DomainError> {
+        let path = dir.join("card.png");
 
         fs::write(&path, png).await.expect("write png");
-        let result = read_character_data_from_png_file(&path).await;
-        let _ = fs::remove_file(&path).await;
-        result
+        read_character_data_from_png_file(&path).await
     }
 
     fn inject_raw_chunks_before_iend(base_png: &[u8], raw_chunks: &[Vec<u8>]) -> Vec<u8> {
@@ -235,13 +235,16 @@ mod tests {
         let base_png = build_minimal_png();
         let json = r#"{"spec":"chara_card_v3","spec_version":"3.0","name":"Streamed"}"#;
         let encoded = encode_base64(json);
+        let temp = tempfile::tempdir().expect("create temp dir");
 
         for chunk in [
             build_ztxt_chunk("ccv3", &encoded),
             build_itxt_chunk("ccv3", &encoded),
         ] {
             let png = inject_raw_chunks_before_iend(&base_png, &[chunk]);
-            let streamed = read_streamed_temp(&png).await.expect("stream metadata");
+            let streamed = read_streamed_temp(temp.path(), &png)
+                .await
+                .expect("stream metadata");
             assert_eq!(streamed, json);
         }
     }
@@ -254,7 +257,8 @@ mod tests {
         let mut broken = Vec::new();
         write_chunk(&mut broken, CHUNK_TYPE_ZTXT, b"chara\0\0broken");
         let png = inject_raw_chunks_before_iend(&build_minimal_png(), &[preferred, broken]);
-        assert_eq!(read_streamed_temp(&png).await.unwrap(), json);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        assert_eq!(read_streamed_temp(temp.path(), &png).await.unwrap(), json);
     }
 
     #[tokio::test]
@@ -264,7 +268,8 @@ mod tests {
         png.extend_from_slice(b"IDAT");
         png.extend_from_slice(&[1, 2]);
 
-        let error = read_streamed_temp(&png)
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let error = read_streamed_temp(temp.path(), &png)
             .await
             .expect_err("truncated chunk should fail");
         assert!(error.to_string().contains("truncated PNG chunk"), "{error}");

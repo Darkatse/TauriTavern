@@ -2,8 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn character_service_returns_raw_json_and_v2_data_metadata_from_real_png() {
-    let root = temp_root("character-raw-json");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let mut card = character_card("Alice", json!({ "custom": "kept" }));
     card["creator"] = json!("stale root creator");
     card["creator_notes"] = json!("stale root notes");
@@ -32,14 +33,13 @@ async fn character_service_returns_raw_json_and_v2_data_metadata_from_real_png()
         .await
         .expect("list characters");
     assert_eq!(listed[0].creator, "data creator");
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_create_keeps_character_when_lorebook_materialization_fails() {
-    let root = temp_root("character-create-broken-lorebook");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let worlds_dir = root.join("default-user/worlds");
     fs::create_dir_all(&worlds_dir)
         .await
@@ -56,19 +56,18 @@ async fn character_service_create_keeps_character_when_lorebook_materialization_
         .await
         .expect("create character without optional embedded lorebook");
 
-    let stored = read_stored_card(&root, "Alice").await;
+    let stored = read_stored_card(root, "Alice").await;
     assert_eq!(
         stored.pointer("/data/extensions/world"),
         Some(&json!("Broken Lore"))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_update_preserves_v3_spec_and_unknown_fields() {
-    let root = temp_root("character-update-v3");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let mut card = character_card("Alice", json!({ "custom": "kept" }));
     card["spec"] = json!("chara_card_v3");
     card["spec_version"] = json!("3.0");
@@ -101,7 +100,7 @@ async fn character_service_update_preserves_v3_spec_and_unknown_fields() {
         .await
         .expect("update character");
 
-    let stored_card = read_stored_card(&root, "Alice").await;
+    let stored_card = read_stored_card(root, "Alice").await;
     assert_eq!(stored_card.get("spec"), Some(&json!("chara_card_v3")));
     assert_eq!(stored_card.get("spec_version"), Some(&json!("3.0")));
     assert_eq!(
@@ -131,14 +130,13 @@ async fn character_service_update_preserves_v3_spec_and_unknown_fields() {
     ] {
         assert_eq!(stored_card.pointer(path), Some(&expected), "{path}");
     }
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_raw_card_update_preserves_embedded_lorebook_without_resolving_binding() {
-    let root = temp_root("character-update-lorebook");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     service
         .create_character(create_character("Alice", None))
         .await
@@ -167,7 +165,7 @@ async fn character_service_raw_card_update_preserves_embedded_lorebook_without_r
         .await
         .expect("update raw card data");
 
-    let stored_card = read_stored_card(&root, "Alice").await;
+    let stored_card = read_stored_card(root, "Alice").await;
     assert_eq!(
         stored_card.pointer("/data/character_book/name"),
         Some(&json!("Embedded Lore"))
@@ -176,14 +174,13 @@ async fn character_service_raw_card_update_preserves_embedded_lorebook_without_r
         stored_card.pointer("/data/character_book/entries/0/content"),
         Some(&json!("embedded lore"))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_form_update_refreshes_available_lorebook_without_blocking_raw_updates() {
-    let root = temp_root("character-form-lorebook");
-    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, world_repository) = character_service_with_world_repository(root).await;
     world_repository
         .save_world_info("Local Lore", &world_info("current lore"))
         .await
@@ -209,19 +206,18 @@ async fn character_form_update_refreshes_available_lorebook_without_blocking_raw
         .expect("update form card data");
 
     assert_eq!(
-        read_stored_card(&root, "Alice")
+        read_stored_card(root, "Alice")
             .await
             .pointer("/data/character_book/entries/0/content"),
         Some(&json!("current lore"))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_export_sanitizes_private_fields_and_materializes_current_lorebook() {
-    let root = temp_root("character-export-lorebook");
-    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, world_repository) = character_service_with_world_repository(root).await;
     world_repository
         .save_world_info("Lore", &world_info("current lore"))
         .await
@@ -304,19 +300,18 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         Some(&json!("current lore"))
     );
 
-    let source_card = read_stored_card(&root, "Alice").await;
+    let source_card = read_stored_card(root, "Alice").await;
     assert_eq!(
         source_card.pointer("/data/character_book/entries/0/content"),
         Some(&json!("stale embedded lore"))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_export_keeps_stored_card_when_optional_enrichment_is_invalid() {
-    let root = temp_root("character-export-optional-fallback");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let mut card = character_card("Alice", json!({ "world": "Missing Lore" }));
     card["data"]["character_book"] = character_book("Stored Lore", "stored lore");
     card["data"]["extensions"]["tauritavern"] = json!({
@@ -352,14 +347,13 @@ async fn character_service_export_keeps_stored_card_when_optional_enrichment_is_
         exported_card.pointer("/data/extensions/tauritavern/kept"),
         Some(&json!(true))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_update_avatar_preserves_embedded_lorebook() {
-    let root = temp_root("character-avatar-lorebook");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let mut card = character_card("Alice", json!({ "world": "" }));
     card["data"]["character_book"] = character_book("Embedded Lore", "embedded avatar lore");
     fs::write(
@@ -382,19 +376,18 @@ async fn character_service_update_avatar_preserves_embedded_lorebook() {
         .await
         .expect("update avatar");
 
-    let stored_card = read_stored_card(&root, "Alice").await;
+    let stored_card = read_stored_card(root, "Alice").await;
     assert_eq!(
         stored_card.pointer("/data/character_book/entries/0/content"),
         Some(&json!("embedded avatar lore"))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_replacement_adopts_the_new_lorebook_and_keeps_local_edits() {
-    let root = temp_root("character-replacement-adoption");
-    let (service, worlds) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, worlds) = character_service_with_world_repository(root).await;
     let local = world_info("local edits");
     worlds
         .save_world_info("Lore v1", &local)
@@ -439,7 +432,7 @@ async fn character_service_replacement_adopts_the_new_lorebook_and_keeps_local_e
     assert_eq!(target, "Lore v2");
     assert!(!can_update);
     assert_eq!(
-        read_stored_card(&root, "Alice")
+        read_stored_card(root, "Alice")
             .await
             .pointer("/data/extensions/world"),
         Some(&json!("Lore v1"))
@@ -464,7 +457,7 @@ async fn character_service_replacement_adopts_the_new_lorebook_and_keeps_local_e
         matches!(result, CharacterLorebookAdoptionDto::Linked { world, created: true, .. } if world == "Lore v2")
     );
     assert_eq!(
-        read_stored_card(&root, "Alice")
+        read_stored_card(root, "Alice")
             .await
             .pointer("/data/extensions/world"),
         Some(&json!("Lore v2"))
@@ -485,13 +478,13 @@ async fn character_service_replacement_adopts_the_new_lorebook_and_keeps_local_e
             .pointer("/entries/0/content"),
         Some(&json!("new version"))
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_rejects_stale_lorebook_adoption() {
-    let root = temp_root("character-lorebook-stale-decision");
-    let (service, worlds) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, worlds) = character_service_with_world_repository(root).await;
     worlds
         .save_world_info("Lore", &world_info("local version one"))
         .await
@@ -532,13 +525,13 @@ async fn character_service_rejects_stale_lorebook_adoption() {
             .expect("read newer local lorebook"),
         Some(newer)
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_import_auto_links_embedded_lorebook_without_dropping_unknown_fields() {
-    let root = temp_root("character-import-lorebook");
-    let (service, world_repository) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, world_repository) = character_service_with_world_repository(root).await;
     let mut card = character_card("Alice", json!({ "custom": "kept" }));
     card["data"]["character_book"] = json!({
         "name": "Embedded Lore",
@@ -565,7 +558,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
         .expect("import character");
 
     let stem = imported.character.avatar.trim_end_matches(".png");
-    let stored_card = read_stored_card(&root, stem).await;
+    let stored_card = read_stored_card(root, stem).await;
     assert_eq!(
         stored_card.pointer("/data/extensions/world"),
         Some(&json!("Embedded Lore"))
@@ -600,7 +593,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
         .await
         .expect("import new character with a prescribed file name");
     assert_eq!(named_import.character.avatar, "Named.png");
-    let named_stored_card = read_stored_card(&root, "Named").await;
+    let named_stored_card = read_stored_card(root, "Named").await;
     assert_eq!(
         named_stored_card.pointer("/data/extensions/world"),
         Some(&json!("Embedded Lore (1)"))
@@ -612,14 +605,13 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
             .expect("read named import world info")
             .is_some()
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_import_keeps_unrecognized_embedded_lorebook_data() {
-    let root = temp_root("character-import-open-lorebook");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     let mut card = character_card("Alice", json!({}));
     card["data"]["character_book"] = json!({ "entries": "not a supported entry set" });
     let import_path = root.join("import.png");
@@ -640,7 +632,7 @@ async fn character_service_import_keeps_unrecognized_embedded_lorebook_data() {
         CharacterLorebookAdoptionDto::Failed
     ));
     let stem = imported.character.avatar.trim_end_matches(".png");
-    let stored = read_stored_card(&root, stem).await;
+    let stored = read_stored_card(root, stem).await;
     assert_eq!(
         stored.pointer("/data/character_book/entries"),
         Some(&json!("not a supported entry set"))
@@ -649,14 +641,13 @@ async fn character_service_import_keeps_unrecognized_embedded_lorebook_data() {
         .adopt_character_lorebook(stem)
         .await
         .expect_err("standalone adoption reports the invalid lorebook as an error");
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_updates_the_linked_copy_without_overwriting_the_base_book() {
-    let root = temp_root("character-lorebook-copy-adoption");
-    let (service, worlds) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, worlds) = character_service_with_world_repository(root).await;
     let unrelated = world_info("another character's book");
     let local = world_info("local edits in the copy");
     worlds
@@ -707,7 +698,7 @@ async fn character_service_updates_the_linked_copy_without_overwriting_the_base_
         .await
         .expect("update current copy");
     assert_eq!(
-        read_stored_card(&root, "Update")
+        read_stored_card(root, "Update")
             .await
             .pointer("/data/extensions/world"),
         Some(&json!("Lore (1)"))
@@ -729,13 +720,13 @@ async fn character_service_updates_the_linked_copy_without_overwriting_the_base_
             .expect("read unrelated lorebook"),
         Some(unrelated)
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_keeps_an_equal_copy_when_an_earlier_name_is_vacant() {
-    let root = temp_root("character-lorebook-vacant-name");
-    let (service, worlds) = character_service_with_world_repository(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let (service, worlds) = character_service_with_world_repository(root).await;
     let mut incoming = character_card("Seed", json!({}));
     incoming["data"]["character_book"] = character_book("Lore", "incoming content");
     let source = root.join("incoming.png");
@@ -786,13 +777,13 @@ async fn character_service_keeps_an_equal_copy_when_an_earlier_name_is_vacant() 
             .expect("check the earlier name remains vacant")
             .is_none()
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_replaces_an_unreadable_existing_card() {
-    let root = temp_root("character-replace-unreadable");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     fs::write(
         root.join("default-user/characters/Broken.png"),
         write_character_data_to_png(&minimal_png(), "{").expect("write invalid card metadata"),
@@ -821,19 +812,18 @@ async fn character_service_replaces_an_unreadable_existing_card() {
     assert_eq!(replaced.character.avatar, "Broken.png");
     assert_eq!(replaced.character.name, "Recovered");
     assert_eq!(
-        read_stored_card(&root, "Broken")
+        read_stored_card(root, "Broken")
             .await
             .pointer("/data/extensions/world"),
         Some(&json!(""))
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_replace_rejects_non_segment_storage_identity() {
-    let root = temp_root("character-replace-invalid-storage-identity");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
 
     let error = service
         .replace_character(ReplaceCharacterDto {
@@ -844,13 +834,13 @@ async fn character_service_replace_rejects_non_segment_storage_identity() {
         .expect_err("path-like replacement identity must fail before repository lookup");
 
     assert!(matches!(error, ApplicationError::ValidationError(_)));
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_validation() {
-    let root = temp_root("character-single-merge");
-    let service = character_service(&root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
     service
         .create_character(create_character(
             "Alice",
@@ -876,7 +866,7 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         )
         .await
         .expect("merge card data");
-    let merged = read_stored_card(&root, "Alice").await;
+    let merged = read_stored_card(root, "Alice").await;
     assert_eq!(
         merged.pointer("/data/description"),
         Some(&json!("merged description"))
@@ -901,7 +891,7 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         .await
         .expect("V3 accepts open extension field types");
     assert_eq!(
-        read_stored_card(&root, "Alice")
+        read_stored_card(root, "Alice")
             .await
             .pointer("/data/extensions"),
         Some(&json!("not an object"))
@@ -920,6 +910,4 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         .await
         .expect_err("V3 still requires an object data container");
     assert!(matches!(error, ApplicationError::ValidationError(_)));
-
-    let _ = fs::remove_dir_all(root).await;
 }

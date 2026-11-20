@@ -45,9 +45,10 @@ async fn next_event(events: &mut mpsc::UnboundedReceiver<Value>) -> Value {
 
 #[tokio::test]
 async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools() {
-    let root = temp_root("chat-extension-tool");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call("inspect", "inspect", json!({"query":"theme"})),
@@ -195,14 +196,14 @@ async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools()
             .text,
         "Theme inspected"
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are_unavailable() {
-    let root = temp_root("session-extension-tools");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             json!({"choices":[{"message":{"role":"assistant","content":"The tool is disabled."}}]}),
             model_tool_response(vec![model_tool_call("inspect", "inspect", json!({}))]),
@@ -210,7 +211,7 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
             json!({"choices":[{"message":{"role":"assistant","content":"Continuing without extensions."}}]}),
         ],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     let tool_id = ToolId::extension("contract", "inspect").unwrap();
     profile.tools.allow.push(tool_id.to_string());
     let error = fixture
@@ -361,14 +362,14 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
             .iter()
             .all(|tool| tool.tool_id.extension_id().is_none())
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_cancellation_stops_after_the_started_extension_call() {
-    let root = temp_root("session-extension-cancel");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call("waiting", "inspect", json!({})),
             model_tool_call(
@@ -384,7 +385,7 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
         "inspect",
         vec![AgentToolScope::Session],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     profile.tools.allow.push(tool_id.to_string());
     fixture
         .service
@@ -439,7 +440,6 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
             .all(|event| event.payload["callId"] != "after_cancel")
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 1);
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -448,9 +448,10 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
     use tt_contracts::extension_tools::ExtensionToolImage;
 
     for accepts_images in [true, false] {
-        let root = temp_root("session-tool-images");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let fixture = agent_runtime_fixture_with_responses(
-            &root,
+            root,
             vec![
                 model_tool_response(vec![model_tool_call("capture", "inspect", json!({}))]),
                 model_tool_response(vec![model_tool_call(
@@ -467,7 +468,7 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
             "inspect",
             vec![AgentToolScope::Session],
         );
-        let mut profile = configure_session_profile(&fixture, &root).await;
+        let mut profile = configure_session_profile(&fixture, root).await;
         profile.tools.allow = vec![tool_id.to_string(), "builtin:workspace.list_files".into()];
         let session = fixture.service.create_session().await.unwrap().session;
         let mut input = prepare_input(
@@ -623,6 +624,5 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
                 assert!(message.parts.iter().any(|part| matches!(part, AgentModelContentPart::ToolResult { result } if result.content.ends_with("[The image is not shown: this model does not accept images.]"))));
             }
         }
-        fs::remove_dir_all(root).await.unwrap();
     }
 }

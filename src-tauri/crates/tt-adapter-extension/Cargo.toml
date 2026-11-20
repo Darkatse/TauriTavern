@@ -22,4 +22,4 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-rand = { workspace = true }
+tempfile = { workspace = true }

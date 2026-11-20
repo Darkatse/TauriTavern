@@ -410,8 +410,6 @@ fn is_supported_profile_schema_version(version: u32) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use uuid::Uuid;
-
     use super::FileAgentProfileRepository;
     use tt_domain::models::agent::AgentRunPresentation;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
@@ -430,11 +428,8 @@ mod tests {
 
     #[tokio::test]
     async fn repository_round_trips_profile_files() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-agent-profile-repo-{}",
-            Uuid::new_v4().simple()
-        ));
-        let repository = FileAgentProfileRepository::new(root.clone());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = FileAgentProfileRepository::new(temp.path().to_path_buf());
         let profile = sample_profile("writer");
 
         repository
@@ -466,21 +461,16 @@ mod tests {
                 .expect("load missing")
                 .is_none()
         );
-
-        tokio::fs::remove_dir_all(root).await.expect("cleanup");
     }
 
     #[tokio::test]
     async fn repository_lists_valid_profiles_and_reports_repairable_file_issues() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-agent-profile-repo-{}",
-            Uuid::new_v4().simple()
-        ));
-        let profiles_dir = root.join("profiles");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let profiles_dir = temp.path().join("profiles");
         tokio::fs::create_dir_all(&profiles_dir)
             .await
             .expect("create profiles dir");
-        let repository = FileAgentProfileRepository::new(root.clone());
+        let repository = FileAgentProfileRepository::new(temp.path().to_path_buf());
         repository
             .save_profile(&sample_profile("writer"))
             .await
@@ -523,21 +513,16 @@ mod tests {
             listed.issues[1].recommended_action,
             Some(AgentProfileStorageRepairAction::NormalizeIdentity)
         );
-
-        tokio::fs::remove_dir_all(root).await.expect("cleanup");
     }
 
     #[tokio::test]
     async fn repository_identity_repair_preserves_profile_content() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-agent-profile-repo-{}",
-            Uuid::new_v4().simple()
-        ));
-        let profiles_dir = root.join("profiles");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let profiles_dir = temp.path().join("profiles");
         tokio::fs::create_dir_all(&profiles_dir)
             .await
             .expect("create profiles dir");
-        let repository = FileAgentProfileRepository::new(root.clone());
+        let repository = FileAgentProfileRepository::new(temp.path().to_path_buf());
 
         let mut profile = sample_profile("other");
         profile.schema_version = 99;
@@ -569,21 +554,16 @@ mod tests {
             loaded.description.as_deref(),
             Some("Do not replace this profile body.")
         );
-
-        tokio::fs::remove_dir_all(root).await.expect("cleanup");
     }
 
     #[tokio::test]
     async fn repository_identity_repair_refuses_to_replace_missing_profile_content() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-agent-profile-repo-{}",
-            Uuid::new_v4().simple()
-        ));
-        let profiles_dir = root.join("profiles");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let profiles_dir = temp.path().join("profiles");
         tokio::fs::create_dir_all(&profiles_dir)
             .await
             .expect("create profiles dir");
-        let repository = FileAgentProfileRepository::new(root.clone());
+        let repository = FileAgentProfileRepository::new(temp.path().to_path_buf());
         let path = profiles_dir.join("writer.json");
         tokio::fs::write(
             &path,
@@ -606,8 +586,6 @@ mod tests {
             .expect("read unchanged profile");
         assert!(raw.contains(r#""kind":"wrong.kind""#));
         assert!(raw.contains(r#""schemaVersion":99"#));
-
-        tokio::fs::remove_dir_all(root).await.expect("cleanup");
     }
 
     fn sample_profile(id: &str) -> AgentProfileDefinition {

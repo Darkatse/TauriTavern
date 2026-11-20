@@ -2,9 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn agent_runtime_delegate_await_runs_return_mode_child() {
-    let root = temp_root("agent-return-child");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -41,7 +42,7 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         ],
     );
     configure_return_mode_profiles(&fixture).await;
-    let profile = configure_distinct_root_binding(&fixture, &root).await;
+    let profile = configure_distinct_root_binding(&fixture, root).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -186,15 +187,14 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         ],
     )
     .await;
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() {
-    let root = temp_root("agent-handoff-success");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -232,7 +232,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         ],
     );
     configure_handoff_profiles(&fixture).await;
-    let profile = configure_distinct_root_binding(&fixture, &root).await;
+    let profile = configure_distinct_root_binding(&fixture, root).await;
     let mut editor = fixture
         .profile_service
         .load_profile("final-editor")
@@ -402,15 +402,14 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         ],
     )
     .await;
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
-    let root = temp_root("agent-handoff-failure");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![
             Ok(model_tool_response(vec![model_tool_call(
                 "call_handoff",
@@ -478,15 +477,14 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
         ],
     )
     .await;
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_recovers_handoff_before_trailing_tool() {
-    let root = temp_root("agent-handoff-trailing-tool");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -563,8 +561,6 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
             && event.payload["errorCode"] == "agent.tool_after_finish"
     }));
     assert!(!events.iter().any(|event| event.event_type == "run_failed"));
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 async fn configure_distinct_root_binding(

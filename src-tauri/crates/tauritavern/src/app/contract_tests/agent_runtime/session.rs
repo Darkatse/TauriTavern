@@ -13,9 +13,10 @@ use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 
 #[tokio::test]
 async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
-    let root = temp_root("session-continuity");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -32,7 +33,7 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
             json!({"choices":[{"message":{"role":"assistant","content":"Saved both files.","native":{"example":{"signature":"opaque"}}}}]}),
         ],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     fixture
         .service
         .save_session_profile(AgentSaveProfileDto {
@@ -108,7 +109,7 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -125,7 +126,7 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
             json!({"choices":[{"message":{"role":"assistant","content":"Both files survived."}}]}),
         ],
     );
-    configure_session_profile(&fixture, &root).await;
+    configure_session_profile(&fixture, root).await;
     let restored = fixture
         .service
         .read_session(AgentReadSessionDto {
@@ -216,14 +217,14 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
             .iter()
             .any(|file| file.path.as_str().starts_with(&old_result_path))
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn session_admission_is_exclusive_and_cancellation_keeps_the_user_message() {
-    let root = temp_root("session-cancel");
-    let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    let profile = configure_session_profile(&fixture, &root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture_with_responses(root, Vec::new());
+    let profile = configure_session_profile(&fixture, root).await;
     let session = fixture.service.create_session().await.unwrap().session;
     let input = prepare_input(
         &fixture,
@@ -323,14 +324,14 @@ async fn session_admission_is_exclusive_and_cancellation_keeps_the_user_message(
             .await
             .is_err()
     );
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat_profile() {
-    let root = temp_root("session-preset-rename");
-    let fixture = agent_runtime_fixture(&root);
-    let profile = configure_session_profile(&fixture, &root).await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture(root);
+    let profile = configure_session_profile(&fixture, root).await;
     let from = profile.preset.ref_.clone().unwrap();
     let to = AgentPresetRef {
         api_id: from.api_id.clone(),
@@ -436,13 +437,12 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
         })
         .await
         .unwrap();
-
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
-    let root = temp_root("session-compaction-point");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let mut tool_response = model_tool_response(vec![model_tool_call(
         "large-result",
         "workspace_shell",
@@ -457,7 +457,7 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
     invalid_summary["choices"][0]["message"]["content"] = json!("I will inspect the app first.");
     let summary = "## Goal\nInspect the app and report what remains.\n## Next steps\nContinue the original request.";
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             tool_response,
             invalid_summary,
@@ -465,7 +465,7 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
             json!({"choices":[{"message":{"role":"assistant","content":"Finished the original request."}}]}),
         ],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     profile.tools.allow = vec![
         "builtin:workspace.shell".into(),
         "builtin:workspace.write_file".into(),
@@ -589,16 +589,16 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
         measured[1]["tokens"],
         compacted_event.payload["tokensAfter"]
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_recovers_an_overflow_and_retries_the_original_round() {
-    let root = temp_root("session-compaction-overflow");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let summary =
         "The earlier inspection finished. The user now wants the remaining work completed.";
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![
             Ok(model_tool_response(vec![model_tool_call(
                 "large-result",
@@ -615,7 +615,7 @@ async fn session_recovers_an_overflow_and_retries_the_original_round() {
             ),
         ],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     profile.tools.allow = vec!["builtin:workspace.shell".into()];
     let session = fixture.service.create_session().await.unwrap().session;
     let input = prepare_input(
@@ -678,15 +678,15 @@ async fn session_recovers_an_overflow_and_retries_the_original_round() {
             .any(|event| event.event_type == "context_compaction_started"
                 && event.payload["trigger"] == "overflow")
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_compacts_on_request_without_a_new_message() {
-    let root = temp_root("session-compaction-manual");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let summary = "The app was inspected. The user has not asked for anything since.";
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![model_tool_call(
                 "large-result",
@@ -697,7 +697,7 @@ async fn session_compacts_on_request_without_a_new_message() {
             json!({"choices":[{"message":{"role":"assistant","content":summary}}]}),
         ],
     );
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     profile.tools.allow = vec!["builtin:workspace.shell".into()];
     let session = fixture.service.create_session().await.unwrap().session;
     let input = prepare_input(
@@ -764,7 +764,6 @@ async fn session_compacts_on_request_without_a_new_message() {
             .any(|event| event.event_type == "context_compaction_started"
                 && event.payload["trigger"] == "manual")
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -774,9 +773,10 @@ async fn session_resolves_builtin_skills_before_profile_skills_verbatim() {
     };
     use tt_ports::repositories::skill_repository::SkillRepository;
 
-    let root = temp_root("session-builtin-skills");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -806,7 +806,7 @@ async fn session_resolves_builtin_skills_before_profile_skills_verbatim() {
         .await
         .unwrap();
     }
-    let mut profile = configure_session_profile(&fixture, &root).await;
+    let mut profile = configure_session_profile(&fixture, root).await;
     profile.skills.visible = vec!["*".into()];
     FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills"))
         .install_import(SkillInstallRequest {
@@ -868,7 +868,6 @@ async fn session_resolves_builtin_skills_before_profile_skills_verbatim() {
             .content
             .contains("Write for Frozen name.")
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 pub(super) async fn configure_session_profile(

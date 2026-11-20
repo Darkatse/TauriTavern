@@ -19,4 +19,5 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

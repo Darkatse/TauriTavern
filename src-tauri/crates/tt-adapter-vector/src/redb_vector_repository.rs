@@ -495,24 +495,6 @@ fn storage_error(action: &str, error: impl std::fmt::Display) -> DomainError {
 mod tests {
     use super::*;
     use tt_ports::repositories::vector_repository::VectorMetadata;
-    use uuid::Uuid;
-
-    struct TempDatabase(PathBuf);
-
-    impl TempDatabase {
-        fn new() -> Self {
-            let root = std::env::temp_dir().join(format!("tauritavern-vector-{}", Uuid::new_v4()));
-            Self(root.join("index.redb"))
-        }
-    }
-
-    impl Drop for TempDatabase {
-        fn drop(&mut self) {
-            if let Some(root) = self.0.parent() {
-                let _ = std::fs::remove_dir_all(root);
-            }
-        }
-    }
 
     fn record(hash: i64, text: &str, embedding: Vec<f32>) -> VectorRecord {
         VectorRecord {
@@ -527,8 +509,8 @@ mod tests {
 
     #[tokio::test]
     async fn exact_query_is_idempotent_and_purge_is_collection_scoped() {
-        let temp = TempDatabase::new();
-        let repository = RedbVectorRepository::new(temp.0.clone());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = RedbVectorRepository::new(temp.path().join("index.redb"));
         let scope = VectorScope {
             collection_id: "chat-a".to_string(),
             source: "test".to_string(),
@@ -579,14 +561,14 @@ mod tests {
         assert_eq!(repository.list_hashes(&other_scope).await.unwrap(), vec![3]);
 
         drop(repository);
-        let reopened = RedbVectorRepository::new(temp.0.clone());
+        let reopened = RedbVectorRepository::new(temp.path().join("index.redb"));
         assert_eq!(reopened.list_hashes(&other_scope).await.unwrap(), vec![3]);
     }
 
     #[tokio::test]
     async fn concurrent_writers_commit_complete_transactions() {
-        let temp = TempDatabase::new();
-        let repository = Arc::new(RedbVectorRepository::new(temp.0.clone()));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = Arc::new(RedbVectorRepository::new(temp.path().join("index.redb")));
         let first = VectorScope {
             collection_id: "first".to_string(),
             source: "test".to_string(),

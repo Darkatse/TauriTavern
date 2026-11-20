@@ -6,10 +6,11 @@ use tt_ports::repositories::skill_repository::SkillRepository;
 
 #[tokio::test]
 async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
-    let root = temp_root("agent-skill-scopes");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let path = "skills/style/SKILL.md";
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -182,5 +183,4 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
         original["chatCompletionPayload"]["messages"][0]["content"],
         "Follow the writer's rules."
     );
-    fs::remove_dir_all(root).await.unwrap();
 }

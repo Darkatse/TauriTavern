@@ -313,44 +313,10 @@ impl StoredMcpCatalogSnapshotV1 {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
     use serde_json::{Value, json};
     use tt_ports::mcp::{McpDiscoveredTool, McpToolDiagnostic};
 
     use super::*;
-
-    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    struct TestDir(PathBuf);
-
-    impl TestDir {
-        fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            Self(std::env::temp_dir().join(format!(
-                "tauritavern-mcp-repository-test-{}-{suffix}-{counter}",
-                std::process::id()
-            )))
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn registration(id: &str) -> McpServerRegistration {
         McpServerRegistration::try_new(
@@ -389,8 +355,8 @@ mod tests {
 
     #[tokio::test]
     async fn round_trip_uses_one_strict_file_per_registration() {
-        let dir = TestDir::new();
-        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = FileMcpServerRepository::new(temp.path().to_path_buf());
         let mut expected = registration("550e8400-e29b-41d4-a716-446655440000");
         expected
             .set_tool_description_override(
@@ -407,7 +373,7 @@ mod tests {
 
         assert_eq!(loaded, expected);
         assert!(
-            dir.path()
+            temp.path()
                 .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
                 .is_file()
         );
@@ -415,8 +381,8 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_snapshot_is_strict_endpoint_bound_and_removed_with_registration() {
-        let dir = TestDir::new();
-        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = FileMcpServerRepository::new(temp.path().to_path_buf());
         let registration = registration("550e8400-e29b-41d4-a716-446655440000");
         let expected = catalog();
         repository.save(&registration).await.unwrap();
@@ -425,7 +391,7 @@ mod tests {
             .await
             .unwrap();
 
-        let reopened = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let reopened = FileMcpServerRepository::new(temp.path().to_path_buf());
         assert_eq!(
             reopened
                 .load_catalog_snapshot(registration.id(), registration.endpoint())
@@ -443,7 +409,7 @@ mod tests {
                 .contains("mcp.catalog_endpoint_mismatch")
         );
 
-        let catalog_path = dir
+        let catalog_path = temp
             .path()
             .join("catalogs/550e8400-e29b-41d4-a716-446655440000.json");
         let mut stored: Value =
@@ -478,7 +444,8 @@ mod tests {
         reopened.remove(registration.id()).await.unwrap();
         assert!(!catalog_path.exists());
         assert!(
-            !dir.path()
+            !temp
+                .path()
                 .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
                 .exists()
         );
@@ -486,11 +453,11 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_cleanup_failure_does_not_block_registration_removal() {
-        let dir = TestDir::new();
-        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = FileMcpServerRepository::new(temp.path().to_path_buf());
         let registration = registration("550e8400-e29b-41d4-a716-446655440000");
         repository.save(&registration).await.unwrap();
-        let catalog_path = dir
+        let catalog_path = temp
             .path()
             .join("catalogs/550e8400-e29b-41d4-a716-446655440000.json");
         tokio::fs::create_dir_all(&catalog_path).await.unwrap();
@@ -499,7 +466,8 @@ mod tests {
 
         assert!(catalog_path.is_dir());
         assert!(
-            !dir.path()
+            !temp
+                .path()
                 .join("registrations/550e8400-e29b-41d4-a716-446655440000.json")
                 .exists()
         );
@@ -507,11 +475,11 @@ mod tests {
 
     #[tokio::test]
     async fn scan_isolates_corrupt_files_without_hiding_healthy_registrations() {
-        let dir = TestDir::new();
-        let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = FileMcpServerRepository::new(temp.path().to_path_buf());
         let expected = registration("550e8400-e29b-41d4-a716-446655440000");
         repository.save(&expected).await.unwrap();
-        let corrupt_path = dir
+        let corrupt_path = temp
             .path()
             .join("registrations/550e8400-e29b-41d4-a716-446655440001.json");
         tokio::fs::write(&corrupt_path, [0xff]).await.unwrap();
@@ -528,8 +496,8 @@ mod tests {
 
     #[tokio::test]
     async fn scan_rejects_unknown_fields_and_filename_identity_mismatch() {
-        let dir = TestDir::new();
-        let registrations = dir.path().join("registrations");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let registrations = temp.path().join("registrations");
         tokio::fs::create_dir_all(&registrations).await.unwrap();
         let unknown_field = json!({
             "schemaVersion": 1,
@@ -560,7 +528,7 @@ mod tests {
             .unwrap();
         }
 
-        let scan = FileMcpServerRepository::new(dir.path().to_path_buf())
+        let scan = FileMcpServerRepository::new(temp.path().to_path_buf())
             .scan()
             .await
             .unwrap();

@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
 
@@ -26,10 +25,6 @@ use tt_ports::repositories::character_repository::{
 };
 
 use super::FileCharacterRepository;
-
-fn unique_temp_root() -> PathBuf {
-    std::env::temp_dir().join(format!("tauritavern-character-import-{}", random::<u64>()))
-}
 
 fn build_minimal_png() -> Vec<u8> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 1));
@@ -110,12 +105,6 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     )
 }
 
-async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
-    let root = unique_temp_root();
-    let repository = repository_for_root(&root).await;
-    (repository, root)
-}
-
 async fn create_character(repository: &FileCharacterRepository, character: &Character) {
     repository
         .create_with_avatar(character, None, None)
@@ -131,7 +120,8 @@ fn shallow_index_path(root: &Path) -> PathBuf {
 
 #[tokio::test]
 async fn find_by_name_preserves_nonstandard_create_date() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Invalid Date Character",
@@ -147,7 +137,7 @@ async fn find_by_name_preserves_nonstandard_create_date() {
     )
     .expect("embed card in png");
 
-    let character_path = root.join("characters").join("InvalidDate.png");
+    let character_path = temp.path().join("characters").join("InvalidDate.png");
     fs::write(&character_path, source_png)
         .await
         .expect("write character png");
@@ -173,13 +163,12 @@ async fn find_by_name_preserves_nonstandard_create_date() {
             .and_then(|value| value.as_str()),
         Some("not-a-date")
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn create_with_avatar_allocates_unique_file_stems() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let first = Character::new(
         "Duplicate".to_string(),
@@ -219,13 +208,12 @@ async fn create_with_avatar_allocates_unique_file_stems() {
 
     assert_eq!(loaded_first.first_mes, "First greeting");
     assert_eq!(loaded_second.first_mes, "Second greeting");
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Dirty Chunks".to_string(),
@@ -239,7 +227,7 @@ async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
         .await
         .expect("create persistent shallow index");
 
-    let character_path = root.join("characters").join("Dirty Chunks.png");
+    let character_path = temp.path().join("characters").join("Dirty Chunks.png");
     let clean_png = fs::read(&character_path)
         .await
         .expect("read clean character png");
@@ -272,14 +260,13 @@ async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
         .count();
 
     assert_eq!(character_chunks_count, 2);
-    assert!(!shallow_index_path(&root).exists());
-
-    let _ = fs::remove_dir_all(&root).await;
+    assert!(!shallow_index_path(temp.path()).exists());
 }
 
 #[tokio::test]
 async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchanged() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Avatar Edit".to_string(),
@@ -293,7 +280,7 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
         .await
         .expect("create persistent shallow index");
 
-    let avatar_path = root.join("replacement-avatar.png");
+    let avatar_path = temp.path().join("replacement-avatar.png");
     fs::write(&avatar_path, build_distinct_png())
         .await
         .expect("write replacement avatar");
@@ -304,7 +291,7 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
         .await
         .expect("replace avatar");
 
-    let character_path = root.join("characters").join("Avatar Edit.png");
+    let character_path = temp.path().join("characters").join("Avatar Edit.png");
     let stored_png = fs::read(&character_path)
         .await
         .expect("read updated character png");
@@ -312,14 +299,13 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
 
     assert_eq!(stored_image.width(), 2);
     assert_eq!(stored_image.height(), 2);
-    assert!(!shallow_index_path(&root).exists());
-
-    let _ = fs::remove_dir_all(&root).await;
+    assert!(!shallow_index_path(temp.path()).exists());
 }
 
 #[tokio::test]
 async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Unsafe/Name".to_string(),
@@ -334,15 +320,14 @@ async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
         .character;
 
     assert_eq!(created.avatar, "UnsafeName.png");
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn create_with_avatar_invalid_avatar_bytes_falls_back_to_default_avatar() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
-    let invalid_avatar_path = root.join("invalid-upload.bin");
+    let invalid_avatar_path = temp.path().join("invalid-upload.bin");
     fs::write(&invalid_avatar_path, b"not an image")
         .await
         .expect("write invalid avatar");
@@ -365,7 +350,7 @@ async fn create_with_avatar_invalid_avatar_bytes_falls_back_to_default_avatar() 
     );
     let created = result.character;
 
-    let stored_path = root.join("characters").join(&created.avatar);
+    let stored_path = temp.path().join("characters").join(&created.avatar);
     let stored_bytes = fs::read(&stored_path)
         .await
         .expect("read stored character png");
@@ -381,13 +366,12 @@ async fn create_with_avatar_invalid_avatar_bytes_falls_back_to_default_avatar() 
         stored_value.get("name").and_then(|value| value.as_str()),
         Some("Invalid Avatar")
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Display Name",
@@ -411,8 +395,8 @@ async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
     )
     .expect("embed card in png");
 
-    let source_path = root.join("characters").join("Alice_1.png");
-    let occupied_path = root.join("characters").join("Alice_2.png");
+    let source_path = temp.path().join("characters").join("Alice_1.png");
+    let occupied_path = temp.path().join("characters").join("Alice_2.png");
     fs::write(&source_path, &source_png)
         .await
         .expect("write source character png");
@@ -436,7 +420,7 @@ async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
     assert_eq!(duplicated.avatar, "Alice_3.png");
     assert_eq!(duplicated.file_name, Some("Alice_3".to_string()));
 
-    let duplicated_path = root.join("characters").join("Alice_3.png");
+    let duplicated_path = temp.path().join("characters").join("Alice_3.png");
     let duplicated_bytes = fs::read(&duplicated_path)
         .await
         .expect("read duplicated character png");
@@ -450,13 +434,12 @@ async fn duplicate_copies_png_bytes_and_uses_upstream_suffix() {
         duplicated_value["x_custom_root"]["keep"].as_bool(),
         Some(true)
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_png_does_not_eagerly_create_chat_file() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let mut character = Character::new(
         "Test Character".to_string(),
@@ -471,7 +454,7 @@ async fn import_png_does_not_eagerly_create_chat_file() {
         &serde_json::to_string(&character.to_v2()).expect("serialize card"),
     )
     .expect("embed card in png");
-    let import_path = root.join("upload.png");
+    let import_path = temp.path().join("upload.png");
     fs::write(&import_path, source_png)
         .await
         .expect("write import png");
@@ -482,7 +465,8 @@ async fn import_png_does_not_eagerly_create_chat_file() {
         .expect("import png character");
 
     let character_id = imported.avatar.trim_end_matches(".png").to_string();
-    let chat_path = root
+    let chat_path = temp
+        .path()
         .join("chats")
         .join(character_id)
         .join(format!("{}.jsonl", imported.chat));
@@ -492,13 +476,12 @@ async fn import_png_does_not_eagerly_create_chat_file() {
         "character import should not eagerly create chat files"
     );
     assert_eq!(imported.avatar, "Test Character.png");
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_json_uses_exact_preserved_file_name() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Another Character".to_string(),
@@ -506,7 +489,7 @@ async fn import_json_uses_exact_preserved_file_name() {
         "".to_string(),
         "Hi".to_string(),
     );
-    let import_path = root.join("upload.json");
+    let import_path = temp.path().join("upload.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&character.to_v2()).expect("serialize json card"),
@@ -520,15 +503,25 @@ async fn import_json_uses_exact_preserved_file_name() {
         .expect("import json character");
 
     assert_eq!(imported.avatar, "Preserved.png");
-    assert!(root.join("characters").join("Preserved.png").exists());
-    assert!(!root.join("characters").join("Preserved.png.png").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
+    assert!(
+        temp.path()
+            .join("characters")
+            .join("Preserved.png")
+            .exists()
+    );
+    assert!(
+        !temp
+            .path()
+            .join("characters")
+            .join("Preserved.png.png")
+            .exists()
+    );
 }
 
 #[tokio::test]
 async fn failed_replace_keeps_existing_character() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
     let character = Character::new(
         "Preserved".to_string(),
         "old description".to_string(),
@@ -537,7 +530,7 @@ async fn failed_replace_keeps_existing_character() {
     );
     create_character(&repository, &character).await;
 
-    let import_path = root.join("invalid.png");
+    let import_path = temp.path().join("invalid.png");
     fs::write(&import_path, b"not a character card")
         .await
         .expect("write invalid card");
@@ -552,13 +545,12 @@ async fn failed_replace_keeps_existing_character() {
         .await
         .expect("reload existing character");
     assert_eq!(reloaded.first_mes, "old first message");
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_png_preserves_unknown_card_fields() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "spec": "chara_card_v3",
@@ -614,7 +606,7 @@ async fn import_png_preserves_unknown_card_fields() {
         &serde_json::to_string(&card_payload).expect("serialize card"),
     )
     .expect("embed card in png");
-    let import_path = root.join("unknown-import.png");
+    let import_path = temp.path().join("unknown-import.png");
     fs::write(&import_path, source_png)
         .await
         .expect("write import png");
@@ -660,13 +652,12 @@ async fn import_png_preserves_unknown_card_fields() {
         Some(&json!(false))
     );
     assert_ne!(stored_value.get("chat"), Some(&json!("source-chat")));
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_png_preserves_open_card_field_types() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
     let card_payload = json!({
         "spec": "chara_card_v2",
         "spec_version": "2.0",
@@ -700,7 +691,7 @@ async fn import_png_preserves_open_card_field_types() {
         &serde_json::to_string(&card_payload).expect("serialize card"),
     )
     .expect("embed card in png");
-    let import_path = root.join("aichared.png");
+    let import_path = temp.path().join("aichared.png");
     fs::write(&import_path, source_png)
         .await
         .expect("write import png");
@@ -738,13 +729,12 @@ async fn import_png_preserves_open_card_field_types() {
             "{pointer}"
         );
     }
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_json_preserves_unknown_card_fields() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "spec": "chara_card_v3",
@@ -768,7 +758,7 @@ async fn import_json_preserves_unknown_card_fields() {
         }
     });
 
-    let import_path = root.join("unknown-import.json");
+    let import_path = temp.path().join("unknown-import.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&card_payload).expect("serialize card"),
@@ -798,14 +788,13 @@ async fn import_json_preserves_unknown_card_fields() {
         stored_value.pointer("/data/extensions/tavern_helper/enabled"),
         Some(&json!(true))
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fields() {
-    let (repository, root) = setup_repository().await;
-    let import_path = root.join("legacy.json");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
+    let import_path = temp.path().join("legacy.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&json!({
@@ -826,7 +815,7 @@ async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fiel
         .import_character(&import_path, None)
         .await
         .expect("import legacy card");
-    let stored_png = fs::read(root.join("characters").join(&imported.avatar))
+    let stored_png = fs::read(temp.path().join("characters").join(&imported.avatar))
         .await
         .expect("read imported card");
     let v2_chunk = read_text_chunks_from_png(&stored_png)
@@ -845,13 +834,12 @@ async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fiel
     assert_eq!(stored.get("spec_version"), Some(&json!("2.0")));
     assert_eq!(stored.pointer("/data/name"), Some(&json!("Legacy")));
     assert_eq!(stored.pointer("/custom/kept"), Some(&json!(true)));
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_v3_uses_data_fields_when_top_level_is_stale() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "spec": "chara_card_v3",
@@ -879,7 +867,7 @@ async fn import_v3_uses_data_fields_when_top_level_is_stale() {
         }
     });
 
-    let import_path = root.join("stale-root.json");
+    let import_path = temp.path().join("stale-root.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&card_payload).expect("serialize card"),
@@ -922,13 +910,12 @@ async fn import_v3_uses_data_fields_when_top_level_is_stale() {
         stored_value.pointer("/data/extensions/talkativeness"),
         Some(&json!(0.8))
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_json_preserves_top_level_alternate_greetings_array() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Legacy Greeting Character",
@@ -941,7 +928,7 @@ async fn import_json_preserves_top_level_alternate_greetings_array() {
         ],
     });
 
-    let import_path = root.join("legacy-alt-array.json");
+    let import_path = temp.path().join("legacy-alt-array.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&card_payload).expect("serialize card"),
@@ -958,13 +945,12 @@ async fn import_json_preserves_top_level_alternate_greetings_array() {
         imported.data.alternate_greetings,
         vec!["Hi there".to_string(), "Howdy".to_string()]
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Alternate Only Character",
@@ -974,7 +960,7 @@ async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open(
         "alternate_greetings": ["Only Alt"],
     });
 
-    let import_path = root.join("alternate-only.json");
+    let import_path = temp.path().join("alternate-only.json");
     fs::write(
         &import_path,
         serde_json::to_vec(&card_payload).expect("serialize card"),
@@ -988,7 +974,8 @@ async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open(
         .expect("import json character");
 
     let character_id = imported.avatar.trim_end_matches(".png").to_string();
-    let chat_path = root
+    let chat_path = temp
+        .path()
         .join("chats")
         .join(character_id)
         .join(format!("{}.jsonl", imported.chat));
@@ -1002,13 +989,12 @@ async fn import_json_with_only_alternate_greetings_keeps_payload_for_first_open(
         !chat_path.exists(),
         "character import should keep first-message selection for chat open flow"
     );
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn import_json_with_lone_surrogate_escape_sequence_succeeds() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = r#"{
         "name": "Surrogate Character",
@@ -1017,7 +1003,7 @@ async fn import_json_with_lone_surrogate_escape_sequence_succeeds() {
         "first_mes": "Hello \uD83D"
     }"#;
 
-    let import_path = root.join("surrogate.json");
+    let import_path = temp.path().join("surrogate.json");
     fs::write(&import_path, card_payload.as_bytes())
         .await
         .expect("write import json");
@@ -1029,13 +1015,12 @@ async fn import_json_with_lone_surrogate_escape_sequence_succeeds() {
 
     assert_eq!(imported.first_mes, "Hello \u{FFFD}");
     assert_eq!(imported.data.first_mes, "Hello \u{FFFD}");
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "spec": "chara_card_v2",
@@ -1085,7 +1070,7 @@ async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
     )
     .expect("embed card in png");
     fs::write(
-        root.join("characters").join("MetadataTarget.png"),
+        temp.path().join("characters").join("MetadataTarget.png"),
         source_png,
     )
     .await
@@ -1121,13 +1106,12 @@ async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
     assert_eq!(shallow[0].tags, vec!["data-tag".to_string()]);
     assert_eq!(shallow[0].talkativeness, 0.8);
     assert!(!shallow[0].fav);
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Stable Missing",
@@ -1139,7 +1123,7 @@ async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
     )
     .expect("embed card in png");
     fs::write(
-        root.join("characters").join("StableMissing.png"),
+        temp.path().join("characters").join("StableMissing.png"),
         source_png,
     )
     .await
@@ -1153,13 +1137,13 @@ async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
         .find_by_name("StableMissing")
         .await
         .expect("load full character");
-    let reopened = repository_for_root(&root)
+    let reopened = repository_for_root(temp.path())
         .await
         .find_by_name("StableMissing")
         .await
         .expect("reload full character");
 
-    let index_path = shallow_index_path(&root);
+    let index_path = shallow_index_path(temp.path());
     let mut stale_index: Value = serde_json::from_slice(
         &fs::read(&index_path)
             .await
@@ -1174,7 +1158,7 @@ async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
     )
     .await
     .expect("write stale shallow index");
-    let rebuilt = repository_for_root(&root)
+    let rebuilt = repository_for_root(temp.path())
         .await
         .find_all(true)
         .await
@@ -1184,13 +1168,12 @@ async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
     assert_eq!(full.chat, shallow[0].chat);
     assert_eq!(reopened.chat, full.chat);
     assert_eq!(rebuilt[0].chat, full.chat);
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn legacy_cards_get_data_size_after_normalization() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let card_payload = json!({
         "name": "Legacy Size",
@@ -1204,9 +1187,12 @@ async fn legacy_cards_get_data_size_after_normalization() {
         &serde_json::to_string(&card_payload).expect("serialize card"),
     )
     .expect("embed card in png");
-    fs::write(root.join("characters").join("LegacySize.png"), source_png)
-        .await
-        .expect("write character png");
+    fs::write(
+        temp.path().join("characters").join("LegacySize.png"),
+        source_png,
+    )
+    .await
+    .expect("write character png");
 
     let full = repository
         .find_by_name("LegacySize")
@@ -1220,13 +1206,12 @@ async fn legacy_cards_get_data_size_after_normalization() {
         .expect("load shallow character list");
     assert_eq!(shallow.len(), 1);
     assert_eq!(shallow[0].data_size, full.data_size);
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn unreadable_chat_statistics_do_not_hide_the_character() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
     let character = Character::new(
         "Stats Fallback".to_string(),
         "desc".to_string(),
@@ -1234,7 +1219,7 @@ async fn unreadable_chat_statistics_do_not_hide_the_character() {
         "hello".to_string(),
     );
     create_character(&repository, &character).await;
-    let chat_dir = root.join("chats").join("Stats Fallback");
+    let chat_dir = temp.path().join("chats").join("Stats Fallback");
     fs::create_dir_all(&chat_dir)
         .await
         .expect("create chat directory");
@@ -1245,7 +1230,7 @@ async fn unreadable_chat_statistics_do_not_hide_the_character() {
         .await
         .expect("write invalid UTF-8 after an early JSON error");
 
-    let reopened = repository_for_root(&root).await;
+    let reopened = repository_for_root(temp.path()).await;
     let shallow = reopened
         .find_all(true)
         .await
@@ -1259,13 +1244,12 @@ async fn unreadable_chat_statistics_do_not_hide_the_character() {
         .await
         .expect("read character despite unreadable chat statistics");
     assert_eq!((full.chat_size, full.date_last_chat), (0, 0));
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
     for name in ["Alice", "Broken"] {
         create_character(
             &repository,
@@ -1283,12 +1267,12 @@ async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() 
         .await
         .expect("build initial shallow index");
 
-    fs::write(root.join("characters/Broken.png"), b"not a png")
+    fs::write(temp.path().join("characters/Broken.png"), b"not a png")
         .await
         .expect("corrupt one character");
     let added = json!({ "name": "Added", "first_mes": "hello" });
     fs::write(
-        root.join("characters/Added.png"),
+        temp.path().join("characters/Added.png"),
         write_character_data_to_png(
             &build_minimal_png(),
             &serde_json::to_string(&added).expect("serialize added card"),
@@ -1306,13 +1290,12 @@ async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() 
         .map(|character| character.avatar)
         .collect();
     assert_eq!(avatars, vec!["Added.png", "Alice.png"]);
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn character_chat_listing_reads_legacy_alias_directory() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Alice#1".to_string(),
@@ -1322,7 +1305,7 @@ async fn character_chat_listing_reads_legacy_alias_directory() {
     );
     create_character(&repository, &character).await;
 
-    let legacy_chat_dir = root.join("chats").join("Alice");
+    let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
@@ -1362,13 +1345,12 @@ async fn character_chat_listing_reads_legacy_alias_directory() {
         .expect("find exact character");
     assert!(alice.chat_size > 0);
     assert!(alice.date_last_chat > 0);
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Alice#1".to_string(),
@@ -1378,7 +1360,7 @@ async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
     );
     create_character(&repository, &character).await;
 
-    let legacy_chat_dir = root.join("chats").join("Alice");
+    let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
@@ -1393,22 +1375,27 @@ async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
 
     assert_eq!(renamed.name, "Renamed:/Name");
     assert_eq!(renamed.avatar, "RenamedName.png");
-    assert!(root.join("characters").join("RenamedName.png").exists());
-    assert!(!root.join("characters").join("Alice#1.png").exists());
     assert!(
-        root.join("chats")
+        temp.path()
+            .join("characters")
+            .join("RenamedName.png")
+            .exists()
+    );
+    assert!(!temp.path().join("characters").join("Alice#1.png").exists());
+    assert!(
+        temp.path()
+            .join("chats")
             .join("RenamedName")
             .join("session.jsonl")
             .exists()
     );
     assert!(!legacy_chat_dir.exists());
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn delete_with_chats_removes_legacy_alias_chat_directory() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Alice#1".to_string(),
@@ -1418,7 +1405,7 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
     );
     create_character(&repository, &character).await;
 
-    let legacy_chat_dir = root.join("chats").join("Alice");
+    let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
@@ -1431,15 +1418,14 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
         .await
         .expect("delete exact character and chats");
 
-    assert!(!root.join("characters").join("Alice#1.png").exists());
+    assert!(!temp.path().join("characters").join("Alice#1.png").exists());
     assert!(!legacy_chat_dir.exists());
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn rename_uses_next_available_file_stem_when_target_exists() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let source = Character::new(
         "Source".to_string(),
@@ -1464,18 +1450,17 @@ async fn rename_uses_next_available_file_stem_when_target_exists() {
 
     assert_eq!(renamed.name, "Taken");
     assert_eq!(renamed.avatar, "Taken1.png");
-    assert!(root.join("characters").join("Taken.png").exists());
-    assert!(root.join("characters").join("Taken1.png").exists());
-    assert!(!root.join("characters").join("Source.png").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
+    assert!(temp.path().join("characters").join("Taken.png").exists());
+    assert!(temp.path().join("characters").join("Taken1.png").exists());
+    assert!(!temp.path().join("characters").join("Source.png").exists());
 }
 
 #[tokio::test]
 async fn rename_preserves_avatar_pixel_data() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
-    let avatar_path = root.join("custom.png");
+    let avatar_path = temp.path().join("custom.png");
     fs::write(&avatar_path, build_distinct_png())
         .await
         .expect("write custom avatar png");
@@ -1493,7 +1478,7 @@ async fn rename_preserves_avatar_pixel_data() {
         .expect("create character with avatar")
         .character;
 
-    let old_file_path = root.join("characters").join(&created.avatar);
+    let old_file_path = temp.path().join("characters").join(&created.avatar);
     let old_bytes = fs::read(&old_file_path)
         .await
         .expect("read old character file");
@@ -1503,7 +1488,7 @@ async fn rename_preserves_avatar_pixel_data() {
         .await
         .expect("rename character");
 
-    let new_file_path = root.join("characters").join(&renamed.avatar);
+    let new_file_path = temp.path().join("characters").join(&renamed.avatar);
     let new_bytes = fs::read(&new_file_path)
         .await
         .expect("read renamed character file");
@@ -1513,13 +1498,12 @@ async fn rename_preserves_avatar_pixel_data() {
     assert_eq!(old_image.to_rgba8(), new_image.to_rgba8());
 
     assert!(!old_file_path.exists());
-
-    let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
 async fn write_character_card_json_rejects_invalid_avatar_bytes() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
 
     let character = Character::new(
         "Strict Avatar Target".to_string(),
@@ -1533,7 +1517,7 @@ async fn write_character_card_json_rejects_invalid_avatar_bytes() {
         .await
         .expect("read character card JSON");
 
-    let invalid_avatar_path = root.join("invalid-replacement.bin");
+    let invalid_avatar_path = temp.path().join("invalid-replacement.bin");
     fs::write(&invalid_avatar_path, b"not an image")
         .await
         .expect("write invalid avatar");
@@ -1548,6 +1532,4 @@ async fn write_character_card_json_rejects_invalid_avatar_bytes() {
         .await;
 
     assert!(result.is_err(), "invalid avatar replacement should fail");
-
-    let _ = fs::remove_dir_all(&root).await;
 }

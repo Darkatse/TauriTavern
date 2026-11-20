@@ -20,4 +20,4 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
-uuid = { workspace = true }
+tempfile = { workspace = true }

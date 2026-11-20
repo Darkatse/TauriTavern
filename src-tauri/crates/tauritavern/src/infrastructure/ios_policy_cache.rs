@@ -68,34 +68,10 @@ pub(crate) fn resolve_effective_raw_policy_sync(
 mod tests {
     use super::*;
     use serde_json::json;
-    use uuid::Uuid;
-
-    struct TempDirGuard {
-        root: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(prefix: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "tauritavern-ios-policy-cache-{}-{}",
-                prefix,
-                Uuid::new_v4()
-            ));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(&root).expect("create temp root");
-            Self { root }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
 
     #[test]
     fn resolve_effective_raw_policy_prefers_settings_and_persists_cache() {
-        let temp = TempDirGuard::new("prefers-settings");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let policy = json!({
             "version": 1,
             "profile": "ios_external_beta",
@@ -103,20 +79,20 @@ mod tests {
         });
 
         let resolved =
-            resolve_effective_raw_policy_sync(&temp.root, Some(&policy)).expect("resolve policy");
+            resolve_effective_raw_policy_sync(temp.path(), Some(&policy)).expect("resolve policy");
         assert_eq!(resolved, Some(policy.clone()));
 
         let cached =
-            resolve_effective_raw_policy_sync(&temp.root, None).expect("resolve cached policy");
+            resolve_effective_raw_policy_sync(temp.path(), None).expect("resolve cached policy");
         assert_eq!(cached, Some(policy));
     }
 
     #[test]
     fn resolve_effective_raw_policy_uses_cache_when_settings_missing() {
-        let temp = TempDirGuard::new("uses-cache");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let policy = json!({ "version": 1, "profile": "ios_external_beta" });
 
-        let cache_path = cache_path(&temp.root);
+        let cache_path = cache_path(temp.path());
         std::fs::create_dir_all(cache_path.parent().expect("cache path has parent"))
             .expect("create cache parent");
         std::fs::write(
@@ -125,20 +101,21 @@ mod tests {
         )
         .expect("write cache file");
 
-        let resolved = resolve_effective_raw_policy_sync(&temp.root, None).expect("resolve policy");
+        let resolved =
+            resolve_effective_raw_policy_sync(temp.path(), None).expect("resolve policy");
         assert_eq!(resolved, Some(policy));
     }
 
     #[test]
     fn load_cache_fails_fast_on_invalid_json() {
-        let temp = TempDirGuard::new("invalid-json");
-        let path = cache_path(&temp.root);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = cache_path(temp.path());
 
         std::fs::create_dir_all(path.parent().expect("cache path has parent"))
             .expect("create cache parent");
         std::fs::write(&path, b"not json").expect("write invalid cache");
 
-        let error = resolve_effective_raw_policy_sync(&temp.root, None).unwrap_err();
+        let error = resolve_effective_raw_policy_sync(temp.path(), None).unwrap_err();
         assert!(
             error.to_string().contains("contains invalid JSON"),
             "unexpected error: {}",
@@ -153,12 +130,12 @@ mod tests {
 
     #[test]
     fn load_cache_rejects_directory_at_cache_path() {
-        let temp = TempDirGuard::new("cache-is-dir");
-        let path = cache_path(&temp.root);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = cache_path(temp.path());
 
         std::fs::create_dir_all(&path).expect("create directory at cache path");
 
-        let error = resolve_effective_raw_policy_sync(&temp.root, None).unwrap_err();
+        let error = resolve_effective_raw_policy_sync(temp.path(), None).unwrap_err();
         assert!(
             error.to_string().contains("cache path is not a file"),
             "unexpected error: {}",

@@ -216,8 +216,8 @@ mod tests {
 
     #[tokio::test]
     async fn only_paths_inside_the_page_area_resolve() {
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-staging-{}", uuid::Uuid::new_v4()));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let area = root.join(PAGE_AREA);
         let kind = area.join("avatar");
         let host = root.join(HOST_AREA);
@@ -249,6 +249,5 @@ mod tests {
                 rejected.display()
             );
         }
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }

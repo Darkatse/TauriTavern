@@ -88,6 +88,7 @@ ttsync-core = { workspace = true }
 [dev-dependencies]
 tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

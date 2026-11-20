@@ -21,4 +21,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 base64 = "0.23"
+tempfile = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

@@ -258,59 +258,35 @@ pub async fn stage_file_discard(app: AppHandle, file_path: String) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    struct TempStagedFile {
-        path: PathBuf,
-    }
-
-    impl TempStagedFile {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-file-staging-test-{}.bin",
-                uuid::Uuid::new_v4().simple()
-            ));
-            std::fs::File::create(&path).expect("create staged test file");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempStagedFile {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
 
     #[tokio::test]
     async fn append_staged_chunk_is_fully_observable_before_acknowledgement() {
-        let staged = TempStagedFile::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let staged = temp.path().join("staged.bin");
+        std::fs::File::create(&staged).expect("create staged test file");
         let data = (0..1_094_711)
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
 
-        let next_offset = append_staged_chunk(&staged.path, 0, &data)
+        let next_offset = append_staged_chunk(&staged, 0, &data)
             .await
             .expect("append staged chunk");
 
         assert_eq!(next_offset, data.len() as u64);
         assert_eq!(
-            fs::metadata(&staged.path)
-                .await
-                .expect("stat staged file")
-                .len(),
+            fs::metadata(&staged).await.expect("stat staged file").len(),
             data.len() as u64
         );
-        assert_eq!(
-            fs::read(&staged.path).await.expect("read staged file"),
-            data
-        );
+        assert_eq!(fs::read(&staged).await.expect("read staged file"), data);
     }
 
     #[tokio::test]
     async fn append_staged_chunk_rejects_an_unexpected_offset_without_writing() {
-        let staged = TempStagedFile::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let staged = temp.path().join("staged.bin");
+        std::fs::File::create(&staged).expect("create staged test file");
 
-        let error = append_staged_chunk(&staged.path, 1, b"chunk")
+        let error = append_staged_chunk(&staged, 1, b"chunk")
             .await
             .expect_err("reject mismatched offset");
 
@@ -320,10 +296,7 @@ mod tests {
                 if message == "File staging offset mismatch: expected 0, got 1"
         ));
         assert_eq!(
-            fs::metadata(&staged.path)
-                .await
-                .expect("stat staged file")
-                .len(),
+            fs::metadata(&staged).await.expect("stat staged file").len(),
             0
         );
     }

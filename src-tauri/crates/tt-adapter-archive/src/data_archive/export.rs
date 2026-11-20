@@ -377,22 +377,13 @@ fn is_transient_entry(relative_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
 
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-export-{}-{}",
-            name,
-            uuid::Uuid::new_v4().simple()
-        ))
-    }
-
     #[test]
     fn archives_exclude_staging_files_and_apply_the_user_backup_secrets_policy() {
-        let root = temp_root("export-contents");
-        let data_root = root.join("source");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("source");
         let user_root = data_root.join("default-user");
         fs::create_dir_all(user_root.join("backups")).unwrap();
         let staging = format!("backups/.tmp-chat-backup-{}", uuid::Uuid::nil().simple());
@@ -407,7 +398,7 @@ mod tests {
         }
 
         for (index, include_secrets) in [None, Some(false), Some(true)].into_iter().enumerate() {
-            let output_path = root.join(format!("export-{index}.zip"));
+            let output_path = temp.path().join(format!("export-{index}.zip"));
             let prefix = if let Some(include_secrets) = include_secrets {
                 run_export_user_backup_archive(
                     &user_root,
@@ -441,15 +432,13 @@ mod tests {
             assert!(!names.contains(&format!("{prefix}{staging}").as_str()));
             assert!(names.contains(&format!("{prefix}{kept}").as_str()));
         }
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn export_refuses_to_overwrite_existing_archive() {
-        let root = temp_root("existing-output");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(&source_root).expect("create source root");
         fs::write(source_root.join("settings.json"), b"{}").expect("write source file");
         fs::write(&output_path, b"keep me").expect("write existing output");
@@ -468,15 +457,13 @@ mod tests {
             fs::read(&output_path).expect("read existing output"),
             b"keep me"
         );
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 
     #[test]
     fn export_settings_repairs_the_projection_without_rewriting_sources() {
-        let root = temp_root("settings-repair");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(source_root.join("settings")).unwrap();
         fs::write(source_root.join(CORE_FILE), b"{}").unwrap();
         let presets_path = source_root.join(tt_contracts::settings::PRESETS_FILE);
@@ -500,15 +487,13 @@ mod tests {
             serde_json::json!([{"identifier": "main"}]),
         );
         assert_eq!(fs::read(presets_path).unwrap(), presets);
-        drop(archive);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn export_progress_is_weighted_by_file_bytes() {
-        let root = temp_root("byte-progress");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(&source_root).expect("create source root");
         fs::write(source_root.join("a.json"), b"a").expect("write small source file");
         fs::write(source_root.join("b.json"), vec![b'b'; 99]).expect("write large source file");
@@ -530,7 +515,5 @@ mod tests {
 
         assert!(reports.iter().any(|percent| (3.8..4.1).contains(percent)));
         assert_eq!(reports.last().copied(), Some(96.0));
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

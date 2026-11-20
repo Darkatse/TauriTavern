@@ -11,16 +11,14 @@ use tt_ports::repositories::settings_repository::SettingsRepository;
 const FACTORY_USER_CSS: &[u8] = b"/* Put custom styles here. */\n";
 
 struct Fixture {
-    root: PathBuf,
     data: DataDirectory,
     settings: Arc<FileSettingsRepository>,
     sync_rules: Arc<SyncAutomationStore>,
     service: SafeModeService,
 }
 
-fn fixture(label: &str) -> Fixture {
-    let root = temp_root(label);
-    let data = DataDirectory::new(root.clone());
+fn fixture(root: &Path) -> Fixture {
+    let data = DataDirectory::new(root.to_path_buf());
     let settings = Arc::new(FileSettingsRepository::new(
         data.settings().to_path_buf(),
         UserSettings {
@@ -46,12 +44,11 @@ fn fixture(label: &str) -> Fixture {
             data.extension_sources().to_path_buf(),
             Arc::new(HttpClientPool::new("tauritavern-contract-test")),
         )),
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
         sync_rules.clone(),
         FACTORY_USER_CSS.to_vec(),
     );
     Fixture {
-        root,
         data,
         settings,
         sync_rules,
@@ -71,13 +68,13 @@ fn has_safe_mode_copy(dir: &Path, name: &str) -> bool {
 
 #[tokio::test]
 async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
+    let temp = tempfile::tempdir().expect("create temp dir");
     let Fixture {
-        root,
         data,
         settings,
         sync_rules,
         service,
-    } = fixture("safe-mode");
+    } = fixture(temp.path());
     settings
         .save_user_settings(UserSettings {
             data: json!({
@@ -110,7 +107,7 @@ async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
     native.request_proxy.enabled = true;
     native.dynamic_theme.enabled = true;
     settings.save_tauritavern_settings(&native).await.unwrap();
-    let user_css = root.join("_css").join("user.css");
+    let user_css = temp.path().join("_css").join("user.css");
     std::fs::create_dir_all(user_css.parent().unwrap()).unwrap();
     std::fs::write(&user_css, "body { display: none }").unwrap();
     let mut rule = sync_rules.load_or_create_rule().await.unwrap().rule;
@@ -153,18 +150,14 @@ async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
     assert_eq!(std::fs::read(&user_css).unwrap(), FACTORY_USER_CSS);
     assert!(has_safe_mode_copy(user_css.parent().unwrap(), "user.css"));
     assert!(!sync_rules.load_or_create_rule().await.unwrap().rule.enabled);
-
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
 async fn safe_mode_replaces_chat_backup_limits_that_would_fail_startup_with_none() {
+    let temp = tempfile::tempdir().expect("create temp dir");
     let Fixture {
-        root,
-        settings,
-        service,
-        ..
-    } = fixture("safe-mode-invalid-limits");
+        settings, service, ..
+    } = fixture(temp.path());
     let native = TauriTavernSettings {
         chat_backups: ChatBackupSettings {
             max_total_bytes: -2,
@@ -189,5 +182,4 @@ async fn safe_mode_replaces_chat_backup_limits_that_would_fail_startup_with_none
         ],
         [-1; 3]
     );
-    std::fs::remove_dir_all(root).unwrap();
 }

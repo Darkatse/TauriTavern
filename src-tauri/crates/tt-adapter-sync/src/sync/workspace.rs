@@ -212,23 +212,20 @@ fn workspace_write_error(error: sync_fs::FileMutationError) -> WorkspaceWriteErr
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::path::PathBuf;
 
     use tokio::io::AsyncReadExt;
     use ttsync_client::ClientWorkspace;
     use ttsync_contract::path::SyncPath;
-    use uuid::Uuid;
 
     use super::TauriTavernSyncWorkspace;
 
-    fn temp_root() -> PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-sync-workspace-{}", Uuid::new_v4()))
-    }
-
     #[tokio::test]
     async fn workspace_round_trips_file_operations_and_prunes_empty_parents() {
-        let root = temp_root();
-        let workspace = TauriTavernSyncWorkspace::new(root.clone(), super::empty_database_access());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let workspace = TauriTavernSyncWorkspace::new(
+            temp.path().to_path_buf(),
+            super::empty_database_access(),
+        );
         let path = SyncPath::new("default-user/chats/thread/hello.json".to_string()).unwrap();
         let mut source = Cursor::new(br#"{"hello":true}"#.to_vec());
 
@@ -243,9 +240,7 @@ mod tests {
         assert_eq!(&bytes, br#"{"hello":true}"#);
 
         workspace.delete_file(&path).await.unwrap();
-        assert!(!root.join("default-user/chats/thread").exists());
-        assert!(root.join("default-user/chats").exists());
-
-        let _ = tokio::fs::remove_dir_all(root).await;
+        assert!(!temp.path().join("default-user/chats/thread").exists());
+        assert!(temp.path().join("default-user/chats").exists());
     }
 }

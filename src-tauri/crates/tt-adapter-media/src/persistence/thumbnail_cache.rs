@@ -591,7 +591,6 @@ fn rewind_original(
 mod tests {
     use super::*;
     use image::{ImageBuffer, Rgb};
-    use std::path::PathBuf;
 
     fn source_snapshot(path: &Path) -> ThumbnailSourceSnapshot {
         let metadata = std::fs::metadata(path).expect("source metadata");
@@ -601,34 +600,14 @@ mod tests {
         }
     }
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn thumbnail_generation_does_not_follow_existing_temp_symlink() {
-        let temp = TempDirGuard::new("thumbnail-cache-temp-symlink");
-        let external = TempDirGuard::new("thumbnail-cache-temp-external");
-        let original_path = temp.path.join("source.png");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let original_path = temp.path().join("source.png");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         let old_temp_path = thumbnail_path.with_extension("tmp");
-        let outside_path = external.path.join("outside.txt");
+        let outside_path = temp.path().join("outside.txt");
 
         let image = ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]));
         image.save(&original_path).expect("write source image");
@@ -671,8 +650,8 @@ mod tests {
 
     #[test]
     fn external_jpeg_without_embedded_identity_is_a_cache_miss() {
-        let temp = TempDirGuard::new("thumbnail-cache-external-jpeg");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         ImageBuffer::from_pixel(2, 2, Rgb([0u8, 0, 255]))
             .save(&thumbnail_path)
             .expect("write external jpeg");
@@ -686,9 +665,9 @@ mod tests {
 
     #[test]
     fn source_change_prevents_thumbnail_commit() {
-        let temp = TempDirGuard::new("thumbnail-cache-source-change");
-        let original_path = temp.path.join("source.png");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let original_path = temp.path().join("source.png");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
             .save(&original_path)
             .expect("write source image");

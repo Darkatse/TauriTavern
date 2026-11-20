@@ -869,10 +869,7 @@ fn tokenizer_error(action: &str, model: &str, error: TokenizerError) -> DomainEr
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use miktik::Model;
     use serde_json::json;
@@ -882,19 +879,6 @@ mod tests {
     use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
-    static NEXT_TEMP_CACHE_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_cache_dir() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let sequence = NEXT_TEMP_CACHE_DIR_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "tauritavern-tokenizer-test-{}-{nonce}-{sequence}",
-            std::process::id()
-        ))
-    }
 
     fn repository(cache_dir: &std::path::Path) -> MiktikTokenizerRepository {
         MiktikTokenizerRepository::new(
@@ -927,7 +911,7 @@ mod tests {
 
     #[tokio::test]
     async fn bundled_models_and_unknown_names_estimate_without_network() {
-        let cache_dir = unique_temp_cache_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let names = [
             "claude-3-7-sonnet",
             "deepseek-chat",
@@ -939,7 +923,7 @@ mod tests {
             "my-local-model",
             "gpt-4o",
         ];
-        let repository = prepared(&cache_dir, &names).await;
+        let repository = prepared(temp.path(), &names).await;
         let messages = [json!({"role": "user", "content": "hello world, 世界"})];
 
         let estimates = names.map(|name| {
@@ -948,7 +932,6 @@ mod tests {
                 .expect("prepared tokenizer should estimate")
         });
 
-        let _ = std::fs::remove_dir_all(cache_dir);
         assert!(estimates.iter().all(|estimate| estimate.value[0] > 0));
         assert_eq!(estimates[7], estimates[8], "unknown names use o200k");
         assert!(
@@ -959,7 +942,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_engines_match_golden_text() {
-        let cache_dir = unique_temp_cache_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let text = "Hello, 世界 👨‍👩‍👧‍👦\n";
         let cases: [(&str, &[u32]); 3] = [
             (
@@ -985,7 +968,7 @@ mod tests {
                 ],
             ),
         ];
-        let repository = prepared(&cache_dir, &cases.map(|(model, _)| model)).await;
+        let repository = prepared(temp.path(), &cases.map(|(model, _)| model)).await;
 
         for (model, expected_ids) in cases {
             let ids = repository
@@ -1000,32 +983,31 @@ mod tests {
                 "roundtrip changed for '{model}'"
             );
         }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[tokio::test]
     async fn tokenizers_load_from_artifacts_and_the_cache_keeps_only_what_is_used() {
-        let cache_dir = unique_temp_cache_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let text = "Artifacts load in milliseconds.\n世界设定 🙂\n";
         let models = ["gpt-4o", "claude"];
-        let compiled = prepared(&cache_dir, &models).await;
+        let compiled = prepared(temp.path(), &models).await;
         let estimates = models.map(|model| compiled.estimate_text(model, text).unwrap().value);
         let ids = models.map(|model| compiled.encode(model, text).unwrap());
 
-        let artifact_dir = cache_dir
+        let artifact_dir = temp
+            .path()
             .join("compiled")
             .join(format!("v{}", miktik::ARTIFACT_VERSION));
         let claude_artifact = artifact_dir.join("claude-claude.json.mtk");
         let stale = [
-            cache_dir
+            temp.path()
                 .join("compiled")
                 .join("v0")
                 .join("claude-claude.json.mtk"),
             artifact_dir.join("gemma-gemma.model.mtk"),
-            cache_dir.join("gemma.model"),
-            cache_dir.join("kimi.tiktoken"),
-            cache_dir.join(".claude.json.1.2.tmp"),
+            temp.path().join("gemma.model"),
+            temp.path().join("kimi.tiktoken"),
+            temp.path().join(".claude.json.1.2.tmp"),
         ];
         for path in &stale {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1033,7 +1015,7 @@ mod tests {
         }
         std::fs::write(&claude_artifact, b"not an artifact").unwrap();
 
-        let loaded = prepared(&cache_dir, &models).await;
+        let loaded = prepared(temp.path(), &models).await;
         let reloaded_estimates =
             models.map(|model| loaded.estimate_text(model, text).unwrap().value);
         let reloaded_ids = models.map(|model| loaded.encode(model, text).unwrap());
@@ -1045,7 +1027,6 @@ mod tests {
         kept.sort();
         let stale_left = stale.iter().filter(|path| path.exists()).count();
 
-        let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(reloaded_estimates, estimates);
         assert_eq!(reloaded_ids, ids);
         assert!(
@@ -1058,10 +1039,10 @@ mod tests {
 
     #[tokio::test]
     async fn sources_that_cannot_download_estimate_with_the_fallback_until_they_do() {
-        let cache_dir = unique_temp_cache_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let http_clients = Arc::new(HttpClientPool::new(TEST_USER_AGENT));
         http_clients.block_requests_for_invalid_proxy();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), http_clients);
+        let repository = MiktikTokenizerRepository::new(temp.path().to_path_buf(), http_clients);
         let text = "A source that cannot download.\n下载不了的源。";
 
         repository
@@ -1072,7 +1053,6 @@ mod tests {
         let fallback = repository.estimate_text("gpt-4o", text).unwrap();
         let exact = repository.encode("llama3", text);
 
-        let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(estimate.value, fallback.value);
         assert!(
             estimate.fallback,
@@ -1087,9 +1067,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_late_error_of_a_replaced_tokenizer_keeps_its_replacement() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = prepared(&cache_dir, &["claude"]).await;
-        let artifact = cache_dir
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = prepared(temp.path(), &["claude"]).await;
+        let artifact = temp
+            .path()
             .join("compiled")
             .join(format!("v{}", miktik::ARTIFACT_VERSION))
             .join("claude-claude.json.mtk");
@@ -1102,15 +1083,14 @@ mod tests {
         let current = repository.exact("claude");
         let artifact_kept = artifact.exists();
 
-        let _ = std::fs::remove_dir_all(cache_dir);
         assert!(Arc::ptr_eq(&current.unwrap(), &replacement));
         assert!(artifact_kept);
     }
 
     #[tokio::test]
     async fn openai_0301_keeps_legacy_message_count_rules() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = prepared(&cache_dir, &["gpt-3.5-turbo-0301", "gpt-4"]).await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = prepared(temp.path(), &["gpt-3.5-turbo-0301", "gpt-4"]).await;
         let messages = [json!({"role": "user", "name": "Alice", "content": "hello"})];
 
         let legacy = repository
@@ -1122,13 +1102,12 @@ mod tests {
             .unwrap()
             .value[0];
 
-        let _ = std::fs::remove_dir_all(cache_dir);
         assert_eq!(legacy, modern + 8);
     }
 
     #[tokio::test]
     async fn prefix_estimates_equal_the_estimate_of_each_prefix() {
-        let cache_dir = unique_temp_cache_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let models = [
             "gpt-4o",
             "gpt-3.5-turbo-0301",
@@ -1136,7 +1115,7 @@ mod tests {
             "deepseek",
             "gemma",
         ];
-        let repository = prepared(&cache_dir, &models).await;
+        let repository = prepared(temp.path(), &models).await;
         let fragments = [
             "",
             "a",
@@ -1193,7 +1172,5 @@ mod tests {
                 );
             }
         }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }

@@ -316,21 +316,11 @@ fn cleanup_stale_exports(export_root: &Path, protected_paths: &[PathBuf]) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 
     use filetime::{FileTime, set_file_mtime};
-    use uuid::Uuid;
 
     use super::*;
-
-    fn temp_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-adapters-{}-{}",
-            name,
-            Uuid::new_v4().simple()
-        ))
-    }
 
     fn make_stale(path: &Path) {
         let stale_time = FileTime::from_system_time(
@@ -341,20 +331,17 @@ mod tests {
 
     #[test]
     fn cleanup_stale_exports_keeps_protected_active_artifact() {
-        let root = temp_root("protected-export");
-        fs::create_dir_all(&root).expect("create export root");
-        let protected = root.join("export-active.zip");
-        let stale = root.join("export-stale.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let protected = temp.path().join("export-active.zip");
+        let stale = temp.path().join("export-stale.zip");
         fs::write(&protected, b"active").expect("write protected export");
         fs::write(&stale, b"stale").expect("write stale export");
         make_stale(&protected);
         make_stale(&stale);
 
-        cleanup_stale_exports(&root, std::slice::from_ref(&protected));
+        cleanup_stale_exports(temp.path(), std::slice::from_ref(&protected));
 
         assert!(protected.is_file());
         assert!(!stale.exists());
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

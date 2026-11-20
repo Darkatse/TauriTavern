@@ -783,12 +783,8 @@ mod tests {
 
     #[test]
     fn zero_byte_zip_entry_wakes_cancellation_polling() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-empty-zip-cancel-{}",
-            rand::random::<u64>()
-        ));
-        fs::create_dir_all(&root).expect("create test root");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let archive_path = temp.path().join("fixture.zip");
         let mut writer = ZipWriter::new(File::create(&archive_path).expect("create zip"));
         writer
             .start_file("empty", SimpleFileOptions::default())
@@ -799,7 +795,7 @@ mod tests {
             ZipArchive::new(File::open(&archive_path).expect("open zip")).expect("read zip");
         let files = [ZipFileStage {
             index: 0,
-            payload_path: root.join("payload"),
+            payload_path: temp.path().join("payload"),
         }];
         let checks = AtomicUsize::new(0);
         let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) > 0;
@@ -816,6 +812,5 @@ mod tests {
         .expect_err("empty entry should wake cancellation polling");
 
         assert!(matches!(error, DomainError::Cancelled(_)));
-        fs::remove_dir_all(root).expect("remove test root");
     }
 }

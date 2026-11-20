@@ -1702,9 +1702,10 @@ mod tests {
 
     #[tokio::test]
     async fn servers_the_page_names_need_approval() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let repository = super::HttpStableDiffusionRepository::new(
             super::Arc::new(super::HttpClientPool::new("TauriTavern/test")),
-            std::env::temp_dir(),
+            temp.path().to_path_buf(),
         );
         for path in ["ping", "comfy/ping", "sdcpp/ping", "drawthings/ping"] {
             let (_cancel, cancel) = super::watch::channel(false);
@@ -1790,15 +1791,18 @@ mod tests {
     async fn comfy_workflow_save_replaces_file_and_preserves_directory_on_failure() {
         use std::io::Read;
 
-        let root =
-            std::env::temp_dir().join(format!("tauritavern-workflow-{}", uuid::Uuid::new_v4()));
+        let temp = tempfile::tempdir().expect("create temp dir");
         let body = json!({ "file_name": "workflow.json", "workflow": "old" });
-        super::comfy_save_workflow(&root, &body).await.unwrap();
-        let target = root.join("workflow.json");
+        super::comfy_save_workflow(temp.path(), &body)
+            .await
+            .unwrap();
+        let target = temp.path().join("workflow.json");
         let mut old_file = std::fs::File::open(&target).unwrap();
 
         let body = json!({ "file_name": "workflow.json", "workflow": "new" });
-        super::comfy_save_workflow(&root, &body).await.unwrap();
+        super::comfy_save_workflow(temp.path(), &body)
+            .await
+            .unwrap();
         let mut old_contents = String::new();
         old_file.read_to_string(&mut old_contents).unwrap();
         assert_eq!(old_contents, "old");
@@ -1807,10 +1811,11 @@ mod tests {
 
         tokio::fs::remove_file(&target).await.unwrap();
         tokio::fs::create_dir(&target).await.unwrap();
-        super::comfy_save_workflow(&root, &body).await.unwrap_err();
+        super::comfy_save_workflow(temp.path(), &body)
+            .await
+            .unwrap_err();
         assert!(target.is_dir());
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-        tokio::fs::remove_dir_all(root).await.unwrap();
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
     }
 
     #[test]

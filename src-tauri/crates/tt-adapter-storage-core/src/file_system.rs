@@ -726,45 +726,35 @@ mod tests {
     use serde_json::{Value, json};
     use std::io::Read;
 
-    fn unique_temp_root() -> PathBuf {
-        use rand::random;
-        std::env::temp_dir().join(format!("tauritavern-file-system-{}", random::<u64>()))
-    }
-
     #[tokio::test]
     async fn persist_file_keeps_existing_target_when_stage_is_missing() {
         use tokio::io::AsyncWriteExt;
 
-        let root = unique_temp_root();
-        tokio_fs::create_dir_all(&root).await.unwrap();
-        let temp = root.join("missing.txt");
-        let target = root.join("target.txt");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let stage = temp.path().join("missing.txt");
+        let target = temp.path().join("target.txt");
         tokio_fs::write(&target, b"old").await.unwrap();
-        let mut file = tokio_fs::File::create(&temp).await.unwrap();
+        let mut file = tokio_fs::File::create(&stage).await.unwrap();
         file.write_all(b"new").await.unwrap();
         file.flush().await.unwrap();
-        tokio_fs::remove_file(&temp).await.unwrap();
+        tokio_fs::remove_file(&stage).await.unwrap();
 
-        persist_file(file, &temp, &target)
+        persist_file(file, &stage, &target)
             .await
             .expect_err("missing stage must fail");
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"old");
-
-        tokio_fs::remove_dir_all(root).await.unwrap();
     }
 
     #[test]
     fn replace_keeping_original_leaves_a_file_that_already_holds_the_bytes() {
-        let root = unique_temp_root();
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("settings.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("settings.json");
         std::fs::write(&path, b"same").unwrap();
 
         let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, b"same");
 
         assert_eq!(kept.unwrap(), None);
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
     }
 
     #[cfg(unix)]
@@ -773,31 +763,25 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         use tokio::io::AsyncWriteExt;
 
-        let root = unique_temp_root();
-        tokio_fs::create_dir_all(&root).await.unwrap();
-        let temp = root.join("stage.txt");
-        let target = root.join("target.txt");
-        let mut file = tokio_fs::File::create(&temp).await.unwrap();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let stage = temp.path().join("stage.txt");
+        let target = temp.path().join("target.txt");
+        let mut file = tokio_fs::File::create(&stage).await.unwrap();
         file.write_all(b"new").await.unwrap();
         file.flush().await.unwrap();
         file.set_permissions(std::fs::Permissions::from_mode(0o400))
             .await
             .unwrap();
 
-        persist_file(file, &temp, &target).await.unwrap();
+        persist_file(file, &stage, &target).await.unwrap();
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"new");
-        assert!(!temp.exists());
-
-        tokio_fs::remove_dir_all(root).await.unwrap();
+        assert!(!stage.exists());
     }
 
     #[tokio::test]
     async fn move_file_no_replace_with_fallback_moves_file() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("nested").join("target.txt");
@@ -812,19 +796,12 @@ mod tests {
         let bytes = tokio_fs::read(&target).await.expect("read target");
         assert_eq!(&bytes, b"payload");
         assert!(!source.exists(), "source file should be moved/removed");
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn move_file_no_replace_with_fallback_rejects_existing_target() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("target.txt");
@@ -850,19 +827,12 @@ mod tests {
             tokio_fs::read(&target).await.expect("read target"),
             b"target"
         );
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn copy_file_no_replace_keeps_existing_target() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("target.txt");
@@ -886,19 +856,12 @@ mod tests {
             tokio_fs::read(&target).await.expect("read target"),
             b"target"
         );
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn write_json_file_replaces_target_entry_so_open_handles_keep_old_bytes() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let path = root.join("settings.json");
         persist_json_file(&path, &json!({ "version": 1u32, "payload": "old" }))
@@ -927,10 +890,6 @@ mod tests {
 
         assert_eq!(old_json.get("version"), Some(&json!(1u32)));
         assert_eq!(new_json.get("version"), Some(&json!(2u32)));
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
@@ -946,11 +905,8 @@ mod tests {
             }
         }
 
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let path = root.join("settings.json");
         write_json_file(&path, &json!({ "ok": true }))
@@ -970,9 +926,5 @@ mod tests {
 
         let after: Value = read_json_file(&path).await.expect("read json after error");
         assert_eq!(after, before);
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 }

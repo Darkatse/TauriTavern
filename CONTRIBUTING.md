@@ -101,7 +101,7 @@ KISS 要求我们选择能够完整解决当前问题的最简单方案。判断
 
 测试用于守住可观察行为、非平凡不变式与边界，以及已经发生并修复的具体缺陷。代码变化或覆盖率增加本身不是新增测试的理由。
 
-不要测试源码文本、字面量、显然控制流、直接委托、实现细节或已移除功能。不要提前添加回归测试。优先复用最高层的现有行为覆盖；并发测试使用确定性协调，不依赖 sleep。删除功能或测试后，也应删除失效的 fixture、fake、hook 与依赖。Agent 的具体分层策略见 `docs/Agent/TestingStrategy.md`。
+不要测试源码文本、字面量、显然控制流、直接委托、实现细节或已移除功能。不要提前添加回归测试。优先复用最高层的现有行为覆盖；并发测试使用确定性协调，不依赖 sleep。Rust 测试的临时目录用 `tempfile::tempdir()` 创建，由返回的 `TempDir` 负责删除。删除功能或测试后，也应删除失效的 fixture、fake、hook 与依赖。Agent 的具体分层策略见 `docs/Agent/TestingStrategy.md`。
 
 ### 提交 PR 前
 
@@ -216,7 +216,7 @@ Use these principles to ask questions and explain decisions. No decision needs t
 
 Tests protect observable behavior, non-trivial invariants and boundaries, and concrete defects that have already been fixed. A code change or higher coverage is not, by itself, a reason to add a test.
 
-Do not test source text, literals, obvious control flow, direct delegation, implementation details, or removed features. Do not add regression tests speculatively. Prefer the highest existing behavior boundary, and coordinate concurrency deterministically instead of sleeping. When a feature or test is removed, also remove obsolete fixtures, fakes, hooks, and dependencies. See `docs/Agent/TestingStrategy.md` for Agent-specific layering.
+Do not test source text, literals, obvious control flow, direct delegation, implementation details, or removed features. Do not add regression tests speculatively. Prefer the highest existing behavior boundary, and coordinate concurrency deterministically instead of sleeping. Rust tests create scratch directories with `tempfile::tempdir()` and let the returned `TempDir` delete them. When a feature or test is removed, also remove obsolete fixtures, fakes, hooks, and dependencies. See `docs/Agent/TestingStrategy.md` for Agent-specific layering.
 
 ### Before Opening a PR
 

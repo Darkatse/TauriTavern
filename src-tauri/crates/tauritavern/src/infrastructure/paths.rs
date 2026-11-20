@@ -751,30 +751,6 @@ fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<
 mod tests {
     use super::*;
     use std::fs;
-    use uuid::Uuid;
-
-    struct TempDirGuard {
-        root: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(prefix: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "tauritavern-runtime-paths-{}-{}",
-                prefix,
-                Uuid::new_v4()
-            ));
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(&root).expect("create temp root");
-            Self { root }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
 
     fn runtime_paths_with_app_root(app_root: &Path) -> RuntimePaths {
         RuntimePaths::new(RuntimeMode::Standard, app_root.to_path_buf())
@@ -782,28 +758,28 @@ mod tests {
 
     #[test]
     fn effectively_empty_directory_ignores_known_metadata_files() {
-        let temp = TempDirGuard::new("effectively-empty");
+        let temp = tempfile::tempdir().expect("create temp dir");
 
-        fs::write(temp.root.join("desktop.ini"), "").expect("write desktop.ini");
-        fs::write(temp.root.join(".DS_Store"), "").expect("write .DS_Store");
+        fs::write(temp.path().join("desktop.ini"), "").expect("write desktop.ini");
+        fs::write(temp.path().join(".DS_Store"), "").expect("write .DS_Store");
 
         assert!(
-            is_effectively_empty_directory(&temp.root).expect("inspect temp root"),
+            is_effectively_empty_directory(temp.path()).expect("inspect temp root"),
             "expected metadata-only directory to be treated as empty"
         );
 
-        fs::write(temp.root.join("actual.txt"), "content").expect("write actual file");
+        fs::write(temp.path().join("actual.txt"), "content").expect("write actual file");
         assert!(
-            !is_effectively_empty_directory(&temp.root).expect("inspect non-empty directory"),
+            !is_effectively_empty_directory(temp.path()).expect("inspect non-empty directory"),
             "expected non-metadata file to make directory non-empty"
         );
     }
 
     #[test]
     fn migrate_data_root_accepts_metadata_only_target_directory() {
-        let temp = TempDirGuard::new("metadata-target");
-        let from = temp.root.join("from");
-        let to = temp.root.join("to");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let from = temp.path().join("from");
+        let to = temp.path().join("to");
 
         fs::create_dir_all(from.join(DEFAULT_USER_DIR_NAME).join("chats"))
             .expect("create source chats");
@@ -838,10 +814,10 @@ mod tests {
 
     #[tokio::test]
     async fn request_runtime_data_root_change_writes_pending_config() {
-        let temp = TempDirGuard::new("request-change");
-        let app_root = temp.root.join("app");
-        let current = temp.root.join("current");
-        let target = temp.root.join("target");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let app_root = temp.path().join("app");
+        let current = temp.path().join("current");
+        let target = temp.path().join("target");
         fs::create_dir_all(&app_root).expect("create app root");
         fs::create_dir_all(&current).expect("create current root");
         fs::create_dir_all(&target).expect("create target root");
@@ -866,9 +842,9 @@ mod tests {
 
     #[tokio::test]
     async fn request_runtime_data_root_change_rejects_current_child() {
-        let temp = TempDirGuard::new("request-change-child");
-        let app_root = temp.root.join("app");
-        let current = temp.root.join("current");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let app_root = temp.path().join("app");
+        let current = temp.path().join("current");
         let target = current.join("child");
         fs::create_dir_all(&app_root).expect("create app root");
         fs::create_dir_all(&target).expect("create target root");
@@ -891,8 +867,8 @@ mod tests {
 
     #[test]
     fn apply_runtime_config_finalizes_missing_source_when_target_is_initialized() {
-        let temp = TempDirGuard::new("missing-source-finalize");
-        let target = temp.root.join("migrated-data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("migrated-data");
         fs::create_dir_all(target.join(DEFAULT_USER_DIR_NAME)).expect("create initialized target");
         fs::write(target.join(DEFAULT_USER_DIR_NAME).join("marker.txt"), "ok")
             .expect("write target marker");
@@ -901,19 +877,19 @@ mod tests {
             version: TAURITAVERN_RUNTIME_CONFIG_VERSION,
             data_root: target.clone(),
             migration: Some(DataRootMigration {
-                from: temp.root.join("missing-source"),
+                from: temp.path().join("missing-source"),
             }),
             migration_error: None,
         };
-        write_runtime_config_sync(&runtime_config_path(&temp.root), &config)
+        write_runtime_config_sync(&runtime_config_path(temp.path()), &config)
             .expect("write runtime config");
 
-        let resolved = apply_runtime_config(runtime_paths_with_app_root(&temp.root))
+        let resolved = apply_runtime_config(runtime_paths_with_app_root(temp.path()))
             .expect("apply runtime config");
 
         assert_eq!(resolved.data_root, target);
 
-        let persisted = load_runtime_config(&temp.root)
+        let persisted = load_runtime_config(temp.path())
             .expect("load runtime config")
             .expect("runtime config should exist");
         assert!(
@@ -928,22 +904,22 @@ mod tests {
 
     #[test]
     fn apply_runtime_config_fails_when_missing_source_target_is_not_initialized() {
-        let temp = TempDirGuard::new("missing-source-invalid-target");
-        let target = temp.root.join("empty-target");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("empty-target");
         fs::create_dir_all(&target).expect("create empty target");
 
         let config = TauriTavernRuntimeConfig {
             version: TAURITAVERN_RUNTIME_CONFIG_VERSION,
             data_root: target.clone(),
             migration: Some(DataRootMigration {
-                from: temp.root.join("missing-source"),
+                from: temp.path().join("missing-source"),
             }),
             migration_error: None,
         };
-        write_runtime_config_sync(&runtime_config_path(&temp.root), &config)
+        write_runtime_config_sync(&runtime_config_path(temp.path()), &config)
             .expect("write runtime config");
 
-        let error = apply_runtime_config(runtime_paths_with_app_root(&temp.root))
+        let error = apply_runtime_config(runtime_paths_with_app_root(temp.path()))
             .expect_err("expected missing-source invalid-target branch to fail");
         let error_text = error.to_string();
         assert!(
@@ -951,7 +927,7 @@ mod tests {
             "unexpected error text: {error_text}"
         );
 
-        let persisted = load_runtime_config(&temp.root)
+        let persisted = load_runtime_config(temp.path())
             .expect("load runtime config")
             .expect("runtime config should exist");
         assert!(
@@ -969,9 +945,9 @@ mod tests {
 
     #[test]
     fn apply_runtime_config_recovers_to_existing_source_on_migration_failure() {
-        let temp = TempDirGuard::new("migration-recovery");
-        let source = temp.root.join("data");
-        let target = temp.root.join("occupied-target");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source = temp.path().join("data");
+        let target = temp.path().join("occupied-target");
 
         fs::create_dir_all(source.join(DEFAULT_USER_DIR_NAME)).expect("create source root");
         fs::write(
@@ -990,10 +966,10 @@ mod tests {
             }),
             migration_error: None,
         };
-        write_runtime_config_sync(&runtime_config_path(&temp.root), &config)
+        write_runtime_config_sync(&runtime_config_path(temp.path()), &config)
             .expect("write runtime config");
 
-        let resolved = apply_runtime_config(runtime_paths_with_app_root(&temp.root))
+        let resolved = apply_runtime_config(runtime_paths_with_app_root(temp.path()))
             .expect("apply runtime config");
 
         assert_eq!(
@@ -1001,7 +977,7 @@ mod tests {
             "expected runtime to keep using the existing source root after migration failure"
         );
 
-        let persisted = load_runtime_config(&temp.root)
+        let persisted = load_runtime_config(temp.path())
             .expect("load runtime config")
             .expect("runtime config should exist");
         assert!(
@@ -1019,9 +995,9 @@ mod tests {
 
     #[test]
     fn copy_dir_recursive_preserves_symlinks() {
-        let temp = TempDirGuard::new("symlink-copy");
-        let from = temp.root.join("from");
-        let to = temp.root.join("to");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let from = temp.path().join("from");
+        let to = temp.path().join("to");
 
         fs::create_dir_all(&from).expect("create source dir");
         fs::write(from.join("real.txt"), "payload").expect("write source file");

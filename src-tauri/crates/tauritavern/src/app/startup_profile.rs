@@ -74,46 +74,15 @@ fn factory_ios_profile() -> Option<IosPolicyProfile> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-startup-profile-test-{}-{}",
-                std::process::id(),
-                NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&path).expect("failed to create temp dir");
-
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn load_creates_default_tauritavern_settings_file() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
 
-        let profile = StartupProfile::load(dir.path()).expect("load startup profile");
+        let profile = StartupProfile::load(temp.path()).expect("load startup profile");
 
         assert!(
-            dir.path()
+            temp.path()
                 .join("default-user/tauritavern-settings.json")
                 .is_file()
         );
@@ -125,8 +94,8 @@ mod tests {
 
     #[test]
     fn load_rejects_invalid_chat_backup_limits() {
-        let dir = TestDir::new();
-        let default_user = dir.path().join("default-user");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let default_user = temp.path().join("default-user");
         fs::create_dir_all(&default_user).expect("create default user dir");
         fs::write(
             default_user.join("tauritavern-settings.json"),
@@ -143,7 +112,7 @@ mod tests {
         .expect("write settings");
 
         assert!(matches!(
-            StartupProfile::load(dir.path()),
+            StartupProfile::load(temp.path()),
             Err(DomainError::InvalidData(message)) if message.contains("max_total_bytes")
         ));
     }
@@ -151,8 +120,8 @@ mod tests {
     #[cfg(not(target_os = "ios"))]
     #[test]
     fn load_ignores_invalid_ios_policy_off_ios() {
-        let dir = TestDir::new();
-        let default_user = dir.path().join("default-user");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let default_user = temp.path().join("default-user");
         fs::create_dir_all(&default_user).expect("create default user dir");
         fs::write(
             default_user.join("tauritavern-settings.json"),
@@ -160,7 +129,7 @@ mod tests {
         )
         .expect("write settings");
 
-        let profile = StartupProfile::load(dir.path()).expect("load startup profile");
+        let profile = StartupProfile::load(temp.path()).expect("load startup profile");
 
         assert_eq!(profile.ios_policy.scope, IosPolicyScope::Ignored);
     }

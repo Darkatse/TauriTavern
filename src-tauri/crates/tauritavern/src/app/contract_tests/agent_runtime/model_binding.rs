@@ -5,7 +5,8 @@ use tt_ports::repositories::settings_repository::SettingsRepository;
 
 #[tokio::test]
 async fn agent_model_binding_uses_the_named_proxy_without_copying_credentials() {
-    let root = temp_root("agent-proxy-binding");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let settings = Arc::new(FileSettingsRepository::new(
         root.join("default-user"),
         UserSettings::default(),
@@ -77,5 +78,4 @@ async fn agent_model_binding_uses_the_named_proxy_without_copying_credentials() 
             .to_string()
             .contains("llm_connection.proxy_preset_missing")
     );
-    let _ = fs::remove_dir_all(root).await;
 }

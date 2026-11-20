@@ -1,8 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
 use chrono::DateTime;
-use rand::random;
 use serde_json::{Value, json};
 use tokio::fs;
 
@@ -24,32 +23,15 @@ use super::backup_codec::set_backup_modified;
 
 mod format_contract;
 
-fn unique_temp_root() -> PathBuf {
-    std::env::temp_dir().join(format!("tauritavern-chat-repo-{}", random::<u64>()))
-}
-
-async fn setup_repository() -> (FileChatRepository, PathBuf) {
-    let root = unique_temp_root();
-    let repository = repository_for_root(&root);
+async fn setup_repository(root: &Path) -> FileChatRepository {
+    let repository = repository_for_root(root);
 
     repository
         .ensure_directory_exists()
         .await
         .expect("create chat directories");
 
-    (repository, root)
-}
-
-async fn cleanup_repository(repository: FileChatRepository, root: PathBuf) {
-    // All mutations have finished. Flush waits for active index I/O; queued flushes
-    // then see a clean cache and cannot write after the directory is removed.
-    FileChatRepository::flush_backup_summary_cache(&repository.backup_summary_cache)
-        .await
-        .expect("finish backup index writes");
-    drop(repository);
-    fs::remove_dir_all(root)
-        .await
-        .expect("remove chat repository fixture");
+    repository
 }
 
 fn repository_for_root(root: &Path) -> FileChatRepository {
@@ -140,7 +122,8 @@ fn character_target(character_id: &str, file_name: &str) -> ChatCommitTarget {
 
 #[tokio::test]
 async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let session = repository
         .begin(
             character_target("alice", "session"),
@@ -189,13 +172,12 @@ async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
         repository.append(&session.session_id, 2, b"{}").await,
         Err(DomainError::NotFound(_))
     ));
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "multi-frame");
     let original = b"{}\n{\"mes\":\"old\"}";
     commit_payload_bytes(&repository, target.clone(), original, false)
@@ -239,12 +221,12 @@ async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
             .unwrap(),
         payload
     );
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let header = json!({
         "user_name": "Original user", "character_name": "Original character",
         "create_date": "legacy date", "unknown": { "keep": [1, true] },
@@ -288,12 +270,12 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
         );
         assert_eq!(&updated[split + 1..], expected_body);
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("Alice", "metadata");
     let path = repository
         .resolve_chat_commit_target(&target)
@@ -381,12 +363,13 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
             .is_none(),
         "metadata commits must clean both received and rewritten stages"
     );
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semantics() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let target = character_target("Alice", "metadata");
     let original = payload_to_jsonl(&payload_with_integrity(
         "92698fe9-2d05-54b0-9734-a55213d002d5",
@@ -458,7 +441,7 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         .await
         .unwrap();
     drop(repository);
-    let repository = repository_for_root(&root);
+    let repository = repository_for_root(root);
     let after = repository
         .list_chat_summaries(Some("Alice"), true)
         .await
@@ -467,13 +450,13 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         serde_json::to_value(after).unwrap(),
         serde_json::to_value(before).unwrap()
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let target = character_target("Alice", "metadata");
     let mut payload = payload_with_integrity("92698fe9-2d05-54b0-9734-a55213d002d5");
@@ -486,7 +469,7 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
         .backup_chat_automatic("Alice", "metadata")
         .await
         .unwrap();
-    let before = backup_file_names(&root).await;
+    let before = backup_file_names(root).await;
 
     payload[0]["chat_metadata"]["variables"]["score"] = json!("2");
     commit_metadata(&repository, target, payload[0]["chat_metadata"].clone())
@@ -501,19 +484,20 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
         .backup_chat_automatic("Alice", "metadata")
         .await
         .unwrap();
-    let after = backup_file_names(&root).await;
+    let after = backup_file_names(root).await;
     assert_eq!(after.len(), before.len() + 1);
     let added = after.iter().find(|file| !before.contains(file)).unwrap();
     assert_eq!(
         read_backup_payload(&repository, added, 1024).await.unwrap(),
         updated
     );
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn cache_clear_during_commit_keeps_automatic_backups_conservative() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let payload = b"{}";
     let session = repository
@@ -544,13 +528,13 @@ async fn cache_clear_during_commit_keeps_automatic_backups_conservative() {
             .await
             .unwrap();
     }
-    assert_eq!(backup_file_names(&root).await.len(), 2);
-    cleanup_repository(repository, root).await;
+    assert_eq!(backup_file_names(root).await.len(), 2);
 }
 
 #[tokio::test]
 async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let old_payload = payload_to_jsonl(&payload_with_message(
         "d6ddecec-7267-5279-a976-56f8762960a0",
         "2026-01-01T00:00:00.000Z",
@@ -615,13 +599,12 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
             .expect("read staging entry")
             .is_none()
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn same_target_sessions_are_complete_and_last_finish_wins() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let payload_a = b"{}\n{\"mes\":\"a\"}";
     let payload_b = b"{}\n{\"mes\":\"b\"}";
     let target = character_target("alice", "session");
@@ -676,12 +659,13 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
             .unwrap(),
         last
     );
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn startup_cleanup_removes_only_chat_commit_staging() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let unrelated = root.join(".staging").join("other-state");
     fs::create_dir_all(repository.chat_commit_sessions.directory())
         .await
@@ -706,7 +690,6 @@ async fn startup_cleanup_removes_only_chat_commit_staging() {
 
     assert!(!repository.chat_commit_sessions.directory().exists());
     assert!(unrelated.join("keep").exists());
-    cleanup_repository(repository, root).await;
 }
 
 fn backup_policy(
@@ -800,7 +783,9 @@ fn timestamp_millis(value: &str) -> i64 {
 
 #[tokio::test]
 async fn zstd_setting_converts_all_backups_in_both_directions() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let source = root.join("source.jsonl");
     let payload = payload_to_jsonl(&payload_with_integrity(
         "945cfdae-6502-5126-a0ef-783d446b8b44",
@@ -812,7 +797,7 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
         .backup_chat_file_explicit(&source, "Alice")
         .await
         .expect("create raw backup");
-    let raw_name = backup_file_names(&root).await.pop().expect("raw backup");
+    let raw_name = backup_file_names(root).await.pop().expect("raw backup");
     let logical_name = raw_name.clone();
     // Exercise count backfill from conversion rather than signature-only preservation.
     repository.remove_backup_summary(&logical_name).await;
@@ -825,7 +810,7 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
     let mut compressed_policy = backup_policy(-1, -1, -1);
     compressed_policy.zstd_compression_enabled = true;
     apply_and_reconcile_backups(&repository, compressed_policy).await;
-    let compressed_name = backup_file_names(&root)
+    let compressed_name = backup_file_names(root)
         .await
         .pop()
         .expect("converted zstd backup");
@@ -853,7 +838,7 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
     assert_eq!(downloaded, payload.as_bytes());
 
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    assert_eq!(backup_file_names(&root).await, vec![logical_name.clone()]);
+    assert_eq!(backup_file_names(root).await, vec![logical_name.clone()]);
     let restored_path = root.join("backups").join(&logical_name);
     assert_eq!(
         fs::read(&restored_path)
@@ -886,14 +871,14 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
         .map(|entry| entry.logical_file_name)
         .collect();
     assert_eq!(logical_names, vec![logical_name]);
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
     for compression in [false, true] {
-        let (repository, root) = setup_repository().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let repository = setup_repository(root).await;
         let mut policy = backup_policy(-1, -1, -1);
         policy.zstd_compression_enabled = compression;
         apply_and_reconcile_backups(&repository, policy).await;
@@ -916,7 +901,7 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             .await
             .expect("flush before reopening repository");
         drop(repository);
-        let repository = repository_for_root(&root);
+        let repository = repository_for_root(root);
         apply_and_reconcile_backups(&repository, policy).await;
 
         let descriptor = repository
@@ -946,12 +931,12 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             format!("...{}", "重复内容".repeat(100))
         );
 
-        let files_before = backup_file_names(&root).await;
+        let files_before = backup_file_names(root).await;
         let downloaded = read_backup_payload(&repository, &descriptor.logical_file_name, 4096)
             .await
             .expect("stream backup");
         assert_eq!(downloaded, payload.as_bytes());
-        assert_eq!(backup_file_names(&root).await, files_before);
+        assert_eq!(backup_file_names(root).await, files_before);
         assert!(!repository.chat_commit_sessions.directory().exists());
 
         let restored_character = repository
@@ -997,13 +982,14 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
                 .expect("read chat staging entry")
                 .is_none()
         );
-        cleanup_repository(repository, root).await;
     }
 }
 
 #[tokio::test]
 async fn zstd_quota_uses_actual_compressed_bytes() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let payload = format!(
         "{{\"chat_metadata\":{{}},\"user_name\":\"User\"}}\n{{\"mes\":\"{}\"}}",
         "x".repeat(256 * 1024)
@@ -1021,7 +1007,7 @@ async fn zstd_quota_uses_actual_compressed_bytes() {
         .await
         .expect("compressed candidate should fit physical quota");
 
-    let name = backup_file_names(&root)
+    let name = backup_file_names(root)
         .await
         .pop()
         .expect("compressed backup");
@@ -1033,13 +1019,13 @@ async fn zstd_quota_uses_actual_compressed_bytes() {
             .len()
             <= 4096
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let small_payload = payload_to_jsonl(&payload_with_integrity(
         "938c7216-88af-52ae-a02f-8dea9d7f3fba",
     ));
@@ -1056,7 +1042,7 @@ async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
         .backup_chat_file_explicit(&small_source, "Alice")
         .await
         .expect("create retained backup");
-    let retained_names = backup_file_names(&root).await;
+    let retained_names = backup_file_names(root).await;
 
     let large_source = root.join("large.jsonl");
     fs::write(&large_source, "x".repeat(small_payload.len() + 1024))
@@ -1068,7 +1054,7 @@ async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
             .await,
         Err(DomainError::Conflict(_))
     ));
-    assert_eq!(backup_file_names(&root).await, retained_names);
+    assert_eq!(backup_file_names(root).await, retained_names);
 
     let mut entries = fs::read_dir(root.join("backups"))
         .await
@@ -1081,13 +1067,13 @@ async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
                 .starts_with(".tmp-chat-backup-")
         );
     }
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let mut policy = backup_policy(-1, -1, -1);
     policy.zstd_compression_enabled = true;
     apply_and_reconcile_backups(&repository, policy).await;
@@ -1233,16 +1219,16 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         .await
         .expect("finish convergence after removing corrupt backup");
     assert_eq!(
-        backup_file_names(&root).await,
+        backup_file_names(root).await,
         vec![healthy.logical_file_name]
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let logical_name = "chat_alice_20260101-000000.jsonl";
     let raw_path = root.join("backups").join(logical_name);
     let compressed_path = root.join("backups").join(format!("{logical_name}.zst"));
@@ -1292,13 +1278,13 @@ async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
             .expect("read recovered zstd mtime"),
         raw_modified
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn inventory_enforces_prefix_and_global_file_limits() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let mut policy = backup_policy(2, 3, -1);
     policy.zstd_compression_enabled = true;
     apply_and_reconcile_backups(&repository, policy).await;
@@ -1326,7 +1312,7 @@ async fn inventory_enforces_prefix_and_global_file_limits() {
         }
     }
 
-    let names = backup_file_names(&root).await;
+    let names = backup_file_names(root).await;
     assert_eq!(names.len(), 3);
     assert!(names.iter().all(|name| name.len() <= 255));
     for (_, prefix, _) in keys {
@@ -1336,13 +1322,13 @@ async fn inventory_enforces_prefix_and_global_file_limits() {
             "retained {retained} backups for {prefix}"
         );
     }
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     for index in 0..4 {
         fs::write(
             root.join("backups")
@@ -1356,17 +1342,17 @@ async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
     }
 
     apply_and_reconcile_backups(&repository, backup_policy(2, 3, -1)).await;
-    assert_eq!(backup_file_names(&root).await.len(), 2);
+    assert_eq!(backup_file_names(root).await.len(), 2);
 
     apply_and_reconcile_backups(&repository, backup_policy(0, -1, -1)).await;
-    assert!(backup_file_names(&root).await.is_empty());
-
-    cleanup_repository(repository, root).await;
+    assert!(backup_file_names(root).await.is_empty());
 }
 
 #[tokio::test]
 async fn automatic_quota_rejection_does_not_fail_current_save() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, 1)).await;
     let payload = payload_to_jsonl(&payload_with_integrity(
         "39b864b4-8182-5c5c-83eb-2cc4c27d44d1",
@@ -1380,13 +1366,13 @@ async fn automatic_quota_rejection_does_not_fail_current_save() {
     )
     .await
     .expect("current save must succeed");
-    assert!(backup_file_names(&root).await.is_empty());
+    assert!(backup_file_names(root).await.is_empty());
 
     repository
         .backup_chat_automatic("Alice", "session")
         .await
         .expect("automatic quota rejection is an expected skip");
-    assert!(backup_file_names(&root).await.is_empty());
+    assert!(backup_file_names(root).await.is_empty());
 
     let error = repository
         .backup_chat("Alice", "session")
@@ -1400,13 +1386,13 @@ async fn automatic_quota_rejection_does_not_fail_current_save() {
             .expect("read committed current payload"),
         payload.as_bytes()
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn automatic_deduplication_preserves_prefix_and_latest_state() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let payload_a = payload_to_jsonl(&payload_with_message(
         "0f62c7c2-a8a9-56a3-ac00-90277833bf63",
@@ -1434,12 +1420,12 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
         .backup_chat_automatic("Alice", "session-one")
         .await
         .expect("create first automatic snapshot");
-    let first_names = backup_file_names(&root).await;
+    let first_names = backup_file_names(root).await;
     repository
         .backup_chat_automatic("Alice", "session-one")
         .await
         .expect("skip unchanged automatic snapshot");
-    assert_eq!(backup_file_names(&root).await, first_names);
+    assert_eq!(backup_file_names(root).await, first_names);
 
     commit_payload_bytes(
         &repository,
@@ -1453,7 +1439,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
         .backup_chat_automatic("Alice", "session-two")
         .await
         .expect("same bytes under the latest prefix remain redundant");
-    assert_eq!(backup_file_names(&root).await.len(), 1);
+    assert_eq!(backup_file_names(root).await.len(), 1);
 
     commit_payload_bytes(
         &repository,
@@ -1479,7 +1465,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
         .backup_chat_automatic("Alice", "session-one")
         .await
         .expect("A-B-A creates the third timeline state");
-    assert_eq!(backup_file_names(&root).await.len(), 3);
+    assert_eq!(backup_file_names(root).await.len(), 3);
 
     let current_path = repository
         .resolve_character_chat_path("Alice", "session-one")
@@ -1492,14 +1478,14 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
         .backup_chat_file_automatic(&current_path, "Bob")
         .await
         .expect("same source under a new prefix gets a snapshot");
-    assert_eq!(backup_file_names(&root).await.len(), 4);
-
-    cleanup_repository(repository, root).await;
+    assert_eq!(backup_file_names(root).await.len(), 4);
 }
 
 #[tokio::test]
 async fn cache_clear_reenables_group_backup_after_deduplication() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     commit_payload_bytes(
         &repository,
@@ -1517,7 +1503,7 @@ async fn cache_clear_reenables_group_backup_after_deduplication() {
             .await
             .unwrap();
     }
-    assert_eq!(backup_file_names(&root).await.len(), 1);
+    assert_eq!(backup_file_names(root).await.len(), 1);
 
     <FileChatRepository as ChatRepository>::clear_cache(&repository)
         .await
@@ -1526,13 +1512,14 @@ async fn cache_clear_reenables_group_backup_after_deduplication() {
         .backup_group_chat_automatic("group-session")
         .await
         .unwrap();
-    assert_eq!(backup_file_names(&root).await.len(), 2);
-    cleanup_repository(repository, root).await;
+    assert_eq!(backup_file_names(root).await.len(), 2);
 }
 
 #[tokio::test]
 async fn explicit_access_retries_a_failed_inventory_build() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let backups = root.join("backups");
     fs::remove_dir(&backups).await.unwrap();
     fs::write(&backups, b"blocks directory access")
@@ -1549,12 +1536,13 @@ async fn explicit_access_retries_a_failed_inventory_build() {
         repository.list_chat_backup_catalog().await.unwrap().len(),
         1
     );
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_commit_sanitizes_paths_and_preserves_unicode_spacing() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     for (character, name, read_name, expected) in [
         (
             "ali:ce",
@@ -1587,13 +1575,13 @@ async fn chat_commit_sanitizes_paths_and_preserves_unicode_spacing() {
             b"{}"
         );
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn shared_legacy_aliases_survive_concurrent_discovery_and_restart() {
-    let root = unique_temp_root();
-    let chat_aliases = new_shared_chat_alias_store_for_user_dir(&root);
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let chat_aliases = new_shared_chat_alias_store_for_user_dir(root);
     let repository_a = FileChatRepository::with_chat_aliases(
         root.join("characters"),
         root.join("chats"),
@@ -1658,7 +1646,7 @@ async fn shared_legacy_aliases_survive_concurrent_discovery_and_restart() {
     );
 
     // Saved aliases must still win after restart, even if canonical directories now exist.
-    let reopened = repository_for_root(&root);
+    let reopened = repository_for_root(root);
     for (character, expected) in [("Alice#1", loaded_a), ("Bob#1", loaded_b)] {
         fs::create_dir(root.join("chats").join(character))
             .await
@@ -1671,15 +1659,13 @@ async fn shared_legacy_aliases_survive_concurrent_discovery_and_restart() {
             expected
         );
     }
-
-    drop(repository_a);
-    drop(repository_b);
-    cleanup_repository(reopened, root).await;
 }
 
 #[tokio::test]
 async fn chat_commit_rejects_empty_names_and_truncated_jsonl_suffixes() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     for name in ["*.jsonl".to_string(), "a".repeat(250)] {
         assert!(matches!(
             repository
@@ -1695,12 +1681,13 @@ async fn chat_commit_rejects_empty_names_and_truncated_jsonl_suffixes() {
         ));
     }
     assert!(!root.join("chats/alice").exists());
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let original = br#"{"chat_metadata":{"integrity":" identity "}}"#;
     for (target, path) in [
         (
@@ -1732,12 +1719,12 @@ async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
             assert_eq!(fs::read(&path).await.unwrap(), incoming);
         }
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn save_and_load_chat_preserves_additional_fields() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
 
     let payload = vec![
         json!({
@@ -1798,13 +1785,12 @@ async fn save_and_load_chat_preserves_additional_fields() {
             .and_then(Value::as_str),
         Some("kept")
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn group_chat_payload_roundtrip_and_delete() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let payload = payload_with_integrity("241855c8-7d0f-5c84-9b6c-949b417f0743");
 
     commit_payload_bytes(
@@ -1832,13 +1818,13 @@ async fn group_chat_payload_roundtrip_and_delete() {
         .expect("delete group chat payload");
 
     assert!(!payload_path.exists());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn import_chat_payload_creates_unique_files() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
 
     let import_path = root.join("import.jsonl");
     let import_content = payload_to_jsonl(&payload_with_integrity(
@@ -1862,13 +1848,13 @@ async fn import_chat_payload_creates_unique_files() {
     assert_ne!(first[0], second[0]);
     assert!(root.join("chats").join("alice").join(&first[0]).exists());
     assert!(root.join("chats").join("alice").join(&second[0]).exists());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn import_chat_payload_preserves_unchanged_jsonl_bytes() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
 
     let import_path = root.join("raw-import.jsonl");
     let import_content = concat!(
@@ -1890,13 +1876,13 @@ async fn import_chat_payload_preserves_unchanged_jsonl_bytes() {
         .await
         .expect("read imported raw JSONL");
     assert_eq!(saved, import_content.as_bytes());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
 
     let import_path = root.join("chub-import.jsonl");
     let import_content = [
@@ -1924,13 +1910,13 @@ async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() 
     assert_eq!(saved[1].pointer("/swipes/1"), Some(&json!({"message": ""})));
     assert!(saved[1].get("name").is_none());
     assert!(saved[1].get("extra").is_none());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn rename_chat_preserves_bytes_and_rejects_invalid_or_occupied_targets() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let original = b"{\"custom_header\":{\"keep\":true}}\n{\"mes\":\"hello\"}";
     let occupied = b"{}\n{\"mes\":\"occupied\"}";
     commit_payload_bytes(
@@ -1989,12 +1975,12 @@ async fn rename_chat_preserves_bytes_and_rejects_invalid_or_occupied_targets() {
         repository.get_chat_payload_bytes("alice", "session").await,
         Err(DomainError::NotFound(_))
     ));
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_directory_dates_survive_unavailable_previews_and_cache_reuse() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let older = payload_with_message(
         "eac4edce-753b-5b13-9579-0d1644e26a1c",
         "2026-01-01T00:00:00.000Z",
@@ -2051,13 +2037,13 @@ async fn chat_directory_dates_survive_unavailable_previews_and_cache_reuse() {
             .1,
         date_last_chat
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn damaged_directory_queries_refresh_after_repair() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let chat_dir = root.join("chats/alice");
     fs::create_dir_all(&chat_dir).await.unwrap();
     let path = chat_dir.join("damaged.jsonl");
@@ -2101,12 +2087,12 @@ async fn damaged_directory_queries_refresh_after_repair() {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].preview, "repaired message");
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn identity_lookup_distinguishes_shared_identity_from_legacy_absence() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     for name in ["first", "second"] {
         commit_payload_bytes(
             &repository,
@@ -2149,13 +2135,13 @@ async fn identity_lookup_distinguishes_shared_identity_from_legacy_absence() {
             .await
             .expect("find no remaining chat")
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     commit_payload_bytes(
         &repository,
         character_target("alice", "session"),
@@ -2187,13 +2173,13 @@ async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
         .await
         .expect("cache persistence must not reverse committed deletion");
     assert!(!root.join("chats/alice/session.jsonl").exists());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn aggregate_chat_queries_skip_an_invalid_sibling() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     commit_payload_bytes(
         &repository,
         character_target("alice", "valid"),
@@ -2245,13 +2231,12 @@ async fn aggregate_chat_queries_skip_an_invalid_sibling() {
         .expect("search valid chats");
     assert_eq!(search.len(), 1);
     assert_eq!(search[0].file_name, "valid.jsonl");
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn search_character_chat_messages_returns_scored_hits_and_respects_role_filter() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
 
     let payload = vec![
         json!({
@@ -2346,13 +2331,12 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
     assert_eq!(user_hits.len(), 1);
     assert_eq!(user_hits[0].index, 0);
     assert_eq!(user_hits[0].role, ChatMessageRole::User);
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn read_character_chat_messages_returns_selected_messages_and_total_count() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
 
     let payload = [
         json!({
@@ -2417,13 +2401,12 @@ async fn read_character_chat_messages_returns_selected_messages_and_total_count(
     assert_eq!(result.messages[0].text, "first message");
     assert_eq!(result.messages[1].index, 2);
     assert_eq!(result.messages[1].role, ChatMessageRole::System);
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn tool_role_roundtrips_and_is_distinct_from_system() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let payload = vec![
         json!({
             "chat_metadata": { "integrity": "fd0b8038-8ff6-54b9-95f7-e451f488b239" },
@@ -2572,13 +2555,12 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
         .await
         .expect("locate system message");
     assert!(system.is_none());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn search_group_chat_messages_respects_scan_limit() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
 
     let payload = vec![
         json!({
@@ -2657,13 +2639,13 @@ async fn search_group_chat_messages_respects_scan_limit() {
 
     assert_eq!(full.len(), 1);
     assert_eq!(full[0].index, 0);
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
     let characters_dir = root.join("characters");
     fs::create_dir_all(&characters_dir)
         .await
@@ -2697,13 +2679,13 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].file_name, "session-newer-date.jsonl");
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = setup_repository(root).await;
 
     commit_payload_bytes(
         &repository,
@@ -2828,13 +2810,12 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         Err(DomainError::InvalidData(_))
     ));
     assert!(!root.join("chats/alice/outside").exists());
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn group_chat_store_update_json_and_key_work() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
 
     repository
         .update_group_chat_store_json(
@@ -2856,13 +2837,12 @@ async fn group_chat_store_update_json_and_key_work() {
         .await
         .expect("read renamed group key");
     assert_eq!(value, json!({ "hello": "world" }));
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let mut payload =
         vec![payload_with_integrity("a7f82e6b-7dbd-51f7-8e4a-57966e2a3071")[0].clone()];
     for index in 0..4 {
@@ -2945,8 +2925,6 @@ async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
         .get_chat_payload_before_lines("alice", "session", stale_cursor, 1)
         .await;
     assert!(stale.is_err(), "stale paging cursor must be rejected");
-
-    cleanup_repository(repository, root).await;
 }
 
 fn payload_to_jsonl(payload: &[Value]) -> String {
@@ -3003,7 +2981,9 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
             chat_id: "cold".into(),
         },
     ] {
-        let (repository, root) = setup_repository().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let repository = setup_repository(root).await;
         let mut original = swipe_fixture();
         original[0]["tt_swipe_cold"] = json!({ "opaque_header_field": true });
         let input = format!(
@@ -3118,7 +3098,7 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
                 .backup_chat_automatic(character_id, file_name)
                 .await
                 .unwrap();
-            let backups = backup_file_names(&root).await;
+            let backups = backup_file_names(root).await;
             // A full commit of the restored bytes must remain the same backup state.
             commit_payload_bytes(&repository, target.clone(), &saved, false)
                 .await
@@ -3127,17 +3107,16 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
                 .backup_chat_automatic(character_id, file_name)
                 .await
                 .unwrap();
-            assert_eq!(backup_file_names(&root).await, backups);
+            assert_eq!(backup_file_names(root).await, backups);
         }
-
-        cleanup_repository(repository, root).await;
     }
 }
 
 #[tokio::test]
 async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages() {
     use tt_ports::repositories::chat_commit_repository::ColdSwipeCommitSource;
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = ChatCommitTarget::Group {
         chat_id: "reject-cold".into(),
     };
@@ -3203,12 +3182,12 @@ async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages(
         );
     }
     drop(source);
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = ChatCommitTarget::Group {
         chat_id: "boundaries".into(),
     };
@@ -3237,13 +3216,13 @@ async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail()
             drop(source);
         }
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn cold_swipes_project_and_restore_all_message_roles() {
     use tt_ports::repositories::chat_commit_repository::ColdSwipeCommitSource;
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = ChatCommitTarget::Group {
         chat_id: "ordered-cold".into(),
     };
@@ -3299,5 +3278,4 @@ async fn cold_swipes_project_and_restore_all_message_roles() {
         crate::chat_jsonl::read_payload(&path).await.unwrap(),
         expected
     );
-    cleanup_repository(repository, root).await;
 }

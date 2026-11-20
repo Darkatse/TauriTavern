@@ -28,3 +28,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 http = "1"
+tempfile = { workspace = true }

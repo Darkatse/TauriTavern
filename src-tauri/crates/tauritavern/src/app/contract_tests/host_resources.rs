@@ -10,7 +10,6 @@ use tauri::http::{Method, Request, StatusCode};
 use tokio::fs;
 use tt_adapter_media::FilesystemHostResourceStore;
 
-use super::temp_root;
 use tt_application::services::host_resource_service::{
     HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody,
     HostResourceService,
@@ -27,7 +26,8 @@ fn body_bytes(response: &HostResourceResponse) -> &[u8] {
 
 #[tokio::test]
 async fn filesystem_host_resources_serve_background_video_range() {
-    let root = temp_root("host-resource-range");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.mp4");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -38,7 +38,7 @@ async fn filesystem_host_resources_serve_background_video_range() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
 
     let request = Request::builder()
@@ -76,7 +76,8 @@ async fn filesystem_host_resources_serve_background_video_range() {
 
 #[tokio::test]
 async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
-    let root = temp_root("host-resource-thumbnail");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.gif");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -87,7 +88,7 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -106,7 +107,8 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
 
 #[tokio::test]
 async fn filesystem_host_resources_generate_required_static_animated_preview() {
-    let root = temp_root("host-resource-static-animated-thumbnail");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.gif");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -120,7 +122,7 @@ async fn filesystem_host_resources_generate_required_static_animated_preview() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -141,7 +143,8 @@ async fn filesystem_host_resources_generate_required_static_animated_preview() {
 
 #[tokio::test]
 async fn generated_thumbnail_revalidation_tracks_source_replacement() {
-    let root = temp_root("host-resource-generated-thumbnail-revalidation");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.png");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -155,7 +158,7 @@ async fn generated_thumbnail_revalidation_tracks_source_replacement() {
         .expect("source mtime");
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -190,7 +193,8 @@ async fn generated_thumbnail_revalidation_tracks_source_replacement() {
 
 #[tokio::test]
 async fn filesystem_host_resources_revalidate_without_reading_stale_content() {
-    let root = temp_root("host-resource-revalidation");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.png");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -200,7 +204,7 @@ async fn filesystem_host_resources_revalidate_without_reading_stale_content() {
         .expect("write background");
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)

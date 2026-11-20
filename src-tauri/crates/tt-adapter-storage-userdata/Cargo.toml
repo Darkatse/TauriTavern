@@ -28,4 +28,4 @@ tt-ports = { path = "../tt-ports" }
 [dev-dependencies]
 flate2 = "1.1.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
-rand = { workspace = true }
+tempfile = { workspace = true }

@@ -215,44 +215,7 @@ mod tests {
         PresetFilePaths, canonical_preset_file_stem, legacy_preset_file_stem,
         load_named_preset_files,
     };
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tt_domain::errors::DomainError;
-
-    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
-            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-preset-file-naming-test-{}-{}-{}",
-                std::process::id(),
-                suffix,
-                counter
-            ));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn canonical_stem_matches_upstream_unicode_behavior() {
@@ -294,8 +257,8 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_for_save_migrates_deprecated_legacy_path() {
-        let dir = TestDir::new();
-        let paths = PresetFilePaths::new("【明月青秋】", dir.path(), ".json").expect("paths");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let paths = PresetFilePaths::new("【明月青秋】", temp.path(), ".json").expect("paths");
         #[allow(deprecated)]
         let legacy = paths.legacy_path().to_path_buf();
         tokio::fs::write(&legacy, r#"{"name":"【明月青秋】"}"#)
@@ -311,8 +274,8 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_for_save_rejects_conflicting_canonical_and_deprecated_legacy_paths() {
-        let dir = TestDir::new();
-        let paths = PresetFilePaths::new("【明月青秋】", dir.path(), ".json").expect("paths");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let paths = PresetFilePaths::new("【明月青秋】", temp.path(), ".json").expect("paths");
         #[allow(deprecated)]
         let legacy = paths.legacy_path().to_path_buf();
         tokio::fs::write(paths.canonical_path(), r#"{"name":"【明月青秋】"}"#)
@@ -332,45 +295,45 @@ mod tests {
 
     #[tokio::test]
     async fn load_named_preset_files_prefers_canonical_over_deprecated_legacy() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         tokio::fs::write(
-            dir.path().join("_明月青秋_.json"),
+            temp.path().join("_明月青秋_.json"),
             r#"{"name":"【明月青秋】","temperature":0.1}"#,
         )
         .await
         .expect("write legacy preset");
         tokio::fs::write(
-            dir.path().join("【明月青秋】.json"),
+            temp.path().join("【明月青秋】.json"),
             r#"{"name":"【明月青秋】","temperature":0.9}"#,
         )
         .await
         .expect("write canonical preset");
 
-        let entries = load_named_preset_files(dir.path())
+        let entries = load_named_preset_files(temp.path())
             .await
             .expect("load preset files");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "【明月青秋】");
         assert!(entries[0].is_canonical);
-        assert_eq!(entries[0].path, dir.path().join("【明月青秋】.json"));
+        assert_eq!(entries[0].path, temp.path().join("【明月青秋】.json"));
     }
 
     #[tokio::test]
     async fn load_named_preset_files_skips_files_that_cannot_be_presets() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         for (file, content) in [
             ("Broken.json", "{"),
             ("First.json", r#"{"name":"Shared"}"#),
             ("Second.json", r#"{"name":"Shared"}"#),
             ("Valid.json", r#"{"temperature":0.5}"#),
         ] {
-            tokio::fs::write(dir.path().join(file), content)
+            tokio::fs::write(temp.path().join(file), content)
                 .await
                 .expect("write preset");
         }
 
-        let entries = load_named_preset_files(dir.path())
+        let entries = load_named_preset_files(temp.path())
             .await
             .expect("load preset files");
 
@@ -380,23 +343,23 @@ mod tests {
                 .map(|entry| (entry.name.as_str(), entry.path.clone()))
                 .collect::<Vec<_>>(),
             vec![
-                ("Shared", dir.path().join("First.json")),
-                ("Valid", dir.path().join("Valid.json")),
+                ("Shared", temp.path().join("First.json")),
+                ("Valid", temp.path().join("Valid.json")),
             ]
         );
     }
 
     #[tokio::test]
     async fn load_named_preset_files_falls_back_to_file_stem_without_embedded_name() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         tokio::fs::write(
-            dir.path().join("Plain Preset.json"),
+            temp.path().join("Plain Preset.json"),
             r#"{"temperature":0.5}"#,
         )
         .await
         .expect("write preset");
 
-        let entries = load_named_preset_files(dir.path())
+        let entries = load_named_preset_files(temp.path())
             .await
             .expect("load preset files");
 

@@ -129,38 +129,30 @@ fn default_scheduled_sync_rule() -> ScheduledSyncRule {
 mod tests {
     use super::SyncAutomationStore;
 
-    fn temp_default_user_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-sync-automation-store-{}",
-            uuid::Uuid::new_v4()
-        ))
-    }
-
     #[tokio::test]
     async fn load_or_create_rule_writes_default_local_config() {
-        let default_user_dir = temp_default_user_dir();
-        let store = SyncAutomationStore::new(default_user_dir.clone());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = SyncAutomationStore::new(temp.path().to_path_buf());
 
         let loaded = store.load_or_create_rule().await.expect("create rule");
 
         assert!(!loaded.rule.enabled);
         assert_eq!(loaded.rule.interval_minutes, 30);
         assert!(
-            default_user_dir
+            temp.path()
                 .join("user")
                 .join("lan-sync")
                 .join("automation.json")
                 .is_file()
         );
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn old_camel_case_config_reports_canonical_rewrite() {
-        let default_user_dir = temp_default_user_dir();
-        let store = SyncAutomationStore::new(default_user_dir.clone());
-        let path = default_user_dir
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = SyncAutomationStore::new(temp.path().to_path_buf());
+        let path = temp
+            .path()
             .join("user")
             .join("lan-sync")
             .join("automation.json");
@@ -179,15 +171,14 @@ mod tests {
         assert_eq!(loaded.legacy_lan_server_auto_start, Some(true));
         assert_eq!(loaded.rule.interval_minutes, 15);
         assert!(loaded.rewrite_canonical);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn old_config_without_selection_is_migrated() {
-        let default_user_dir = temp_default_user_dir();
-        let store = SyncAutomationStore::new(default_user_dir.clone());
-        let path = default_user_dir
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = SyncAutomationStore::new(temp.path().to_path_buf());
+        let path = temp
+            .path()
             .join("user")
             .join("lan-sync")
             .join("automation.json");
@@ -209,7 +200,5 @@ mod tests {
             ttsync_core::dataset::tauri_tavern_default_selection()
         );
         assert!(loaded.rewrite_canonical);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 }

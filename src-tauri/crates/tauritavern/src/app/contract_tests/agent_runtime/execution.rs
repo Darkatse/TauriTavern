@@ -3,8 +3,9 @@ use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFail
 
 #[tokio::test]
 async fn agent_runtime_background_run_finish_uses_run_presentation() {
-    let root = temp_root("agent-runtime");
-    let fixture = agent_runtime_fixture(&root);
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture(root);
     let registry = BuiltinAgentToolRegistry::all();
     let mut profile = fixture
         .profile_service
@@ -189,14 +190,13 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         vec!["run_contract:inv_root".to_string()],
     )
     .await;
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_streaming_keeps_the_existing_final_execution_path() {
-    let root = temp_root("agent-runtime-streaming");
-    let fixture = agent_runtime_fixture(&root);
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture(root);
     let registry = BuiltinAgentToolRegistry::all();
     let mut definition = fixture
         .profile_service
@@ -261,15 +261,14 @@ async fn agent_runtime_streaming_keeps_the_existing_final_execution_path() {
         .await
         .expect("read streamed run artifact");
     assert_eq!(artifact.text, "hello from real repo");
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
-    let root = temp_root("agent-missing-chat-recovery");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -348,15 +347,14 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
         .await
         .expect("load completed run");
     assert_eq!(saved.status, AgentRunStatus::Completed);
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_runs_from_a_snapshot_with_legacy_tool_history() {
-    let root = temp_root("agent-legacy-tool-history");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "call_write",
@@ -423,14 +421,14 @@ async fn agent_runtime_runs_from_a_snapshot_with_legacy_tool_history() {
             .status,
         AgentRunStatus::Completed
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_applies_prompt_tool_definitions_without_granting_execution() {
-    let root = temp_root("agent-prompt-tools");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call("call_state", "read_state", json!({ "target": "Alice" })),
@@ -532,16 +530,16 @@ async fn agent_runtime_applies_prompt_tool_definitions_without_granting_executio
         .await
         .unwrap();
     assert_eq!(artifact.text, "Alice is well.");
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_arguments() {
-    let root = temp_root("agent-tool-arguments");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let mut malformed = model_tool_call("call_invalid", "workspace_list_files", json!({}));
     malformed["function"]["arguments"] = json!(r#"{"path":"#);
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 // The helper encodes this as the wire string "null".
@@ -610,14 +608,14 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
             .status,
         AgentRunStatus::Completed
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
-    let root = temp_root("agent-duplicate-tool-call-id");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![model_tool_response(vec![
             model_tool_call(
                 "duplicate_call",
@@ -670,15 +668,14 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
         .expect("result ref");
     let result = read_workspace_json(&fixture.agent_repository, &handle.run_id, result_ref).await;
     assert_eq!(result["structured"]["path"], "output/first.md");
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_selection_errors() {
-    let root = temp_root("agent-catalog");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -885,14 +882,14 @@ async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_
         assert!(!catalog.contains("private-editor"));
         assert!(!catalog.contains("unconfigured-editor"));
     }
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_commit() {
-    let root = temp_root("agent-foreground");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -1069,15 +1066,14 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
         event.event_type == "persistent_state_metadata_updated"
             && event.payload["messageId"] == "message_1"
     }));
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
-    let root = temp_root("agent-streamed-write-commit");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -1158,15 +1154,14 @@ async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
             && event.payload["callId"] != "call_write_second"
             && event.payload["callId"] != "call_patch_second"
     }));
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
-    let root = temp_root("agent-retry");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![
             Err(ApplicationError::UpstreamFailure(UpstreamFailure::network(
                 UPSTREAM_NETWORK_TIMEOUT,
@@ -1256,15 +1251,14 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
         .expect("retry scheduled event");
     assert_eq!(retry_scheduled.payload["nextAttempt"], 2);
     assert_eq!(retry_scheduled.payload["intervalMs"], 1);
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
 async fn agent_runtime_does_not_retry_non_retryable_model_errors() {
-    let root = temp_root("agent-no-retry");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_results(
-        &root,
+        root,
         vec![Err(ApplicationError::ValidationError(
             "model.invalid_tool_call: missing id".to_string(),
         ))],
@@ -1300,8 +1294,6 @@ async fn agent_runtime_does_not_retry_non_retryable_model_errors() {
             .iter()
             .all(|event| event.event_type != "model_call_retry_scheduled")
     );
-
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
@@ -1312,10 +1304,11 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     };
     use tt_ports::repositories::skill_repository::SkillRepository;
 
-    let root = temp_root("frozen-macros");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let source = "heading\n{{description}}\n{{char}}\n{{greeting::1}} / {{getvar::Name}} / {{getglobalvar::Name}} / {{outlet::Lore}} / {{date}} / {{instructUserPrefix}}";
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -1575,5 +1568,4 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
         .unwrap(),
         source.as_bytes()
     );
-    let _ = fs::remove_dir_all(root).await;
 }

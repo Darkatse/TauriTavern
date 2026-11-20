@@ -77,8 +77,8 @@ async fn session_run(
 
 #[tokio::test]
 async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecycle() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     create_session(&repository, "session_a").await;
     create_session(&repository, "session_b").await;
     let (first_run, first) = session_run(&repository, "session_a", "opaque_first").await;
@@ -168,7 +168,7 @@ async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecyc
         .await
         .unwrap();
     repository.delete_run(&first_run).await.unwrap();
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     let files = reopened.open_filesystem("opaque_second").await.unwrap();
     assert_eq!(
         files.read_text(&path("work/check.js")).await.unwrap().text,
@@ -183,13 +183,12 @@ async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecyc
         "old result"
     );
     assert!(reopened.load_session("session_a").await.is_ok());
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_history_pages_and_appends_across_reopen() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     create_session(&repository, "session_a").await;
     session_run(&repository, "session_a", "opaque_run").await;
     let message = |text: &str| {
@@ -222,7 +221,7 @@ async fn session_history_pages_and_appends_across_reopen() {
     let right = right.unwrap();
     assert_ne!(left.seq, right.seq);
     assert_eq!(repository.session_last_seq("session_a").await.unwrap(), 3);
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     let recent = reopened
         .read_session_messages(
             "session_a",
@@ -263,11 +262,11 @@ async fn session_history_pages_and_appends_across_reopen() {
         4
     );
 
-    let history = root.join("sessions/session_a/history.jsonl");
+    let history = temp.path().join("sessions/session_a/history.jsonl");
     let mut broken = fs::read(&history).await.unwrap();
     broken.extend_from_slice(b"{\"seq\":5");
     fs::write(&history, &broken).await.unwrap();
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     assert!(reopened.session_last_seq("session_a").await.is_err());
     assert!(
         reopened
@@ -279,13 +278,12 @@ async fn session_history_pages_and_appends_across_reopen() {
             .is_err()
     );
     assert_eq!(fs::read(&history).await.unwrap(), broken);
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profile() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     create_session(&repository, "session_a").await;
     create_session(&repository, "session_b").await;
     let created_at = Utc::now() - chrono::Duration::days(2);
@@ -295,7 +293,7 @@ async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profil
         ("session_b", created_at + chrono::Duration::days(1)),
     ] {
         fs::write(
-            root.join("sessions").join(id).join("session.json"),
+            temp.path().join("sessions").join(id).join("session.json"),
             serde_json::to_vec(&json!({"id": id, "createdAt": at})).unwrap(),
         )
         .await
@@ -339,7 +337,7 @@ async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profil
         )
         .await
         .unwrap();
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     let untouched = reopened.load_session("session_a").await.unwrap();
     assert!(untouched.title.is_none());
     assert!(untouched.last_used_at.is_none());
@@ -377,19 +375,19 @@ async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profil
         .append_session_message("session_a", new_message("run_a", assistant.clone()))
         .await
         .unwrap();
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     let saved = reopened.load_session("session_a").await.unwrap();
     assert_eq!(saved.title.as_deref(), Some("Saved title"));
     assert_eq!(saved.last_used_at, used_at);
 
     // Listing and deletion need metadata, never transcripts or model/tool materials.
     fs::write(
-        root.join("sessions/session_a/history.jsonl"),
+        temp.path().join("sessions/session_a/history.jsonl"),
         b"invalid history",
     )
     .await
     .unwrap();
-    let shared_profile = root.join("sessions/profile.json");
+    let shared_profile = temp.path().join("sessions/profile.json");
     fs::write(&shared_profile, b"shared profile").await.unwrap();
     let summary = reopened.index_run_summary_path("run_a").unwrap();
     fs::create_dir_all(summary.parent().unwrap()).await.unwrap();
@@ -397,7 +395,7 @@ async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profil
     assert_eq!(reopened.list_sessions().await.unwrap().len(), 2);
     reopened.delete_session("session_a").await.unwrap();
     reopened.delete_session("session_a").await.unwrap();
-    assert!(!root.join("sessions/session_a").exists());
+    assert!(!temp.path().join("sessions/session_a").exists());
     assert!(!reopened.index_session_run_path("run_a").unwrap().exists());
     assert!(!summary.exists());
     assert!(
@@ -406,17 +404,16 @@ async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profil
             .await
             .is_err()
     );
-    assert!(!root.join("sessions/session_a").exists());
+    assert!(!temp.path().join("sessions/session_a").exists());
     assert_eq!(reopened.load_run("run_b").await.unwrap().id, other_run.id);
     assert_eq!(reopened.list_sessions().await.unwrap()[0].id, "session_b");
     assert_eq!(fs::read(&shared_profile).await.unwrap(), b"shared profile");
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     create_session(&repository, "session_a").await;
     let message: AgentModelMessage = serde_json::from_value(json!({
         "role": "user", "parts": [{"type": "text", "text": "message"}]
@@ -437,9 +434,12 @@ async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size(
         );
         history.push('\n');
     }
-    fs::write(root.join("sessions/session_a/history.jsonl"), history)
-        .await
-        .unwrap();
+    fs::write(
+        temp.path().join("sessions/session_a/history.jsonl"),
+        history,
+    )
+    .await
+    .unwrap();
     let messages = repository
         .read_session_messages(
             "session_a",
@@ -455,13 +455,12 @@ async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size(
         messages.last().unwrap().seq,
         repository.session_last_seq("session_a").await.unwrap()
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn session_history_pages_read_records_longer_than_a_read_block() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     create_session(&repository, "session_a").await;
     session_run(&repository, "session_a", "opaque_run").await;
     let message = |text: String| -> AgentModelMessage {
@@ -479,7 +478,7 @@ async fn session_history_pages_read_records_longer_than_a_read_block() {
             .await
             .unwrap();
     }
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     let page = reopened
         .read_session_messages(
             "session_a",
@@ -495,5 +494,4 @@ async fn session_history_pages_read_records_longer_than_a_read_block() {
         [1, 2]
     );
     assert_eq!(page[1].message, long);
-    fs::remove_dir_all(root).await.unwrap();
 }

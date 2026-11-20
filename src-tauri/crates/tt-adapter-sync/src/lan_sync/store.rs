@@ -193,14 +193,10 @@ mod tests {
     use super::LanSyncStore;
     use ttsync_contract::sync::SyncMode;
 
-    fn temp_default_user_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-lan-store-{}", uuid::Uuid::new_v4()))
-    }
-
     #[tokio::test]
     async fn server_settings_creation_round_trips_without_port_drift() {
-        let default_user_dir = temp_default_user_dir();
-        let store = LanSyncStore::new(default_user_dir.clone());
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = LanSyncStore::new(temp.path().to_path_buf());
 
         let settings = store
             .load_or_create_server_settings()
@@ -213,40 +209,32 @@ mod tests {
 
         assert_ne!(settings.port, 0);
         assert_eq!(reloaded.port, settings.port);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn old_config_without_https_port_uses_existing_port() {
-        let default_user_dir = temp_default_user_dir();
-        write_legacy_config(
-            &default_user_dir,
-            br#"{"port":55000,"sync_mode":"Incremental"}"#,
-        )
-        .await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_legacy_config(temp.path(), br#"{"port":55000,"sync_mode":"Incremental"}"#).await;
 
-        let store = LanSyncStore::new(default_user_dir.clone());
+        let store = LanSyncStore::new(temp.path().to_path_buf());
         let settings = store
             .load_or_create_server_settings()
             .await
             .expect("load settings");
 
         assert_eq!(settings.port, 55000);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn old_config_migrates_when_preferences_load_runs_first() {
-        let default_user_dir = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         write_legacy_config(
-            &default_user_dir,
+            temp.path(),
             br#"{"port":55000,"v2_port":56000,"sync_mode":"Mirror"}"#,
         )
         .await;
 
-        let store = LanSyncStore::new(default_user_dir.clone());
+        let store = LanSyncStore::new(temp.path().to_path_buf());
         let preferences = store
             .load_or_create_sync_preferences()
             .await
@@ -259,46 +247,45 @@ mod tests {
         assert_eq!(preferences.manual_default_mode, SyncMode::Mirror);
         assert_eq!(settings.port, 56000);
         assert!(
-            !default_user_dir
+            !temp
+                .path()
                 .join("user")
                 .join("lan-sync")
                 .join("config.json")
                 .exists()
         );
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn invalid_old_config_fails_without_creating_new_state() {
-        let default_user_dir = temp_default_user_dir();
-        write_legacy_config(&default_user_dir, br#"{"port":0}"#).await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_legacy_config(temp.path(), br#"{"port":0}"#).await;
 
-        let store = LanSyncStore::new(default_user_dir.clone());
+        let store = LanSyncStore::new(temp.path().to_path_buf());
         assert!(store.load_or_create_server_settings().await.is_err());
         assert!(
-            !default_user_dir
+            !temp
+                .path()
                 .join("user")
                 .join("lan-sync")
                 .join("server-settings.json")
                 .exists()
         );
         assert!(
-            !default_user_dir
+            !temp
+                .path()
                 .join("user")
                 .join("lan-sync")
                 .join("v2")
                 .join("identity.json")
                 .exists()
         );
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn old_config_is_removed_when_new_files_already_exist() {
-        let default_user_dir = temp_default_user_dir();
-        let config_dir = default_user_dir.join("user").join("lan-sync");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let config_dir = temp.path().join("user").join("lan-sync");
         tokio::fs::create_dir_all(&config_dir)
             .await
             .expect("create config dir");
@@ -321,7 +308,7 @@ mod tests {
         .await
         .expect("write old config");
 
-        let store = LanSyncStore::new(default_user_dir.clone());
+        let store = LanSyncStore::new(temp.path().to_path_buf());
         let settings = store
             .load_or_create_server_settings()
             .await
@@ -330,8 +317,6 @@ mod tests {
         assert_eq!(settings.port, 56000);
         assert!(settings.auto_start);
         assert!(!config_dir.join("config.json").exists());
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     async fn write_legacy_config(default_user_dir: &std::path::Path, bytes: &[u8]) {

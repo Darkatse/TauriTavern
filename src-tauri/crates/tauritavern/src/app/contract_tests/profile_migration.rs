@@ -3,8 +3,9 @@ use tt_application::dto::agent_dto::AgentSaveProfileDto;
 
 #[tokio::test]
 async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choices() {
-    let root = temp_root("profile-migration");
-    let repository = Arc::new(FileAgentProfileRepository::new(root.clone()));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let repository = Arc::new(FileAgentProfileRepository::new(root.to_path_buf()));
     let service = AgentProfileService::new(
         repository.clone(),
         repository.clone(),
@@ -136,5 +137,4 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
                 .is_err()
         );
     }
-    fs::remove_dir_all(root).await.unwrap();
 }

@@ -240,14 +240,9 @@ mod tests {
     }
 
     fn import_zip_with_raw_names(
-        label: &str,
+        root: &Path,
         entries: &[(&str, &[u8], &[u8])],
-    ) -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-{}-{}",
-            label,
-            rand::random::<u64>()
-        ));
+    ) -> std::path::PathBuf {
         let data_root = root.join("data");
         let workspace_root = root.join("workspace");
         let archive_path = root.join("fixture.zip");
@@ -289,18 +284,15 @@ mod tests {
         )
         .expect("import raw-name zip");
 
-        (root, data_root)
+        data_root
     }
 
     #[test]
     fn zip_extract_uses_prepared_archive_handle_after_source_is_removed() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-zip-one-open-{}",
-            rand::random::<u64>()
-        ));
-        let raw_root = root.join("raw");
-        let normalized_root = root.join("normalized");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let raw_root = temp.path().join("raw");
+        let normalized_root = temp.path().join("normalized");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(&normalized_root).expect("create normalized root");
         write_zip(
@@ -350,19 +342,14 @@ mod tests {
                 .expect("read normalized zip file"),
             b"zip"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn tar_gz_normalizes_from_staged_workspace_after_source_is_removed() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-targz-one-open-{}",
-            rand::random::<u64>()
-        ));
-        let raw_root = root.join("raw");
-        let normalized_root = root.join("normalized");
-        let archive_path = root.join("fixture.tar.gz");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let raw_root = temp.path().join("raw");
+        let normalized_root = temp.path().join("normalized");
+        let archive_path = temp.path().join("fixture.tar.gz");
 
         fs::create_dir_all(&normalized_root).expect("create normalized root");
         write_tar_gz(
@@ -397,19 +384,14 @@ mod tests {
                 .expect("read normalized tar.gz file"),
             b"targz"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn tar_gz_import_preserves_archive_order_for_target_conflicts() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-targz-order-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.tar.gz");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.tar.gz");
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
         write_tar_gz(
@@ -437,19 +419,14 @@ mod tests {
                 .expect("read imported conflict target"),
             b"third"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn zip_import_preserves_archive_order_for_target_conflicts() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-zip-order-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
         write_zip(
@@ -477,19 +454,14 @@ mod tests {
                 .expect("read imported conflict target"),
             b"third"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn cancelling_parallel_zip_staging_does_not_apply_partial_data() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-zip-cancel-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
         let payload = vec![b'x'; crate::data_archive::shared::COPY_BUFFER_BYTES * 3];
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
@@ -531,8 +503,6 @@ mod tests {
             failure.error
         );
         assert!(!data_root.exists());
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
@@ -561,15 +531,11 @@ mod tests {
 
     #[test]
     fn import_preserves_unicode_filenames() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-unicode-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         fs::write(&archive_path, decode_fixture()).expect("write fixture zip");
 
@@ -594,8 +560,6 @@ mod tests {
 
         let text = fs::read_to_string(&imported).expect("read imported file");
         assert!(text.contains("中文"), "imported content should match");
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
@@ -612,7 +576,8 @@ mod tests {
                 b"second",
             ),
         ];
-        let (root, data_root) = import_zip_with_raw_names("gb18030", entries);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = import_zip_with_raw_names(temp.path(), entries);
 
         assert_eq!(
             fs::read(
@@ -628,14 +593,13 @@ mod tests {
                 .expect("read ambiguous GB18030 filename"),
             b"second"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_preserves_unflagged_utf8_zip_filenames() {
-        let (root, data_root) = import_zip_with_raw_names(
-            "unflagged-utf8",
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = import_zip_with_raw_names(
+            temp.path(),
             &[(
                 "data/default-user/characters/abcdef.json",
                 "data/default-user/characters/夏瑾.json".as_bytes(),
@@ -648,14 +612,13 @@ mod tests {
                 .expect("read UTF-8 filename"),
             b"utf8"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_preserves_cp437_zip_filenames_without_gb18030_evidence() {
-        let (root, data_root) = import_zip_with_raw_names(
-            "cp437",
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = import_zip_with_raw_names(
+            temp.path(),
             &[(
                 "data/default-user/characters/abcde.json",
                 b"data/default-user/characters/\x82cole.json",
@@ -668,19 +631,14 @@ mod tests {
                 .expect("read CP437 filename"),
             b"cp437"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_is_incremental_overlay() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-overlay-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(data_root.join("default-user").join("chats")).expect("create chats");
         fs::write(
@@ -737,21 +695,15 @@ mod tests {
                 .is_file(),
             "new file should be imported"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_detects_tar_gz_by_content_not_extension() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-tgz-magic-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         write_tar_gz(
             &archive_path,
@@ -782,21 +734,15 @@ mod tests {
                 .is_file(),
             "tar.gz content should import even when staging name is not reliable"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn tar_import_rejects_path_escape() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-tar-escape-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.tar");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.tar");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         write_raw_tar_file(&archive_path, "../escape.json", b"bad");
 
@@ -813,21 +759,15 @@ mod tests {
         )
         .expect_err("path escape should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_rejects_malformed_archive_as_invalid_data() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-malformed-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.archive");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.archive");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         fs::write(&archive_path, b"not a zip, tar, or gzip archive").expect("write archive");
 
@@ -848,21 +788,15 @@ mod tests {
             "malformed archive should be invalid data, got: {}",
             error.error
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_rejects_pk_prefixed_malformed_zip_without_tar_fallback() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-bad-zip-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         fs::write(&archive_path, b"PKnot a valid zip archive").expect("write archive");
 
@@ -887,20 +821,14 @@ mod tests {
             "PK-prefixed malformed archive should not fall back to tar, got: {}",
             error.error
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn tar_scan_reports_cancelled_errors_as_cancelled() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-tar-cancel-{}",
-            rand::random::<u64>()
-        ));
-        let archive_path = root.join("fixture.tar");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let archive_path = temp.path().join("fixture.tar");
         let large_payload = vec![0u8; 2 * 1024 * 1024];
 
-        fs::create_dir_all(&root).expect("create temp root");
         write_tar(
             &archive_path,
             &[("data/default-user/chats/large.jsonl", &large_payload)],
@@ -913,7 +841,7 @@ mod tests {
         let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
         let error = match archive::prepare_archive_for_import(
             &archive_path,
-            &root.join("raw"),
+            &temp.path().join("raw"),
             &mut report_progress,
             &is_cancelled,
             &mut |path| layout_scan.visit_path(path),
@@ -926,21 +854,15 @@ mod tests {
             "cancelled scan should stay cancelled, got: {}",
             error
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn tar_gz_import_rejects_symlinks() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-targz-symlink-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.tgz");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.tgz");
 
-        fs::create_dir_all(&root).expect("create temp root");
         fs::create_dir_all(&workspace_root).expect("create temp workspace");
         write_tar_gz_symlink(
             &archive_path,
@@ -961,19 +883,14 @@ mod tests {
         )
         .expect_err("symlink should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_supports_sillytavern_user_root_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-sillytavern-user-root-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
         write_zip(&archive_path, &[("characters/root.json", b"{}")]);
@@ -999,19 +916,14 @@ mod tests {
                 .is_file(),
             "SillyTavern user-root archive should map into default-user"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_supports_sillytavern_native_user_backup_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-native-user-backup-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
         write_zip(
@@ -1075,19 +987,14 @@ mod tests {
                 .is_file(),
             "extension content paths should remain user-root content"
         );
-
-        cleanup_directory_sync(&root);
     }
 
     #[test]
     fn import_supports_settings_single_file() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-settings-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("data");
+        let workspace_root = temp.path().join("workspace");
+        let archive_path = temp.path().join("fixture.zip");
 
         fs::create_dir_all(&workspace_root).expect("create workspace");
         write_zip(&archive_path, &[("settings.json", br#"{ "ok": true }"#)]);
@@ -1112,7 +1019,5 @@ mod tests {
                 .is_file(),
             "settings.json should map into default-user"
         );
-
-        cleanup_directory_sync(&root);
     }
 }

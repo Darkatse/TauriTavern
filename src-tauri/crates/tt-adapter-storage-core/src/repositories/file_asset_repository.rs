@@ -431,40 +431,12 @@ impl AssetRepository for FileAssetRepository {
 #[cfg(test)]
 mod tests {
     use std::fs as std_fs;
-    use std::path::{Path, PathBuf};
-
-    use uuid::Uuid;
+    use std::path::Path;
 
     use tt_domain::models::asset::{AssetCatalogEntry, AssetCategory};
     use tt_ports::repositories::asset_repository::AssetRepository;
 
     use super::FileAssetRepository;
-
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(label: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-asset-repository-{}-{}",
-                label,
-                Uuid::new_v4()
-            ));
-            std_fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std_fs::remove_dir_all(&self.path);
-        }
-    }
 
     fn repository(root: &Path) -> FileAssetRepository {
         let user_root = root.join("default-user");
@@ -477,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn saves_lists_and_deletes_audio_assets() {
-        let temp = TempDirGuard::new("audio");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let repository = repository(temp.path());
 
         let temp_path = repository.stage_asset_file("theme.mp3").await.unwrap();
@@ -515,7 +487,7 @@ mod tests {
 
     #[tokio::test]
     async fn stages_and_commits_downloaded_assets_without_leaving_temp_file() {
-        let temp = TempDirGuard::new("staged");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let repository = repository(temp.path());
 
         let temp_path = repository.stage_asset_file("theme.mp3").await.unwrap();
@@ -535,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn discards_staged_asset_downloads() {
-        let temp = TempDirGuard::new("discard");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let repository = repository(temp.path());
 
         let temp_path = repository.stage_asset_file("theme.mp3").await.unwrap();
@@ -550,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn lists_live2d_and_vrm_assets_with_client_relative_paths() {
-        let temp = TempDirGuard::new("special");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let user_root = temp.path().join("default-user");
         std_fs::create_dir_all(user_root.join("assets/live2d/model-a")).unwrap();
         std_fs::write(
@@ -584,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn lists_character_assets() {
-        let temp = TempDirGuard::new("character");
+        let temp = tempfile::tempdir().expect("create temp dir");
         let user_root = temp.path().join("default-user");
         std_fs::create_dir_all(user_root.join("characters/Alice/bgm")).unwrap();
         std_fs::write(user_root.join("characters/Alice/bgm/theme.mp3"), "").unwrap();

@@ -869,7 +869,7 @@ impl ImageMetadataRepository for FileImageMetadataRepository {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use base64::Engine;
     use serde_json::json;
@@ -880,25 +880,6 @@ mod tests {
 
     use super::{BackgroundMetadataBuildError, FileImageMetadataRepository};
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     fn tiny_png() -> Vec<u8> {
         base64::engine::general_purpose::STANDARD
             .decode(
@@ -907,9 +888,8 @@ mod tests {
         .expect("decode png")
     }
 
-    async fn repository_with_background() -> (TempDirGuard, FileImageMetadataRepository) {
-        let temp = TempDirGuard::new("image-metadata");
-        let user_root = temp.path.join("default-user");
+    async fn repository_with_background(root: &Path) -> FileImageMetadataRepository {
+        let user_root = root.join("default-user");
         let backgrounds_dir = user_root.join("backgrounds");
         tokio::fs::create_dir_all(&backgrounds_dir)
             .await
@@ -918,8 +898,7 @@ mod tests {
             .await
             .expect("write background");
 
-        let repository = FileImageMetadataRepository::new(user_root, backgrounds_dir);
-        (temp, repository)
+        FileImageMetadataRepository::new(user_root, backgrounds_dir)
     }
 
     #[test]
@@ -975,7 +954,8 @@ mod tests {
 
     #[tokio::test]
     async fn folder_assignment_is_persisted_in_background_folder_payload() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1000,7 +980,8 @@ mod tests {
 
     #[tokio::test]
     async fn background_metadata_generation_preserves_folder_ids() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1030,7 +1011,8 @@ mod tests {
 
     #[tokio::test]
     async fn background_list_accepts_legacy_c1_filenames() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let legacy_name = "ã\u{80}\u{90}.png";
         tokio::fs::write(repository.backgrounds_dir.join(legacy_name), tiny_png())
             .await
@@ -1047,7 +1029,8 @@ mod tests {
 
     #[tokio::test]
     async fn background_list_keeps_scanning_when_one_image_has_bad_metadata() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         tokio::fs::write(repository.backgrounds_dir.join("broken.png"), b"not a png")
             .await
             .expect("write broken background");
@@ -1074,7 +1057,8 @@ mod tests {
 
     #[tokio::test]
     async fn stale_background_metadata_drops_derived_fields_and_keeps_unknown_fields() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let mut metadata = ImageMetadata {
             hash: Some("stale-hash".to_string()),
             dominant_color: Some("#112233".to_string()),
@@ -1112,7 +1096,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_folder_assignment_path_fails() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1128,7 +1113,8 @@ mod tests {
 
     #[tokio::test]
     async fn folder_thumbnail_batch_skips_stale_folder_and_keeps_missing_cover() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1151,7 +1137,8 @@ mod tests {
 
     #[tokio::test]
     async fn folder_assignment_skips_missing_background_files() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1181,7 +1168,8 @@ mod tests {
 
     #[tokio::test]
     async fn renamed_background_metadata_updates_folder_thumbnail() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await
@@ -1205,7 +1193,8 @@ mod tests {
 
     #[tokio::test]
     async fn removed_background_metadata_clears_folder_thumbnail_without_image_entry() {
-        let (_temp, repository) = repository_with_background().await;
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = repository_with_background(temp.path()).await;
         let folder = repository
             .create_folder("Scenes")
             .await

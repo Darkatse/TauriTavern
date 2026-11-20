@@ -378,14 +378,6 @@ mod tests {
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    fn temp_root(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-{}-{}",
-            name,
-            uuid::Uuid::new_v4().simple()
-        ))
-    }
-
     fn assert_no_overlay_temp_files(dir: &std::path::Path) {
         let has_temp = std::fs::read_dir(dir)
             .expect("read temp parent")
@@ -401,9 +393,9 @@ mod tests {
 
     #[test]
     fn database_restore_replaces_the_file_group_without_touching_other_namespaces() {
-        let root = temp_root("database-restore");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         let relative = "_tauritavern/databases/db-memory";
         let source = normalized_root.join(relative);
         let target = data_root.join(relative);
@@ -431,14 +423,13 @@ mod tests {
         assert!(!target.join("database.tdb.text").exists());
         assert_eq!(fs::read(other.join("database.tdb")).unwrap(), b"keep");
         assert_no_overlay_temp_files(target.parent().unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn cancelling_database_staging_keeps_the_previous_file_group_intact() {
-        let root = temp_root("database-cancel");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         let relative = "_tauritavern/databases/db-memory";
         let source = normalized_root.join(relative);
         let target = data_root.join(relative);
@@ -469,14 +460,13 @@ mod tests {
             b"keep index"
         );
         assert_no_overlay_temp_files(target.parent().unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn apply_overlay_preserves_existing_file_when_cancelled_after_same_volume_move() {
-        let root = temp_root("apply-cancel-after-copy");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         std::fs::create_dir_all(&normalized_root).expect("create normalized root");
         std::fs::create_dir_all(&data_root).expect("create data root");
         std::fs::write(normalized_root.join("settings.json"), b"new")
@@ -503,15 +493,13 @@ mod tests {
             b"old"
         );
         assert_no_overlay_temp_files(&data_root);
-
-        std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
     #[test]
     fn apply_overlay_preserves_directory_when_cancelled_after_same_volume_move() {
-        let root = temp_root("apply-cancel-dir");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         let target_path = data_root.join("settings.json");
         std::fs::create_dir_all(&normalized_root).expect("create normalized root");
         std::fs::create_dir_all(target_path.join("child")).expect("create target directory");
@@ -540,15 +528,13 @@ mod tests {
             b"old"
         );
         assert_no_overlay_temp_files(&data_root);
-
-        std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
     #[test]
     fn apply_overlay_replaces_directory_with_file_by_same_volume_move() {
-        let root = temp_root("apply-dir-to-file");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         let target_path = data_root.join("settings.json");
         std::fs::create_dir_all(&normalized_root).expect("create normalized root");
         std::fs::create_dir_all(target_path.join("child")).expect("create target directory");
@@ -580,15 +566,13 @@ mod tests {
         );
         assert!(!normalized_root.join("settings.json").exists());
         assert_eq!(reports.last().copied(), Some(99.0));
-
-        std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
     #[test]
     fn apply_overlay_does_not_report_mutation_for_existing_directory_only_overlay() {
-        let root = temp_root("apply-noop-dir");
-        let normalized_root = root.join("normalized");
-        let data_root = root.join("data");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let normalized_root = temp.path().join("normalized");
+        let data_root = temp.path().join("data");
         std::fs::create_dir_all(normalized_root.join("characters"))
             .expect("create normalized directory");
         std::fs::create_dir_all(data_root.join("characters")).expect("create target directory");
@@ -598,7 +582,5 @@ mod tests {
             .expect("apply overlay");
 
         assert!(!summary.changed());
-
-        std::fs::remove_dir_all(root).expect("remove temp root");
     }
 }
