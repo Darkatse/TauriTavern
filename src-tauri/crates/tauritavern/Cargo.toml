@@ -58,7 +58,6 @@ url = { workspace = true }
 percent-encoding = "2"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 mime_guess = "2.0.5"
-filetime = "0.2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 dunce = "1"
 rayon = "1.10"

@@ -318,15 +318,15 @@ fn cleanup_stale_exports(export_root: &Path, protected_paths: &[PathBuf]) {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use filetime::{FileTime, set_file_mtime};
-
     use super::*;
 
     fn make_stale(path: &Path) {
-        let stale_time = FileTime::from_system_time(
-            SystemTime::now() - EXPORT_RETENTION - Duration::from_secs(1),
-        );
-        set_file_mtime(path, stale_time).expect("set file mtime");
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open export")
+            .set_modified(SystemTime::now() - EXPORT_RETENTION - Duration::from_secs(1))
+            .expect("set file mtime");
     }
 
     #[test]
