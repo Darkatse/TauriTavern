@@ -23,13 +23,13 @@ test('character index invalidation defers refresh until the next lookup', async 
         },
     });
 
-    await service.ensureCharacterIndex();
-    await service.ensureCharacterIndex();
+    assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 1' }), 'Stem 1');
+    assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 1' }), 'Stem 1');
     service.invalidateCharacterCache();
-    await service.ensureCharacterIndex();
+    assert.equal(reads, 1);
 
+    assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 2' }), 'Stem 2');
     assert.equal(reads, 2);
-    assert.equal(service.findAvatarByCharacterId('Character 2'), 'Stem 2.png');
 });
 
 
