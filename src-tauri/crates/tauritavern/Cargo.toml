@@ -4,6 +4,7 @@ version = "2.4.0"
 description = "SillyTavern backend rebuilt with Tauri and Rust"
 authors = ["TauriTavern Team"]
 edition = "2024"
+rust-version.workspace = true
 default-run = "tauritavern"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

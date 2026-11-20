@@ -23,6 +23,10 @@ members = [
 default-members = ["crates/tauritavern"]
 resolver = "3"
 
+[workspace.package]
+# The oldest rustc among the packaging toolchains (Nix, Flatpak).
+rust-version = "1.95"
+
 [workspace.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 rand = "0.10"
