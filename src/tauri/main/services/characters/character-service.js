@@ -2,8 +2,6 @@
 
 import { commandErrorStatus } from '../../../../scripts/util/command-error-utils.js';
 import {
-    assertCharacterAvatarFileName,
-    characterAvatarFileNameFromStem,
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from './character-identity.js';
@@ -19,12 +17,9 @@ import {
 export function createCharacterService({ safeInvoke }) {
     // The index holds identities only; card data is always read from the backend.
     /** @type {Map<string, CharacterIdentity>} */
-    const identityByAvatar = new Map();
-    /** @type {Map<string, CharacterIdentity>} */
     const identityByName = new Map();
     /** @type {Map<string, CharacterIdentity>} */
     const identityById = new Map();
-    let indexed = false;
 
     /** @param {any} input */
     function normalizeExtensions(input) {
@@ -245,9 +240,6 @@ export function createCharacterService({ safeInvoke }) {
             avatar: character?.avatar ? String(character.avatar) : '',
             name: character?.name ? String(character.name) : '',
         };
-        if (identity.avatar) {
-            identityByAvatar.set(identity.avatar, identity);
-        }
         if (identity.name) {
             identityByName.set(identity.name, identity);
         }
@@ -258,10 +250,8 @@ export function createCharacterService({ safeInvoke }) {
     }
 
     function invalidateCharacterCache() {
-        identityByAvatar.clear();
         identityByName.clear();
         identityById.clear();
-        indexed = false;
     }
 
     /** Reads the shallow character list and indexes it. */
@@ -270,14 +260,7 @@ export function createCharacterService({ safeInvoke }) {
         const normalized = Array.isArray(characters) ? characters.map(normalizeCharacter) : [];
         invalidateCharacterCache();
         normalized.forEach(indexCharacter);
-        indexed = true;
         return normalized;
-    }
-
-    async function ensureCharacterIndex() {
-        if (!indexed) {
-            await getAllCharacters();
-        }
     }
 
     /**
@@ -376,39 +359,13 @@ export function createCharacterService({ safeInvoke }) {
         return readCharacterById(characterId);
     }
 
-    /** @param {any} characterId */
-    function findAvatarByCharacterId(characterId) {
-        const key = String(characterId || '');
-        if (!key) {
-            return '';
-        }
-
-        const avatar = identityByName.get(key)?.avatar || identityById.get(key)?.avatar;
-        if (avatar) {
-            return avatar;
-        }
-
-        try {
-            const avatarFileName = assertCharacterAvatarFileName(key, 'characterId');
-            if (identityByAvatar.has(avatarFileName)) {
-                return avatarFileName;
-            }
-        } catch {
-            // characterId is normally a storage stem; exact avatar filenames are accepted for callers that already have one.
-        }
-
-        return characterAvatarFileNameFromStem(key);
-    }
-
     return {
         normalizeCharacter,
         normalizeExtensions,
         getAllCharacters,
-        ensureCharacterIndex,
         invalidateCharacterCache,
         resolveCharacterId,
         resolveExistingCharacterId,
         getSingleCharacter,
-        findAvatarByCharacterId,
     };
 }

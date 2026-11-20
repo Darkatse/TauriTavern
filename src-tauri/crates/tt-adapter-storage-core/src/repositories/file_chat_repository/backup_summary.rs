@@ -238,7 +238,7 @@ impl FileChatRepository {
             let mut cache = self.backup_summary_cache.lock().await;
             cache.ensure_loaded();
             if let Some(summary) = cache.summary(entry) {
-                return Ok(summary.into());
+                return Ok(summary.into_search_result(String::new()));
             }
         }
 
@@ -246,7 +246,6 @@ impl FileChatRepository {
         let (scanned, _) = self
             .scan_chat_summary_file(
                 &self.backups_dir.join(&entry.file_name),
-                "",
                 &entry.logical_file_name,
                 FileSignature {
                     size: signature.stored_size,
@@ -260,7 +259,7 @@ impl FileChatRepository {
         let mut cache = self.backup_summary_cache.lock().await;
         cache.ensure_loaded();
         cache.record_summary(entry, summary.clone());
-        Ok(summary.into())
+        Ok(summary.into_search_result(String::new()))
     }
 
     pub(super) async fn record_backup_jsonl_count(

@@ -18,11 +18,10 @@ pub(super) use self::index::{SummaryCache, SummaryCacheEntry};
 use self::projection::{FileProjection, MessageText};
 use self::search::SearchFingerprint;
 
-/// Persisted directory projection; complete metadata belongs only to a requested response.
+/// Persisted file projection; character ownership and complete metadata come from the caller.
 /// Changes to its fields or meaning must bump [`index::SCHEMA_VERSION`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct ChatSummary {
-    pub character_name: String,
     pub file_name: String,
     pub file_size: u64,
     pub message_count: usize,
@@ -31,16 +30,16 @@ pub(super) struct ChatSummary {
     pub chat_id: Option<String>,
 }
 
-impl From<ChatSummary> for ChatSearchResult {
-    fn from(summary: ChatSummary) -> Self {
-        Self {
-            character_name: summary.character_name,
-            file_name: summary.file_name,
-            file_size: summary.file_size,
-            message_count: summary.message_count,
-            preview: summary.preview,
-            date: summary.date,
-            chat_id: summary.chat_id,
+impl ChatSummary {
+    pub(super) fn into_search_result(self, character_name: impl Into<String>) -> ChatSearchResult {
+        ChatSearchResult {
+            character_name: character_name.into(),
+            file_name: self.file_name,
+            file_size: self.file_size,
+            message_count: self.message_count,
+            preview: self.preview,
+            date: self.date,
+            chat_id: self.chat_id,
             chat_metadata: None,
         }
     }
@@ -94,7 +93,6 @@ impl FileChatRepository {
     pub(super) async fn scan_chat_summary_file(
         &self,
         path: &Path,
-        fallback_character_name: &str,
         fallback_file_name: &str,
         signature: FileSignature,
         include_fingerprint: bool,
@@ -114,15 +112,6 @@ impl FileChatRepository {
             tail,
         } = scan.projection;
 
-        let character_name = header
-            .character_name
-            .as_deref()
-            .filter(|name| {
-                let trimmed = name.trim();
-                !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unused")
-            })
-            .unwrap_or(fallback_character_name)
-            .to_string();
         let chat_id = header.chat_id;
         let date = directory_date(tail.send_date.as_ref(), signature.modified_millis);
         let preview_unavailable = matches!(&tail.mes, MessageText::Unavailable);
@@ -131,7 +120,6 @@ impl FileChatRepository {
         let entry = SummaryCacheEntry {
             signature,
             summary: ChatSummary {
-                character_name,
                 file_name: Self::normalize_jsonl_file_name(fallback_file_name)?,
                 file_size: signature.size,
                 message_count: line_count.saturating_sub(1),

@@ -69,7 +69,7 @@ Rust chat repository 当前接收的是 character stem，而不是 avatar filena
 
 持续开发约束：
 
-- Rust resolver 的输入名虽然叫 `character_name`，实际语义是内部 stem/key。
+- Rust 角色身份参数和 `ChatSearchResult` 中的 `character_name` 都是内部 stem/key，即 JS 的 `characterId`；群聊和备份结果为空串。
 - Rust resolver 不负责解析 avatar filename，也不负责解析 URL/path。
 - Rust resolver 内部的 legacy candidate 生成，只是为了读取旧错误目录，不是新身份规则。
 

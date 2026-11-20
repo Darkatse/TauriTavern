@@ -924,7 +924,6 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
 
         let summaries = repository.list_chat_backups().await.unwrap();
         assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].character_name, "Alice");
         assert_eq!(summaries[0].message_count, 1);
         assert_eq!(
             summaries[0].preview,
@@ -2663,7 +2662,11 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
         let path = chat_dir.join(name);
         fs::write(
             &path,
-            format!("{{}}\n{}", json!({"send_date": date, "mes": name})),
+            format!(
+                "{}\n{}",
+                json!({"character_name": "Alice Display"}),
+                json!({"send_date": date, "mes": name})
+            ),
         )
         .await
         .unwrap();
@@ -2678,6 +2681,7 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
         .expect("list recent summaries");
 
     assert_eq!(results.len(), 1);
+    assert_eq!(results[0].character_name, "alice");
     assert_eq!(results[0].file_name, "session-newer-date.jsonl");
 }
 

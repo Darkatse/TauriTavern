@@ -290,7 +290,7 @@ impl ChatRepository for FileChatRepository {
         let search_cache_key =
             Self::character_search_cache_key(&normalized_query, character_filter);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
-            return Ok(cached.into_iter().map(ChatSearchResult::from).collect());
+            return Ok(cached);
         }
 
         let descriptors = self.list_character_chat_files(character_filter).await?;
@@ -304,7 +304,7 @@ impl ChatRepository for FileChatRepository {
                 .await;
         }
         self.flush_summary_index_best_effort().await;
-        Ok(results.into_iter().map(ChatSearchResult::from).collect())
+        Ok(results)
     }
 
     async fn list_chat_summaries(
