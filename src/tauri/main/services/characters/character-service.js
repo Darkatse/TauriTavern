@@ -383,7 +383,7 @@ export function createCharacterService({ safeInvoke }) {
             return '';
         }
 
-        const avatar = identityByName.get(key)?.avatar || identityById.get(key)?.avatar;
+        const avatar = identityById.get(key)?.avatar || identityByName.get(key)?.avatar;
         if (avatar) {
             return avatar;
         }
