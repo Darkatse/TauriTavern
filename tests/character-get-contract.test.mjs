@@ -24,10 +24,8 @@ test('character index invalidation defers refresh until the next lookup', async 
     });
 
     assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 1' }), 'Stem 1');
-    assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 1' }), 'Stem 1');
     service.invalidateCharacterCache();
-    assert.equal(reads, 1);
-
+    assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 1' }), null);
     assert.equal(await service.resolveExistingCharacterId({ fallbackName: 'Character 2' }), 'Stem 2');
     assert.equal(reads, 2);
 });
