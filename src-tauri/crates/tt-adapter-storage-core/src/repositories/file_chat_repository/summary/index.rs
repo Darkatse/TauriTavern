@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tt_domain::errors::DomainError;
+use tt_ports::repositories::chat_repository::ChatSearchResult;
 
 use crate::file_system::write_json_file;
 
@@ -16,7 +17,7 @@ use super::{ChatSummary, FileSignature};
 // changes to persisted keys, fields OR projection semantics (preview, dates, fingerprints).
 const INDEX_FILE_NAME: &str = "chat_summary_index_v2.json";
 const LEGACY_INDEX_FILE_NAMES: &[&str] = &["chat_summary_index_v1.json"];
-pub(super) const SCHEMA_VERSION: u32 = 2;
+pub(super) const SCHEMA_VERSION: u32 = 3;
 
 const MAX_SEARCH_ENTRIES: usize = 128;
 
@@ -37,7 +38,7 @@ pub(super) struct ChatStatsCacheEntry {
 pub(in crate::repositories::file_chat_repository) struct SummaryCache {
     entries: HashMap<String, SummaryCacheEntry>,
     stats_entries: HashMap<String, ChatStatsCacheEntry>,
-    search_cache: HashMap<String, Vec<ChatSummary>>,
+    search_cache: HashMap<String, Vec<ChatSearchResult>>,
     user_dir: PathBuf,
     index_path: PathBuf,
     loaded: bool,
@@ -185,11 +186,11 @@ impl SummaryCache {
         self.search_cache.clear();
     }
 
-    pub(super) fn get_search_results(&self, key: &str) -> Option<Vec<ChatSummary>> {
+    pub(super) fn get_search_results(&self, key: &str) -> Option<Vec<ChatSearchResult>> {
         self.search_cache.get(key).cloned()
     }
 
-    pub(super) fn set_search_results(&mut self, key: String, results: Vec<ChatSummary>) {
+    pub(super) fn set_search_results(&mut self, key: String, results: Vec<ChatSearchResult>) {
         if self.search_cache.len() >= MAX_SEARCH_ENTRIES {
             self.search_cache.clear();
         }
@@ -225,7 +226,7 @@ impl FileChatRepository {
     pub(in crate::repositories::file_chat_repository) async fn get_cached_search_results(
         &self,
         key: &str,
-    ) -> Option<Vec<ChatSummary>> {
+    ) -> Option<Vec<ChatSearchResult>> {
         let mut cache = self.summary_cache.lock().await;
         cache.ensure_loaded().await;
         cache.get_search_results(key)
@@ -234,7 +235,7 @@ impl FileChatRepository {
     pub(in crate::repositories::file_chat_repository) async fn cache_search_results(
         &self,
         key: String,
-        results: Vec<ChatSummary>,
+        results: Vec<ChatSearchResult>,
     ) {
         let mut cache = self.summary_cache.lock().await;
         cache.ensure_loaded().await;

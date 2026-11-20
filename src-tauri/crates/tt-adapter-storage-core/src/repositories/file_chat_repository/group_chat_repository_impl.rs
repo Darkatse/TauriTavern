@@ -79,7 +79,7 @@ impl GroupChatRepository for FileChatRepository {
 
         let search_cache_key = Self::group_search_cache_key(&normalized_query, chat_ids);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
-            return Ok(cached.into_iter().map(ChatSearchResult::from).collect());
+            return Ok(cached);
         }
 
         let descriptors = self.list_group_chat_files(chat_ids).await?;
@@ -93,7 +93,7 @@ impl GroupChatRepository for FileChatRepository {
                 .await;
         }
         self.flush_summary_index_best_effort().await;
-        Ok(results.into_iter().map(ChatSearchResult::from).collect())
+        Ok(results)
     }
 
     async fn get_group_chat_payload_tail_lines(

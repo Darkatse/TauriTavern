@@ -14,7 +14,6 @@ const BUFFER_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Default)]
 pub(super) struct HeaderProjection {
-    pub(super) character_name: Option<String>,
     pub(super) chat_id: Option<String>,
 }
 
@@ -35,7 +34,6 @@ impl<'de> Visitor<'de> for HeaderProjection {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
         enum Field {
-            CharacterName,
             ChatMetadata,
             #[serde(other)]
             Other,
@@ -43,7 +41,6 @@ impl<'de> Visitor<'de> for HeaderProjection {
         let mut metadata = HeaderMetadataFields::default();
         while let Some(field) = map.next_key()? {
             match field {
-                Field::CharacterName => self.character_name = map.next_value()?,
                 Field::ChatMetadata => metadata = map.next_value()?,
                 Field::Other => {
                     map.next_value::<IgnoredAny>()?;
