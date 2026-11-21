@@ -145,6 +145,7 @@ pub(super) async fn build(
     ));
     let generation_runtime = Arc::new(GenerationRuntime::new(
         environment.generation_background_runtime.clone(),
+        tauritavern_settings.generation_notifications_enabled,
     ));
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository.clone(),
@@ -263,6 +264,7 @@ pub(super) async fn build(
         repositories.settings_repository.clone(),
         request_proxy_runtime,
         repositories.chat_backup_runtime.clone(),
+        generation_runtime.clone(),
     ));
     let user_directory_service = Arc::new(UserDirectoryService::new(
         repositories.user_directory_repository.clone(),

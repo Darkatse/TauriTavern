@@ -1,7 +1,10 @@
 // @ts-check
 
 import { createAndroidGenerationBridge } from '../../adapters/android/android-generation-bridge.js';
-import { confirmAiNotificationPermissionRationale } from '../../adapters/st/ai-notification-permission-rationale-popup.js';
+import {
+    confirmAiNotificationPermissionRationale,
+    showAiNotificationsOffNotice,
+} from '../../adapters/st/ai-notification-permission-rationale-popup.js';
 import { estimateTokenCount } from '../../brokers/token-count-broker.js';
 import { createAbortError, isAbortError } from '../../kernel/abort-error.js';
 import { createRandomId } from '../../kernel/random-id.js';
@@ -72,6 +75,7 @@ export function createGenerationSessions(context) {
         notificationService: createSystemNotificationService({
             safeInvoke: context.safeInvoke,
             confirmPermissionRationale: confirmAiNotificationPermissionRationale,
+            showNotificationsOffNotice: showAiNotificationsOffNotice,
         }),
         statusBridge: generationStatusBridge,
         shouldNotifyCompletion,

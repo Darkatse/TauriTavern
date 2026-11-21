@@ -312,6 +312,7 @@ export {};
  *   | 'get_group_chat_payload_tail'
  *   | 'get_group_chat_payload_before'
  *   | 'get_group_chat_payload_before_pages'
+ *   | 'get_generation_notification_state'
  *   | 'get_notification_permission_state'
  * )} TauriInvokeCommand
  */

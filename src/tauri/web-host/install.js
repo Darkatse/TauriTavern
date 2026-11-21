@@ -58,7 +58,7 @@ export function installWebHost({ identity, backend, store }) {
         ...createChatCommits(st),
         ...createWorldInfoCommits(st),
         ...createWriteCommands(st),
-        ...createGenerationCommands(st),
+        ...createGenerationCommands(st, settings),
         ...createExtensionCommands(st, fetchResource, loadDefaults),
         ...createExtensionStore(part('extensionStore'), resources),
         ...createMcpCommands(part('mcpServers')),

@@ -8,8 +8,12 @@ import { commandErrorForStatus } from '../../../scripts/util/command-error-utils
  *   status: string, batch: Promise<StreamBatch> | undefined }} Session
  */
 
-/** @param {ReturnType<import('../backend.js').createBackend>} backend @returns {import('../install.js').CommandHandlers} */
-export function createGenerationCommands({ json, request }) {
+/**
+ * @param {ReturnType<import('../backend.js').createBackend>} backend
+ * @param {ReturnType<import('../settings.js').createSettings>} settings
+ * @returns {import('../install.js').CommandHandlers}
+ */
+export function createGenerationCommands({ json, request }, settings) {
     /** @type {Map<string, Session>} */
     const sessions = new Map();
     /** @param {string} id */
@@ -58,6 +62,10 @@ export function createGenerationCommands({ json, request }) {
         // Session chat writes are the record; there is no native history archive or OS notifier.
         chat_history_generation_started: () => undefined,
         chat_history_generation_finished: () => undefined,
+        get_generation_notification_state: async () => ({
+            enabled: Boolean((await settings.get()).generation_notifications_enabled),
+            backgroundShowsProgressUi: false,
+        }),
         get_notification_permission_state: () => 'denied',
         get_chat_completions_status: ({ dto }) => json('/api/backends/chat-completions/status', dto),
         generate_chat_completion: ({ dto }) => json('/api/backends/chat-completions/generate', dto),

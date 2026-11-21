@@ -86,6 +86,10 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         nextChatBackupMaxTotalUnit,
     );
     const nextCloseToTrayOnClose = Boolean(draft.closeToTrayOnClose);
+    const nextGenerationNotificationsEnabled = draft.generationNotificationsEnabled;
+    if (typeof nextGenerationNotificationsEnabled !== 'boolean') {
+        throw new TypeError('Generation notifications setting must be a boolean');
+    }
 
     const nextDynamicThemeEnabled = Boolean(draft.dynamicTheme?.themeEnabled);
     const nextDynamicThemeDayTheme = String(draft.dynamicTheme?.dayTheme || '').trim();
@@ -130,6 +134,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         || hasChatBackupMaxTotalFilesChange
         || hasChatBackupMaxTotalBytesChange;
     const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== initial.closeToTrayOnClose;
+    const hasGenerationNotificationsEnabledChange =
+        nextGenerationNotificationsEnabled !== initial.generationNotificationsEnabled;
     const hasDynamicThemeChange = nextDynamicThemeEnabled !== initial.dynamicTheme.themeEnabled
         || nextDynamicThemeDayTheme !== initial.dynamicTheme.dayTheme
         || nextDynamicThemeNightTheme !== initial.dynamicTheme.nightTheme
@@ -152,6 +158,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         codeMirrorEditorEnabled: hasCodeMirrorEditorEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
+        generationNotificationsEnabled: hasGenerationNotificationsEnabledChange,
         dynamicTheme: hasDynamicThemeChange,
         avatarPersonaOriginalImagesEnabled: hasAvatarPersonaOriginalImagesEnabledChange,
         promptCacheTtl: hasPromptCacheTtlChange,
@@ -199,6 +206,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasCloseToTrayOnCloseChange) {
         patch.close_to_tray_on_close = nextCloseToTrayOnClose;
+    }
+    if (hasGenerationNotificationsEnabledChange) {
+        patch.generation_notifications_enabled = nextGenerationNotificationsEnabled;
     }
     if (hasDynamicThemeChange) {
         patch.dynamic_theme = {
@@ -254,6 +264,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
                 maxTotalBytes: nextChatBackupMaxTotalBytes,
             },
             closeToTrayOnClose: nextCloseToTrayOnClose,
+            generationNotificationsEnabled: nextGenerationNotificationsEnabled,
             dynamicTheme: {
                 themeEnabled: nextDynamicThemeEnabled,
                 dayTheme: nextDynamicThemeDayTheme,

@@ -103,6 +103,10 @@ fn default_close_to_tray_on_close() -> bool {
     true
 }
 
+fn default_generation_notifications_enabled() -> bool {
+    true
+}
+
 fn default_request_proxy_bypass() -> Vec<String> {
     vec![
         "localhost".to_string(),
@@ -374,6 +378,8 @@ pub struct TauriTavernSettings {
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
+    #[serde(default = "default_generation_notifications_enabled")]
+    pub generation_notifications_enabled: bool,
     #[serde(default)]
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
@@ -412,6 +418,7 @@ impl Default for TauriTavernSettings {
             codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
+            generation_notifications_enabled: default_generation_notifications_enabled(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(

@@ -76,6 +76,17 @@ const HELP_TOPICS = {
             'Maximum backups sharing the same character or group name.',
         ],
     },
+    generationNotifications: {
+        title: 'Generation notifications',
+        lines: ['Notifies you when generation ends while TauriTavern is in the background.'],
+    },
+    generationNotificationsWithProgress: {
+        title: 'Generation notifications',
+        lines: [
+            'Shows generation progress and notifies you when generation ends.',
+            'On Android and iOS, the system strictly limits generation by apps in the background. When this is off, leaving the app may let the system pause or end the generation.',
+        ],
+    },
     closeToTray: {
         title: 'Minimize to tray on close (Windows)',
         lines: [
@@ -308,6 +319,49 @@ async function showChatVirtualizationCompatibility() {
     });
 }
 
+async function showGenerationNotificationsOffNotice() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('Generation notifications turned off');
+    const explanation = document.createElement('div');
+    explanation.textContent = translate(
+        'Note: with notifications off, the system may pause or end TauriTavern while it is in the background, and a reply being generated may not arrive.',
+    );
+    content.append(title, explanation);
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
+async function reconcileGenerationNotificationsChange(update, capabilities) {
+    if (!update.changes.generationNotificationsEnabled) {
+        return;
+    }
+
+    if (!update.next.generationNotificationsEnabled) {
+        if (capabilities.backgroundShowsProgressUi) {
+            await showGenerationNotificationsOffNotice();
+        }
+        return;
+    }
+
+    let permission = await invoke('get_notification_permission_state');
+    if (permission === 'prompt') {
+        permission = await invoke('request_notification_permission');
+    }
+    if (permission === 'denied') {
+        toastr.warning(
+            translate(
+                'System notification permission is disabled. To be notified when generation ends, enable notifications for TauriTavern in system settings.',
+            ),
+        );
+    }
+}
+
 async function confirmChatBackupHistoryPurge() {
     const content = createPopupColumn();
     const title = document.createElement('b');
@@ -519,6 +573,12 @@ export async function openTauriTavernSettingsPopup() {
 
         if (result !== POPUP_RESULT.AFFIRMATIVE || !savedUpdate) {
             return;
+        }
+
+        try {
+            await reconcileGenerationNotificationsChange(savedUpdate.update, viewModel.capabilities);
+        } catch (error) {
+            await showErrorPopup(error);
         }
 
         applyTauriTavernSettingsUpdateEffects(savedUpdate.update, savedUpdate.updatedSettings);

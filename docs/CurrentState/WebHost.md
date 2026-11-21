@@ -93,6 +93,7 @@ const host = installWebHost({
 | `start_chat_completion_stream`、`start_text_completion_stream`、`read_generation_stream`、`close_generation_stream` | 各自生成端点的 SSE 流，转为 `afterSeq` 会话 |
 | `cancel_generation` | 确认接收；非流式请求同步完成，没有可取消的请求 |
 | `chat_history_generation_started`、`chat_history_generation_finished` | 确认接收；Session 的聊天写入即记录，不建立原生历史仓库 |
+| `get_generation_notification_state` | 读取 `store` 的 `generation_notifications_enabled`，`backgroundShowsProgressUi` 为 `false` |
 | `get_notification_permission_state` | `denied`：预览不拥有原生系统通知能力 |
 | `get_window_snapshot` | `null`：视口由浏览器管理 |
 | `devlog_append_frontend_logs` | 确认接收；日志留在前端采集器里，浏览器里没有原生日志文件 |

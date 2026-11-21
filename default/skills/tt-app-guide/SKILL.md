@@ -50,7 +50,7 @@ Each top bar drawer is a `.drawer` holding a `.drawer-toggle` and a `.drawer-con
 Elsewhere:
 
 - **TauriTavern settings** open as a popup from `#tauritavern_settings_button`.
-  - Sections: Performance, Chat Backups, System (data directory, request proxy), Models, Misc and Development (logs, reload frontend). Windows adds Interface, and Sync appears when LAN sync is allowed.
+  - Sections: Interface (generation notifications; Windows adds minimize to tray on close), Performance, Chat Backups, System (data directory, request proxy), Models, Misc and Development (logs, reload frontend). Sync appears when LAN sync is allowed.
   - The controls have no stable ids. Find a section by its `aria-label` and a row by its label, both in the user's language.
   - Most changes take effect when the popup is saved, and some of those reload the page.
   - Some act at once: choosing a data directory (after its own confirmation), the Development buttons and Sync.

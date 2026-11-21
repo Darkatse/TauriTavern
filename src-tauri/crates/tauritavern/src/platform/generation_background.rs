@@ -41,7 +41,7 @@ mod android {
     use tauri::{Manager, Runtime};
     use tt_domain::errors::DomainError;
     use tt_ports::generation_background::{
-        GenerationBackgroundOutcome, GenerationBackgroundRuntime,
+        GenerationBackgroundOutcome, GenerationBackgroundRuntime, GenerationNotice,
     };
 
     const PLUGIN_IDENTIFIER: &str = "com.tauritavern.client";
@@ -88,14 +88,22 @@ mod android {
     }
 
     impl<R: Runtime> GenerationBackgroundRuntime for AndroidGenerationBackgroundRuntime<R> {
-        fn start(&self, task_id: &str, _user_visible: bool) -> Result<(), DomainError> {
+        fn shows_progress_ui(&self) -> bool {
+            true
+        }
+
+        fn start(&self, task_id: &str, notice: GenerationNotice) -> Result<bool, DomainError> {
+            if notice == GenerationNotice::Off {
+                return Ok(false);
+            }
             self.handle
                 .run_mobile_plugin::<()>("start", StartArgs { task_id })
                 .map_err(|error| {
                     DomainError::InternalError(format!(
                         "Failed to start Android generation foreground service: {error}"
                     ))
-                })
+                })?;
+            Ok(true)
         }
 
         fn finish(
@@ -154,9 +162,10 @@ mod ios {
     use objc2_foundation::{NSProgressReporting, NSString};
     use objc2_ui_kit::{UIApplication, UIBackgroundTaskIdentifier, UIBackgroundTaskInvalid};
     use tauri::AppHandle;
+    use tauri_plugin_notification::{NotificationExt, PermissionState};
     use tt_domain::errors::DomainError;
     use tt_ports::generation_background::{
-        GenerationBackgroundOutcome, GenerationBackgroundRuntime,
+        GenerationBackgroundOutcome, GenerationBackgroundRuntime, GenerationNotice,
     };
 
     const CONTINUED_TASK_PREFIX: &str = "com.tauritavern.client.ai-generation";
@@ -183,6 +192,16 @@ mod ios {
                 app_handle,
                 legacy_tasks: Arc::new(Mutex::new(HashMap::new())),
                 continued_tasks: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        fn notifications_granted(&self) -> bool {
+            match self.app_handle.notification().permission_state() {
+                Ok(state) => matches!(state, PermissionState::Granted),
+                Err(error) => {
+                    tracing::warn!("Failed to read iOS notification permission: {error}");
+                    false
+                }
             }
         }
 
@@ -360,12 +379,20 @@ mod ios {
     }
 
     impl GenerationBackgroundRuntime for IosGenerationBackgroundRuntime {
-        fn start(&self, task_id: &str, user_visible: bool) -> Result<(), DomainError> {
-            if user_visible && AnyClass::get(c"BGContinuedProcessingTaskRequest").is_some() {
-                self.start_continued(task_id)
+        fn shows_progress_ui(&self) -> bool {
+            AnyClass::get(c"BGContinuedProcessingTaskRequest").is_some()
+        }
+
+        fn start(&self, task_id: &str, notice: GenerationNotice) -> Result<bool, DomainError> {
+            let use_continued = notice == GenerationNotice::Standard
+                && self.shows_progress_ui()
+                && self.notifications_granted();
+            if use_continued {
+                self.start_continued(task_id)?;
             } else {
-                self.start_legacy(task_id)
+                self.start_legacy(task_id)?;
             }
+            Ok(true)
         }
 
         fn report_progress(&self, task_id: &str, completed_units: u64) -> Result<(), DomainError> {

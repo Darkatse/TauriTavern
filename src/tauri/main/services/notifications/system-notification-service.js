@@ -6,8 +6,6 @@
  */
 
 const NOTIFICATION_PERMISSION_STATES = new Set(['granted', 'denied', 'prompt']);
-const NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY = 'tt:notification-permission-rejection-count';
-const NOTIFICATION_PERMISSION_REJECTION_LIMIT = 3;
 
 /**
  * @param {unknown} value
@@ -23,125 +21,99 @@ function normalizePermissionState(value) {
 }
 
 /**
- * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>} storage
- * @returns {number}
- */
-function getPermissionRejectionCount(storage) {
-    const raw = storage.getItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY);
-    const count = Number.parseInt(String(raw ?? ''), 10);
-    return Number.isSafeInteger(count) && count > 0 ? count : 0;
-}
-
-/**
- * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>} storage
- * @param {number} count
- */
-function setPermissionRejectionCount(storage, count) {
-    if (count <= 0) {
-        storage.removeItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY);
-        return;
-    }
-
-    storage.setItem(NOTIFICATION_PERMISSION_REJECTION_COUNT_STORAGE_KEY, String(count));
-}
-
-/**
+ * Declining the rationale turns generation notifications off, so it is not shown again until they
+ * are turned back on.
+ *
  * @param {{
  *   safeInvoke: SafeInvokeFn;
  *   confirmPermissionRationale: () => Promise<boolean>;
- *   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+ *   showNotificationsOffNotice: () => unknown;
  * }} deps
  */
 export function createSystemNotificationService({
     safeInvoke,
     confirmPermissionRationale,
-    storage = globalThis.localStorage,
+    showNotificationsOffNotice,
 }) {
     /** @type {Promise<NotificationPermissionState> | null} */
     let permissionRequestPromise = null;
     /** @type {Promise<boolean> | null} */
     let permissionRationalePromise = null;
 
-    function resetPermissionRejectionCount() {
-        setPermissionRejectionCount(storage, 0);
-    }
-
-    function incrementPermissionRejectionCount() {
-        const nextCount = getPermissionRejectionCount(storage) + 1;
-        setPermissionRejectionCount(storage, nextCount);
-        return nextCount;
+    async function isEnabled() {
+        const state = await safeInvoke('get_generation_notification_state');
+        if (typeof state?.enabled !== 'boolean') {
+            throw new Error('Invalid generation notification state');
+        }
+        return state.enabled;
     }
 
     async function getPermissionState() {
         return normalizePermissionState(await safeInvoke('get_notification_permission_state'));
     }
 
-    async function requestPermission() {
-        if (!permissionRequestPromise) {
-            permissionRequestPromise = safeInvoke('request_notification_permission')
-                .then(normalizePermissionState)
-                .then((state) => {
-                    if (state === 'granted') {
-                        resetPermissionRejectionCount();
-                        return state;
-                    }
-
-                    incrementPermissionRejectionCount();
-                    return state;
-                })
-                .finally(() => {
-                    permissionRequestPromise = null;
-                });
-        }
+    function requestPermission() {
+        permissionRequestPromise ??= safeInvoke('request_notification_permission')
+            .then(normalizePermissionState)
+            .finally(() => {
+                permissionRequestPromise = null;
+            });
 
         return permissionRequestPromise;
     }
 
-    async function confirmPermissionRationaleOnce() {
-        if (getPermissionRejectionCount(storage) >= NOTIFICATION_PERMISSION_REJECTION_LIMIT) {
-            return false;
-        }
+    async function turnOffNotifications() {
+        await safeInvoke('update_tauritavern_settings', {
+            dto: { generation_notifications_enabled: false },
+        });
+        await showNotificationsOffNotice();
+    }
 
-        if (!permissionRationalePromise) {
-            permissionRationalePromise = confirmPermissionRationale()
-                .then((accepted) => {
-                    if (!accepted) {
-                        incrementPermissionRejectionCount();
-                    }
+    function confirmPermissionRationaleOnce() {
+        permissionRationalePromise ??= confirmPermissionRationale()
+            .then(async (accepted) => {
+                if (!accepted) {
+                    await turnOffNotifications();
+                }
 
-                    return accepted;
-                })
-                .finally(() => {
-                    permissionRationalePromise = null;
-                });
-        }
+                return accepted;
+            })
+            .finally(() => {
+                permissionRationalePromise = null;
+            });
 
         return permissionRationalePromise;
     }
 
-    async function preparePermission() {
+    async function prepareForGeneration() {
+        if (!await isEnabled()) {
+            return false;
+        }
+
         const currentState = await getPermissionState();
         if (currentState === 'granted') {
-            resetPermissionRejectionCount();
-            return currentState;
+            return true;
         }
-
         if (currentState !== 'prompt') {
-            return currentState;
+            return false;
         }
 
-        const accepted = await confirmPermissionRationaleOnce();
-        if (!accepted) {
-            return currentState;
-        }
-
-        return requestPermission();
+        return await confirmPermissionRationaleOnce()
+            ? (await requestPermission()) === 'granted'
+            : false;
     }
 
     /**
      * @param {{ title: string; body: string }} params
      */
-    async function show({ title, body }) {
+    async function notifyIfAllowed({ title, body }) {
+        if (!await isEnabled()) {
+            return;
+        }
+        if (await getPermissionState() !== 'granted') {
+            return;
+        }
+
         await safeInvoke('show_system_notification', {
             dto: {
                 title: String(title ?? '').trim(),
@@ -151,9 +123,7 @@ export function createSystemNotificationService({
     }
 
     return {
-        getPermissionState,
-        requestPermission,
-        preparePermission,
-        show,
+        prepareForGeneration,
+        notifyIfAllowed,
     };
 }

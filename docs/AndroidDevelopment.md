@@ -135,7 +135,7 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust 生成运�
 
 执行契约：
 
-- 第一个生成任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
+- 第一个生成任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`。TauriTavern 设置中关闭“生成通知”时，任务的提示级别（`GenerationNotice`）为 `Off`，不启动前台服务，因为它必须显示通知；
 - 并发任务通过稳定 task id 计数，共享一个 FGS；
 - 最后一个任务成功、失败或取消后立即 `stopForeground()` + `stopSelfResult()`；
 - Service 使用 `START_NOT_STICKY`，不会在没有真实生成任务时被系统复活；
@@ -152,7 +152,7 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust 生成运�
 
 - 应用前台可交互态定义为 `Activity resumed && window focused`；
 - 应用进入前台可交互态、冷启动、或收到新的 launch intent 时，只清除 `42001`；
-- Rust 任务结束时，如果应用已经前台可交互、请求为 quiet 或任务被取消，则不发布完成通知；
+- 任务结束时刻按当前最新设置计算 `notify_completion`（非 quiet 且“生成通知”仍开启时为 `true`）；应用已经前台可交互、任务被取消或生成中途已关闭“生成通知”时不发布；
 - 发布新的完成通知前先清除旧的 `42001`，避免 fixed notification id 上的静默复用；
 - 完成通知不使用 `onlyAlertOnce`；保活/进度通知仍可使用，避免 token 进度频繁打扰。
 

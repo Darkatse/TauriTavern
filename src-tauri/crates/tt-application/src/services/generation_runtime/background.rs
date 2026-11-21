@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use tt_ports::generation_background::{GenerationBackgroundOutcome, GenerationBackgroundRuntime};
+use tt_ports::generation_background::{
+    GenerationBackgroundOutcome, GenerationBackgroundRuntime, GenerationNotice,
+};
 
 const PROGRESS_REPORT_STEP_BYTES: u64 = 4 * 1024;
 
@@ -14,17 +16,18 @@ impl GenerationBackgroundLease {
     pub(super) fn start(
         runtime: Option<&Arc<dyn GenerationBackgroundRuntime>>,
         task_id: &str,
-        user_visible: bool,
+        notice: GenerationNotice,
     ) -> Self {
-        let runtime = runtime.and_then(|runtime| {
-            if let Err(error) = runtime.start(task_id, user_visible) {
+        let runtime = runtime.and_then(|runtime| match runtime.start(task_id, notice) {
+            Ok(true) => Some(runtime.clone()),
+            Ok(false) => None,
+            Err(error) => {
                 tracing::warn!(
                     task_id,
                     "Failed to protect AI generation in background: {error}"
                 );
-                return None;
+                None
             }
-            Some(runtime.clone())
         });
 
         Self {
@@ -95,9 +98,12 @@ mod tests {
     }
 
     impl GenerationBackgroundRuntime for RecordingRuntime {
-        fn start(&self, task_id: &str, _user_visible: bool) -> Result<(), DomainError> {
-            self.events.lock().unwrap().push(format!("start:{task_id}"));
-            Ok(())
+        fn start(&self, task_id: &str, notice: GenerationNotice) -> Result<bool, DomainError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("start:{task_id}:{notice:?}"));
+            Ok(true)
         }
 
         fn report_progress(&self, task_id: &str, completed_units: u64) -> Result<(), DomainError> {
@@ -126,7 +132,11 @@ mod tests {
     fn lease_throttles_progress_and_releases_native_runtime_once() {
         let recording = Arc::new(RecordingRuntime::default());
         let runtime: Arc<dyn GenerationBackgroundRuntime> = recording.clone();
-        let mut lease = GenerationBackgroundLease::start(Some(&runtime), "request-1", true);
+        let mut lease = GenerationBackgroundLease::start(
+            Some(&runtime),
+            "request-1",
+            GenerationNotice::Standard,
+        );
 
         lease.report_progress(1);
         lease.report_progress(PROGRESS_REPORT_STEP_BYTES);
@@ -138,7 +148,7 @@ mod tests {
         assert_eq!(
             *recording.events.lock().unwrap(),
             [
-                "start:request-1",
+                "start:request-1:Standard",
                 "progress:request-1:1",
                 "progress:request-1:4097",
                 "progress:request-1:8193",

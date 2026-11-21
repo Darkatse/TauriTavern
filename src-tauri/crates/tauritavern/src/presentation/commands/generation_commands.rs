@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use serde::Serialize;
 use tauri::State;
 
 use crate::app::AppState;
@@ -8,6 +9,26 @@ use crate::presentation::commands::helpers::{
 };
 use crate::presentation::errors::CommandError;
 use tt_application::dto::generation_stream_dto::GenerationStreamReadResultDto;
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationNotificationStateDto {
+    pub enabled: bool,
+    pub background_shows_progress_ui: bool,
+}
+
+#[tauri::command]
+pub fn get_generation_notification_state(
+    app_state: State<'_, Arc<AppState>>,
+) -> GenerationNotificationStateDto {
+    log_command("get_generation_notification_state");
+
+    let runtime = &app_state.services.generation_runtime;
+    GenerationNotificationStateDto {
+        enabled: runtime.notifications_enabled(),
+        background_shows_progress_ui: runtime.background_shows_progress_ui(),
+    }
+}
 
 #[tauri::command]
 pub async fn read_generation_stream(

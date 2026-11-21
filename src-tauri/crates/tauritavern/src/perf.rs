@@ -72,6 +72,7 @@ fn replayed(call: &Call) -> bool {
                 | "start_horde_text_stream"
                 | "read_generation_stream"
                 | "close_generation_stream"
+                | "get_generation_notification_state"
                 | "get_notification_permission_state"
         )
 }

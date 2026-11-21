@@ -1,11 +1,14 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
 use tt_domain::errors::DomainError;
-use tt_ports::generation_background::{GenerationBackgroundOutcome, GenerationBackgroundRuntime};
+use tt_ports::generation_background::{
+    GenerationBackgroundOutcome, GenerationBackgroundRuntime, GenerationNotice,
+};
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 
 use crate::dto::generation_stream_dto::GenerationStreamReadResultDto;
@@ -19,29 +22,54 @@ mod stream_session;
 use self::background::GenerationBackgroundLease;
 use self::stream_session::{StreamAppendOutcome, StreamSessionRegistry};
 
-/// Runs once after the page cancels a generation, before the generation reports its end. A backend
-/// that keeps generating after its connection closes is told to stop here.
 pub type InterruptCleanup = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// Generations started by the page, for every API family. A request is cancelled by its ID from
-/// the moment its command registers it; a stream keeps its events until the page acknowledges
-/// them, so a suspended WebView can read them again. Both hold a background lease while they run.
 pub struct GenerationRuntime {
     background: Option<Arc<dyn GenerationBackgroundRuntime>>,
+    notifications_enabled: AtomicBool,
     streams: StreamSessionRegistry,
     requests: CancellationRegistry,
 }
 
 impl GenerationRuntime {
-    pub fn new(background: Option<Arc<dyn GenerationBackgroundRuntime>>) -> Self {
+    pub fn new(
+        background: Option<Arc<dyn GenerationBackgroundRuntime>>,
+        notifications_enabled: bool,
+    ) -> Self {
         Self {
             background,
+            notifications_enabled: AtomicBool::new(notifications_enabled),
             streams: StreamSessionRegistry::default(),
             requests: CancellationRegistry::default(),
         }
     }
 
-    /// Register a request before the command waits on anything, such as endpoint consent.
+    pub fn notifications_enabled(&self) -> bool {
+        self.notifications_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_notifications_enabled(&self, enabled: bool) {
+        self.notifications_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn background_shows_progress_ui(&self) -> bool {
+        self.background
+            .as_ref()
+            .is_some_and(|background| background.shows_progress_ui())
+    }
+
+    fn notice(&self, quiet: bool) -> GenerationNotice {
+        match (self.notifications_enabled(), quiet) {
+            (false, _) => GenerationNotice::Off,
+            (true, true) => GenerationNotice::Quiet,
+            (true, false) => GenerationNotice::Standard,
+        }
+    }
+
+    fn notifies_completion(&self, quiet: bool) -> bool {
+        self.notice(quiet) == GenerationNotice::Standard
+    }
+
     pub fn register_request(
         &self,
         request_id: &str,
@@ -49,12 +77,10 @@ impl GenerationRuntime {
         self.requests.register(request_id)
     }
 
-    /// A request cancelled before it runs never starts its generation. `on_interrupt` runs only when
-    /// an already-started generation is cancelled explicitly via `cancel_request`.
     pub async fn run_request<T>(
         &self,
         request: RegisteredRequest<'_>,
-        notify_completion: bool,
+        quiet: bool,
         on_interrupt: Option<InterruptCleanup>,
         generation: impl Future<Output = Result<T, ApplicationError>>,
     ) -> Result<T, ApplicationError> {
@@ -65,24 +91,23 @@ impl GenerationRuntime {
         let background = GenerationBackgroundLease::start(
             self.background.as_ref(),
             request.id(),
-            notify_completion,
+            self.notice(quiet),
         );
         let result = until_cancelled(generation, request.receiver()).await;
         drop(request);
         clean_up_if_interrupted(&result, on_interrupt).await;
-        background.complete(background_outcome(&result), notify_completion);
+        background.complete(background_outcome(&result), self.notifies_completion(quiet));
         result
     }
 
     pub fn cancel_request(&self, request_id: &str) -> bool {
         self.requests.cancel(request_id)
     }
-
     /// `generate` sends the upstream stream events and returns when the upstream stream ends.
     pub async fn start_stream<F, Fut>(
         self: &Arc<Self>,
         stream_id: String,
-        notify_completion: bool,
+        quiet: bool,
         on_interrupt: Option<InterruptCleanup>,
         generate: F,
     ) -> Result<(), ApplicationError>
@@ -94,19 +119,12 @@ impl GenerationRuntime {
         let background = GenerationBackgroundLease::start(
             self.background.as_ref(),
             &stream_id,
-            notify_completion,
+            self.notice(quiet),
         );
         let runtime = self.clone();
         tokio::spawn(async move {
             runtime
-                .run_stream(
-                    stream_id,
-                    generate,
-                    cancel,
-                    background,
-                    notify_completion,
-                    on_interrupt,
-                )
+                .run_stream(stream_id, quiet, generate, cancel, background, on_interrupt)
                 .await;
         });
         Ok(())
@@ -127,10 +145,10 @@ impl GenerationRuntime {
     async fn run_stream<F, Fut>(
         self: Arc<Self>,
         stream_id: String,
+        quiet: bool,
         generate: F,
         mut lifecycle_cancel: watch::Receiver<bool>,
         mut background: GenerationBackgroundLease,
-        notify_completion: bool,
         on_interrupt: Option<InterruptCleanup>,
     ) where
         F: FnOnce(GenerationStreamSender, GenerationCancelReceiver) -> Fut,
@@ -188,19 +206,17 @@ impl GenerationRuntime {
             Ok(()) => self.streams.finish(&stream_id).await,
             Err(error) => self.streams.fail(&stream_id, error).await,
         }
-        background.complete(outcome, notify_completion);
+        background.complete(outcome, self.notifies_completion(quiet));
     }
 }
 
-/// A `quiet` generation, such as a summary, runs for the page itself; its end is not notified.
-pub(crate) fn notifies_completion(payload: &Map<String, Value>) -> bool {
-    !payload
+pub(crate) fn is_quiet(payload: &Map<String, Value>) -> bool {
+    payload
         .get("type")
         .and_then(Value::as_str)
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("quiet"))
 }
 
-/// Returns a user cancellation as soon as `cancel` turns `true`, dropping the generation.
 pub(crate) async fn until_cancelled<T>(
     generation: impl Future<Output = Result<T, ApplicationError>>,
     mut cancel: GenerationCancelReceiver,
@@ -305,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_id_is_taken_until_its_run_ends_or_is_dropped() {
-        let runtime = GenerationRuntime::new(None);
+        let runtime = GenerationRuntime::new(None, true);
         let request = runtime.register_request("req").unwrap();
         assert!(matches!(
             runtime.register_request("req"),
@@ -336,7 +352,7 @@ mod tests {
 
     #[tokio::test]
     async fn interrupt_cleanup_runs_once_only_for_a_started_generation_that_is_cancelled() {
-        let runtime = Arc::new(GenerationRuntime::new(None));
+        let runtime = Arc::new(GenerationRuntime::new(None, true));
         let cleanups = Arc::new(AtomicUsize::new(0));
         let cleanup = || -> Option<InterruptCleanup> {
             let cleanups = cleanups.clone();

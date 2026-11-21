@@ -10,7 +10,7 @@ use crate::dto::chat_completion_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::{
-    GenerationRuntime, RegisteredRequest, notifies_completion, until_cancelled,
+    GenerationRuntime, RegisteredRequest, is_quiet, until_cancelled,
 };
 use crate::services::hashing::hex_lower;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
@@ -505,9 +505,9 @@ impl ChatCompletionService {
         request: RegisteredRequest<'_>,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<Value, ApplicationError> {
-        let notify_completion = notifies_completion(&dto.payload);
+        let quiet = is_quiet(&dto.payload);
         self.generation_runtime
-            .run_request(request, notify_completion, None, async {
+            .run_request(request, quiet, None, async {
                 Ok(self.execute_generate(dto, None).await?.body)
             })
             .await
@@ -553,17 +553,12 @@ impl ChatCompletionService {
         stream_id: String,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<(), ApplicationError> {
-        let notify_completion = notifies_completion(&dto.payload);
+        let quiet = is_quiet(&dto.payload);
         let service = self.clone();
         self.generation_runtime
-            .start_stream(
-                stream_id,
-                notify_completion,
-                None,
-                move |sender, cancel| async move {
-                    service.generate_stream(dto, sender, cancel).await
-                },
-            )
+            .start_stream(stream_id, quiet, None, move |sender, cancel| async move {
+                service.generate_stream(dto, sender, cancel).await
+            })
             .await
     }
 

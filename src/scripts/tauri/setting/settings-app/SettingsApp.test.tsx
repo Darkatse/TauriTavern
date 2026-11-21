@@ -55,6 +55,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
             ...overrides.chatBackups,
         },
         closeToTrayOnClose: false,
+        generationNotificationsEnabled: true,
         requestProxy: { enabled: false, url: '', bypass: [], ...overrides.requestProxy },
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
@@ -96,6 +97,7 @@ function createOptions(overrides: Partial<SettingsMountOptions> = {}): SettingsM
                 lanSyncAllowed: true,
                 supportsCloseToTrayOnClose: true,
                 supportsDataRootSelection: true,
+                backgroundShowsProgressUi: false,
             },
             values: createValues(),
             dataRoot: {
@@ -248,6 +250,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
         lanSyncAllowed: false,
         supportsCloseToTrayOnClose: false,
         supportsDataRootSelection: false,
+        backgroundShowsProgressUi: false,
     };
     options.viewModel.values = createValues({
         requestProxy: { enabled: true, url: 'http://127.0.0.1:7890', bypass: ['localhost'] },

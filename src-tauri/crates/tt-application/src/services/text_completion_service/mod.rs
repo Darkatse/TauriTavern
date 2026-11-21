@@ -22,7 +22,7 @@ use crate::dto::text_completion_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::{
-    GenerationRuntime, InterruptCleanup, RegisteredRequest, notifies_completion,
+    GenerationRuntime, InterruptCleanup, RegisteredRequest, is_quiet,
 };
 use crate::services::hashing::hex_lower;
 use crate::services::selected_secret::{read_selected_secret, requested_secret_id};
@@ -62,7 +62,7 @@ impl PreparedTextCompletionProps {
 pub struct PreparedTextCompletionGeneration {
     server: TextCompletionServer,
     secret_id: Option<String>,
-    notify_completion: bool,
+    quiet: bool,
     body: Value,
 }
 
@@ -145,12 +145,12 @@ impl TextCompletionService {
             field("api_server")?.unwrap_or_default(),
         )?;
         let secret_id = requested_secret_id(field("secret_id")?).map(str::to_owned);
-        let notify_completion = notifies_completion(&dto.payload);
+        let quiet = is_quiet(&dto.payload);
         let body = backend::generate_body(server.api_type, dto.payload)?;
         Ok(PreparedTextCompletionGeneration {
             server,
             secret_id,
-            notify_completion,
+            quiet,
             body,
         })
     }
@@ -338,7 +338,7 @@ impl TextCompletionService {
         let on_interrupt = self.interrupt_cleanup(&endpoint);
 
         self.generation_runtime
-            .run_request(request, prepared.notify_completion, on_interrupt, async {
+            .run_request(request, prepared.quiet, on_interrupt, async {
                 Ok(self
                     .repository
                     .generate(
@@ -366,7 +366,7 @@ impl TextCompletionService {
         self.generation_runtime
             .start_stream(
                 stream_id,
-                prepared.notify_completion,
+                prepared.quiet,
                 on_interrupt,
                 move |sender, cancel| async move {
                     let api_type = endpoint.api_type;

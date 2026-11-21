@@ -69,6 +69,11 @@ export function createTauriTavernSettingsState(settings) {
         throw new Error('TauriTavern settings: CodeMirror editor setting missing');
     }
 
+    const generationNotificationsEnabled = settings.generation_notifications_enabled;
+    if (typeof generationNotificationsEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: generation notifications setting missing');
+    }
+
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
     if (typeof avatarPersonaOriginalImagesEnabled !== 'boolean') {
         throw new Error('TauriTavern settings: avatar/persona original images setting missing');
@@ -117,6 +122,7 @@ export function createTauriTavernSettingsState(settings) {
             maxTotalBytes,
         },
         closeToTrayOnClose: Boolean(settings.close_to_tray_on_close),
+        generationNotificationsEnabled,
         requestProxy: {
             enabled: Boolean(settings.request_proxy?.enabled),
             url: typeof settings.request_proxy?.url === 'string' ? settings.request_proxy.url : '',

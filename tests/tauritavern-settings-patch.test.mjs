@@ -22,6 +22,7 @@ function createSettings(overrides = {}) {
             max_total_bytes: 1024 * 1024 * 1024,
         },
         close_to_tray_on_close: false,
+        generation_notifications_enabled: true,
         request_proxy: {
             enabled: false,
             url: '',

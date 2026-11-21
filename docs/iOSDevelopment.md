@@ -148,11 +148,11 @@ Tauri npm CLI 当前会让 `actool` 继承已关闭的 stdin，导致图标编�
 
 ## 7. AI 生成后台执行
 
-iOS 生成的后台租约由 Rust 生成运行时（`GenerationRuntime`）持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行：
+iOS 生成的后台租约由 Rust 生成运行时（`GenerationRuntime`）持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行。租约在任务开始时带上提示级别（`GenerationNotice`）：请求不是 quiet 时为 `Standard`，quiet 时为 `Quiet`，TauriTavern 设置中关闭“生成通知”时一律为 `Off`。
 
-- iOS 26+ 的用户可见生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；
+- iOS 26+ 在用户已授予系统通知权限时的 `Standard` 生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；这个界面无法隐藏；
 - 流式生成以累计收到的 provider 响应字节作为单调递增的真实进度。因为 LLM 输出总量事先未知，`NSProgress` 保持 indeterminate，成功结束时再收敛到 100%；
-- iOS 16–25，以及不会展示系统 UI 的 quiet 内部生成，继续使用 `beginBackgroundTask`。`BGContinuedProcessingTask` 不适合无明确用户意图却会显示 Live Activity 的后台工作。
+- iOS 16–25、系统通知权限尚未授予或被拒绝时，以及 `Quiet`、`Off`，使用没有系统界面的 `beginBackgroundTask`。`BGContinuedProcessingTask` 不适合无明确用户意图或用户未允许通知却会显示 Live Activity 的后台工作。
 
 生命周期契约：
 

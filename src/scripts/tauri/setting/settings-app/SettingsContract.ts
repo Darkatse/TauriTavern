@@ -16,6 +16,7 @@ export type SettingsCapabilities = {
     lanSyncAllowed: boolean;
     supportsCloseToTrayOnClose: boolean;
     supportsDataRootSelection: boolean;
+    backgroundShowsProgressUi: boolean;
 };
 
 export type ChatBackupStorageStats = {
@@ -45,6 +46,7 @@ export type SettingsValues = {
         maxTotalBytes: number;
     };
     closeToTrayOnClose: boolean;
+    generationNotificationsEnabled: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
@@ -114,6 +116,7 @@ export type SettingsDraft = {
         maxTotalUnit: ChatBackupStorageUnit;
     };
     closeToTrayOnClose: boolean;
+    generationNotificationsEnabled: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
@@ -160,6 +163,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
             maxTotalUnit,
         },
         closeToTrayOnClose: values.closeToTrayOnClose,
+        generationNotificationsEnabled: values.generationNotificationsEnabled,
         requestProxy: {
             enabled: values.requestProxy.enabled,
             url: values.requestProxy.url,

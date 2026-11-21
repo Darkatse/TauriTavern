@@ -12,7 +12,7 @@ use tt_ports::repositories::secret_repository::SecretRepository;
 
 use crate::dto::horde_dto::{HordeTextGenerationRequestDto, HordeUserInfoDto};
 use crate::errors::ApplicationError;
-use crate::services::generation_runtime::{GenerationRuntime, notifies_completion};
+use crate::services::generation_runtime::{GenerationRuntime, is_quiet};
 use crate::services::selected_secret::read_selected_secret;
 
 mod text;
@@ -112,7 +112,7 @@ impl HordeService {
     ) -> Result<(), ApplicationError> {
         let horde = self.horde()?.clone();
         let mut payload = dto.payload;
-        let notify_completion = notifies_completion(&payload);
+        let quiet = is_quiet(&payload);
         payload.remove("type");
         let api_key = self
             .api_key()
@@ -128,7 +128,7 @@ impl HordeService {
         self.generation_runtime
             .start_stream(
                 stream_id,
-                notify_completion,
+                quiet,
                 Some(on_interrupt),
                 move |sender, _cancel| async move {
                     text::follow_task(horde.as_ref(), &task_id, &sender).await

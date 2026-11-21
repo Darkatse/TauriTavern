@@ -96,8 +96,8 @@ test('OpenCode generation carries the current stable chat id', async () => {
 
 test('pre-stream cancellation and quiet start failures are handled before returning SSE 200', async () => {
     const cancelledRouter = await createAiRouter(async (command) => {
-        if (command === 'get_notification_permission_state') {
-            return 'denied';
+        if (command === 'get_generation_notification_state') {
+            return { enabled: false, backgroundShowsProgressUi: false };
         }
         if (command === 'start_chat_completion_stream') {
             throw { Cancelled: 'Endpoint authorization cancelled by user' };

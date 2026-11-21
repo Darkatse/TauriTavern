@@ -63,8 +63,8 @@ test('status projects supports_tokenization into the response header', async () 
 
 test('a failed generation is an assistant reply, and a quiet one keeps the upstream error shape', async () => {
     const router = await createTextCompletionRouter(async (command) => {
-        if (command === 'get_notification_permission_state') {
-            return 'denied';
+        if (command === 'get_generation_notification_state') {
+            return { enabled: false, backgroundShowsProgressUi: false };
         }
         if (command === 'generate_text_completion') {
             throw { Unauthorized: 'KoboldCpp endpoint rejected the API key' };
@@ -108,8 +108,8 @@ test('a failed generation is an assistant reply, and a quiet one keeps the upstr
 test('streaming generation forwards chunks and ends mid-stream errors with an error chunk and DONE', async () => {
     let closed = false;
     const router = await createTextCompletionRouter(async (command) => {
-        if (command === 'get_notification_permission_state') {
-            return 'denied';
+        if (command === 'get_generation_notification_state') {
+            return { enabled: false, backgroundShowsProgressUi: false };
         }
         if (command === 'start_text_completion_stream') {
             return null;

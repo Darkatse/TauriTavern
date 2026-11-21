@@ -42,9 +42,8 @@ test('completion notifications never delay generation completion', async () => {
     });
     const service = createGenerationLifecycleService({
         notificationService: {
-            getPermissionState: async () => 'granted',
-            preparePermission: async () => 'granted',
-            show: async () => {
+            prepareForGeneration: async () => true,
+            notifyIfAllowed: async () => {
                 markNotificationStarted();
                 await notificationBlocked;
             },

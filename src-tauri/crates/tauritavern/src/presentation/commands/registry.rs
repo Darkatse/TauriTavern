@@ -409,6 +409,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::horde_commands::get_horde_user_info,
         super::horde_commands::start_horde_text_stream,
         // Generation commands shared by every API family
+        super::generation_commands::get_generation_notification_state,
         super::generation_commands::read_generation_stream,
         super::generation_commands::close_generation_stream,
         super::generation_commands::cancel_generation,

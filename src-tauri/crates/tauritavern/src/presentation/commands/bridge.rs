@@ -207,11 +207,9 @@ pub fn request_notification_permission(
 ) -> Result<NotificationPermissionStateDto, CommandError> {
     log_command("request_notification_permission");
 
-    if !matches!(
-        get_notification_permission_state_inner(&app)?,
-        NotificationPermissionStateDto::Prompt
-    ) {
-        return get_notification_permission_state_inner(&app);
+    let current_state = get_notification_permission_state_inner(&app)?;
+    if !matches!(current_state, NotificationPermissionStateDto::Prompt) {
+        return Ok(current_state);
     }
 
     let requested_state = app.notification().request_permission().map_err(|error| {

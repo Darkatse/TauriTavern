@@ -115,8 +115,23 @@ function SettingsApp({
                 </div>
             </header>
 
-            {capabilities.supportsCloseToTrayOnClose && (
-                <SettingsSection title={tr('Interface')} icon="fa-window-minimize">
+            <SettingsSection title={tr('Interface')} icon="fa-display">
+                <SettingRow
+                    label={tr('Generation notifications')}
+                    helpTopic={capabilities.backgroundShowsProgressUi
+                        ? 'generationNotificationsWithProgress'
+                        : 'generationNotifications'}
+                    helpTitle={tr('Learn more')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.generationNotificationsEnabled}
+                        ariaLabel={tr('Generation notifications')}
+                        onChange={checked => controller.updateDraft('generationNotificationsEnabled', checked)}
+                    />
+                </SettingRow>
+
+                {capabilities.supportsCloseToTrayOnClose && (
                     <SettingRow
                         label={tr('Minimize to tray on close (Windows)')}
                         helpTopic="closeToTray"
@@ -129,8 +144,8 @@ function SettingsApp({
                             onChange={checked => controller.updateDraft('closeToTrayOnClose', checked)}
                         />
                     </SettingRow>
-                </SettingsSection>
-            )}
+                )}
+            </SettingsSection>
 
             <SettingsSection title={tr('Performance')} icon="fa-gauge-high">
                 <SettingRow

@@ -192,7 +192,7 @@ async fn a_text_task_fails_when_faulted_unservable_or_unfinished() {
 #[tokio::test]
 async fn a_text_generation_sends_the_page_request_and_cancelling_deletes_its_task() {
     let horde = Arc::new(FakeHorde::default());
-    let runtime = Arc::new(GenerationRuntime::new(None));
+    let runtime = Arc::new(GenerationRuntime::new(None, true));
     let service = service(horde.clone(), runtime.clone());
     let request = json!({ "prompt": "Hi", "params": { "max_length": 80 }, "models": ["m"] });
     let mut payload = request.as_object().unwrap().clone();
@@ -223,7 +223,7 @@ async fn text_models_merge_their_reference_entry_and_list_without_a_reference() 
         { "name": "unlisted", "count": 1 },
     ]);
     let reference = json!({ "listed": { "display_name": "Listed", "tags": ["popular"] } });
-    let runtime = Arc::new(GenerationRuntime::new(None));
+    let runtime = Arc::new(GenerationRuntime::new(None, true));
 
     let with_reference = service(
         Arc::new(FakeHorde {

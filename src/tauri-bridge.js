@@ -117,6 +117,10 @@ export async function getTauriTavernSettings() {
     return invoke('get_tauritavern_settings');
 }
 
+export async function getGenerationNotificationState() {
+    return invoke('get_generation_notification_state');
+}
+
 export async function getChatBackupStorageStats() {
     return invoke('get_chat_backup_storage_stats');
 }

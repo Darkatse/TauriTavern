@@ -12,6 +12,7 @@ use crate::dto::settings_dto::{
     UserSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
@@ -33,6 +34,7 @@ pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
     request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
+    generation_runtime: Arc<GenerationRuntime>,
     sillytavern_settings_cache: Mutex<Option<SettingsAggregateCacheEntry>>,
     user_settings_save_lock: Mutex<()>,
     /// Held from load to save, so one write cannot restore a field another write just changed.
@@ -45,12 +47,14 @@ impl SettingsService {
         settings_repository: Arc<dyn SettingsRepository>,
         request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
         chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
+        generation_runtime: Arc<GenerationRuntime>,
     ) -> Self {
         Self {
             avatars,
             settings_repository,
             request_proxy_runtime,
             chat_backup_runtime,
+            generation_runtime,
             sillytavern_settings_cache: Mutex::new(None),
             user_settings_save_lock: Mutex::new(()),
             tauritavern_settings_write_lock: Mutex::new(()),
@@ -66,6 +70,8 @@ impl SettingsService {
         self.clear_sillytavern_settings_cache().await;
         self.settings_repository.load_user_settings().await?;
         let settings = self.settings_repository.load_tauritavern_settings().await?;
+        self.generation_runtime
+            .set_notifications_enabled(settings.generation_notifications_enabled);
         self.chat_backup_runtime
             .apply_chat_backup_settings(settings.chat_backups)
             .await?;
@@ -178,6 +184,10 @@ impl SettingsService {
             settings.close_to_tray_on_close = close_to_tray_on_close;
         }
 
+        if let Some(generation_notifications_enabled) = dto.generation_notifications_enabled {
+            settings.generation_notifications_enabled = generation_notifications_enabled;
+        }
+
         if let Some(avatar_persona_original_images_enabled) =
             dto.avatar_persona_original_images_enabled
         {
@@ -268,6 +278,8 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
+        self.generation_runtime
+            .set_notifications_enabled(settings.generation_notifications_enabled);
         drop(write_guard);
 
         if chat_backups_changed {
@@ -729,14 +741,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tauritavern_settings_update_persists_and_applies_chat_backup_policy() {
+    async fn tauritavern_settings_update_and_reload_apply_runtime_policies() {
         let repository = Arc::new(TestSettingsRepository::default());
         let backup_runtime = Arc::new(TestChatBackupRuntime::default());
+        let generation_runtime = Arc::new(GenerationRuntime::new(None, true));
         let service = SettingsService::new(
             Arc::new(TestAvatars),
-            repository,
+            repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            generation_runtime.clone(),
         );
 
         let updated = service
@@ -756,6 +770,7 @@ mod tests {
                     max_total_bytes: Some(0),
                 }),
                 close_to_tray_on_close: None,
+                generation_notifications_enabled: Some(false),
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -770,6 +785,8 @@ mod tests {
         assert_eq!(updated.chat_backups.max_files_per_prefix, 7);
         assert_eq!(updated.chat_backups.max_total_files, -1);
         assert_eq!(updated.chat_backups.max_total_bytes, 0);
+        assert!(!updated.generation_notifications_enabled);
+        assert!(!generation_runtime.notifications_enabled());
         assert_eq!(
             backup_runtime.applied.lock().unwrap().as_slice(),
             &[ChatBackupSettings {
@@ -780,6 +797,16 @@ mod tests {
                 max_total_bytes: 0,
             }]
         );
+
+        repository
+            .save_tauritavern_settings(&TauriTavernSettings {
+                generation_notifications_enabled: true,
+                ..TauriTavernSettings::default()
+            })
+            .await
+            .expect("external sync writes settings");
+        service.reload().await.expect("reload synchronizes runtime");
+        assert!(generation_runtime.notifications_enabled());
     }
 
     #[tokio::test]
@@ -791,6 +818,7 @@ mod tests {
             repository,
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            Arc::new(GenerationRuntime::new(None, true)),
         );
 
         let update = UpdateTauriTavernSettingsDto {
@@ -809,6 +837,7 @@ mod tests {
             cold_swipes_enabled: None,
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
+            generation_notifications_enabled: None,
             avatar_persona_original_images_enabled: None,
             dev: None,
             dynamic_theme: None,
@@ -857,6 +886,7 @@ mod tests {
             repository,
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            Arc::new(GenerationRuntime::new(None, true)),
         );
 
         service
@@ -876,6 +906,7 @@ mod tests {
                 cold_swipes_enabled: None,
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
+                generation_notifications_enabled: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -962,7 +993,15 @@ mod tests {
         }
 
         async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError> {
-            unreachable!()
+            Ok(StoredUserSettings {
+                settings: UserSettings {
+                    data: serde_json::json!({}),
+                },
+                revision: tt_domain::models::settings::revision::UserSettingsRevision {
+                    hash_algorithm: String::new(),
+                    settings_hash: String::new(),
+                },
+            })
         }
 
         async fn begin_commit(
