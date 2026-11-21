@@ -13,8 +13,12 @@ async function openSession(options) {
     const ready = new Promise(resolve => eventSource.once(event_types.APP_READY, resolve));
     const extensionsLoaded = new Promise(resolve => eventSource.once(event_types.EXTENSION_SETTINGS_LOADED, resolve));
     const saved = new Promise(resolve => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
+    // The startup settings save can land before the chat finishes loading; editing a character before the chat
+    // surface settles races its structure writes.
+    const chatLoaded = new Promise(resolve => eventSource.once(event_types.CHAT_LOADED, resolve));
     window.jQuery.holdReady(false);
-    await Promise.race([Promise.all([ready, saved, extensionsLoaded]), failed]);
+    await Promise.race([Promise.all([ready, saved, extensionsLoaded, chatLoaded]), failed]);
+    expect(window.document.querySelector('#chat .mes_text')).not.toBeNull();
     expect(window.document.getElementById('extensions_details').classList.contains('warning')).toBe(false);
     expect(window.webHostFixtureActivated).toBe(true);
     return { ...frontend, main, errors, failed };

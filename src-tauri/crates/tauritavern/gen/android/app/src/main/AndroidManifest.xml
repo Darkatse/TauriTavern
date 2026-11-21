@@ -30,6 +30,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/display_shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -52,6 +53,14 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Static shortcuts clear their target task. Keep that task separate from the WebView. -->
+        <activity
+            android:name=".FontResetShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="${applicationId}.fontreset"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

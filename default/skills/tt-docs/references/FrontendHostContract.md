@@ -216,6 +216,12 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - TT 在上游 `src/scripts/st-context.js` 中增加的函数，属于 Project Contract，目前供第一方助手使用。
   - 效果等同于对主页面 `#chat` 调用 `scrollTo(options)`。`#chat` 的原生滚动只由 ChatSurface 写入，所以要经由它，不直接操作 DOM。
 
+### 3.8 Android 字号恢复（Project Contract）
+
+- `window.__TAURITAVERN__.api.display` 在设置和初始聊天加载后可用。
+- `resetFontScales()` 恢复界面与聊天字号并提交设置。保存期间的重复调用共用当前操作。
+- `getFontResetResult()` 返回 `null`、`pending`、`saved` 或 `failed`。`takeFontResetResult()` 取走已完成的结果，并将状态清为 `null`。
+
 ---
 
 ## 4. 请求拦截与路由契约（Public）

@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [pluginTestFrontend()],
   browser: { enabled: true, provider: 'playwright', headless: true },
   setupFiles: ['./tests/helpers/rstest-setup.mjs'],
+  // A hung browser page must fail its test instead of holding the job until the workflow timeout.
+  testTimeout: 30_000,
   restoreMocks: true,
   unstubGlobals: true,
   tools: {
