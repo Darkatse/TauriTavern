@@ -33,13 +33,8 @@ export function createSettings(store, loadDefaults) {
             const initial = await loadDefaults();
             const value = read(initial);
             // Not in the update DTO; each has its own command.
-            const { updates, allow_keys_exposure: _keys, request_proxy: _proxy, ...options } = patch;
+            const { allow_keys_exposure: _keys, request_proxy: _proxy, ...options } = patch;
             applyOptions(value, options, initial);
-            // This DTO contains required fields rather than nested Option patches.
-            if (updates != null) {
-                if (updates.channel != null) value.updates.channel = updates.channel;
-                value.updates.startup_popup.dismissed_release_token = updates.startup_popup.dismissed_release_token ?? null;
-            }
             store.save(value);
             return structuredClone(value);
         },

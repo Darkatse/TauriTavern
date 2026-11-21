@@ -1,16 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, ClaudeModelSettings,
-    DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl, RequestProxySettings,
-    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
-    UserSettings,
+    AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
+    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
+    RequestProxySettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
 };
 use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettingsDto {
-    pub updates: TauriTavernUpdateSettingsDto,
+    pub updates: AppUpdateSettingsDto,
     pub perf_profile: String,
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
@@ -30,20 +29,23 @@ pub struct TauriTavernSettingsDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TauriTavernUpdateSettingsDto {
+pub struct AppUpdateSettingsDto {
     #[serde(default)]
     pub channel: Option<UpdateChannel>,
-    pub startup_popup: StartupUpdatePopupSettingsDto,
+    pub popup_enabled: bool,
+    pub dismissed_release_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartupUpdatePopupSettingsDto {
+pub struct UpdateAppUpdateSettingsDto {
+    pub channel: Option<UpdateChannel>,
+    pub popup_enabled: Option<bool>,
     pub dismissed_release_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTauriTavernSettingsDto {
-    pub updates: Option<TauriTavernUpdateSettingsDto>,
+    pub updates: Option<UpdateAppUpdateSettingsDto>,
     pub perf_profile: Option<String>,
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
@@ -244,7 +246,7 @@ impl From<SettingsSnapshot> for SettingsSnapshotDto {
 impl From<TauriTavernSettings> for TauriTavernSettingsDto {
     fn from(settings: TauriTavernSettings) -> Self {
         Self {
-            updates: TauriTavernUpdateSettingsDto::from(settings.updates),
+            updates: AppUpdateSettingsDto::from(settings.updates),
             perf_profile: settings.perf_profile,
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
@@ -353,19 +355,12 @@ impl From<ModelSettings> for ModelSettingsDto {
     }
 }
 
-impl From<TauriTavernUpdateSettings> for TauriTavernUpdateSettingsDto {
-    fn from(settings: TauriTavernUpdateSettings) -> Self {
+impl From<AppUpdateSettings> for AppUpdateSettingsDto {
+    fn from(settings: AppUpdateSettings) -> Self {
         Self {
             channel: settings.channel,
-            startup_popup: StartupUpdatePopupSettingsDto::from(settings.startup_popup),
-        }
-    }
-}
-
-impl From<StartupUpdatePopupSettings> for StartupUpdatePopupSettingsDto {
-    fn from(settings: StartupUpdatePopupSettings) -> Self {
-        Self {
-            dismissed_release_token: settings.dismissed_release_token,
+            popup_enabled: settings.popup_enabled,
+            dismissed_release_token: settings.startup_popup.dismissed_release_token,
         }
     }
 }

@@ -100,7 +100,6 @@ mod tests {
         fs::write(
             default_user.join("tauritavern-settings.json"),
             r#"{
-                "updates":{"startup_popup":{"dismissed_release_token":null}},
                 "chat_backups":{
                     "automatic_enabled":true,
                     "max_files_per_prefix":20,
@@ -125,7 +124,7 @@ mod tests {
         fs::create_dir_all(&default_user).expect("create default user dir");
         fs::write(
             default_user.join("tauritavern-settings.json"),
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"ios_policy":{"version":"bad"}}"#,
+            r#"{"ios_policy":{"version":"bad"}}"#,
         )
         .expect("write settings");
 

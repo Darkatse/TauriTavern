@@ -117,7 +117,7 @@ const host = installWebHost({
 
 **角色**。`get_bootstrap_metadata` 保留后端给出的 `shallow` 标记，浅卡片的 `json_data` 为 `null`。`get_character` 与编辑后的回读得到完整卡片，`json_data` 是 ST 返回的原始卡片文本。ST 读卡失败时仍返回 200 和一个不含 `json_data` 的空壳，Web Host 把它当作错误。完整卡片更新转回 ST 的文本表单，保留 `json_data` 中的其他字段；头像文件与裁剪不在范围内。
 
-**TT 设置**。读取时合并默认值与 `store` 文档里的设置，新增字段由默认值补上。更新遵循 Rust 更新 DTO 的 `Option` 语义：未提供或为 `null` 的普通字段保留；嵌套段落按字段更新，数组替换；`updates.startup_popup.dismissed_release_token` 允许 `null` 清除。`allow_keys_exposure` 与 `request_proxy` 只经各自的命令修改，不在更新 DTO 里，更新时忽略。更新在同一任务里读取、合并并保存。
+**TT 设置**。读取时合并默认值与 `store` 文档里的设置，新增字段由默认值补上。更新遵循 Rust 更新 DTO 的 `Option` 语义：未提供或为 `null` 的普通字段保留；嵌套段落按字段更新，数组替换。`allow_keys_exposure` 与 `request_proxy` 只经各自的命令修改，不在更新 DTO 里，更新时忽略。更新在同一任务里读取、合并并保存。
 
 **系统扩展**。启动时写下的状态（MCP 注册、扩展存储条目）保存在 `store` 文档里，之后的启动读到的与原生相同；技能列表是全新安装的结果。工具声明确认接收；真正使用这些能力时才拒绝。
 

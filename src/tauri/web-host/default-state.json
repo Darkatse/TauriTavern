@@ -68,9 +68,8 @@
     },
     "updates": {
       "channel": null,
-      "startup_popup": {
-        "dismissed_release_token": null
-      }
+      "dismissed_release_token": null,
+      "popup_enabled": true
     }
   }
 }

@@ -245,8 +245,8 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - `scripting.tool_registration=false`：不注册 `/tools-register` 等注册类命令
     - `src/scripts/tool-calling.js`
 - `tauritavern-version` 扩展（更新能力 UI）：
-  - `updates.manual_check=false`：移除 “Check for Updates” 按钮与更新渠道选择，并隐藏兼容性信息/Discord 链接
-  - `updates.startup_check=false`：跳过启动检查更新
+  - `updates.manual_check=false`：移除 “Check for Updates” 按钮、隐藏更新渠道选择，并隐藏兼容性信息/Discord/Telegram 链接
+  - `updates.startup_check=false`：隐藏“更新弹窗”开关并跳过启动检查更新（两者均为 `false` 时隐藏整个“更新设置”折叠项）
   - `about.git_info=false`：隐藏 Git Info
   - `src/scripts/extensions/tauritavern-version/index.js`
 

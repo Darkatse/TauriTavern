@@ -8,15 +8,16 @@ use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 use crate::dto::settings_dto::{
     SettingsJsonDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateAgentSettingsDto, UpdateChatBackupSettingsDto, UpdateTauriTavernSettingsDto,
-    UserSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
+    UpdateAgentSettingsDto, UpdateAppUpdateSettingsDto, UpdateChatBackupSettingsDto,
+    UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsRevisionDto,
+    UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
-    RequestProxySettings, UserSettings,
+    AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
+    DevLoggingSettings, RequestProxySettings, UserSettings,
 };
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
@@ -137,11 +138,7 @@ impl SettingsService {
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
         if let Some(updates) = dto.updates {
-            if let Some(channel) = updates.channel {
-                settings.updates.channel = Some(channel);
-            }
-            settings.updates.startup_popup.dismissed_release_token =
-                updates.startup_popup.dismissed_release_token;
+            Self::apply_update_settings_update(&mut settings.updates, updates);
         }
 
         if let Some(perf_profile) = dto.perf_profile {
@@ -321,6 +318,21 @@ impl SettingsService {
             .save_tauritavern_settings(&settings)
             .await?;
         Ok(())
+    }
+
+    fn apply_update_settings_update(
+        settings: &mut AppUpdateSettings,
+        dto: UpdateAppUpdateSettingsDto,
+    ) {
+        if let Some(channel) = dto.channel {
+            settings.channel = Some(channel);
+        }
+        if let Some(popup_enabled) = dto.popup_enabled {
+            settings.popup_enabled = popup_enabled;
+        }
+        if let Some(token) = dto.dismissed_release_token {
+            settings.startup_popup.dismissed_release_token = Some(token);
+        }
     }
 
     fn apply_agent_settings_update(

@@ -107,6 +107,10 @@ fn default_generation_notifications_enabled() -> bool {
     true
 }
 
+fn default_update_popup_enabled() -> bool {
+    true
+}
+
 fn default_request_proxy_bypass() -> Vec<String> {
     vec![
         "localhost".to_string(),
@@ -361,7 +365,8 @@ fn default_chat_backup_max_total_bytes() -> i64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
-    pub updates: TauriTavernUpdateSettings,
+    #[serde(default)]
+    pub updates: AppUpdateSettings,
     #[serde(default = "default_perf_profile")]
     pub perf_profile: String,
     #[serde(default = "default_panel_runtime_profile")]
@@ -409,7 +414,7 @@ pub struct TauriTavernSettings {
 impl Default for TauriTavernSettings {
     fn default() -> Self {
         Self {
-            updates: TauriTavernUpdateSettings::default(),
+            updates: AppUpdateSettings::default(),
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
@@ -457,11 +462,25 @@ impl TauriTavernSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TauriTavernUpdateSettings {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<UpdateChannel>,
+    #[serde(default = "default_update_popup_enabled")]
+    pub popup_enabled: bool,
+    /// Always written: older builds cannot load settings without it.
+    #[serde(default)]
     pub startup_popup: StartupUpdatePopupSettings,
+}
+
+impl Default for AppUpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: None,
+            popup_enabled: default_update_popup_enabled(),
+            startup_popup: StartupUpdatePopupSettings::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -502,7 +521,7 @@ mod tests {
     #[test]
     fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
         let settings = TauriTavernSettings::from_json_value_with_compat(
-            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}),
+            serde_json::json!({"avatar_persona_thumbnails_enabled":false}),
         )
         .expect("parse settings");
 
@@ -516,6 +535,7 @@ mod tests {
         )
         .expect("parse settings");
 
+        assert!(settings.updates.popup_enabled);
         assert!(settings.codemirror_editor_enabled);
         assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
@@ -531,7 +551,6 @@ mod tests {
     #[test]
     fn chat_backup_settings_default_missing_nested_fields() {
         let settings = TauriTavernSettings::from_json_value_with_compat(serde_json::json!({
-            "updates":{"startup_popup":{"dismissed_release_token":null}},
             "chat_backups":{"max_total_files":12}
         }))
         .expect("parse settings");

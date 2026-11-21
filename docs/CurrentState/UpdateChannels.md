@@ -9,7 +9,7 @@ Linux 系统软件源默认使用 `stable`，并提供独立的 `canary` 套件�
 - 面向用户：Stable 显示版本号；Canary 显示中国标准日期，例如 `Canary Release 2026.06.14`。
 - 面向程序：Stable 按 SemVer 比较；Canary 把当前构建与远端 Git 提交都规范化为 12 位短哈希后精确比较。
 - 构建分支为精确的 `main` 时默认 `stable`，其他已知分支默认 `canary`；缺失分支信息时保守默认为 `stable`。
-- 用户可在版本扩展设置中覆盖默认渠道。该选择进入现有 settings 持久化链路。
+- 用户可在版本扩展设置中覆盖默认渠道，并开关“更新弹窗”（`updates.popup_enabled`，默认开启；关闭后跳过启动自动检查与弹窗，手动检查仍可用）。该选择进入现有 settings 持久化链路。
 
 构建身份由 `TAURITAVERN_BUILD_BRANCH` 和 `TAURITAVERN_BUILD_REVISION` 注入；未显式提供时，构建脚本依次读取 GitHub Actions 环境和本地 Git。Canary 构建缺失或包含非法 revision 时必须明确失败，不能退回版本号比较。
 
