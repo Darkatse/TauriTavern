@@ -1,6 +1,8 @@
 pub mod repair;
 pub mod revision;
 
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
@@ -363,6 +365,22 @@ fn default_chat_backup_max_total_bytes() -> i64 {
     DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Http2KeepAliveSettings {
+    pub enabled: bool,
+    pub interval_seconds: NonZeroU32,
+}
+
+impl Default for Http2KeepAliveSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_seconds: NonZeroU32::new(15).unwrap(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
     #[serde(default)]
@@ -385,6 +403,8 @@ pub struct TauriTavernSettings {
     pub close_to_tray_on_close: bool,
     #[serde(default = "default_generation_notifications_enabled")]
     pub generation_notifications_enabled: bool,
+    #[serde(default)]
+    pub http2_keep_alive: Http2KeepAliveSettings,
     #[serde(default)]
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
@@ -424,6 +444,7 @@ impl Default for TauriTavernSettings {
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             generation_notifications_enabled: default_generation_notifications_enabled(),
+            http2_keep_alive: Http2KeepAliveSettings::default(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(

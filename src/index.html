@@ -2403,6 +2403,19 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <option value="kobold" data-i18n="KoboldAI">KoboldAI Classic</option>
                         </select>
                     </div>
+                    <div id="http2_keep_alive_settings" hidden>
+                        <label for="http2_keep_alive_enabled" class="checkbox_label">
+                            <input id="http2_keep_alive_enabled" type="checkbox"
+                                aria-describedby="http2_keep_alive_description">
+                            <span data-i18n="HTTP/2 keepalive">HTTP/2 keepalive</span>
+                        </label>
+                        <small id="http2_keep_alive_description" data-i18n="Send HTTP/2 PING frames during active generation requests.">Send HTTP/2 PING frames during active generation requests.</small>
+                        <div class="flex-container alignItemsCenter">
+                            <label for="http2_keep_alive_interval" data-i18n="Keepalive interval (seconds)">Keepalive interval (seconds)</label>
+                            <input id="http2_keep_alive_interval" class="text_pole flex1" type="number"
+                                min="1" max="4294967295" step="1" required disabled>
+                        </div>
+                    </div>
                     <div id="kobold_horde" style="position: relative;"> <!-- shows the kobold settings -->
                         <form action="javascript:void(null);" method="post" enctype="multipart/form-data">
                             <div id="kobold_horde_block">

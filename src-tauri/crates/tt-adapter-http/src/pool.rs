@@ -7,8 +7,8 @@ use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClien
 use reqwest::redirect::Policy;
 use reqwest::{Client, NoProxy, Proxy};
 use tt_domain::errors::DomainError;
-use tt_domain::models::settings::RequestProxySettings;
-use tt_ports::settings::RequestProxyRuntime;
+use tt_domain::models::settings::{Http2KeepAliveSettings, RequestProxySettings};
+use tt_ports::settings::OutboundHttpRuntime;
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use crate::client::{build_http_client, configure_blocking_http_client};
@@ -53,6 +53,12 @@ pub enum HttpClientProfile {
     CorsProxy,
 }
 
+impl HttpClientProfile {
+    fn uses_generation_keep_alive(self) -> bool {
+        matches!(self, Self::Generation | Self::GenerationStream)
+    }
+}
+
 #[derive(Clone, Default)]
 enum RequestProxyState {
     #[default]
@@ -84,6 +90,7 @@ struct ClientCacheKey {
 struct HttpClientPoolState {
     revision: u64,
     proxy: RequestProxyState,
+    http2_keep_alive_interval: Option<Duration>,
     user_endpoint_grants: HashSet<String>,
     clients: HashMap<ClientCacheKey, Client>,
 }
@@ -160,6 +167,21 @@ impl HttpClientPool {
         state.revision += 1;
     }
 
+    pub fn apply_http2_keep_alive_settings(&self, settings: Http2KeepAliveSettings) {
+        let interval = settings
+            .enabled
+            .then(|| Duration::from_secs(u64::from(settings.interval_seconds.get())));
+        let mut state = self.state.write().unwrap();
+        if state.http2_keep_alive_interval == interval {
+            return;
+        }
+        state.http2_keep_alive_interval = interval;
+        state
+            .clients
+            .retain(|key, _| !key.profile.uses_generation_keep_alive());
+        state.revision += 1;
+    }
+
     pub fn client(&self, profile: HttpClientProfile) -> Result<Client, DomainError> {
         self.client_with_revision(profile)
             .map(|(client, _revision)| client)
@@ -203,7 +225,7 @@ impl HttpClientPool {
             user_endpoint_route,
         };
         loop {
-            let (revision, proxy) = {
+            let (revision, proxy, keep_alive_interval) = {
                 let state = self.state.read().unwrap();
                 if let Some(client) = state.clients.get(&key) {
                     return Ok((client.clone(), state.revision));
@@ -214,12 +236,16 @@ impl HttpClientPool {
                 } else {
                     state.proxy.configured()?
                 };
-                (state.revision, proxy)
+                let keep_alive_interval = state
+                    .http2_keep_alive_interval
+                    .filter(|_| profile.uses_generation_keep_alive());
+                (state.revision, proxy, keep_alive_interval)
             };
 
             let client = build_profile_client(
                 profile,
                 proxy,
+                keep_alive_interval,
                 user_endpoint_route,
                 &self.product_user_agent,
             )?;
@@ -266,7 +292,7 @@ fn install_rustls_crypto_provider() {
     });
 }
 
-impl RequestProxyRuntime for HttpClientPool {
+impl OutboundHttpRuntime for HttpClientPool {
     fn validate_request_proxy_settings(
         &self,
         settings: &RequestProxySettings,
@@ -279,6 +305,10 @@ impl RequestProxyRuntime for HttpClientPool {
         settings: &RequestProxySettings,
     ) -> Result<(), DomainError> {
         HttpClientPool::apply_request_proxy_settings(self, settings)
+    }
+
+    fn apply_http2_keep_alive_settings(&self, settings: Http2KeepAliveSettings) {
+        HttpClientPool::apply_http2_keep_alive_settings(self, settings);
     }
 }
 
@@ -319,10 +349,13 @@ fn normalized_bypass_csv(entries: &[String]) -> String {
 fn build_profile_client(
     profile: HttpClientProfile,
     proxy: Option<Proxy>,
+    keep_alive_interval: Option<Duration>,
     user_endpoint_route: Option<UserEndpointRoute>,
     product_user_agent: &str,
 ) -> Result<Client, DomainError> {
-    let mut builder = Client::builder().no_proxy();
+    let mut builder = Client::builder()
+        .no_proxy()
+        .http2_keep_alive_interval(keep_alive_interval);
 
     builder = match profile {
         HttpClientProfile::Default | HttpClientProfile::Download => builder,

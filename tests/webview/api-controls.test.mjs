@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from '@rstest/core';
+import { waitFor } from '@testing-library/dom';
 import { computeAccessibleName } from 'dom-accessibility-api';
 import { createFrontend } from '../helpers/frontend.mjs';
 
@@ -12,6 +13,45 @@ const textgen = (await load('scripts/textgen-settings.js'));
 const power = (await load('scripts/power-user.js'));
 kai.initKoboldSettings();
 textgen.initTextGenSettings();
+
+test('the global HTTP/2 keepalive control saves its interval and retains it when disabled', async () => {
+    const frontend = await createFrontend();
+    try {
+        const { window, load, startHost } = frontend;
+        let settings = { enabled: false, interval_seconds: 15 };
+        const invoke = window.__TAURI__.core.invoke;
+        window.__TAURI__.core.invoke = async (command, args, options) => {
+            if (command === 'update_tauritavern_settings') {
+                settings = { ...settings, ...args.dto.http2_keep_alive };
+                return { http2_keep_alive: settings };
+            }
+            return invoke(command, args, options);
+        };
+        await startHost();
+        const { initializeHttp2KeepAliveSettings } = await load('scripts/tauritavern/http2-keep-alive.js');
+        initializeHttp2KeepAliveSettings(settings);
+
+        const enabled = window.document.getElementById('http2_keep_alive_enabled');
+        const interval = window.document.getElementById('http2_keep_alive_interval');
+        expect(enabled.checked).toBe(false);
+        expect(interval.disabled).toBe(true);
+
+        enabled.click();
+        await waitFor(() => expect(interval.disabled).toBe(false));
+        interval.value = '28';
+        interval.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await waitFor(() => expect(interval.disabled).toBe(false));
+        expect(settings.interval_seconds).toBe(28);
+
+        enabled.click();
+        await waitFor(() => expect(enabled.disabled).toBe(false));
+        expect(settings).toEqual({ enabled: false, interval_seconds: 28 });
+        expect(interval.disabled).toBe(true);
+        expect(interval.valueAsNumber).toBe(28);
+    } finally {
+        frontend.close();
+    }
+});
 
 test('preset selection preserves legal context ranges and reports adjusted values once', async () => {
     power.prepareGenerationControls({ enableLabMode: false, max_context_unlocked: false });

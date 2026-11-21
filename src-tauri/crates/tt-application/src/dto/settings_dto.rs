@@ -1,9 +1,12 @@
+use std::num::NonZeroU32;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
-    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
-    RequestProxySettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
+    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, Http2KeepAliveSettings,
+    ModelSettings, PromptCacheTtl, RequestProxySettings, SettingsSnapshot, TauriTavernSettings,
+    UserSettings,
 };
 use tt_domain::models::update::UpdateChannel;
 
@@ -19,6 +22,8 @@ pub struct TauriTavernSettingsDto {
     pub chat_backups: ChatBackupSettingsDto,
     pub close_to_tray_on_close: bool,
     pub generation_notifications_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http2_keep_alive: Option<Http2KeepAliveSettings>,
     pub request_proxy: RequestProxySettingsDto,
     pub allow_keys_exposure: bool,
     pub avatar_persona_original_images_enabled: bool,
@@ -55,11 +60,18 @@ pub struct UpdateTauriTavernSettingsDto {
     pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
     pub generation_notifications_enabled: Option<bool>,
+    pub http2_keep_alive: Option<UpdateHttp2KeepAliveSettingsDto>,
     pub avatar_persona_original_images_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
     pub models: Option<UpdateModelSettingsDto>,
     pub agent: Option<UpdateAgentSettingsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateHttp2KeepAliveSettingsDto {
+    pub enabled: Option<bool>,
+    pub interval_seconds: Option<NonZeroU32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +268,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             chat_backups: ChatBackupSettingsDto::from(settings.chat_backups),
             close_to_tray_on_close: settings.close_to_tray_on_close,
             generation_notifications_enabled: settings.generation_notifications_enabled,
+            http2_keep_alive: Some(settings.http2_keep_alive),
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             allow_keys_exposure: settings.allow_keys_exposure,
             avatar_persona_original_images_enabled: settings.avatar_persona_original_images_enabled,
