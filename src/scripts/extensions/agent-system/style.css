@@ -668,9 +668,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     list-style: none;
 }
 
+/* The windowed list sets its own scroll position as rows come and go; scroll anchoring would move it again, and the
+ * list would read that as the user scrolling away from the bottom. */
 .ttas-run-events.is-windowed {
     --ttas-run-event-row-height: 58px;
     gap: 0;
+    overflow-anchor: none;
 }
 
 .ttas-run-event {
