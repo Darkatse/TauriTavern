@@ -564,14 +564,16 @@ async function openFrontend({ allocations = false } = {}) {
 
     // Waits until the main thread has idled for three frame intervals with no frame or idle callback pending; a
     // pending callback waits for a frame, which the harness issues when it issues frames. Idleness is read from
-    // outside the page, so waiting adds no page work.
+    // outside the page, so waiting adds no page work. Resolves whether the page worked while it waited.
     async function quiet() {
         const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'TaskDuration').value;
         const deadline = Date.now() + quietWithinMs;
+        let worked = false;
         for (let idle = 0, last = await busy(); idle < 50;) {
             if (Date.now() > deadline) throw new Error(`The page did not go quiet within ${quietWithinMs / 1000} s`);
             await new Promise(resolve => setTimeout(resolve, 10));
             const now = await busy();
+            if (now - last >= 0.001) worked = true;
             idle = now - last < 0.001 ? idle + 10 : 0;
             last = now;
             if (idle >= 50 && await page.evaluate(() => globalThis.__perfPage.hasPendingCallbacks())) {
@@ -579,14 +581,16 @@ async function openFrontend({ allocations = false } = {}) {
                 if (harnessFrames) await issueFrame();
             }
         }
+        return worked;
     }
 
     // Once the page is quiet, runs the held timeouts, ticks the step's intervals once, lets one held response
-    // through, or issues a frame, and repeats until nothing is held and a frame draws nothing. Holding them means
-    // no work arrives after the page looks quiet.
+    // through, or issues a frame, and repeats until nothing is held and nothing has run since a frame that drew
+    // nothing. Holding them means no work arrives after the page looks quiet; timers outside steps keep real time,
+    // so their work can land while the page goes quiet and needs a frame of its own.
     async function settle() {
         for (let ticks = 0, frames = 0, drawn = true; ;) {
-            await quiet();
+            const worked = await quiet();
             if (await page.evaluate(() => globalThis.__perfPage.runPendingTimeouts()) > 0) {
                 drawn = true;
                 continue;
@@ -603,7 +607,7 @@ async function openFrontend({ allocations = false } = {}) {
                 drawn = true;
                 continue;
             }
-            if (!harnessFrames || !drawn) return;
+            if (!harnessFrames || !(drawn || worked)) return;
             if (++frames > 1000) throw new Error('Frames keep drawing');
             drawn = await issueFrame();
         }
