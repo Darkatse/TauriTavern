@@ -106,6 +106,40 @@ test('character form edit preserves the embedded lorebook while updating ordinar
     assert.equal(calls[0].args.dto.materialize_primary_lorebook, true);
 });
 
+test('character form edit keeps blank alternate greetings', async () => {
+    const calls = [];
+    const service = createCharacterFormService({
+        safeInvoke: async (command, args) => calls.push({ command, args }),
+        resolveCharacterId: async () => 'Alice',
+        resolveExistingCharacterId: async () => 'Alice',
+        materializeUploadFile: async () => {
+            throw new Error('materializeUploadFile should not be called');
+        },
+    });
+    const body = new FormData();
+    body.set('avatar_url', 'Alice.png');
+    body.set('ch_name', 'Alice');
+    for (const greeting of ['Hi', '', ' ']) {
+        body.append('alternate_greetings', greeting);
+    }
+
+    await service.editCharacterFromForm(body, new URL('http://localhost/api/characters/edit'));
+
+    const written = JSON.parse(calls[0].args.dto.card_json);
+    assert.deepEqual(written.data.alternate_greetings, ['Hi', '', ' ']);
+    assert.deepEqual(
+        payloadToCreateCharacterDto({ ch_name: 'Alice', alternate_greetings: '' }).alternate_greetings,
+        [],
+    );
+    assert.deepEqual(
+        payloadToCreateCharacterDto({
+            ch_name: 'Alice',
+            alternate_greetings: ['Hi', '', null, undefined, { ignored: true }, 7],
+        }).alternate_greetings,
+        ['Hi', '', '7'],
+    );
+});
+
 test('character form ignores malformed optional card JSON and saves owned fields', async () => {
     const calls = [];
     const service = createCharacterFormService({

@@ -132,27 +132,6 @@ impl FileCharacterRepository {
         preceding.is_multiple_of(2)
     }
 
-    fn parse_alternate_greetings(value: Option<&Value>) -> Vec<String> {
-        match value {
-            Some(Value::Array(items)) => items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(ToString::to_string)
-                .collect(),
-            Some(Value::String(item)) => {
-                let trimmed = item.trim();
-                if trimmed.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![trimmed.to_string()]
-                }
-            }
-            _ => Vec::new(),
-        }
-    }
-
     fn has_canonical_data_payload(raw_value: &Value) -> bool {
         matches!(
             raw_value.get("spec").and_then(Value::as_str),
@@ -257,7 +236,7 @@ impl FileCharacterRepository {
             DomainError::InvalidData("Imported character payload must be a JSON object".to_string())
         })?;
 
-        self.apply_legacy_aliases(&mut character, &raw_value);
+        Self::apply_legacy_aliases(&mut character, &raw_value);
         Self::sync_canonical_data_fields(&mut character, &raw_value);
         Self::normalize_imported_character(&mut character)?;
         if !has_talkativeness
@@ -274,7 +253,7 @@ impl FileCharacterRepository {
         })
     }
 
-    pub(crate) fn apply_legacy_aliases(&self, character: &mut Character, raw_value: &Value) {
+    fn apply_legacy_aliases(character: &mut Character, raw_value: &Value) {
         if character.creator_notes.trim().is_empty()
             && let Some(value) = raw_value.get("creatorcomment").and_then(Value::as_str)
         {
@@ -309,31 +288,6 @@ impl FileCharacterRepository {
             && let Some(value) = raw_value.get("world_scenario").and_then(Value::as_str)
         {
             character.scenario = value.to_string();
-        }
-
-        if character.tags.is_empty() {
-            if let Some(array) = raw_value.get("tags").and_then(Value::as_array) {
-                character.tags = array
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|tag| tag.trim().to_string())
-                    .filter(|tag| !tag.is_empty())
-                    .collect();
-            } else if let Some(csv) = raw_value.get("tags").and_then(Value::as_str) {
-                character.tags = csv
-                    .split(',')
-                    .map(|tag| tag.trim().to_string())
-                    .filter(|tag| !tag.is_empty())
-                    .collect();
-            }
-        }
-
-        if character.data.alternate_greetings.is_empty() {
-            character.data.alternate_greetings = Self::parse_alternate_greetings(
-                raw_value
-                    .get("alternate_greetings")
-                    .or_else(|| raw_value.pointer("/data/alternate_greetings")),
-            );
         }
     }
 

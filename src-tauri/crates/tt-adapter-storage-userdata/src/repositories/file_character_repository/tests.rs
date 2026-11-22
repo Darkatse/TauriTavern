@@ -804,6 +804,7 @@ async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fiel
             "scenario": "scenario",
             "first_mes": "hello",
             "mes_example": "",
+            "alternate_greetings": "",
             "custom": { "kept": true }
         }))
         .expect("serialize legacy card"),
@@ -833,6 +834,10 @@ async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fiel
     assert_eq!(stored.get("spec"), Some(&json!("chara_card_v2")));
     assert_eq!(stored.get("spec_version"), Some(&json!("2.0")));
     assert_eq!(stored.pointer("/data/name"), Some(&json!("Legacy")));
+    assert_eq!(
+        stored.pointer("/data/alternate_greetings"),
+        Some(&json!([]))
+    );
     assert_eq!(stored.pointer("/custom/kept"), Some(&json!(true)));
 }
 
@@ -851,6 +856,7 @@ async fn import_v3_uses_data_fields_when_top_level_is_stale() {
         "first_mes": "stale root hello",
         "mes_example": "stale root example",
         "tags": ["root-tag"],
+        "alternate_greetings": ["stale root greeting"],
         "talkativeness": 0.1,
         "data": {
             "name": "Canonical Import",
@@ -860,6 +866,7 @@ async fn import_v3_uses_data_fields_when_top_level_is_stale() {
             "first_mes": "canonical hello",
             "mes_example": "canonical example",
             "tags": ["data-tag"],
+            "alternate_greetings": [],
             "extensions": {
                 "talkativeness": 0.8,
                 "fav": false
@@ -887,6 +894,7 @@ async fn import_v3_uses_data_fields_when_top_level_is_stale() {
     assert_eq!(imported.first_mes, "canonical hello");
     assert_eq!(imported.mes_example, "canonical example");
     assert_eq!(imported.tags, vec!["data-tag".to_string()]);
+    assert!(imported.data.alternate_greetings.is_empty());
     assert_eq!(imported.talkativeness, 0.8);
 
     let stored_json = repository
@@ -924,7 +932,8 @@ async fn import_json_preserves_top_level_alternate_greetings_array() {
         "first_mes": "Hello",
         "alternate_greetings": [
             "Hi there",
-            "Howdy"
+            "",
+            "  Howdy\n"
         ],
     });
 
@@ -943,7 +952,11 @@ async fn import_json_preserves_top_level_alternate_greetings_array() {
 
     assert_eq!(
         imported.data.alternate_greetings,
-        vec!["Hi there".to_string(), "Howdy".to_string()]
+        vec![
+            "Hi there".to_string(),
+            String::new(),
+            "  Howdy\n".to_string()
+        ]
     );
 }
 

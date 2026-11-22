@@ -150,30 +150,42 @@ fn projected_string(value: Option<&Value>) -> String {
     value.and_then(Value::as_str).unwrap_or("").to_string()
 }
 
-fn projected_string_list(value: Option<&Value>, split_string: bool) -> Vec<String> {
+fn projected_tags(value: Option<&Value>) -> Vec<String> {
     match value {
-        Some(Value::String(value)) if split_string => value
+        Some(Value::String(value)) => value
             .split(',')
             .map(str::trim)
             .filter(|item| !item.is_empty())
             .map(ToString::to_string)
             .collect(),
-        Some(Value::String(value)) => {
-            let value = value.trim();
-            (!value.is_empty())
-                .then(|| value.to_string())
-                .into_iter()
-                .collect()
-        }
         Some(Value::Array(values)) => values
             .iter()
             .filter_map(|value| match value {
-                Value::String(value) => Some(value.trim().to_string()),
+                Value::String(value) => {
+                    let trimmed = value.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }
                 Value::Number(value) => Some(value.to_string()),
                 Value::Bool(value) => Some(value.to_string()),
                 _ => None,
             })
-            .filter(|value| !value.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Greetings are message text: array entries stay verbatim, blank ones included.
+fn projected_greetings(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(value)) if !value.is_empty() => vec![value.clone()],
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| match value {
+                Value::String(value) => Some(value.clone()),
+                Value::Number(value) => Some(value.to_string()),
+                Value::Bool(value) => Some(value.to_string()),
+                _ => None,
+            })
             .collect(),
         _ => Vec::new(),
     }
@@ -201,7 +213,7 @@ fn projected_bool(value: Option<&Value>) -> bool {
 }
 
 impl CharacterData {
-    fn from_card_value(value: Option<&Value>) -> Self {
+    fn from_card_value(value: Option<&Value>, legacy_alternate_greetings: Option<&Value>) -> Self {
         let object = value.and_then(Value::as_object);
         let field = |name| object.and_then(|object| object.get(name));
 
@@ -215,11 +227,13 @@ impl CharacterData {
             creator_notes: projected_string(field("creator_notes")),
             system_prompt: projected_string(field("system_prompt")),
             post_history_instructions: projected_string(field("post_history_instructions")),
-            tags: projected_string_list(field("tags"), true),
+            tags: projected_tags(field("tags")),
             creator: projected_string(field("creator")),
             character_version: projected_string(field("character_version")),
-            alternate_greetings: projected_string_list(field("alternate_greetings"), false),
-            group_only_greetings: projected_string_list(field("group_only_greetings"), false),
+            alternate_greetings: projected_greetings(
+                field("alternate_greetings").or(legacy_alternate_greetings),
+            ),
+            group_only_greetings: projected_greetings(field("group_only_greetings")),
             extensions: CharacterExtensions::from_card_value(field("extensions")),
             character_book: field("character_book")
                 .filter(|value| !value.is_null())
@@ -258,11 +272,11 @@ impl Character {
             creator: projected_string(field("creator")),
             creator_notes: projected_string(field("creator_notes")),
             character_version: projected_string(field("character_version")),
-            tags: projected_string_list(field("tags"), true),
+            tags: projected_tags(field("tags")),
             create_date: projected_string(field("create_date")),
             talkativeness: projected_number(field("talkativeness")).unwrap_or(0.0),
             fav: projected_bool(field("fav")),
-            data: CharacterData::from_card_value(field("data")),
+            data: CharacterData::from_card_value(field("data"), field("alternate_greetings")),
             ..Default::default()
         })
     }

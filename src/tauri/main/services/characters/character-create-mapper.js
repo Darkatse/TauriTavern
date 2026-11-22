@@ -13,10 +13,15 @@ function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+/** @param {any} item */
+function isScalarListItem(item) {
+    return typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean';
+}
+
 /** @param {any} tagsRaw */
 function splitTags(tagsRaw) {
     if (Array.isArray(tagsRaw)) {
-        return tagsRaw.map((tag) => String(tag).trim()).filter(Boolean);
+        return tagsRaw.filter(isScalarListItem).map((tag) => String(tag).trim()).filter(Boolean);
     }
 
     if (typeof tagsRaw === 'string') {
@@ -80,10 +85,17 @@ function stringFromPayload(payload, data, keys, fallback = '') {
     return fallback;
 }
 
-/** @param {any} value */
-function arrayFromValue(value) {
+/**
+ * Greetings are message text: array entries stay verbatim, blank ones included.
+ * @param {any} value
+ */
+function greetingsFromValue(value) {
     if (Array.isArray(value)) {
-        return value.map((item) => String(item)).filter(Boolean);
+        return value.filter(isScalarListItem).map((item) => String(item));
+    }
+
+    if (typeof value === 'string' && value.length > 0) {
+        return [value];
     }
 
     return [];
@@ -145,14 +157,12 @@ function stringFromForm(formData, key, fallback = '') {
 
 /** @param {FormData} formData @param {string} key */
 function arrayNotationValuesFromForm(formData, key) {
+    /** @type {FormDataEntryValue[]} */
     const values = [];
 
     for (const [entryKey, entryValue] of formData.entries()) {
         if (entryKey === `${key}[]` || (entryKey.startsWith(`${key}[`) && entryKey.endsWith(']'))) {
-            const value = String(entryValue);
-            if (value) {
-                values.push(value);
-            }
+            values.push(entryValue);
         }
     }
 
@@ -218,7 +228,7 @@ export function payloadToCreateCharacterDto(payload) {
         tags: splitTags(tags),
         talkativeness: numberFromValue(payload.talkativeness ?? extensions.talkativeness, 0.5),
         fav: boolFromValue(payload.fav ?? extensions.fav),
-        alternate_greetings: arrayFromValue(alternateGreetings),
+        alternate_greetings: greetingsFromValue(alternateGreetings),
         system_prompt: stringFromPayload(payload, data, ['system_prompt', 'systemPrompt']),
         post_history_instructions: stringFromPayload(payload, data, ['post_history_instructions', 'postHistoryInstructions']),
         extensions,
@@ -227,9 +237,9 @@ export function payloadToCreateCharacterDto(payload) {
 
 /** @param {FormData} formData */
 export function formDataToCreateCharacterDto(formData) {
-    const alternateGreetings = formData.getAll('alternate_greetings').map((item) => String(item)).filter(Boolean);
+    const alternateGreetings = formData.getAll('alternate_greetings');
     const bracketAlternateGreetings = arrayNotationValuesFromForm(formData, 'alternate_greetings');
-    const bracketTags = arrayNotationValuesFromForm(formData, 'tags');
+    const bracketTags = splitTags(arrayNotationValuesFromForm(formData, 'tags'));
 
     return payloadToCreateCharacterDto({
         file_name: stringFromForm(formData, 'file_name', ''),
