@@ -116,7 +116,7 @@ importers:
         version: 2.3.1(@swc/helpers@0.5.23)
       '@rstest/browser':
         specifier: ^0.12.6
-        version: 0.12.6(@rstest/core@0.12.6)(playwright@1.64.1)
+        version: 0.12.6(@rstest/core@0.12.6)(playwright@1.65.1)
       '@rstest/core':
         specifier: ^0.12.6
         version: 0.12.6
@@ -178,8 +178,8 @@ importers:
         specifier: ^7.1.1
         version: 7.1.1(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0)
       playwright:
-        specifier: 1.64.1
-        version: 1.64.1
+        specifier: 1.65.1
+        version: 1.65.1
       postcss:
         specifier: ^8.5.33
         version: 8.5.33
@@ -1749,13 +1749,13 @@ packages:
     resolution: {integrity: sha512-o8mkY4E/+LNUf6LzX96ht6k6CEDi65k9G2rjMtBe9Oo+VPKSvl+0GKHuH/AlG+GA5LPG/i5hrekkxUc3s2HU+Q==}
     hasBin: true
 
-  playwright-core@1.64.1:
-    resolution: {integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==}
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
     engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.64.1:
-    resolution: {integrity: sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==}
+  playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2523,7 +2523,7 @@ snapshots:
     optionalDependencies:
       '@swc/helpers': 0.5.23
 
-  '@rstest/browser@0.12.6(@rstest/core@0.12.6)(playwright@1.64.1)':
+  '@rstest/browser@0.12.6(@rstest/core@0.12.6)(playwright@1.65.1)':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@rstest/core': 0.12.6
@@ -2535,7 +2535,7 @@ snapshots:
       sirv: 3.0.2
       ws: 8.22.1
     optionalDependencies:
-      playwright: 1.64.1
+      playwright: 1.65.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -3724,11 +3724,11 @@ snapshots:
     dependencies:
       pngjs: 6.0.0
 
-  playwright-core@1.64.1: {}
+  playwright-core@1.65.1: {}
 
-  playwright@1.64.1:
+  playwright@1.65.1:
     dependencies:
-      playwright-core: 1.64.1
+      playwright-core: 1.65.1
 
   pngjs@6.0.0: {}
 

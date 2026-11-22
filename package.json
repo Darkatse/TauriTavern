@@ -75,7 +75,7 @@
     "eslint": "^9.39.5",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "playwright": "1.64.1",
+    "playwright": "1.65.1",
     "postcss": "^8.5.33",
     "postcss-selector-parser": "^7.2.1",
     "typescript": "^5.9.3",
