@@ -19,7 +19,6 @@ body:not(.tts) #ttsExtensionNarrateAll {
 }
 
 body.no-hotswap .hotswap,
-body.no-hotswap .hotswap~hr,
 body.no-timer .mes_timer,
 body.no-timestamps .timestamp,
 body.no-tokenCount .tokenCounterDisplay,

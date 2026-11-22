@@ -145,7 +145,7 @@
     opacity: 0;
 }
 
-.tt-settings-switch span {
+.tt-settings-switch-track {
     position: relative;
     width: 42px;
     height: 22px;
@@ -155,7 +155,7 @@
     transition: background-color var(--animation-duration), border-color var(--animation-duration);
 }
 
-.tt-settings-switch span::after {
+.tt-settings-switch-track::after {
     content: "";
     position: absolute;
     top: 3px;
@@ -167,16 +167,16 @@
     transition: transform var(--animation-duration);
 }
 
-.tt-settings-switch input:checked + span {
+.tt-settings-switch input:checked + .tt-settings-switch-track {
     border-color: var(--SmartThemeQuoteColor);
     background: color-mix(in srgb, var(--SmartThemeQuoteColor) 44%, var(--black30a));
 }
 
-.tt-settings-switch input:checked + span::after {
+.tt-settings-switch input:checked + .tt-settings-switch-track::after {
     transform: translateX(18px);
 }
 
-.tt-settings-switch input:focus-visible + span,
+.tt-settings-switch input:focus-visible + .tt-settings-switch-track,
 .tt-settings-icon-button:focus-visible,
 .tt-settings-action-button:focus-visible,
 .tt-settings-wallpaper-button:focus-visible,

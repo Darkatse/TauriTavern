@@ -444,8 +444,8 @@
 .popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > h3:first-child,
 .popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > #qr--ctxEditor,
 .popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > .qr--ctxEditorActions,
-.popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > .qr--ctxEditorActions + h3,
-.popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > .qr--ctxEditorActions + h3 + div {
+.popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > .qr--autoExecTitle,
+.popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--qrOptions > #qr--autoExec {
   display: none;
 }
 .popup:has(#qr--modalEditor) .popup-content > #qr--modalEditor.qr--isExecuting #qr--main > .qr--modal-messageContainer > #qr--modal-messageHolder > #qr--modal-message {
