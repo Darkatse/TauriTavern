@@ -56,7 +56,7 @@
     opacity: 0;
 }
 
-#tauritavern_version_settings .ttv-switch span {
+#tauritavern_version_settings .ttv-switch-track {
     position: relative;
     width: 42px;
     height: 22px;
@@ -66,7 +66,7 @@
     transition: background-color var(--animation-duration) ease, border-color var(--animation-duration) ease, opacity var(--animation-duration) ease;
 }
 
-#tauritavern_version_settings .ttv-switch span::after {
+#tauritavern_version_settings .ttv-switch-track::after {
     content: "";
     position: absolute;
     top: 3px;
@@ -78,21 +78,21 @@
     transition: transform var(--animation-duration) ease;
 }
 
-#tauritavern_version_settings .ttv-switch input:checked + span {
+#tauritavern_version_settings .ttv-switch input:checked + .ttv-switch-track {
     border-color: var(--SmartThemeQuoteColor);
     background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 44%, var(--black30a));
 }
 
-#tauritavern_version_settings .ttv-switch input:checked + span::after {
+#tauritavern_version_settings .ttv-switch input:checked + .ttv-switch-track::after {
     transform: translateX(18px);
 }
 
-#tauritavern_version_settings .ttv-switch input:focus-visible + span {
+#tauritavern_version_settings .ttv-switch input:focus-visible + .ttv-switch-track {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 2px;
 }
 
-#tauritavern_version_settings .ttv-switch input:disabled + span {
+#tauritavern_version_settings .ttv-switch input:disabled + .ttv-switch-track {
     opacity: 0.5;
     cursor: default;
 }
@@ -155,7 +155,7 @@
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
-#tauritavern_version_settings .ttv-update-settings-body > :not([hidden]) ~ :not([hidden]) {
+#tauritavern_version_settings .ttv-update-setting-group:not([hidden]) + .ttv-update-setting-row {
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid var(--SmartThemeBorderColor);
