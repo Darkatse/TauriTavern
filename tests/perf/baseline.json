@@ -1,6 +1,6 @@
 {
     "chromium": "156.0.8078.4",
-    "rust": "1.99.0",
+    "rust": "1.100.0",
     "steps": {
         "app/startup": {
             "frontend": {
@@ -11,14 +11,14 @@
                 "eventListeners": 3350
             },
             "backend": {
-                "allocatedBytes": 35622458,
-                "allocations": 27680,
-                "readBytes": 6274476,
-                "readOps": 384,
-                "resultBytes": 735472,
-                "writeBytes": 34062,
+                "allocatedBytes": 35699864,
+                "allocations": 27817,
+                "readBytes": 6278232,
+                "readOps": 396,
+                "resultBytes": 741632,
+                "writeBytes": 34279,
                 "writeOps": 4,
-                "instructions": 46302216
+                "instructions": 46813965
             }
         },
         "assistant/open-session": {
@@ -43,14 +43,14 @@
                 "jsAllocatedBytes": 4717484
             },
             "backend": {
-                "allocatedBytes": 3508625,
-                "allocations": 3452,
-                "readBytes": 1033332,
-                "readOps": 173,
-                "resultBytes": 247838,
+                "allocatedBytes": 3579629,
+                "allocations": 3491,
+                "readBytes": 1088888,
+                "readOps": 185,
+                "resultBytes": 247855,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 45529638
+                "instructions": 48861105
             }
         },
         "assistant/load-older": {
@@ -75,14 +75,14 @@
                 "jsAllocatedBytes": 4994568
             },
             "backend": {
-                "allocatedBytes": 3854113,
+                "allocatedBytes": 3854863,
                 "allocations": 1479,
                 "readBytes": 1180026,
                 "readOps": 24,
                 "resultBytes": 221769,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 5769067
+                "instructions": 5768719
             }
         },
         "character/open-heavy-card": {
@@ -107,14 +107,14 @@
                 "jsAllocatedBytes": 10490380
             },
             "backend": {
-                "allocatedBytes": 44950643,
+                "allocatedBytes": 44952263,
                 "allocations": 32543,
                 "readBytes": 2964389,
                 "readOps": 21,
-                "resultBytes": 4299594,
+                "resultBytes": 4299593,
                 "writeBytes": 42061,
                 "writeOps": 3,
-                "instructions": 152308977
+                "instructions": 152294376
             }
         },
         "character/open-back": {
@@ -139,14 +139,14 @@
                 "jsAllocatedBytes": 38377120
             },
             "backend": {
-                "allocatedBytes": 17321426,
+                "allocatedBytes": 17322656,
                 "allocations": 1815,
                 "readBytes": 105621,
                 "readOps": 15,
                 "resultBytes": 48702,
                 "writeBytes": 29110,
                 "writeOps": 2,
-                "instructions": 4666865
+                "instructions": 4660972
             }
         },
         "chat/send-and-stream": {
@@ -171,14 +171,14 @@
                 "jsAllocatedBytes": 19844736
             },
             "backend": {
-                "allocatedBytes": 660285,
+                "allocatedBytes": 661320,
                 "allocations": 681,
                 "readBytes": 32768,
                 "readOps": 4,
                 "resultBytes": 258,
                 "writeBytes": 145871,
                 "writeOps": 2,
-                "instructions": 2942319
+                "instructions": 2942203
             }
         },
         "chat/stream-long-reply": {
@@ -210,7 +210,7 @@
                 "resultBytes": 0,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 20649
+                "instructions": 20683
             }
         },
         "chat/finish-long-reply": {
@@ -235,14 +235,14 @@
                 "jsAllocatedBytes": 14274036
             },
             "backend": {
-                "allocatedBytes": 383342,
+                "allocatedBytes": 383762,
                 "allocations": 362,
                 "readBytes": 16384,
                 "readOps": 2,
                 "resultBytes": 129,
                 "writeBytes": 85754,
                 "writeOps": 1,
-                "instructions": 1800682
+                "instructions": 1801906
             }
         },
         "frontend-card/open-chat": {
@@ -267,14 +267,14 @@
                 "jsAllocatedBytes": 109953540
             },
             "backend": {
-                "allocatedBytes": 19940141,
+                "allocatedBytes": 19941866,
                 "allocations": 3965,
                 "readBytes": 999668,
                 "readOps": 21,
                 "resultBytes": 1031597,
                 "writeBytes": 42518,
                 "writeOps": 4,
-                "instructions": 20313652
+                "instructions": 20321680
             }
         },
         "frontend-card/send": {
@@ -299,14 +299,14 @@
                 "jsAllocatedBytes": 7761500
             },
             "backend": {
-                "allocatedBytes": 4734258,
+                "allocatedBytes": 4734873,
                 "allocations": 351,
                 "readBytes": 16384,
                 "readOps": 2,
                 "resultBytes": 102,
                 "writeBytes": 1542191,
                 "writeOps": 2,
-                "instructions": 22200273
+                "instructions": 22201483
             }
         },
         "frontend-card/stream-reply": {
@@ -338,7 +338,7 @@
                 "resultBytes": 0,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 24583
+                "instructions": 22764
             }
         },
         "frontend-card/finish-reply": {
@@ -363,14 +363,14 @@
                 "jsAllocatedBytes": 26699988
             },
             "backend": {
-                "allocatedBytes": 4901763,
+                "allocatedBytes": 4902183,
                 "allocations": 308,
                 "readBytes": 16384,
                 "readOps": 2,
                 "resultBytes": 98,
                 "writeBytes": 1617527,
                 "writeOps": 2,
-                "instructions": 23341313
+                "instructions": 23342573
             }
         },
         "prompt-manager/open-message-entry": {
@@ -483,14 +483,14 @@
                 "jsAllocatedBytes": 4532408
             },
             "backend": {
-                "allocatedBytes": 5558,
+                "allocatedBytes": 5510,
                 "allocations": 38,
                 "readBytes": 622,
                 "readOps": 2,
                 "resultBytes": 662,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 45261
+                "instructions": 46506
             }
         },
         "world-info/type-title-10-keys": {
@@ -515,14 +515,14 @@
                 "jsAllocatedBytes": 35170560
             },
             "backend": {
-                "allocatedBytes": 1955875,
+                "allocatedBytes": 1956100,
                 "allocations": 142,
                 "readBytes": 447052,
                 "readOps": 2,
                 "resultBytes": 86,
                 "writeBytes": 894074,
                 "writeOps": 2,
-                "instructions": 13208597
+                "instructions": 13207864
             }
         },
         "world-info/open-entry": {
@@ -554,7 +554,7 @@
                 "resultBytes": 41,
                 "writeBytes": 0,
                 "writeOps": 0,
-                "instructions": 553909
+                "instructions": 554888
             }
         },
         "world-info/type-10-keys": {
@@ -579,14 +579,14 @@
                 "jsAllocatedBytes": 5109600
             },
             "backend": {
-                "allocatedBytes": 2164835,
+                "allocatedBytes": 2165060,
                 "allocations": 189,
                 "readBytes": 446932,
                 "readOps": 2,
                 "resultBytes": 127,
                 "writeBytes": 893834,
                 "writeOps": 2,
-                "instructions": 13988394
+                "instructions": 13734665
             }
         },
         "world-info/close-entry": {
