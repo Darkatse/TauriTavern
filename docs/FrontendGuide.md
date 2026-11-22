@@ -237,8 +237,9 @@ src/
   - 参数里不检查 `style` 属性，需要按显示状态选择时，由改变状态的代码写类或属性；
   - `:has()` 之后的最右复合带类、ID 或属性；
   - 不要为了绕开 `:has()` 改用已知类名的白名单，扩展插入的控件会漏掉。
-- 兄弟组合子不要以 `*` 或纯伪类结尾、左侧又没有特征（如 `* + *`），否则 `body` 的子元素一有增删，整个 `body` 都要重算。`> * + *` 写成 `> :not(:first-child)`。
+- 兄弟组合子（`+`、`~`）之后的复合带类、ID 或属性；用 `:is()`、`:where()` 时，每个参数的最右复合都要带。Blink 只按这一段决定重算哪些兄弟，不看祖先；这一段是裸标签、`*` 或只有 `:not()` 时，页面上任何状态变化或节点增删都会重算后面的兄弟，规则不匹配任何元素也一样。兄弟之间的间距用父元素的 `gap` 或 `> :not(:first-child)`。
 - WebKit 中，`:has()` 后面接兄弟组合子、参数又检查状态伪类时（如 `#a:has(#b:checked) ~ #c`），页面上任何该状态的变化都会引起整页重查。改写成后代关系：`#共同父元素:has(#b:checked) #c`。
+- 上面两条由 `scripts/check-css-guardrails.mjs` 检查，范围是 `src/lib` 与 `*.min.css` 以外的全部 CSS。
 - 运行中的 CSS 动画让合成器每帧出图，`steps()` 只减少取值变化，不减少帧数。长时间显示的循环指示改由低频节拍切换属性，帧数随节拍；节拍只在元素可见且未要求减少动态时运行。
 - 成批出现的控件不要成为滚动容器，每个可见的滚动容器都会增加每一帧的合成成本。世界书标题因此按内容自适应高度，设为 `overflow: hidden`。
 - WebKit 有两种情况会重算整个文档的样式：内存占用较高时（macOS 上约 1.5 GB 以上）每 30 s 一次，以及每次打开、关闭模态 `<dialog>`。成本随渲染树里的元素数增长；原生下拉框还要重新测量选项文字，含 U+FE0F（emoji 表现选择符）的文字尤其慢。所以成批出现的下拉框，选项文字不带 U+FE0F；长列表里远离可见区域的行，不留在渲染树里。
@@ -462,6 +463,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
   - 行数预算：默认单文件 `<= 500` 行；关键聚合文件受 `scripts/guardrails/frontend-lines-baseline.json` 的基线约束。
   - 依赖边界：`kernel/ports` 不得 import `services/routes/adapters`；`services` 不得 import `routes`。
   - 路由契约：`src/tauri/main/routes/*` 禁止直接引用 `window`（需要触碰浏览器/DOM/上游 ST 时，新增 `adapters/*`）。
+- CSS 守护（`scripts/check-css-guardrails.mjs`）：兄弟组合子与 WebKit `:has()` 两条样式规则，见 §6.6。
 - 类型检查（`tsc -p tsconfig.host.json`）：
   - `strict` + `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess` 等强约束。
   - JS 文件默认不强制检查；需要在文件头加 `// @ts-check` 并配合 JSDoc（Host Kernel 目录已按此标准化）。
