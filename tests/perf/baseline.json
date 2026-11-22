@@ -635,24 +635,24 @@
         },
         "agent/stream-timeline-reasoning": {
             "frontend": {
-                "eventDispatches": 0,
-                "styleRecalcs": 3,
-                "forcedStyleRecalcs": 0,
-                "elementsRestyled": 29,
+                "eventDispatches": 25,
+                "styleRecalcs": 5,
+                "forcedStyleRecalcs": 1,
+                "elementsRestyled": 42,
                 "layouts": 6,
                 "forcedLayouts": 0,
-                "layoutObjectsLaidOut": 150,
-                "frames": 6,
-                "compositorUpdates": 4,
-                "requests": 1,
+                "layoutObjectsLaidOut": 143,
+                "frames": 8,
+                "compositorUpdates": 5,
+                "requests": 0,
                 "consoleMessages": 0,
                 "hostBytes": 0,
-                "elements": 15741,
+                "elements": 15951,
                 "scrollContainers": 89,
-                "liveNodes": 53862,
-                "layoutObjects": 4387,
-                "eventListeners": 3932,
-                "jsAllocatedBytes": 365360
+                "liveNodes": 54208,
+                "layoutObjects": 4739,
+                "eventListeners": 3952,
+                "jsAllocatedBytes": 377032
             }
         }
     }

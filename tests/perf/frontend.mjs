@@ -288,23 +288,29 @@ function rememberIssued(issued, index, value, opensResource, at = []) {
         for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, opensResource, [...at, key]);
     }
 }
-// The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal and
-// push() sends a live projection update to every open stream. Until the run ends, a read past the journal's last
-// event waits for the next one, so the run's event pollers wait instead of polling while the page settles.
+// The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal,
+// project() sets the timeline projection that journal reads return, and push() sends a live projection update to
+// every open stream. Until the run ends, a forward read from the journal's last event waits for the next one, so the
+// run's event pollers wait instead of polling while the page settles; a read from past the end, as the timeline reads
+// its projection, returns at once.
 // \`runId\` satisfies \`issuedToken\` so backend replay skips every call referencing this un-replayed mock run.
 // Live projection resource ids stay clear of the Web Host's own resource ids.
-const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false };
+const agentRun = {
+    runId: 'run_perf_4c1e9a7b2d6f3058', events: [], projection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
+    waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false,
+};
 const agentRunEnded = new Promise(resolve => { agentRun.end = resolve; });
 globalThis.__perfAgent = {
-    event(type) {
+    event(type, payload = {}) {
         const seq = agentRun.events.length + 1;
-        agentRun.events.push({ seq, id: \`agent-event-\${seq}\`, runId: agentRun.runId, timestamp: '2026-01-01T00:00:00Z', level: 'info', type, payload: {} });
+        agentRun.events.push({ seq, id: \`agent-event-\${seq}\`, runId: agentRun.runId, timestamp: '2026-01-01T00:00:00Z', level: 'info', type, payload });
         if (['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed'].includes(type)) {
             agentRun.ended = true;
             agentRun.end();
         }
         for (const wake of agentRun.waiting.splice(0)) wake();
     },
+    project(projection) { agentRun.projection = projection; },
     push: update => agentRun.resources.forEach(resource => resource.channel?.onmessage(update)),
     subscribers: () => [...agentRun.resources.values()].filter(resource => resource.channel).length,
 };
@@ -314,10 +320,10 @@ function readAgentRunEvents(dto) {
         const events = agentRun.events.filter(event => event.seq > after && event.seq < before);
         return {
             events: dto.beforeSeq == null ? events.slice(0, dto.limit) : events.slice(-dto.limit),
-            ...(dto.includeTimelineProjection ? { timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] } } : {}),
+            ...(dto.includeTimelineProjection ? { timelineProjection: agentRun.projection } : {}),
         };
     };
-    if (agentRun.ended || dto.beforeSeq != null || agentRun.events.length > after) return page();
+    if (agentRun.ended || dto.beforeSeq != null || agentRun.events.length !== after) return page();
     return new Promise(resolve => agentRun.waiting.push(() => resolve(page())));
 }
 // Native commands the Web Host lacks, answered as the native host would.
