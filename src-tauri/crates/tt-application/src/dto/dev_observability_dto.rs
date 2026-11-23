@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 pub use tt_contracts::observability::{
-    ExchangeViewDto, LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
-    LlmApiLogViewDto, LlmApiRawKindDto, MessageViewDto, ParameterViewDto, PartViewDto,
-    RequestKindDto, RequestViewDto, ResponseViewDto, ToolViewDto, UsageViewDto,
+    ChatCompletionRequestPreviewDto, ExchangeViewDto, LlmApiLogIndexEntryDto, LlmApiLogPreviewDto,
+    LlmApiLogRawDto, LlmApiLogViewDto, LlmApiRawKindDto, MessageViewDto, ParameterViewDto,
+    PartViewDto, RequestKindDto, RequestViewDto, ResponseViewDto, ToolViewDto, UsageViewDto,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

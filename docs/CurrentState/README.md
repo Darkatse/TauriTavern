@@ -24,7 +24,7 @@
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |
 | [角色身份](CharacterIdentityContract.md) | 角色、聊天目录、重命名与世界书绑定 |
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |
-| [请求查看器](RequestInspector.md) | LLM 请求的记录与结构化视图 |
+| [请求查看器](RequestInspector.md) | LLM 请求的记录、结构化视图与发送前预览 |
 | [资源缓存](HostResourceCaching.md) | 资源版本与条件请求 |
 | [更新渠道](UpdateChannels.md) | Stable、Canary 与更新检测 |
 | [Linux 分发](LinuxRepository.md) | APT、RPM 与 Nix |

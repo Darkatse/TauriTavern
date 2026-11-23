@@ -8,6 +8,7 @@ mod text_completion_repository;
 mod types;
 
 pub use chat_completion_repository::LoggingChatCompletionRepository;
+pub use request::preview_chat_completion_request;
 pub use store::LlmApiLogStore;
 pub use text_completion_repository::LoggingTextCompletionRepository;
 

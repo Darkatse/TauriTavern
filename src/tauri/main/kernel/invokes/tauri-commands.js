@@ -76,6 +76,7 @@ export {};
  *   | 'export_skill'
  *   | 'find_secret'
  *   | 'generate_chat_completion'
+ *   | 'preview_chat_completion_request'
  *   | 'generate_text_completion'
  *   | 'get_all_background_metadata'
  *   | 'get_all_backgrounds'

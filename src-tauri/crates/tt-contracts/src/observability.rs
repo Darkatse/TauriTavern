@@ -68,6 +68,16 @@ pub struct LlmApiLogViewDto {
     pub view: ExchangeViewDto,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCompletionRequestPreviewDto {
+    pub source: String,
+    pub model: Option<String>,
+    pub endpoint: String,
+    pub request_raw: String,
+    pub view: ExchangeViewDto,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestKindDto {

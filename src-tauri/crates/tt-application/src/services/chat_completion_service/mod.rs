@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::dto::chat_completion_dto::{
-    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+    ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto, ChatCompletionWireRequestDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::{
@@ -22,7 +22,9 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
     ChatCompletionStreamDelta,
 };
-use tt_ports::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
+use tt_ports::repositories::prompt_cache_repository::{
+    PromptCacheKey, PromptCacheRepository, PromptDigestSnapshot,
+};
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::settings_repository::SettingsRepository;
 
@@ -69,6 +71,10 @@ struct PreparedChatCompletionRequest {
     config: ChatCompletionApiConfig,
     endpoint_path: String,
     upstream_payload: Value,
+    provider_format: ChatCompletionProviderFormat,
+    /// The prompt digests this request would leave behind; sending saves them, a preview
+    /// drops them.
+    prompt_digests: Option<(PromptCacheKey, PromptDigestSnapshot)>,
 }
 
 pub struct ChatCompletionService {
@@ -407,13 +413,8 @@ impl ChatCompletionService {
         dto: ChatCompletionGenerateRequestDto,
         on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<ChatCompletionExecution, ApplicationError> {
-        let source = self.resolve_generate_source(&dto)?;
-        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
-        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
-        let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
-        let prepared = self
-            .prepare_generate_request(dto, source, additional_parameters)
-            .await?;
+        let prepared = self.prepare_send(dto).await?;
+        let provider_format = prepared.provider_format;
 
         let response = match on_delta {
             Some(on_delta) => {
@@ -448,12 +449,41 @@ impl ChatCompletionService {
         })
     }
 
+    pub async fn preview_request(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<ChatCompletionWireRequestDto, ApplicationError> {
+        let prepared = self.prepare_generate_request(dto).await?;
+        Ok(ChatCompletionWireRequestDto {
+            source: prepared.source,
+            base_url: prepared.config.base_url,
+            endpoint_path: prepared.endpoint_path,
+            payload: prepared.upstream_payload,
+        })
+    }
+
+    async fn prepare_send(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<PreparedChatCompletionRequest, ApplicationError> {
+        let mut prepared = self.prepare_generate_request(dto).await?;
+        if let Some((key, snapshot)) = prepared.prompt_digests.take() {
+            self.prompt_cache_repository
+                .save_prompt_digests(key, snapshot)
+                .await
+                .map_err(ApplicationError::from)?;
+        }
+        Ok(prepared)
+    }
+
     async fn prepare_generate_request(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-        source: ChatCompletionSource,
-        additional_parameters: AdditionalParameters,
     ) -> Result<PreparedChatCompletionRequest, ApplicationError> {
+        let source = self.resolve_generate_source(&dto)?;
+        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
+        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
+        let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
@@ -467,21 +497,17 @@ impl ChatCompletionService {
         apply_opencode_session_header(source, &dto.payload, &mut config)?;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, dto.payload)?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
-        self.apply_tauritavern_prompt_caching(
-            source,
-            &endpoint_path,
-            &mut config,
-            &settings,
-            &mut upstream_payload,
-            prompt_caching_hints,
-        )
-        .await?;
-        Ok(PreparedChatCompletionRequest {
+        let mut prepared = PreparedChatCompletionRequest {
             source,
             config,
             endpoint_path,
             upstream_payload,
-        })
+            provider_format,
+            prompt_digests: None,
+        };
+        self.apply_tauritavern_prompt_caching(&mut prepared, &settings, prompt_caching_hints)
+            .await?;
+        Ok(prepared)
     }
 
     pub(crate) async fn generate_exchange(
@@ -528,12 +554,7 @@ impl ChatCompletionService {
         sender: GenerationStreamSender,
         cancel: GenerationCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let source = self.resolve_generate_source(&dto)?;
-        let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
-        Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
-        let prepared = self
-            .prepare_generate_request(dto, source, additional_parameters)
-            .await?;
+        let prepared = self.prepare_send(dto).await?;
 
         self.chat_completion_repository
             .generate_stream(
@@ -598,11 +619,8 @@ impl ChatCompletionService {
 
     async fn apply_tauritavern_prompt_caching(
         &self,
-        source: ChatCompletionSource,
-        endpoint_path: &str,
-        config: &mut ChatCompletionApiConfig,
+        prepared: &mut PreparedChatCompletionRequest,
         settings: &TauriTavernSettings,
-        upstream_payload: &mut Value,
         hints: prompt_caching_plan::PromptCachingRequestHints,
     ) -> Result<(), ApplicationError> {
         let cache_ttl = settings.models.claude.prompt_cache_ttl;
@@ -617,20 +635,20 @@ impl ChatCompletionService {
         };
 
         let plan = prompt_caching_plan::resolve_prompt_caching_plan(
-            source,
-            endpoint_path,
-            config,
-            upstream_payload,
+            prepared.source,
+            &prepared.endpoint_path,
+            &prepared.config,
+            &prepared.upstream_payload,
             hints,
         )?;
         let Some(plan) = plan else {
             return Ok(());
         };
 
-        if prompt_caching::contains_cache_control(upstream_payload) {
+        if prompt_caching::contains_cache_control(&prepared.upstream_payload) {
             // User-supplied cache_control wins over automatic prompt caching.
             if let prompt_caching_plan::PromptCachingPlan::VertexClaude { key, .. } = &plan {
-                apply_vertexai_prompt_cache_session_header(config, key);
+                apply_vertexai_prompt_cache_session_header(&mut prepared.config, key);
             }
             return Ok(());
         }
@@ -646,15 +664,12 @@ impl ChatCompletionService {
                     .await
                     .map_err(ApplicationError::from)?;
                 let snapshot = prompt_caching::apply_claude_prompt_caching(
-                    upstream_payload,
+                    &mut prepared.upstream_payload,
                     previous.as_ref(),
                     ttl,
                 );
-                self.prompt_cache_repository
-                    .save_prompt_digests(key, snapshot)
-                    .await
-                    .map_err(ApplicationError::from)?;
-                config.anthropic_beta_header_mode = anthropic_beta_header_mode;
+                prepared.prompt_digests = Some((key, snapshot));
+                prepared.config.anthropic_beta_header_mode = anthropic_beta_header_mode;
             }
             prompt_caching_plan::PromptCachingPlan::OpenRouterClaude { key } => {
                 let previous = self
@@ -663,14 +678,11 @@ impl ChatCompletionService {
                     .await
                     .map_err(ApplicationError::from)?;
                 let snapshot = prompt_caching::apply_openrouter_claude_prompt_caching(
-                    upstream_payload,
+                    &mut prepared.upstream_payload,
                     previous.as_ref(),
                     ttl,
                 );
-                self.prompt_cache_repository
-                    .save_prompt_digests(key, snapshot)
-                    .await
-                    .map_err(ApplicationError::from)?;
+                prepared.prompt_digests = Some((key, snapshot));
             }
             prompt_caching_plan::PromptCachingPlan::VertexClaude { key, model } => {
                 ensure_vertexai_claude_prompt_cache_ttl(ttl, &model)?;
@@ -680,18 +692,15 @@ impl ChatCompletionService {
                     .await
                     .map_err(ApplicationError::from)?;
                 let snapshot = prompt_caching::apply_claude_explicit_prompt_caching(
-                    upstream_payload,
+                    &mut prepared.upstream_payload,
                     previous.as_ref(),
                     ttl,
                 );
-                self.prompt_cache_repository
-                    .save_prompt_digests(key.clone(), snapshot)
-                    .await
-                    .map_err(ApplicationError::from)?;
-                apply_vertexai_prompt_cache_session_header(config, &key);
+                apply_vertexai_prompt_cache_session_header(&mut prepared.config, &key);
+                prepared.prompt_digests = Some((key, snapshot));
             }
             prompt_caching_plan::PromptCachingPlan::NanoGptClaude => {
-                apply_nanogpt_claude_cache_control(upstream_payload, ttl);
+                apply_nanogpt_claude_cache_control(&mut prepared.upstream_payload, ttl);
             }
         }
 
@@ -974,5 +983,248 @@ mod tests {
                 expected_error
             );
         }
+    }
+
+    #[tokio::test]
+    async fn preview_request_matches_the_sent_request_without_sending_or_saving_digests() {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use async_trait::async_trait;
+        use tokio::sync::Mutex;
+        use tt_domain::errors::DomainError;
+        use tt_domain::ios_policy::{IosPolicyScope, resolve_ios_policy_activation_report};
+        use tt_domain::models::secret::Secrets;
+        use tt_domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
+        use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
+        use tt_ports::repositories::chat_completion_repository::{
+            ChatCompletionNormalizationReport, ChatCompletionRepository,
+            ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+        };
+        use tt_ports::repositories::prompt_cache_repository::{
+            PromptCacheRepository, PromptDigestSnapshot,
+        };
+        use tt_ports::repositories::secret_repository::SecretRepository;
+
+        use super::prompt_caching;
+        use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
+        use crate::services::agent_run_retention_test_support::TestSettingsRepository;
+        use crate::services::generation_runtime::GenerationRuntime;
+
+        #[derive(Debug, Clone, PartialEq)]
+        struct RecordedCall {
+            source: ChatCompletionSource,
+            base_url: String,
+            endpoint_path: String,
+            payload: Value,
+        }
+
+        #[derive(Default)]
+        struct RecordingChatRepo {
+            calls: Mutex<Vec<RecordedCall>>,
+        }
+
+        #[async_trait]
+        impl ChatCompletionRepository for RecordingChatRepo {
+            async fn list_models(
+                &self,
+                _source: ChatCompletionSource,
+                _config: &ChatCompletionApiConfig,
+            ) -> Result<Value, DomainError> {
+                unreachable!()
+            }
+
+            async fn generate(
+                &self,
+                source: ChatCompletionSource,
+                config: &ChatCompletionApiConfig,
+                endpoint_path: &str,
+                payload: &Value,
+            ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+                self.calls.lock().await.push(RecordedCall {
+                    source,
+                    base_url: config.base_url.clone(),
+                    endpoint_path: endpoint_path.to_string(),
+                    payload: payload.clone(),
+                });
+                Ok(ChatCompletionRepositoryGenerateResponse::new(
+                    json!({
+                        "choices": [{
+                            "finish_reason": "stop",
+                            "message": { "role": "assistant", "content": "ok" }
+                        }]
+                    }),
+                    ChatCompletionNormalizationReport::default(),
+                ))
+            }
+
+            async fn generate_stream(
+                &self,
+                _source: ChatCompletionSource,
+                _config: &ChatCompletionApiConfig,
+                _endpoint_path: &str,
+                _payload: &Value,
+                _sender: GenerationStreamSender,
+                _cancel: GenerationCancelReceiver,
+            ) -> Result<(), DomainError> {
+                unreachable!()
+            }
+
+            async fn generate_with_deltas(
+                &self,
+                _source: ChatCompletionSource,
+                _config: &ChatCompletionApiConfig,
+                _endpoint_path: &str,
+                _payload: &Value,
+                _on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
+            ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+                unreachable!()
+            }
+
+            async fn close_provider_session(&self, _session_id: &str) {}
+        }
+
+        struct StaticSecretRepo;
+
+        #[async_trait]
+        impl SecretRepository for StaticSecretRepo {
+            async fn save(&self, _secrets: &Secrets) -> Result<(), DomainError> {
+                unreachable!()
+            }
+            async fn load(&self) -> Result<Secrets, DomainError> {
+                unreachable!()
+            }
+            async fn clear_cache(&self) -> Result<(), DomainError> {
+                Ok(())
+            }
+            async fn write_secret(&self, _: &str, _: &str, _: &str) -> Result<String, DomainError> {
+                unreachable!()
+            }
+            async fn read_secret(
+                &self,
+                _key: &str,
+                _id: Option<&str>,
+            ) -> Result<Option<String>, DomainError> {
+                Ok(Some("sk-ant-test".to_string()))
+            }
+            async fn delete_secret(&self, _: &str, _: Option<&str>) -> Result<(), DomainError> {
+                unreachable!()
+            }
+            async fn rotate_secret(&self, _: &str, _: &str) -> Result<(), DomainError> {
+                unreachable!()
+            }
+            async fn rename_secret(&self, _: &str, _: &str, _: &str) -> Result<(), DomainError> {
+                unreachable!()
+            }
+        }
+
+        #[derive(Default)]
+        struct RecordingPromptCacheRepo {
+            snapshots: Mutex<HashMap<PromptCacheKey, PromptDigestSnapshot>>,
+            saves: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl PromptCacheRepository for RecordingPromptCacheRepo {
+            async fn load_prompt_digests(
+                &self,
+                key: PromptCacheKey,
+            ) -> Result<Option<PromptDigestSnapshot>, DomainError> {
+                Ok(self.snapshots.lock().await.get(&key).cloned())
+            }
+
+            async fn save_prompt_digests(
+                &self,
+                key: PromptCacheKey,
+                snapshot: PromptDigestSnapshot,
+            ) -> Result<(), DomainError> {
+                self.saves.fetch_add(1, Ordering::SeqCst);
+                self.snapshots.lock().await.insert(key, snapshot);
+                Ok(())
+            }
+        }
+
+        let chat_repo = Arc::new(RecordingChatRepo::default());
+        let cache_repo = Arc::new(RecordingPromptCacheRepo::default());
+        let settings_repo = TestSettingsRepository::new();
+        let mut settings = TauriTavernSettings::default();
+        settings.models.claude.prompt_cache_ttl = PromptCacheTtl::FiveMinutes;
+        settings_repo.store_tauritavern_settings(settings).await;
+
+        let runtime = Arc::new(GenerationRuntime::new(None, false));
+        let ios_policy =
+            resolve_ios_policy_activation_report(IosPolicyScope::Ignored, None, None).unwrap();
+        let service = ChatCompletionService::new(
+            chat_repo.clone(),
+            Arc::new(StaticSecretRepo),
+            settings_repo,
+            cache_repo.clone(),
+            runtime.clone(),
+            ios_policy,
+        );
+
+        let dto_from = |value: Value| ChatCompletionGenerateRequestDto {
+            payload: value.as_object().unwrap().clone(),
+        };
+
+        let turn1 = dto_from(json!({
+            "chat_completion_source": "claude",
+            "model": "claude-sonnet-4-5",
+            "messages": [
+                { "role": "system", "content": "System rules" },
+                { "role": "user", "content": "Context block" },
+                { "role": "assistant", "content": "Reply 1" },
+                { "role": "user", "content": "Turn 1 user" }
+            ],
+            "stream": false
+        }));
+        let req1 = runtime.register_request("req_1").unwrap();
+        service.generate_request(req1, turn1).await.unwrap();
+        assert_eq!(chat_repo.calls.lock().await.len(), 1);
+        assert_eq!(cache_repo.saves.load(Ordering::SeqCst), 1);
+
+        let turn2_json = json!({
+            "chat_completion_source": "claude",
+            "model": "claude-sonnet-4-5",
+            "top_k": 40,
+            "custom_include_body": "{\"metadata\":{\"user_id\":\"u_42\"}}",
+            "custom_exclude_body": "[\"top_k\"]",
+            "messages": [
+                { "role": "system", "content": "System rules" },
+                { "role": "user", "content": "Context block" },
+                { "role": "assistant", "content": "Reply 1" },
+                { "role": "user", "content": "Turn 1 user" },
+                { "role": "assistant", "content": "Reply 2" },
+                { "role": "user", "content": "Turn 2 user" }
+            ],
+            "stream": false
+        });
+
+        let preview = service
+            .preview_request(dto_from(turn2_json.clone()))
+            .await
+            .unwrap();
+        assert_eq!(chat_repo.calls.lock().await.len(), 1);
+        assert_eq!(cache_repo.saves.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            preview.payload.pointer("/metadata/user_id"),
+            Some(&json!("u_42"))
+        );
+        assert!(preview.payload.get("top_k").is_none());
+        assert!(prompt_caching::contains_cache_control(&preview.payload));
+
+        let req2 = runtime.register_request("req_2").unwrap();
+        service
+            .generate_request(req2, dto_from(turn2_json))
+            .await
+            .unwrap();
+        assert_eq!(cache_repo.saves.load(Ordering::SeqCst), 2);
+
+        let sent = chat_repo.calls.lock().await[1].clone();
+        assert_eq!(sent.source, preview.source);
+        assert_eq!(sent.base_url, preview.base_url);
+        assert_eq!(sent.endpoint_path, preview.endpoint_path);
+        assert_eq!(sent.payload, preview.payload);
     }
 }

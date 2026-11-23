@@ -7,12 +7,14 @@ use tauri::AppHandle;
 
 use crate::infrastructure::logging::dev_bundle::{DevLogBundleInput, export_dev_log_bundle};
 use crate::infrastructure::logging::devtools::{BackendLogEntry, BackendLogStore};
-use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
+use crate::infrastructure::logging::llm_api_logs::{self, LlmApiLogStore};
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::staging;
+use tt_application::dto::chat_completion_dto::ChatCompletionWireRequestDto;
 use tt_application::dto::dev_observability_dto::{
-    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto,
-    LlmApiLogPreviewDto, LlmApiLogRawDto, LlmApiLogViewDto,
+    BackendLogEntryDto, ChatCompletionRequestPreviewDto, DevBundleVersionDto,
+    FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
+    LlmApiLogViewDto,
 };
 use tt_domain::errors::DomainError;
 
@@ -135,6 +137,17 @@ impl DevObservabilityHub {
         }
         result
     }
+}
+
+pub fn preview_chat_completion_request(
+    request: &ChatCompletionWireRequestDto,
+) -> ChatCompletionRequestPreviewDto {
+    llm_api_logs::preview_chat_completion_request(
+        request.source,
+        &request.base_url,
+        &request.endpoint_path,
+        &request.payload,
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]

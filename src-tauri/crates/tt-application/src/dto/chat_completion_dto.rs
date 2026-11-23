@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatCompletionStatusRequestDto {
@@ -47,4 +48,13 @@ impl ChatCompletionGenerateRequestDto {
     pub fn get_string(&self, key: &str) -> Option<&str> {
         self.payload.get(key).and_then(Value::as_str)
     }
+}
+
+/// The request a generation puts on the wire, without its credentials.
+#[derive(Debug)]
+pub struct ChatCompletionWireRequestDto {
+    pub source: ChatCompletionSource,
+    pub base_url: String,
+    pub endpoint_path: String,
+    pub payload: Value,
 }
