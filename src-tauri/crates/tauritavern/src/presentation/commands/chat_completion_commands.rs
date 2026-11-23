@@ -121,10 +121,7 @@ pub async fn preview_chat_completion_request(
         .services
         .chat_completion_service
         .preview_request(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to preview chat completion request",
-        ))?;
+        .await?;
 
     Ok(dev_observability::preview_chat_completion_request(&request))
 }
