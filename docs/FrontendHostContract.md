@@ -152,9 +152,11 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
       - `getKeep() -> Promise<number>`
       - `setKeep(value: number) -> Promise<void>`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
+    - `api.dev.requestInspector`（Project，第一方使用）
+      - `getLogView(id: number) -> Promise<LlmApiLogView>`：从落盘原始文件派生结构化 `ExchangeView`，见 [RequestInspector](CurrentState/RequestInspector.md) 与 `docs/API/Dev.md`。
     - `api.dev.exportBundle() -> Promise<boolean>`：生成并交付 debug bundle（zip），返回是否已交付，详见 `docs/API/Dev.md`。
 
-`api.dev.*` 的长期契约要求：
+`api.dev` 中 Public 部分（`frontendLogs`、`backendLogs`、`llmApiLogs`、`exportBundle`）的长期契约要求：
 
 - DTO 字段保持 camelCase，新增字段只能做向后兼容扩展。
 - `subscribe()` / `subscribeIndex()` 返回的 `unsubscribe` 必须幂等且可安全延迟调用。

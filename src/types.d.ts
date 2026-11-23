@@ -1226,11 +1226,17 @@ type TauriTavernLlmApiLogsApi = {
     setKeep: (value: number) => Promise<void>;
 };
 
+type TauriTavernRequestInspectorApi = {
+    /** Project: structured view derived from stored raw request/response files. */
+    getLogView: (id: number) => Promise<TauriTavernLlmApiLogView>;
+};
+
 type TauriTavernDevApi = {
     frontendLogs: TauriTavernFrontendLogsApi;
     backendLogs: TauriTavernBackendLogsApi;
     exportBundle: () => Promise<boolean>;
     llmApiLogs: TauriTavernLlmApiLogsApi;
+    requestInspector: TauriTavernRequestInspectorApi;
 };
 
 type TauriTavernWorldInfoApi = {
@@ -1487,6 +1493,82 @@ type TauriTavernLlmApiLogRaw = {
     requestRaw: string;
     responseRaw: string;
     responseRawKind: TauriTavernLlmApiRawKind | null;
+};
+
+type TauriTavernRequestKind = 'chat' | 'text';
+
+type TauriTavernPartView =
+    | { type: 'text'; text: string; cacheBreakpoint: boolean; path?: string }
+    | { type: 'reasoning'; text: string; path?: string }
+    | { type: 'nativeState'; kind: string; length: number; path?: string }
+    | { type: 'media'; mime: string; encodedLength?: number; url?: string; path?: string }
+    | { type: 'toolCall'; id: string; name: string; arguments: unknown; argumentsText?: string; path?: string }
+    | { type: 'toolResult'; callId: string; name?: string; isError?: boolean; parts: TauriTavernPartView[]; path?: string }
+    | { type: 'other'; label: string; value: unknown; path?: string };
+
+type TauriTavernMessageView = {
+    role: string;
+    name?: string;
+    path?: string;
+    parts: TauriTavernPartView[];
+};
+
+type TauriTavernToolView = {
+    name: string;
+    description?: string;
+    parameters?: unknown;
+    path: string;
+};
+
+type TauriTavernParameterView = {
+    key: string;
+    path: string;
+    value: unknown;
+};
+
+type TauriTavernUsageView = {
+    input?: number;
+    cacheRead?: number;
+    output?: number;
+    reasoning?: number;
+};
+
+type TauriTavernRequestView = {
+    kind: TauriTavernRequestKind;
+    systemField?: string;
+    systemPath?: string;
+    system: TauriTavernPartView[];
+    messages: TauriTavernMessageView[];
+    tools: TauriTavernToolView[];
+    toolChoice?: unknown;
+    parameters: TauriTavernParameterView[];
+    prompt?: string;
+};
+
+type TauriTavernResponseView = {
+    candidates: TauriTavernMessageView[];
+    finishReason?: string;
+    usage?: TauriTavernUsageView;
+    error?: string;
+};
+
+type TauriTavernExchangeView = {
+    request: TauriTavernRequestView;
+    response?: TauriTavernResponseView;
+};
+
+type TauriTavernLlmApiLogView = {
+    id: number;
+    timestampMs: number;
+    level: 'INFO' | 'WARN' | 'ERROR';
+    ok: boolean;
+    source: string;
+    model: string | null;
+    endpoint: string;
+    durationMs: number;
+    stream: boolean;
+    responseRawKind: TauriTavernLlmApiRawKind | null;
+    view: TauriTavernExchangeView;
 };
 
 type TauriTavernWorldInfoEntryRef = {

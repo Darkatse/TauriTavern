@@ -40,6 +40,7 @@ export {};
  *   | 'devlog_get_backend_log_tail'
  *   | 'devlog_get_llm_api_log_index'
  *   | 'devlog_get_llm_api_log_preview'
+ *   | 'devlog_get_llm_api_log_view'
  *   | 'devlog_get_llm_api_log_raw'
  *   | 'devlog_set_backend_log_stream_enabled'
  *   | 'devlog_set_llm_api_log_stream_enabled'

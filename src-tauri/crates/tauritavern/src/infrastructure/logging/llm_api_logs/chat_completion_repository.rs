@@ -3,11 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::readable::{
-    StreamReadableCollector, format_endpoint, format_request_readable, format_response_readable,
-    stream_readable_source,
-};
 use super::recording::GenerationLog;
+use super::request::LoggedRequest;
 use super::store::LlmApiLogStore;
 use tt_domain::errors::DomainError;
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
@@ -27,7 +24,7 @@ impl LoggingChatCompletionRepository {
     }
 
     fn start_log<'a>(
-        &'a self,
+        &self,
         source: ChatCompletionSource,
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
@@ -35,12 +32,14 @@ impl LoggingChatCompletionRepository {
         stream: bool,
     ) -> GenerationLog<'a> {
         GenerationLog::start(
-            &self.store,
-            source.key().to_string(),
-            format_endpoint(&config.base_url, endpoint_path),
-            payload,
+            Arc::clone(&self.store),
+            LoggedRequest::new(
+                source.key().to_string(),
+                &config.base_url,
+                endpoint_path,
+                payload,
+            ),
             stream,
-            |payload| format_request_readable(source, payload),
         )
     }
 }
@@ -67,11 +66,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             .inner
             .generate(source, config, endpoint_path, payload)
             .await;
-        log.finish_json(
-            result.as_ref().map(|response| &response.body),
-            format_response_readable,
-        )
-        .await;
+        log.finish_json(result.as_ref().map(|response| &response.body));
         result
     }
 
@@ -84,9 +79,8 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         sender: GenerationStreamSender,
         cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError> {
-        let readable = StreamReadableCollector::new(stream_readable_source(source, endpoint_path));
         self.start_log(source, config, endpoint_path, payload, true)
-            .record_stream(sender, readable, |sender| {
+            .record_stream(sender, |sender| {
                 self.inner
                     .generate_stream(source, config, endpoint_path, payload, sender, cancel)
             })
@@ -106,11 +100,7 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
             .inner
             .generate_with_deltas(source, config, endpoint_path, payload, on_delta)
             .await;
-        log.finish_json(
-            result.as_ref().map(|response| &response.body),
-            format_response_readable,
-        )
-        .await;
+        log.finish_json(result.as_ref().map(|response| &response.body));
         result
     }
 

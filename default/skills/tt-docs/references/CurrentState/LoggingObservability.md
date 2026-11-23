@@ -39,9 +39,9 @@ user-error layer 将消息交给 `app/backend_errors.rs::BackendErrorHub`。前�
 
 ## 4. Dev Observability
 
-Dev Observability 通过 `app/dev_observability.rs::DevObservabilityHub` 暴露给 presentation commands。`dev_logging_commands.rs` 和 `settings_commands.rs` 不直接接触 `infrastructure::logging::*` store。
+Dev Observability 通过 `app/dev_observability.rs` 暴露给 presentation commands，commands 不直接接触 `infrastructure::logging::*`。
 
-LLM API logs 由 infrastructure decorator `LoggingChatCompletionRepository` 与 `LoggingTextCompletionRepository` 记录 raw/readable 请求响应，两者共用 `recording.rs` 写入同一存储；文本补全的来源写 `text_completion:<type>`，可读请求是 `prompt`，辅助请求不记录。JSON 请求及非流式 JSON 响应写入前会移除内部 provider state，并把 base64 data URL，以及同一对象内同时带非空字符串 `data` 和媒体类型（`media_type`、`mime_type` 或 `mimeType`）的内联媒体，替换为只含 MIME 与编码长度的占位符；脱敏只作用于日志副本，不修改出站 payload。持久化失败是诊断日志，不触发 backend error toast。
+LLM API logs 由 infrastructure decorator `LoggingChatCompletionRepository` 与 `LoggingTextCompletionRepository` 记录，两者写入同一存储。记录、脱敏与读取时派生视图的规则见[请求查看器](RequestInspector.md)。
 
 ## 5. 持续开发守卫
 

@@ -7,19 +7,10 @@ import {
     setFrontendConsoleCaptureEnabled,
     subscribeFrontendLogs,
 } from '../services/dev-logging/frontend-log-capture.js';
-import { createLlmApiLogBridge } from '../services/dev-logging/llm-api-log-bridge.js';
-
-/**
- * @param {unknown} value
- * @param {string} label
- */
-function requirePositiveInteger(value, label) {
-    const number = typeof value === 'number' ? value : Number(value);
-    if (!Number.isSafeInteger(number) || number <= 0) {
-        throw new Error(`${label} must be a positive integer`);
-    }
-    return number;
-}
+import {
+    createLlmApiLogBridge,
+    requirePositiveInteger,
+} from '../services/dev-logging/llm-api-log-bridge.js';
 
 /**
  * @template T
@@ -114,6 +105,16 @@ function createDevApi({ safeInvoke }) {
             async setKeep(value) {
                 await settings.update({
                     llm_api_keep: requirePositiveInteger(value, 'value'),
+                });
+            },
+        },
+        requestInspector: {
+            /**
+             * @param {number} id
+             */
+            async getLogView(id) {
+                return safeInvoke('devlog_get_llm_api_log_view', {
+                    id: requirePositiveInteger(id, 'id'),
                 });
             },
         },

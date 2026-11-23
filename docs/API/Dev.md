@@ -155,11 +155,34 @@ type LlmApiLogRaw = {
 
 ### 语义
 
-- `getPreview()` / `getRaw()` 会从磁盘读取对应的 log 文件（按需加载，不常驻内存）。
-- `requestReadable/responseReadable` 为开发者调试默认不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
-- `requestReadable/responseReadable` 会显示 provider 返回的可见/摘要化 reasoning，例如 `[reasoning]`、`[thinking]`、`[thought]` 块；signature、`thoughtSignature`、`encrypted_content` 等 provider-private continuation 只显示 `native_state=present` 标记，不当作可解释文本展开。
+- `getPreview()` / `getRaw()` 每次从磁盘读取，不常驻内存。`index()` 与 `subscribeIndex()` 给出的条目，文件都已写完，可以立即读取；记录规则见[请求查看器](../CurrentState/RequestInspector.md#3-记录)。
+- `requestReadable/responseReadable` 由结构化视图渲染，不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
+- 可读文本使用统一的标记：消息以 `[<role>]` 开头，其余标记与结构化视图的部件类型对应，与服务商的线路格式无关。
+- 工具调用的参数是对象时，其中含换行的字符串值按 `[key]\nvalue` 块展开。
+- 可见或摘要化的 reasoning 显示为 `[reasoning]` 块。signature、`thoughtSignature`、`encrypted_content` 等续接状态只显示 `[native_state kind=…]` 标记，不展开内容。
 
-## 4. `exportBundle()`
+## 4. `requestInspector`（Project Contract）
+
+供第一方请求查看器使用的结构化视图接口。它是 Project Contract，形状随第一方界面演进。
+
+```js
+const entry = await dev.requestInspector.getLogView(index[0].id);
+```
+
+### 方法
+
+| 方法 | 返回值 | 说明 |
+| --- | --- | --- |
+| `getLogView(id)` | `Promise<LlmApiLogView>` | 读取单条已记录请求的结构化请求/响应视图（`ExchangeView`） |
+
+### 语义
+
+- 返回索引条目的字段、`responseRawKind` 与 `view: { request, response? }`；类型见 `src/types.d.ts` 的 `TauriTavernLlmApiLogView`。
+- `path` 是 RFC 6901 JSON Pointer。请求的消息、内容块、工具定义与参数指向 `requestRaw`；非流式响应的消息与内容块指向 `responseRaw`；流式响应由事件合并而来，没有 `path`。
+- 工具调用的参数是 JSON 字符串时解析为 JSON 值；解析失败时 `arguments` 为 `null`，原文在 `argumentsText`。
+- 失败信息只在 `view.response.error`。它与结束原因、用量的取值，以及视图的其余派生规则，见[请求查看器](../CurrentState/RequestInspector.md#4-结构化视图)。
+
+## 5. `exportBundle()`
 
 ```js
 const delivered = await dev.exportBundle();
@@ -178,10 +201,10 @@ const delivered = await dev.exportBundle();
 - 设置副本不含密钥文件；键名表明是凭据的值（password、API key、token、auth、headers 等）替换为 `[redacted]`，URL 中的用户名与密码被去掉。
 - 导出文件可能包含 prompt/响应体等敏感信息；分享前请自行检查。
 
-## 5. 边界与稳定性
+## 6. 边界与稳定性
 
 - `tauritavern-backend-log`
 - `tauritavern-llm-api-log`
 - `devlog_*`
 
-以上事件名和命令名都属于宿主内部实现细节，不是第三方扩展 Public Contract。扩展应只依赖 `api.dev`。
+以上事件名和命令名都属于宿主内部实现细节，不是第三方扩展 Public Contract。扩展应只依赖 `api.dev` 中的 Public Contract。
