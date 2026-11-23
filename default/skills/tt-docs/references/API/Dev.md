@@ -156,6 +156,7 @@ type LlmApiLogRaw = {
 ### 语义
 
 - `getPreview()` / `getRaw()` 每次从磁盘读取，不常驻内存。`index()` 与 `subscribeIndex()` 给出的条目，文件都已写完，可以立即读取；记录规则见[请求查看器](../CurrentState/RequestInspector.md#4-记录)。
+- `requestRaw` 是实际发出的请求体，内联媒体换成了占位标记。
 - `requestReadable/responseReadable` 由结构化视图渲染，不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
 - 可读文本使用统一的标记：消息以 `[<role>]` 开头，其余标记与结构化视图的部件类型对应，与服务商的线路格式无关。
 - 工具调用的参数是对象时，其中含换行的字符串值按 `[key]\nvalue` 块展开。
@@ -180,7 +181,8 @@ const entry = await dev.requestInspector.getLogView(index[0].id);
 - 返回索引条目的字段、`responseRawKind` 与 `view: { request, response? }`；类型见 `src/types.d.ts` 的 `TauriTavernLlmApiLogView`。
 - `path` 是 RFC 6901 JSON Pointer。请求的消息、内容块、工具定义与参数指向 `requestRaw`；非流式响应的消息与内容块指向 `responseRaw`；流式响应由事件合并而来，没有 `path`。
 - 工具调用的参数是 JSON 字符串时解析为 JSON 值；解析失败时 `arguments` 为 `null`，原文在 `argumentsText`。
-- 失败信息只在 `view.response.error`。它与结束原因、用量的取值，以及视图的其余派生规则，见[请求查看器](../CurrentState/RequestInspector.md#5-结构化视图)。
+- `view.request.http` 是请求描述：`transport`（`http` 或 `websocket`）、`method`、`url` 与 `headers`（`{ name, value }` 的列表）。凭据的值是 `[redacted]`，没有描述的记录不带这个字段。规则见[请求查看器](../CurrentState/RequestInspector.md#3-线路请求)。
+- 失败信息只在 `view.response.error`。它与结束原因、用量的取值，以及视图的其余派生规则，见[请求查看器](../CurrentState/RequestInspector.md#5-视图)。
 
 ## 5. `exportBundle()`
 
@@ -199,6 +201,7 @@ const delivered = await dev.exportBundle();
 - 由用户在系统保存面板中选择位置（iOS 为分享面板），见[文件传输](../CurrentState/FileTransfer.md)。
 - 导出内容包含后端文件日志、前端日志 snapshot、LLM API Logs（含 raw）与设置/版本信息。
 - 设置副本不含密钥文件；键名表明是凭据的值（password、API key、token、auth、headers 等）替换为 `[redacted]`，URL 中的用户名与密码被去掉。
+- LLM API Logs 的 meta 经过同样的替换，记录的请求头整体换掉；请求体与响应体原样导出。
 - 导出文件可能包含 prompt/响应体等敏感信息；分享前请自行检查。
 
 ## 6. 边界与稳定性

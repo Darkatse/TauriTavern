@@ -21,6 +21,7 @@ tokio = { version = "1", default-features = false, features = ["fs", "io-util", 
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
+tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 url = { workspace = true }

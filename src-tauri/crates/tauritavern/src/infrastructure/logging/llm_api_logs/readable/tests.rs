@@ -1,9 +1,10 @@
+use std::borrow::Cow;
+
 use serde_json::{Value, json};
 use tt_contracts::observability::{
     MessageViewDto, ParameterViewDto, PartViewDto, RequestKindDto, ResponseViewDto, ToolViewDto,
     UsageViewDto,
 };
-use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::*;
 
@@ -319,8 +320,8 @@ fn claude_gemini_and_responses_requests_project_to_unified_exchange_view() {
 }
 
 #[test]
-fn wire_log_payload_strips_internal_state_and_redacts_media_including_input_audio() {
-    let mut payload = json!({
+fn wire_log_payload_redacts_inline_media_including_input_audio() {
+    let payload = json!({
         "model": "gpt-5",
         "messages": [
             {
@@ -361,17 +362,8 @@ fn wire_log_payload_strips_internal_state_and_redacts_media_including_input_audi
             }
         }
     });
-    payload.as_object_mut().unwrap().insert(
-        CHAT_COMPLETION_PROVIDER_STATE_FIELD.to_string(),
-        json!({ "sessionId": "run_123" }),
-    );
 
-    let sanitized = wire_log_payload(&payload);
-    assert!(
-        sanitized
-            .get(CHAT_COMPLETION_PROVIDER_STATE_FIELD)
-            .is_none()
-    );
+    let sanitized = wire_log_payload(Cow::Borrowed(&payload));
     assert_eq!(
         sanitized.pointer("/messages/0/content/0/image_url/url"),
         Some(&json!(

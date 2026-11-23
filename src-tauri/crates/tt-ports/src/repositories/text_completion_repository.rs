@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use tt_contracts::observability::RequestDescriptionDto;
 use tt_domain::errors::DomainError;
 
 use crate::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
@@ -70,4 +71,12 @@ pub trait TextCompletionRepository: Send + Sync {
         sender: GenerationStreamSender,
         cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError>;
+
+    /// Describes `generate_stream` for `Some(format)` or `generate` for `None`, without I/O.
+    fn describe_request(
+        &self,
+        endpoint: &TextCompletionEndpoint,
+        path: &str,
+        stream: Option<TextCompletionStreamFormat>,
+    ) -> Result<RequestDescriptionDto, DomainError>;
 }

@@ -28,6 +28,7 @@ pub(super) fn project_text_request(payload: &Value) -> RequestViewDto {
 
     RequestViewDto {
         kind: RequestKindDto::Text,
+        http: None,
         system_field: None,
         system_path: None,
         system: Vec::new(),

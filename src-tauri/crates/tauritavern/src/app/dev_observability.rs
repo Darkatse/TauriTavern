@@ -140,13 +140,15 @@ impl DevObservabilityHub {
 }
 
 pub fn preview_chat_completion_request(
-    request: &ChatCompletionWireRequestDto,
+    request: ChatCompletionWireRequestDto,
 ) -> ChatCompletionRequestPreviewDto {
     llm_api_logs::preview_chat_completion_request(
         request.source,
         &request.base_url,
         &request.endpoint_path,
         &request.payload,
+        &request.body,
+        request.http,
     )
 }
 
@@ -220,7 +222,7 @@ fn bundle_readme() -> String {
         "",
         "- frontend/logs.jsonl: preview only (truncated/summarized).",
         "- backend/*.log: full backend file logs (may include forwarded frontend logs).",
-        "- llm-api/*: LLM API request/response raw logs (may contain prompts/responses).",
+        "- llm-api/*: LLM API request/response raw logs (may contain prompts/responses); recorded request headers are removed.",
         "- settings/*: app settings snapshot; secrets, credential-like values and URL user info are removed.",
         "",
         "Review files before sharing.",

@@ -35,6 +35,7 @@ pub fn project_request_view(kind: RequestKindDto, payload: &Value) -> RequestVie
     let Some(root) = payload.as_object() else {
         return RequestViewDto {
             kind: RequestKindDto::Chat,
+            http: None,
             system_field: None,
             system_path: None,
             system: Vec::new(),
@@ -104,6 +105,7 @@ pub fn project_request_view(kind: RequestKindDto, payload: &Value) -> RequestVie
 
     RequestViewDto {
         kind: RequestKindDto::Chat,
+        http: None,
         system_field,
         system_path,
         system,

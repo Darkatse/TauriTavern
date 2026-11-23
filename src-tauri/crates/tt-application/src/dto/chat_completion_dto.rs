@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use tt_contracts::observability::RequestDescriptionDto;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -50,11 +51,13 @@ impl ChatCompletionGenerateRequestDto {
     }
 }
 
-/// The request a generation puts on the wire, without its credentials.
 #[derive(Debug)]
 pub struct ChatCompletionWireRequestDto {
     pub source: ChatCompletionSource,
     pub base_url: String,
     pub endpoint_path: String,
+    /// Retains the model even when the wire body moves it into the URL.
     pub payload: Value,
+    pub body: Value,
+    pub http: RequestDescriptionDto,
 }

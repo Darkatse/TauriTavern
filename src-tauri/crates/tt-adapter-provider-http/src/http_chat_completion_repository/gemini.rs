@@ -6,6 +6,44 @@ use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelt
 
 use crate::provider_response;
 
+/// The model goes in the URL, not the body.
+pub(super) fn model_and_body<'a>(
+    payload: &'a Value,
+    api_name: &str,
+) -> Result<(&'a str, Value), DomainError> {
+    let fields = payload.as_object().ok_or_else(|| {
+        DomainError::InvalidData(format!("{api_name} payload must be a JSON object"))
+    })?;
+    let model = fields
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| DomainError::InvalidData(format!("{api_name} payload missing model")))?;
+
+    let mut body = fields.clone();
+    body.remove("model");
+    Ok((model, Value::Object(body)))
+}
+
+pub(super) fn generation_method(endpoint_path: &str, stream: bool) -> &'static str {
+    let endpoint = endpoint_path.trim().trim_matches('/');
+
+    if endpoint.eq_ignore_ascii_case("streamGenerateContent") {
+        return "streamGenerateContent";
+    }
+
+    if endpoint.eq_ignore_ascii_case("generateContent") {
+        return "generateContent";
+    }
+
+    if stream {
+        "streamGenerateContent"
+    } else {
+        "generateContent"
+    }
+}
+
 pub(super) async fn consume_generate_content_stream(
     provider_name: &str,
     response: reqwest::Response,

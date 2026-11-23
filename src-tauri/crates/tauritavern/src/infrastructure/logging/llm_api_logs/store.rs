@@ -16,9 +16,9 @@ use super::files::{
     persist_raw_files, request_raw_path, response_raw_json_path, response_raw_sse_path, sse_events,
 };
 use super::readable::{
-    merge_stream_events, project_request_view, project_response_view, render_request_readable,
-    render_response_readable,
+    merge_stream_events, project_response_view, render_request_readable, render_response_readable,
 };
+use super::request::request_view;
 use super::types::LlmApiLogMeta;
 
 const DEFAULT_KEEP: usize = 5;
@@ -169,7 +169,7 @@ impl LlmApiLogStore {
             std::io::Error::other(format!("Failed to parse LLM API request JSON: {error}"))
         })?;
         let kind = meta.request_kind();
-        let request = project_request_view(kind, &request_value);
+        let request = request_view(kind, &request_value, meta.http.clone());
 
         let mut response = match meta.response_raw_kind {
             Some(LlmApiRawKindDto::Json) => {
@@ -283,16 +283,20 @@ impl LlmApiLogStore {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::sync::Arc;
 
     use async_trait::async_trait;
     use serde_json::{Value, json};
+    use tt_contracts::observability::{
+        RequestDescriptionDto, RequestHeaderDto, RequestTransportDto,
+    };
     use tt_domain::errors::DomainError;
     use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionNormalizationReport,
         ChatCompletionRepository, ChatCompletionRepositoryGenerateResponse, ChatCompletionSource,
-        ChatCompletionStreamDelta,
+        ChatCompletionStreamDelta, GenerationCall, WireRequest,
     };
 
     use super::LlmApiLogStore;
@@ -367,6 +371,32 @@ mod tests {
         }
 
         async fn close_provider_session(&self, _session_id: &str) {}
+
+        fn describe_request<'a>(
+            &self,
+            _source: ChatCompletionSource,
+            _config: &ChatCompletionApiConfig,
+            _endpoint_path: &str,
+            payload: &'a Value,
+            call: GenerationCall,
+        ) -> Result<WireRequest<'a>, DomainError> {
+            Ok(WireRequest {
+                http: described(call),
+                body: Cow::Borrowed(payload),
+            })
+        }
+    }
+
+    fn described(call: GenerationCall) -> RequestDescriptionDto {
+        RequestDescriptionDto {
+            transport: RequestTransportDto::Http,
+            method: "POST".to_string(),
+            url: "https://api.example.com/v1/chat/completions".to_string(),
+            headers: vec![RequestHeaderDto {
+                name: "x-call".to_string(),
+                value: format!("{call:?}"),
+            }],
+        }
     }
 
     fn test_config() -> ChatCompletionApiConfig {
@@ -416,7 +446,11 @@ mod tests {
         .unwrap();
 
         let json_entry = published_rx.recv().await.expect("JSON entry published");
-        assert!(store.get_view(json_entry.id).await.is_ok());
+        let json_view = store.get_view(json_entry.id).await.unwrap();
+        assert_eq!(
+            json_view.view.request.http,
+            Some(described(GenerationCall::Generate))
+        );
         assert!(store.get_preview(json_entry.id).await.is_ok());
         assert!(store.get_raw(json_entry.id).await.is_ok());
 
@@ -435,7 +469,11 @@ mod tests {
         assert!(stream_rx.recv().await.is_some());
 
         let sse_entry = published_rx.recv().await.expect("SSE entry published");
-        assert!(store.get_view(sse_entry.id).await.is_ok());
+        let sse_view = store.get_view(sse_entry.id).await.unwrap();
+        assert_eq!(
+            sse_view.view.request.http,
+            Some(described(GenerationCall::GenerateStream))
+        );
         assert!(store.get_preview(sse_entry.id).await.is_ok());
         assert!(store.get_raw(sse_entry.id).await.is_ok());
     }

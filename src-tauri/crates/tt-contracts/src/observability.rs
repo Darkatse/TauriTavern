@@ -4,6 +4,8 @@ use serde_json::Value;
 pub const COMMAND: &str = "tauritavern::command";
 pub const USER_VISIBLE_ERROR: &str = "tauritavern::user_error";
 
+pub const REDACTED: &str = "[redacted]";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmApiRawKindDto {
@@ -98,6 +100,8 @@ pub struct ExchangeViewDto {
 pub struct RequestViewDto {
     pub kind: RequestKindDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<RequestDescriptionDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_path: Option<String>,
@@ -109,6 +113,30 @@ pub struct RequestViewDto {
     pub parameters: Vec<ParameterViewDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+}
+
+/// Credentials in the URL and headers are already replaced with [`REDACTED`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestDescriptionDto {
+    pub transport: RequestTransportDto,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<RequestHeaderDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestTransportDto {
+    Http,
+    Websocket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestHeaderDto {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

@@ -1,27 +1,30 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue};
-use reqwest::{Client, StatusCode};
+use reqwest::header::HeaderName;
+use reqwest::{Client, StatusCode, Url};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
+use tt_contracts::observability::RequestTransportDto;
 
 use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta, GenerationCall,
     OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
-use super::normalizers;
-use super::{HttpChatCompletionRepository, current_unix_timestamp};
+use super::{GenerationRequest, HttpChatCompletionRepository, current_unix_timestamp};
+use super::{normalizers, openai};
+use crate::provider_request::ProviderRequest;
 use crate::provider_response::{self, log_upstream_body_parse_failure, read_upstream_json_body};
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
@@ -35,29 +38,36 @@ pub(super) struct ResponsesWsSessionPool {
 }
 
 struct ResponsesWsSession {
-    connection_key: String,
+    handshake: ProviderRequest,
+    transport_revision: u64,
     socket: ResponsesWsStream,
 }
 
 impl ResponsesWsSessionPool {
+    /// Reuse requires the same handshake and transport revision.
     async fn session(
         &self,
         repository: &HttpChatCompletionRepository,
         config: &ChatCompletionApiConfig,
-        endpoint_path: &str,
         session_id: &str,
+        handshake: ProviderRequest,
     ) -> Result<Arc<Mutex<ResponsesWsSession>>, DomainError> {
         let (client, transport_revision) = repository.websocket_client(config)?;
-        let connection_key = ws_connection_key(config, endpoint_path, transport_revision)?;
-        if let Some(session) = self.sessions.lock().await.get(session_id).cloned()
-            && session.lock().await.connection_key == connection_key
-        {
-            return Ok(session);
+        let open = self.sessions.lock().await.get(session_id).cloned();
+        if let Some(session) = open {
+            let reusable = {
+                let session = session.lock().await;
+                session.handshake == handshake && session.transport_revision == transport_revision
+            };
+            if reusable {
+                return Ok(session);
+            }
         }
 
-        let socket = connect_responses_ws(client, config, endpoint_path).await?;
+        let socket = connect_responses_ws(client, handshake.clone()).await?;
         let session = Arc::new(Mutex::new(ResponsesWsSession {
-            connection_key,
+            handshake,
+            transport_revision,
             socket,
         }));
         self.sessions
@@ -364,6 +374,44 @@ impl ResponsesStreamState {
     }
 }
 
+pub(super) fn generation_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    call: GenerationCall,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    routed_request(config, endpoint_path, payload, call).map(|(_, request)| request)
+}
+
+/// WebSocket descriptions pair upgrade headers with the `response.create` message.
+/// `GenerateStream` always uses HTTP.
+fn routed_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    call: GenerationCall,
+) -> Result<(Option<String>, GenerationRequest<'a>), DomainError> {
+    let session_id = match call {
+        GenerationCall::GenerateStream => None,
+        GenerationCall::Generate | GenerationCall::GenerateWithDeltas => {
+            provider_session_id(payload)?
+        }
+    };
+    let request = if session_id.is_some() {
+        GenerationRequest {
+            transport: RequestTransportDto::Websocket,
+            head: ws_upgrade_request(config, endpoint_path)?,
+            body: Cow::Owned(response_create_event(payload)?),
+        }
+    } else {
+        GenerationRequest::http(
+            openai::request_head(config, endpoint_path, call.is_stream())?,
+            http_body(payload)?,
+        )
+    };
+    Ok((session_id, request))
+}
+
 pub(super) async fn generate(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
@@ -371,71 +419,19 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    if let Some(session_id) = provider_session_id(payload)? {
-        return generate_persistent_ws(
-            repository,
-            config,
-            endpoint_path,
-            payload,
-            &session_id,
-            None,
-        )
-        .await;
+    let (session_id, request) =
+        routed_request(config, endpoint_path, payload, GenerationCall::Generate)?;
+    if let Some(session_id) = session_id {
+        return generate_on_session(repository, config, &session_id, request, None).await;
     }
 
-    generate_http(repository, config, endpoint_path, payload, provider_name).await
-}
-
-async fn generate_http(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-    provider_name: &str,
-) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-
-    let client = repository.client(config)?;
-    let http_payload = upstream_payload(payload)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&http_payload);
-
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        provider_response::send_checked(request, provider_name, "Generation request failed")
-            .await?;
-
+    let response = repository
+        .send_generation(config, request, false, provider_name)
+        .await?;
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
     validate_terminal_response(&body)?;
 
     Ok(normalizers::normalize_openai_responses_response(body))
-}
-
-pub(super) async fn generate_stream(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-    provider_name: &str,
-    sender: GenerationStreamSender,
-    cancel: GenerationCancelReceiver,
-) -> Result<(), DomainError> {
-    generate_stream_http(
-        repository,
-        config,
-        endpoint_path,
-        payload,
-        provider_name,
-        sender,
-        cancel,
-    )
-    .await
 }
 
 pub(super) async fn generate_with_deltas(
@@ -446,20 +442,19 @@ pub(super) async fn generate_with_deltas(
     provider_name: &str,
     on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    if let Some(session_id) = provider_session_id(payload)? {
-        return generate_persistent_ws(
-            repository,
-            config,
-            endpoint_path,
-            payload,
-            &session_id,
-            Some(on_delta),
-        )
-        .await;
+    let (session_id, request) = routed_request(
+        config,
+        endpoint_path,
+        payload,
+        GenerationCall::GenerateWithDeltas,
+    )?;
+    if let Some(session_id) = session_id {
+        return generate_on_session(repository, config, &session_id, request, Some(on_delta)).await;
     }
 
-    let response =
-        send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
+    let response = repository
+        .send_generation(config, request, true, provider_name)
+        .await?;
     let mut observer = ResponsesDeltaObserver::default();
     let mut completed_response = None;
 
@@ -484,7 +479,7 @@ pub(super) async fn generate_with_deltas(
     Ok(normalizers::normalize_openai_responses_response(response))
 }
 
-async fn generate_stream_http(
+pub(super) async fn generate_stream(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
@@ -493,8 +488,15 @@ async fn generate_stream_http(
     sender: GenerationStreamSender,
     cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
-    let response =
-        send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
+    let (_, request) = routed_request(
+        config,
+        endpoint_path,
+        payload,
+        GenerationCall::GenerateStream,
+    )?;
+    let response = repository
+        .send_generation(config, request, true, provider_name)
+        .await?;
 
     let model = payload
         .get("model")
@@ -517,44 +519,20 @@ async fn generate_stream_http(
     state.ensure_completed(was_cancelled)
 }
 
-async fn send_stream_request(
+async fn generate_on_session(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-    provider_name: &str,
-) -> Result<reqwest::Response, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-    let client = repository.stream_client(config)?;
-    let http_payload = upstream_payload(payload)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(&http_payload);
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    provider_response::send_checked(request, provider_name, "Generation request failed").await
-}
-
-async fn generate_persistent_ws(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
     session_id: &str,
+    request: GenerationRequest<'_>,
     on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let pool = &repository.openai_responses_ws_sessions;
-    let event = response_create_event(payload)?;
     let session = pool
-        .session(repository, config, endpoint_path, session_id)
+        .session(repository, config, session_id, request.head)
         .await?;
     let result = {
         let mut session = session.lock().await;
-        session.generate(event, on_delta).await
+        session.generate(&request.body, on_delta).await
     };
 
     match result {
@@ -575,7 +553,7 @@ impl ResponsesWsSession {
 
     async fn generate(
         &mut self,
-        event: Value,
+        event: &Value,
         mut on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<Value, DomainError> {
         self.socket
@@ -639,13 +617,13 @@ impl ResponsesWsSession {
 
 async fn connect_responses_ws(
     client: Client,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
+    mut handshake: ProviderRequest,
 ) -> Result<ResponsesWsStream, DomainError> {
     let key = generate_key();
-    let request = build_ws_upgrade_request(&client, config, endpoint_path, &key)?;
-    let response = client
-        .execute(request)
+    handshake.header("sec-websocket-key", &key)?;
+    let response = handshake
+        .with_client(&client)
+        .send()
         .await
         .map_err(upstream::request_failure)?;
 
@@ -667,43 +645,17 @@ async fn connect_responses_ws(
     Ok(tokio_tungstenite::WebSocketStream::from_raw_socket(upgraded, Role::Client, None).await)
 }
 
-fn build_ws_upgrade_request(
-    client: &Client,
+/// The handshake without its `Sec-WebSocket-Key`, which every connection draws anew.
+fn ws_upgrade_request(
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
-    key: &str,
-) -> Result<reqwest::Request, DomainError> {
-    let url = responses_ws_upgrade_url(&config.base_url, endpoint_path)?;
-    let request = client.get(url);
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-    let mut request = request.build().map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid OpenAI Responses WebSocket upgrade request: {error}"
-        ))
-    })?;
-
-    let key = HeaderValue::from_str(key).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid OpenAI Responses WebSocket key header: {error}"
-        ))
-    })?;
-    let headers = request.headers_mut();
-    headers.insert(
-        HeaderName::from_static("connection"),
-        HeaderValue::from_static("Upgrade"),
-    );
-    headers.insert(
-        HeaderName::from_static("upgrade"),
-        HeaderValue::from_static("websocket"),
-    );
-    headers.insert(
-        HeaderName::from_static("sec-websocket-version"),
-        HeaderValue::from_static("13"),
-    );
-    headers.insert(HeaderName::from_static("sec-websocket-key"), key);
-
+) -> Result<ProviderRequest, DomainError> {
+    let mut request =
+        ProviderRequest::get(responses_ws_upgrade_url(&config.base_url, endpoint_path)?);
+    openai::apply_headers(&mut request, config)?;
+    request.header("connection", "Upgrade")?;
+    request.header("upgrade", "websocket")?;
+    request.header("sec-websocket-version", "13")?;
     Ok(request)
 }
 
@@ -729,45 +681,10 @@ fn verify_ws_upgrade_response(response: &reqwest::Response, key: &str) -> Result
     Ok(())
 }
 
-fn ws_connection_key(
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    transport_revision: u64,
-) -> Result<String, DomainError> {
-    let mut headers = config
-        .extra_headers
-        .iter()
-        .chain(config.additional_headers.iter())
-        .map(|(key, value)| format!("{}={}", key.trim().to_ascii_lowercase(), value.trim()))
-        .collect::<Vec<_>>();
-    headers.sort_unstable();
-
-    Ok(format!(
-        "{}\n{}\n{}\n{}",
-        responses_ws_url(&config.base_url, endpoint_path)?,
-        transport_revision,
-        websocket_authorization_header(config).unwrap_or_default(),
-        headers.join("\n")
-    ))
-}
-
-fn websocket_authorization_header(config: &ChatCompletionApiConfig) -> Option<String> {
-    config
-        .authorization_header
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            let api_key = config.api_key.trim();
-            (!api_key.is_empty()).then(|| format!("Bearer {api_key}"))
-        })
-}
-
-fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
+fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<Url, DomainError> {
     let mut url = HttpChatCompletionRepository::build_url(base_url, endpoint_path)?;
     let scheme = match url.scheme() {
-        "https" | "http" => return Ok(url.to_string()),
+        "https" | "http" => return Ok(url),
         "wss" => "https",
         "ws" => "http",
         other => {
@@ -779,25 +696,7 @@ fn responses_ws_upgrade_url(base_url: &str, endpoint_path: &str) -> Result<Strin
     url.set_scheme(scheme).map_err(|_| {
         DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {url}"))
     })?;
-    Ok(url.to_string())
-}
-
-fn responses_ws_url(base_url: &str, endpoint_path: &str) -> Result<String, DomainError> {
-    let mut url = HttpChatCompletionRepository::build_url(base_url, endpoint_path)?;
-    let scheme = match url.scheme() {
-        "https" => "wss",
-        "http" => "ws",
-        "ws" | "wss" => return Ok(url.to_string()),
-        other => {
-            return Err(DomainError::InvalidData(format!(
-                "OpenAI Responses WebSocket URL must use http, https, ws, or wss scheme: {other}"
-            )));
-        }
-    };
-    url.set_scheme(scheme).map_err(|_| {
-        DomainError::InvalidData(format!("Invalid OpenAI Responses WebSocket URL {url}"))
-    })?;
-    Ok(url.to_string())
+    Ok(url)
 }
 
 fn response_create_event(payload: &Value) -> Result<Value, DomainError> {
@@ -822,12 +721,17 @@ fn websocket_response_payload(
     Ok(response)
 }
 
-fn upstream_payload(payload: &Value) -> Result<Value, DomainError> {
-    let mut object = payload.as_object().cloned().ok_or_else(|| {
+fn http_body(payload: &Value) -> Result<Cow<'_, Value>, DomainError> {
+    let fields = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("OpenAI Responses payload must be an object".to_string())
     })?;
-    object.remove(CHAT_COMPLETION_PROVIDER_STATE_FIELD);
-    Ok(Value::Object(object))
+    if !fields.contains_key(CHAT_COMPLETION_PROVIDER_STATE_FIELD) {
+        return Ok(Cow::Borrowed(payload));
+    }
+
+    let mut fields = fields.clone();
+    fields.remove(CHAT_COMPLETION_PROVIDER_STATE_FIELD);
+    Ok(Cow::Owned(Value::Object(fields)))
 }
 
 fn provider_session_id(payload: &Value) -> Result<Option<String>, DomainError> {
@@ -976,18 +880,6 @@ mod tests {
     use tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode;
 
     #[test]
-    fn responses_ws_url_maps_http_schemes() {
-        assert_eq!(
-            responses_ws_url("https://api.openai.com/v1", "/responses").unwrap(),
-            "wss://api.openai.com/v1/responses"
-        );
-        assert_eq!(
-            responses_ws_url("http://localhost:8080/v1", "/responses").unwrap(),
-            "ws://localhost:8080/v1/responses"
-        );
-    }
-
-    #[test]
     fn response_create_event_removes_http_only_fields() {
         let mut payload = json!({
             "model": "gpt-test",
@@ -1052,22 +944,11 @@ mod tests {
             aws_bedrock_custom_stream_path: None,
         };
 
-        let client = Client::new();
-        let request = build_ws_upgrade_request(&client, &config, "/responses", "test-key").unwrap();
+        let request = ws_upgrade_request(&config, "/responses").unwrap();
 
         assert_eq!(
-            request
-                .headers()
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
+            request.header_value("authorization"),
             Some("Bearer override")
-        );
-        assert_eq!(
-            request
-                .headers()
-                .get("sec-websocket-key")
-                .and_then(|value| value.to_str().ok()),
-            Some("test-key")
         );
     }
 

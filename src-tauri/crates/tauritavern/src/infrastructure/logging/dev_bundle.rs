@@ -8,14 +8,13 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::zipkit::export_file_options;
+use tt_contracts::observability::REDACTED;
 use tt_domain::errors::DomainError;
 
 const BUNDLE_ROOT_DIR: &str = "tauritavern-dev-bundle";
 
 const COPY_BUFFER_BYTES: usize = 1024 * 1024;
 const FILE_IO_BUFFER_BYTES: usize = 1024 * 1024;
-
-const REDACTED: &str = "[redacted]";
 
 /// Compared against key names lowercased with separators removed, so `proxy_password`,
 /// `apiKey` and `custom_include_headers` all match.
@@ -121,11 +120,7 @@ pub fn export_dev_log_bundle(
         }
 
         let zip_path = format!("{}/settings/{}", BUNDLE_ROOT_DIR, file_name);
-        add_text_file(
-            &mut writer,
-            &zip_path,
-            &read_redacted_settings(&source_path)?,
-        )?;
+        add_text_file(&mut writer, &zip_path, &read_redacted_json(&source_path)?)?;
     }
 
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
@@ -167,7 +162,12 @@ pub fn export_dev_log_bundle(
             })?;
 
         let zip_path = format!("{}/llm-api/{}", BUNDLE_ROOT_DIR, file_name);
-        add_file_from_disk(&mut writer, &source_path, &zip_path, &mut copy_buffer)?;
+        // A request's headers are recorded in its meta; payloads are copied as they are.
+        if file_name.ends_with(".meta.json") {
+            add_text_file(&mut writer, &zip_path, &read_redacted_json(&source_path)?)?;
+        } else {
+            add_file_from_disk(&mut writer, &source_path, &zip_path, &mut copy_buffer)?;
+        }
     }
 
     let mut buffered_output = writer.finish().map_err(|error| {
@@ -185,28 +185,16 @@ pub fn export_dev_log_bundle(
 }
 
 /// The copy keeps no value under a credential-like key and no user info in a URL.
-fn read_redacted_settings(path: &Path) -> Result<String, DomainError> {
+fn read_redacted_json(path: &Path) -> Result<String, DomainError> {
     let bytes = fs::read(path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read settings file {}: {}",
-            path.display(),
-            error
-        ))
+        DomainError::InternalError(format!("Failed to read {}: {}", path.display(), error))
     })?;
-    let mut settings: Value = serde_json::from_slice(&bytes).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Settings file {} is not valid JSON: {}",
-            path.display(),
-            error
-        ))
+    let mut document: Value = serde_json::from_slice(&bytes).map_err(|error| {
+        DomainError::InvalidData(format!("{} is not valid JSON: {}", path.display(), error))
     })?;
-    redact_credentials(&mut settings);
-    serde_json::to_string_pretty(&settings).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to serialize settings file {}: {}",
-            path.display(),
-            error
-        ))
+    redact_credentials(&mut document);
+    serde_json::to_string_pretty(&document).map_err(|error| {
+        DomainError::InternalError(format!("Failed to serialize {}: {}", path.display(), error))
     })
 }
 
@@ -385,9 +373,67 @@ fn list_log_root_files(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::io::Read;
 
-    use super::redact_credentials;
+    use serde_json::{Value, json};
+
+    use super::{DevLogBundleInput, export_dev_log_bundle, redact_credentials};
+    use crate::infrastructure::paths::{RuntimeMode, RuntimePaths};
+
+    #[test]
+    fn exported_llm_api_meta_keeps_no_request_header_values() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime_paths = RuntimePaths::new(RuntimeMode::Standard, root.path().to_path_buf());
+        std::fs::create_dir_all(&runtime_paths.log_root).unwrap();
+        let meta = json!({
+            "id": 7,
+            "endpoint": "https://api.example.com/v1/chat/completions",
+            "http": {
+                "transport": "http",
+                "method": "POST",
+                "url": "https://api.example.com/v1/chat/completions",
+                "headers": [{ "name": "x-trace", "value": "user-value" }]
+            }
+        });
+        let request = r#"{"model":"gpt-test","headers":"part of the prompt"}"#;
+        std::fs::write(
+            runtime_paths.log_root.join("llm-api-7.meta.json"),
+            meta.to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            runtime_paths.log_root.join("llm-api-7.request.json"),
+            request,
+        )
+        .unwrap();
+
+        let bundle = export_dev_log_bundle(
+            root.path().join("bundle.zip"),
+            &runtime_paths,
+            DevLogBundleInput {
+                meta_json: String::new(),
+                readme_text: String::new(),
+                frontend_logs_jsonl: String::new(),
+                backend_logs_tail_text: String::new(),
+            },
+        )
+        .unwrap();
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(bundle).unwrap()).unwrap();
+        let mut read = |name: &str| {
+            let mut content = String::new();
+            archive
+                .by_name(&format!("tauritavern-dev-bundle/llm-api/{name}"))
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+            content
+        };
+        let exported_meta: Value = serde_json::from_str(&read("llm-api-7.meta.json")).unwrap();
+        assert_eq!(exported_meta["http"]["headers"], "[redacted]");
+        assert_eq!(exported_meta["http"]["url"], meta["http"]["url"]);
+        assert_eq!(read("llm-api-7.request.json"), request);
+    }
 
     #[test]
     fn settings_copy_drops_credentials_and_keeps_other_values() {

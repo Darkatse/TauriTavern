@@ -9350,6 +9350,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tt-adapter-http",
+ "tt-contracts",
  "tt-domain",
  "tt-ports",
  "url",

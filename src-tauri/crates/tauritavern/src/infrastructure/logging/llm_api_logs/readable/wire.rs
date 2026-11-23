@@ -2,8 +2,6 @@ use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
-use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
-
 pub fn format_endpoint(base_url: &str, endpoint_path: &str) -> String {
     let base = base_url.trim().trim_end_matches('/');
     let path = endpoint_path.trim();
@@ -43,19 +41,14 @@ pub fn extract_model(payload: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn wire_log_payload(payload: &Value) -> Cow<'_, Value> {
-    let has_provider_state = payload
-        .as_object()
-        .is_some_and(|object| object.contains_key(CHAT_COMPLETION_PROVIDER_STATE_FIELD));
-    if !has_provider_state && !contains_inline_media(payload) {
-        return Cow::Borrowed(payload);
+/// Replaces inline media with type/size markers.
+pub fn wire_log_payload(payload: Cow<'_, Value>) -> Cow<'_, Value> {
+    if !contains_inline_media(&payload) {
+        return payload;
     }
 
-    let mut sanitized = payload.clone();
+    let mut sanitized = payload.into_owned();
     redact_inline_media(&mut sanitized);
-    if let Some(object) = sanitized.as_object_mut() {
-        object.remove(CHAT_COMPLETION_PROVIDER_STATE_FIELD);
-    }
     Cow::Owned(sanitized)
 }
 

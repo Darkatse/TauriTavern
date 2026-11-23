@@ -123,5 +123,5 @@ pub async fn preview_chat_completion_request(
         .preview_request(dto)
         .await?;
 
-    Ok(dev_observability::preview_chat_completion_request(&request))
+    Ok(dev_observability::preview_chat_completion_request(request))
 }

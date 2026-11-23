@@ -108,6 +108,11 @@ impl HttpClientPool {
         }
     }
 
+    /// The `User-Agent` every client of this pool sends unless a request sets its own.
+    pub fn product_user_agent(&self) -> &str {
+        &self.product_user_agent
+    }
+
     pub fn validate_request_proxy_settings(
         settings: &RequestProxySettings,
     ) -> Result<(), DomainError> {

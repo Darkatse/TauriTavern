@@ -1533,8 +1533,16 @@ type TauriTavernUsageView = {
     reasoning?: number;
 };
 
+type TauriTavernRequestDescription = {
+    transport: 'http' | 'websocket';
+    method: string;
+    url: string;
+    headers: { name: string; value: string }[];
+};
+
 type TauriTavernRequestView = {
     kind: TauriTavernRequestKind;
+    http?: TauriTavernRequestDescription;
     systemField?: string;
     systemPath?: string;
     system: TauriTavernPartView[];

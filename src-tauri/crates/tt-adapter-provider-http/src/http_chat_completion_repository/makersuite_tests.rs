@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tt_adapter_http::HttpClientPool;
 use tt_ports::repositories::chat_completion_repository::{
@@ -12,45 +10,7 @@ use tt_ports::repositories::chat_completion_repository::{
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::HttpChatCompletionRepository;
-
-async fn upstream(bodies: Vec<String>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
-        let mut requests = Vec::new();
-        for body in bodies {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut chunk = [0; 4096];
-            loop {
-                let count = socket.read(&mut chunk).await.unwrap();
-                assert_ne!(count, 0);
-                request.extend_from_slice(&chunk[..count]);
-                if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                    let length = headers
-                        .lines()
-                        .find_map(|line| {
-                            line.strip_prefix("content-length: ")
-                                .map(|value| value.parse::<usize>().unwrap())
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= end + 4 + length {
-                        break;
-                    }
-                }
-            }
-            socket.write_all(format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            if body.starts_with("data:") { "text/event-stream" } else { "application/json" },
-            body.len(),
-        ).as_bytes()).await.unwrap();
-            requests.push(String::from_utf8(request).unwrap());
-        }
-        requests
-    });
-    (base, task)
-}
+use super::test_upstream::upstream;
 
 fn repository(base_url: String) -> (HttpChatCompletionRepository, ChatCompletionApiConfig) {
     let base_url = reqwest::Url::parse(&base_url).unwrap();

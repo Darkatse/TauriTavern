@@ -5,7 +5,8 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 use tt_contracts::observability::{
-    ChatCompletionRequestPreviewDto, ExchangeViewDto, RequestKindDto,
+    ChatCompletionRequestPreviewDto, ExchangeViewDto, RequestDescriptionDto, RequestKindDto,
+    RequestViewDto,
 };
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
@@ -17,7 +18,9 @@ pub(super) struct LoggedRequest<'a> {
     pub source: String,
     pub endpoint: String,
     pub model: Option<String>,
-    pub payload: Cow<'a, Value>,
+    pub body: Cow<'a, Value>,
+    /// Absent when request construction fails.
+    pub http: Option<RequestDescriptionDto>,
 }
 
 impl<'a> LoggedRequest<'a> {
@@ -25,19 +28,32 @@ impl<'a> LoggedRequest<'a> {
         source: String,
         base_url: &str,
         endpoint_path: &str,
-        payload: &'a Value,
+        payload: &Value,
+        body: Cow<'a, Value>,
+        http: Option<RequestDescriptionDto>,
     ) -> Self {
-        let payload = wire_log_payload(payload);
         Self {
             source,
             endpoint: format_endpoint(base_url, endpoint_path),
-            model: extract_model(&payload),
-            payload,
+            model: extract_model(payload),
+            body: wire_log_payload(body),
+            http,
         }
     }
 
     pub(super) fn raw(&self) -> String {
-        pretty_json(&self.payload)
+        pretty_json(&self.body)
+    }
+}
+
+pub(super) fn request_view(
+    kind: RequestKindDto,
+    payload: &Value,
+    http: Option<RequestDescriptionDto>,
+) -> RequestViewDto {
+    RequestViewDto {
+        http,
+        ..project_request_view(kind, payload)
     }
 }
 
@@ -46,8 +62,17 @@ pub fn preview_chat_completion_request(
     base_url: &str,
     endpoint_path: &str,
     payload: &Value,
+    body: &Value,
+    http: RequestDescriptionDto,
 ) -> ChatCompletionRequestPreviewDto {
-    let request = LoggedRequest::new(source.key().to_string(), base_url, endpoint_path, payload);
+    let request = LoggedRequest::new(
+        source.key().to_string(),
+        base_url,
+        endpoint_path,
+        payload,
+        Cow::Borrowed(body),
+        Some(http),
+    );
     let request_raw = request.raw();
     ChatCompletionRequestPreviewDto {
         source: request.source,
@@ -55,7 +80,7 @@ pub fn preview_chat_completion_request(
         endpoint: request.endpoint,
         request_raw,
         view: ExchangeViewDto {
-            request: project_request_view(RequestKindDto::Chat, &request.payload),
+            request: request_view(RequestKindDto::Chat, &request.body, request.http),
             response: None,
         },
     }

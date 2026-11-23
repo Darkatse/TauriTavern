@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,7 +43,7 @@ impl<'a> GenerationLog<'a> {
         let id = self.store.allocate_id();
         let (response_raw, response_raw_kind) = match result {
             Ok(response) => (
-                Some(pretty_json(&wire_log_payload(response))),
+                Some(pretty_json(&wire_log_payload(Cow::Borrowed(response)))),
                 Some(LlmApiRawKindDto::Json),
             ),
             Err(_) => (None, None),
@@ -144,6 +145,7 @@ impl<'a> GenerationLog<'a> {
             stream: self.stream,
             error_message: error.map(ToString::to_string),
             response_raw_kind,
+            http: self.request.http.clone(),
         }
     }
 }

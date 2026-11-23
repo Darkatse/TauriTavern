@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use tt_contracts::observability::{LlmApiLogIndexEntryDto, LlmApiRawKindDto, RequestKindDto};
+use tt_contracts::observability::{
+    LlmApiLogIndexEntryDto, LlmApiRawKindDto, RequestDescriptionDto, RequestKindDto,
+};
 
 pub(super) const TEXT_COMPLETION_SOURCE_PREFIX: &str = "text_completion:";
 
@@ -17,6 +19,8 @@ pub(super) struct LlmApiLogMeta {
     pub stream: bool,
     pub error_message: Option<String>,
     pub response_raw_kind: Option<LlmApiRawKindDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<RequestDescriptionDto>,
 }
 
 impl LlmApiLogMeta {

@@ -20,7 +20,7 @@ use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSend
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
-    ChatCompletionStreamDelta,
+    ChatCompletionStreamDelta, GenerationCall,
 };
 use tt_ports::repositories::prompt_cache_repository::{
     PromptCacheKey, PromptCacheRepository, PromptDigestSnapshot,
@@ -453,12 +453,34 @@ impl ChatCompletionService {
         &self,
         dto: ChatCompletionGenerateRequestDto,
     ) -> Result<ChatCompletionWireRequestDto, ApplicationError> {
+        let stream = dto
+            .payload
+            .get("stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let prepared = self.prepare_generate_request(dto).await?;
+        let request = self
+            .chat_completion_repository
+            .describe_request(
+                prepared.source,
+                &prepared.config,
+                &prepared.endpoint_path,
+                &prepared.upstream_payload,
+                if stream {
+                    GenerationCall::GenerateStream
+                } else {
+                    GenerationCall::Generate
+                },
+            )
+            .map_err(ApplicationError::from)?;
+        let (http, body) = (request.http, request.body.into_owned());
         Ok(ChatCompletionWireRequestDto {
             source: prepared.source,
             base_url: prepared.config.base_url,
             endpoint_path: prepared.endpoint_path,
             payload: prepared.upstream_payload,
+            body,
+            http,
         })
     }
 
@@ -987,12 +1009,14 @@ mod tests {
 
     #[tokio::test]
     async fn preview_request_matches_the_sent_request_without_sending_or_saving_digests() {
+        use std::borrow::Cow;
         use std::collections::HashMap;
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         use async_trait::async_trait;
         use tokio::sync::Mutex;
+        use tt_contracts::observability::{RequestDescriptionDto, RequestTransportDto};
         use tt_domain::errors::DomainError;
         use tt_domain::ios_policy::{IosPolicyScope, resolve_ios_policy_activation_report};
         use tt_domain::models::secret::Secrets;
@@ -1000,7 +1024,8 @@ mod tests {
         use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
         use tt_ports::repositories::chat_completion_repository::{
             ChatCompletionNormalizationReport, ChatCompletionRepository,
-            ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+            ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta, GenerationCall,
+            WireRequest,
         };
         use tt_ports::repositories::prompt_cache_repository::{
             PromptCacheRepository, PromptDigestSnapshot,
@@ -1083,6 +1108,25 @@ mod tests {
             }
 
             async fn close_provider_session(&self, _session_id: &str) {}
+
+            fn describe_request<'a>(
+                &self,
+                _source: ChatCompletionSource,
+                config: &ChatCompletionApiConfig,
+                endpoint_path: &str,
+                payload: &'a Value,
+                _call: GenerationCall,
+            ) -> Result<WireRequest<'a>, DomainError> {
+                Ok(WireRequest {
+                    http: RequestDescriptionDto {
+                        transport: RequestTransportDto::Http,
+                        method: "POST".to_string(),
+                        url: format!("{}{endpoint_path}", config.base_url),
+                        headers: Vec::new(),
+                    },
+                    body: Cow::Borrowed(payload),
+                })
+            }
         }
 
         struct StaticSecretRepo;
@@ -1226,5 +1270,10 @@ mod tests {
         assert_eq!(sent.base_url, preview.base_url);
         assert_eq!(sent.endpoint_path, preview.endpoint_path);
         assert_eq!(sent.payload, preview.payload);
+        assert_eq!(sent.payload, preview.body);
+        assert_eq!(
+            preview.http.url,
+            format!("{}{}", sent.base_url, sent.endpoint_path)
+        );
     }
 }

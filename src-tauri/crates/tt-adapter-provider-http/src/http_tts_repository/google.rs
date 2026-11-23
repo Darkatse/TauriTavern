@@ -256,10 +256,10 @@ async fn generate_gemini(
         &base_url,
         "v1beta",
         &format!("models/{model}:generateContent"),
-    );
+    )?;
     let response = send_with_retry(|| {
         client
-            .post(&url)
+            .post(url.clone())
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/json")
             .header("x-goog-api-key", &api_key)
