@@ -7241,6 +7241,7 @@ function getZaiMaxContext(model, isUnlocked) {
     }
 
     const contextMap = {
+        'glm-5.4': max_1mil,
         'glm-5.3-flash': max_1mil,
         'glm-5.3': max_1mil,
         'glm-5.2': max_1mil,
@@ -8449,6 +8450,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'kimi-k2.5',
         'kimi-latest',
         // Z.AI (GLM)
+        'glm-5.4',
         'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
@@ -8545,6 +8547,7 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'gemini-4',
         'gemma-4',
         // Z.AI (GLM)
+        'glm-5.4',
         'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',

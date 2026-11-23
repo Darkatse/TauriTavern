@@ -2280,8 +2280,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                             <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.">
                                                 DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.">
-                                                Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.3 and later always think: Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort. GLM-5.2 accepts the full effort list.">
+                                                Z.AI GLM-5.3 and later always think: Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort. GLM-5.2 accepts the full effort list.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
@@ -4270,6 +4270,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             </select>
                             <h4><span data-i18n="Z.AI Model" id="model_zai_select_label">Z.AI Model</span></h4>
                             <select id="model_zai_select" aria-labelledby="model_zai_select_label">
+                                <option value="glm-5.4">glm-5.4</option>
                                 <option value="glm-5.3">glm-5.3</option>
                                 <option value="glm-5.3-flash">glm-5.3-flash</option>
                                 <option value="glm-5.3-flashx">glm-5.3-flashx</option>
