@@ -248,7 +248,7 @@ fn claude_gemini_and_responses_requests_project_to_unified_exchange_view() {
     let gemini_payload = json!({
         "systemInstruction": { "parts": [{ "text": "Be concise" }] },
         "tools": [{
-            "functionDeclarations": [{
+            "function_declarations": [{
                 "name": "lookup",
                 "parameters": { "type": "object" }
             }]
@@ -271,7 +271,7 @@ fn claude_gemini_and_responses_requests_project_to_unified_exchange_view() {
         gemini_req.system_field.as_deref(),
         Some("systemInstruction")
     );
-    assert_eq!(gemini_req.tools[0].path, "/tools/0/functionDeclarations/0");
+    assert_eq!(gemini_req.tools[0].path, "/tools/0/function_declarations/0");
     assert_eq!(gemini_req.messages[1].role, "model");
     assert_eq!(gemini_req.messages[1].parts.len(), 2);
     assert_eq!(

@@ -409,8 +409,11 @@ fn project_tools(tools: &[Value], base_path: &str) -> Vec<ToolViewDto> {
             continue;
         }
 
-        if let Some(declarations) = object.get("functionDeclarations").and_then(Value::as_array) {
-            let decls_base = pointer_push(&tool_path, "functionDeclarations");
+        if let Some((key, declarations)) = ["functionDeclarations", "function_declarations"]
+            .into_iter()
+            .find_map(|key| Some((key, object.get(key)?.as_array()?)))
+        {
+            let decls_base = pointer_push(&tool_path, key);
             for (decl_index, declaration) in declarations.iter().enumerate() {
                 let decl_path = pointer_index(&decls_base, decl_index);
                 let Some(decl_obj) = declaration.as_object() else {
