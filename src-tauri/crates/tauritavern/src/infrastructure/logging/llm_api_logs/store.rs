@@ -299,7 +299,10 @@ mod tests {
     use super::response_raw_sse_path;
     use crate::infrastructure::logging::llm_api_logs::LoggingChatCompletionRepository;
 
-    struct FakeChatCompletionRepository;
+    #[derive(Default)]
+    struct FakeChatCompletionRepository {
+        stream_never_ends: bool,
+    }
 
     #[async_trait]
     impl ChatCompletionRepository for FakeChatCompletionRepository {
@@ -345,6 +348,9 @@ mod tests {
                         .to_string(),
                 )
                 .unwrap();
+            if self.stream_never_ends {
+                std::future::pending::<()>().await;
+            }
             sender.send("[DONE]".to_string()).unwrap();
             Ok(())
         }
@@ -391,7 +397,7 @@ mod tests {
         store.set_stream_enabled(true);
 
         let repo = LoggingChatCompletionRepository::new(
-            Arc::new(FakeChatCompletionRepository),
+            Arc::new(FakeChatCompletionRepository::default()),
             Arc::clone(&store),
         );
         let config = test_config();
@@ -435,6 +441,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_dropped_by_its_caller_is_recorded_as_cancelled_with_what_arrived() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (published_tx, mut published_rx) = tokio::sync::mpsc::unbounded_channel();
+        let store = Arc::new(LlmApiLogStore::with_publisher(
+            temp_dir.path().to_path_buf(),
+            move |entry| {
+                let _ = published_tx.send(entry.clone());
+            },
+        ));
+        store.set_stream_enabled(true);
+
+        let repo = LoggingChatCompletionRepository::new(
+            Arc::new(FakeChatCompletionRepository {
+                stream_never_ends: true,
+            }),
+            Arc::clone(&store),
+        );
+        let (stream_tx, mut stream_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let generation = tokio::spawn(async move {
+            let payload = json!({
+                "model": "gpt-5",
+                "messages": [{ "role": "user", "content": "Ping" }]
+            });
+            repo.generate_stream(
+                ChatCompletionSource::OpenAi,
+                &test_config(),
+                "/chat/completions",
+                &payload,
+                stream_tx,
+                cancel_rx,
+            )
+            .await
+        });
+        assert!(stream_rx.recv().await.is_some());
+        generation.abort();
+
+        let entry = published_rx.recv().await.expect("entry published");
+        assert_eq!(entry.level, "WARN");
+        let response = store
+            .get_view(entry.id)
+            .await
+            .unwrap()
+            .view
+            .response
+            .unwrap();
+        assert!(response.error.is_some());
+        assert_eq!(response.candidates.len(), 1);
+    }
+
+    #[tokio::test]
     async fn stream_whose_response_file_cannot_be_written_is_not_published() {
         let temp_dir = tempfile::tempdir().unwrap();
         // A fresh store allocates id 1 first, so a directory at its SSE path fails the write.
@@ -450,7 +507,7 @@ mod tests {
         store.set_stream_enabled(true);
 
         let repo = LoggingChatCompletionRepository::new(
-            Arc::new(FakeChatCompletionRepository),
+            Arc::new(FakeChatCompletionRepository::default()),
             Arc::clone(&store),
         );
         let config = test_config();

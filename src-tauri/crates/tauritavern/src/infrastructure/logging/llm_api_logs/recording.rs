@@ -69,45 +69,54 @@ impl<'a> GenerationLog<'a> {
         Fut: Future<Output = Result<(), DomainError>>,
     {
         let id = self.store.allocate_id();
-        let log_root = self.store.log_root().to_path_buf();
-        let (tee, mut events) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let forward_task = tauri::async_runtime::spawn({
-            let log_root = log_root.clone();
-            async move {
-                // Holds the file until its first error; events reach `sender` either way.
-                let mut file = create_sse_file(&log_root, id).await;
-                while let Some(event) = events.recv().await {
-                    let _ = sender.send(event.clone());
-                    if let Ok(writer) = &mut file
-                        && let Err(error) = append_sse_event(writer, &event).await
-                    {
-                        file = Err(error);
-                    }
-                }
-                file?.flush().await
-            }
-        });
-
-        let result = generate(tee).await;
-        let recorded = forward_task.await.map_err(std::io::Error::other).flatten();
-
-        let meta = self.meta(id, result.as_ref().err(), Some(LlmApiRawKindDto::Sse));
+        let store = Arc::clone(&self.store);
         let request_raw = self.request.raw();
-        let store = self.store;
+        let started = self.started;
+        // A dropped generation never reports; the task below then finishes the entry as cancelled.
+        let cancelled = self.meta(
+            id,
+            Some(&DomainError::generation_cancelled_by_user()),
+            Some(LlmApiRawKindDto::Sse),
+        );
+        let (report, outcome) = tokio::sync::oneshot::channel();
+        let (tee, mut events) = tokio::sync::mpsc::unbounded_channel::<String>();
         tauri::async_runtime::spawn(async move {
+            // Holds the file until its first error; events reach `sender` either way.
+            let mut file = create_sse_file(store.log_root(), id).await;
+            while let Some(event) = events.recv().await {
+                let _ = sender.send(event.clone());
+                if let Ok(writer) = &mut file
+                    && let Err(error) = append_sse_event(writer, &event).await
+                {
+                    file = Err(error);
+                }
+            }
+            // The stream ends for its consumer before the entry is written.
+            drop(sender);
+
+            let recorded = match file {
+                Ok(mut writer) => writer.flush().await,
+                Err(error) => Err(error),
+            };
+            let meta = outcome.await.unwrap_or_else(|_| LlmApiLogMeta {
+                duration_ms: elapsed_ms(started),
+                ..cancelled
+            });
             match recorded {
                 Ok(()) => store.finalize_entry(meta, &request_raw, None).await,
                 Err(error) => {
                     tracing::error!(
                         "Failed to write LLM API SSE log file {}: {}",
-                        response_raw_sse_path(&log_root, id).display(),
+                        response_raw_sse_path(store.log_root(), id).display(),
                         error
                     );
-                    let _ = delete_entry_files(&log_root, id).await;
+                    let _ = delete_entry_files(store.log_root(), id).await;
                 }
             }
         });
 
+        let result = generate(tee).await;
+        let _ = report.send(self.meta(id, result.as_ref().err(), Some(LlmApiRawKindDto::Sse)));
         result
     }
 
@@ -131,10 +140,14 @@ impl<'a> GenerationLog<'a> {
             source: self.request.source.clone(),
             model: self.request.model.clone(),
             endpoint: self.request.endpoint.clone(),
-            duration_ms: self.started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32,
+            duration_ms: elapsed_ms(self.started),
             stream: self.stream,
             error_message: error.map(ToString::to_string),
             response_raw_kind,
         }
     }
+}
+
+fn elapsed_ms(started: Instant) -> u32 {
+    started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32
 }
