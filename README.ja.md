@@ -147,7 +147,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 
 ## TauriTavernとは
 
-TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.19.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
+TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.19.1へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
 
 Node.jsのインストールやコマンドライン操作は必要ありません。ダウンロードして、そのまま起動できます。キャラクターカード、チャット、プリセット、世界情報、フロントエンド拡張はSillyTavernと互換性があります。
 
@@ -156,7 +156,7 @@ Node.jsのインストールやコマンドライン操作は必要ありませ�
 ## 主な機能
 
 - 🖥️ **5つのネイティブプラットフォーム**：Windows、macOS、Linux、Android、iOSで同じように利用できます。ネイティブのHarmonyOS版は現在ベータです
-- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.19.0と同期し、データ形式とディレクトリ構成にも対応
+- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.19.1と同期し、データ形式とディレクトリ構成にも対応
 - 🧩 **フロントエンド拡張**：ネイティブGitを内蔵し、画面上でインストール、更新、ブランチ切り替えを行えます（Node.js専用のバックエンドプラグインは非対応）
 - 🔄 **端末間同期**：暗号化されたLANペアリング、またはTT-Sync v2を使ったリモート自動アップロードに対応
 - 🤖 **Agentフレームワーク**：ツール呼び出し、Skills、サブエージェント、実行タイムラインを備えています。開発は継続中です

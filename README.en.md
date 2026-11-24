@@ -147,7 +147,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 
 ## What is TauriTavern
 
-TauriTavern ports [SillyTavern](https://github.com/SillyTavern/SillyTavern) into a true native app: the frontend keeps the full upstream experience (synced to 1.19.0), while the backend is rebuilt from Node.js into Rust (Tauri v2).
+TauriTavern ports [SillyTavern](https://github.com/SillyTavern/SillyTavern) into a true native app: the frontend keeps the full upstream experience (synced to 1.19.1), while the backend is rebuilt from Node.js into Rust (Tauri v2).
 
 No Node.js to install, no command line — just download and run. Your character cards, chats, presets, world info, and frontend extensions all stay compatible with SillyTavern.
 
@@ -156,7 +156,7 @@ No Node.js to install, no command line — just download and run. Your character
 ## Highlights
 
 - 🖥️ **Five native platforms**: Windows, macOS, Linux, Android, and iOS — one experience everywhere; native HarmonyOS support is currently in beta
-- 🎭 **Full SillyTavern experience**: frontend synced to upstream 1.19.0, with fully compatible data formats and directory layout
+- 🎭 **Full SillyTavern experience**: frontend synced to upstream 1.19.1, with fully compatible data formats and directory layout
 - 🧩 **Frontend extension ecosystem**: built-in native Git — install, update, and switch branches right in the UI (Node-only backend plugins are not supported)
 - 🔄 **Built-in multi-device sync**: encrypted LAN pairing, or automatic upload via the remote TT-Sync v2
 - 🤖 **Agent framework**: tool calling, Skills, sub-agents, and a run timeline; development is ongoing
