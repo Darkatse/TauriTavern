@@ -1,22 +1,15 @@
 // @ts-check
 
-import { mustGetSillyTavernContext } from '../adapters/st/active-chat-ref.js';
 import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import {
     getUpstreamFailureDetails,
     getUserFacingErrorMessage,
 } from '../services/ai/ai-error-presenter.js';
 import { registerCaptionRoutes } from './caption-routes.js';
+import { createChatCompletionDto, getChatCompletionSource } from '../services/ai/chat-completion-dto.js';
 import { copyGenerationPayload, isRequestCancelled } from '../services/ai/generation-sessions.js';
-import { createRandomId } from '../kernel/random-id.js';
 
 const DEFAULT_COMPLETION_MODEL = 'tauritavern-error';
-const OPENCODE_STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
-
-/** @param {Record<string, unknown>} payload */
-function getChatCompletionSource(payload) {
-    return String(payload.chat_completion_source || '').trim().toLowerCase();
-}
 
 /** @param {Record<string, unknown>} payload */
 function getCompletionModel(payload) {
@@ -57,24 +50,6 @@ function isVertexAiClaudePayload(payload) {
 function isOpenCodeFormat(payload, format) {
     return getChatCompletionSource(payload) === 'opencode'
         && String(payload.opencode_api_format || '').trim() === format;
-}
-
-/** @param {Record<string, unknown>} payload */
-async function attachOpenCodeStableChatId(payload) {
-    if (getChatCompletionSource(payload) !== 'opencode') {
-        return;
-    }
-
-    if (!mustGetSillyTavernContext().getCurrentChatId()) {
-        payload[OPENCODE_STABLE_CHAT_ID_FIELD] = createRandomId();
-        return;
-    }
-
-    const chatApi = (/** @type {Window} */ (/** @type {unknown} */ (globalThis))).__TAURITAVERN__?.api?.chat;
-    if (!chatApi) {
-        throw new Error('TauriTavern host ABI is not initialized');
-    }
-    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await chatApi.current.handle().stableId();
 }
 
 /**
@@ -190,10 +165,9 @@ function extractOpenAiChunkText(data) {
  * @param {AbortSignal | null | undefined} [signal]
  */
 async function requestChatCompletion(generation, payload, signal) {
-    await attachOpenCodeStableChatId(payload);
     return generation.request({
         command: 'generate_chat_completion',
-        args: { dto: payload, locale: getSillyTavernLocale() },
+        args: { dto: await createChatCompletionDto(payload), locale: getSillyTavernLocale() },
         signal,
     });
 }
@@ -253,14 +227,11 @@ export function registerAiRoutes(router, context, { jsonResponse }, generation) 
             payload,
             signal: init?.signal,
             chunkText: extractOpenAiChunkText,
-            startStream: async (streamId) => {
-                await attachOpenCodeStableChatId(payload);
-                return context.safeInvoke('start_chat_completion_stream', {
-                    streamId,
-                    dto: payload,
-                    locale: getSillyTavernLocale(),
-                });
-            },
+            startStream: async (streamId) => context.safeInvoke('start_chat_completion_stream', {
+                streamId,
+                dto: await createChatCompletionDto(payload),
+                locale: getSillyTavernLocale(),
+            }),
             errorChunk: (content) => buildErrorStreamChunk(content, payload),
             nonStream: {
                 run: () => requestChatCompletion(generation, payload, init?.signal),

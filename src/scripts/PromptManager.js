@@ -153,6 +153,9 @@ class Prompt {
      */
     extension;
 
+    /** @type {string|undefined} */
+    extension_key;
+
     /**
      * A list of generation type triggers for the prompt injection.
      * @type {string[]}
@@ -184,12 +187,13 @@ class Prompt {
      * @param {string[]} [param0.injection_trigger] - The generation type trigger for the prompt injection.
      * @param {boolean} [param0.forbid_overrides] - Indicates if the prompt should not be overridden.
      * @param {boolean} [param0.extension] - Prompt is added by an extension.
+     * @param {string} [param0.extension_key]
      * @param {string} [param0.attach_role] - The role of the message to attach to.
      * @param {number} [param0.attach_index] - The ordinal index of the message to attach to.
      * @param {string} [param0.attach_side] - The side of the message to attach to (start/end).
      * @param {Record<string, unknown>} [param0.fields]
      */
-    constructor({ identifier, role, content, name, system_prompt, position, injection_depth, injection_position, forbid_overrides, extension, injection_order, injection_trigger, attach_role, attach_index, attach_side, fields } = {}) {
+    constructor({ identifier, role, content, name, system_prompt, position, injection_depth, injection_position, forbid_overrides, extension, extension_key, injection_order, injection_trigger, attach_role, attach_index, attach_side, fields } = {}) {
         this.identifier = identifier;
         this.role = role;
         this.content = content;
@@ -200,6 +204,7 @@ class Prompt {
         this.injection_position = injection_position;
         this.forbid_overrides = forbid_overrides;
         this.extension = extension ?? false;
+        this.extension_key = extension_key;
         this.injection_order = injection_order ?? DEFAULT_ORDER;
         this.injection_trigger = injection_trigger ?? [];
         this.attach_role = attach_role ?? 'user';

@@ -7,6 +7,7 @@ import {
     setFrontendConsoleCaptureEnabled,
     subscribeFrontendLogs,
 } from '../services/dev-logging/frontend-log-capture.js';
+import { createChatCompletionDto } from '../services/ai/chat-completion-dto.js';
 import {
     createLlmApiLogBridge,
     requirePositiveInteger,
@@ -116,6 +117,12 @@ function createDevApi({ safeInvoke }) {
                 return safeInvoke('devlog_get_llm_api_log_view', {
                     id: requirePositiveInteger(id, 'id'),
                 });
+            },
+            async preview() {
+                const { previewRequest } = await import('../../../scripts/tauritavern/request-preview.js');
+                return previewRequest(async payload => safeInvoke('preview_chat_completion_request', {
+                    dto: await createChatCompletionDto(payload),
+                }));
             },
         },
     };

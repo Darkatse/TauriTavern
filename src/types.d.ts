@@ -1229,6 +1229,8 @@ type TauriTavernLlmApiLogsApi = {
 type TauriTavernRequestInspectorApi = {
     /** Project: structured view derived from stored raw request/response files. */
     getLogView: (id: number) => Promise<TauriTavernLlmApiLogView>;
+    /** Project: preview without sending. */
+    preview: () => Promise<TauriTavernRequestPreview>;
 };
 
 type TauriTavernDevApi = {
@@ -1577,6 +1579,50 @@ type TauriTavernLlmApiLogView = {
     stream: boolean;
     responseRawKind: TauriTavernLlmApiRawKind | null;
     view: TauriTavernExchangeView;
+};
+
+type TauriTavernPromptPiece = {
+    type: 'prompt' | 'extensionPrompt' | 'chat';
+    identifier?: string;
+    /** Index in the original chat, before filtering. */
+    messageId?: number;
+    depth?: number;
+    text: string;
+    tokens: number;
+    attached?: { identifier: string; text: string }[];
+};
+
+type TauriTavernPromptSource = {
+    role: string;
+    tokens: number;
+    toolCallIds?: string[];
+    toolCallId?: string;
+    pieces: TauriTavernPromptPiece[];
+};
+
+type TauriTavernToolSource = {
+    name: string;
+    type: 'prompt' | 'mcp' | 'function';
+    identifier?: string;
+    server?: string;
+};
+
+type TauriTavernRequestPreview = {
+    source: string;
+    model: string | null;
+    endpoint: string;
+    requestRaw: string;
+    view: TauriTavernExchangeView;
+    promptSources: TauriTavernPromptSource[];
+    toolSources: TauriTavernToolSource[];
+    promptNames: Record<string, string>;
+    chatHistory: { included: number; candidates: number };
+    assemblyError: string | null;
+    mcpDiagnostics: { code: string; message: string }[];
+    /** A send would start an Agent run instead of sending this preview. */
+    agentMode: boolean;
+    /** The pending draft is not part of the preview. */
+    draft: boolean;
 };
 
 type TauriTavernWorldInfoEntryRef = {

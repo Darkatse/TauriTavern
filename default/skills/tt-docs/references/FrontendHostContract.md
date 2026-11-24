@@ -154,6 +154,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
     - `api.dev.requestInspector`（Project，第一方使用）
       - `getLogView(id: number) -> Promise<LlmApiLogView>`：从落盘原始文件派生结构化 `ExchangeView`，见 [RequestInspector](CurrentState/RequestInspector.md) 与 `docs/API/Dev.md`。
+      - `preview() -> Promise<RequestPreview>`：下一次发送的请求与它的组成，不发送。
     - `api.dev.exportBundle() -> Promise<boolean>`：生成并交付 debug bundle（zip），返回是否已交付，详见 `docs/API/Dev.md`。
 
 `api.dev` 中 Public 部分（`frontendLogs`、`backendLogs`、`llmApiLogs`、`exportBundle`）的长期契约要求：

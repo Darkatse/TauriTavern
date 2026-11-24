@@ -155,19 +155,20 @@ type LlmApiLogRaw = {
 
 ### 语义
 
-- `getPreview()` / `getRaw()` 每次从磁盘读取，不常驻内存。`index()` 与 `subscribeIndex()` 给出的条目，文件都已写完，可以立即读取；记录规则见[请求查看器](../CurrentState/RequestInspector.md#4-记录)。
+- `getPreview()` / `getRaw()` 每次从磁盘读取，不常驻内存。`index()` 与 `subscribeIndex()` 给出的条目可以立即读取，记录规则见[请求查看器](../CurrentState/RequestInspector.md#5-记录)。
 - `requestRaw` 是实际发出的请求体，内联媒体换成了占位标记。
-- `requestReadable/responseReadable` 由结构化视图渲染，不截断（内容过大时可能影响 UI 打开速度）；完整内容也可用 `getRaw()` 或导出 bundle 获取。
-- 可读文本使用统一的标记：消息以 `[<role>]` 开头，其余标记与结构化视图的部件类型对应，与服务商的线路格式无关。
+- `responseRawKind` 是响应文件的种类：转发事件流的请求是 `sse`；一次取回完整响应的请求成功时是 `json`，失败时没有响应体。`stream` 只表示请求是否以流式发出。
+- `requestReadable` 与 `responseReadable` 由结构化视图渲染，不截断，内容很大时会拖慢界面。
+- 可读文本的标记与服务商的线路格式无关：消息以 `[<role>]` 开头，可见的 reasoning 是 `[reasoning]` 块，签名等续接状态只显示 `[native_state kind=…]`。
 - 工具调用的参数是对象时，其中含换行的字符串值按 `[key]\nvalue` 块展开。
-- 可见或摘要化的 reasoning 显示为 `[reasoning]` 块。signature、`thoughtSignature`、`encrypted_content` 等续接状态只显示 `[native_state kind=…]` 标记，不展开内容。
 
 ## 4. `requestInspector`（Project Contract）
 
-供第一方请求查看器使用的结构化视图接口。它是 Project Contract，形状随第一方界面演进。
+供第一方请求查看器使用的结构化视图与预览接口。它是 Project Contract，形状随第一方界面演进。
 
 ```js
 const entry = await dev.requestInspector.getLogView(index[0].id);
+const next = await dev.requestInspector.preview();
 ```
 
 ### 方法
@@ -175,14 +176,27 @@ const entry = await dev.requestInspector.getLogView(index[0].id);
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
 | `getLogView(id)` | `Promise<LlmApiLogView>` | 读取单条已记录请求的结构化请求/响应视图（`ExchangeView`） |
+| `preview()` | `Promise<RequestPreview>` | 给出下一次发送的请求与它的组成，不发送，也不写聊天记录 |
 
 ### 语义
 
-- 返回索引条目的字段、`responseRawKind` 与 `view: { request, response? }`；类型见 `src/types.d.ts` 的 `TauriTavernLlmApiLogView`。
-- `path` 是 RFC 6901 JSON Pointer。请求的消息、内容块、工具定义与参数指向 `requestRaw`；非流式响应的消息与内容块指向 `responseRaw`；流式响应由事件合并而来，没有 `path`。
+- `getLogView()` 返回索引条目的字段、`responseRawKind` 与 `view: { request, response? }`，类型见 `src/types.d.ts` 的 `TauriTavernLlmApiLogView`。
+- `path` 是 RFC 6901 JSON Pointer。请求里的指向 `requestRaw`，非流式响应里的指向 `responseRaw`；流式响应由事件合并而来，没有 `path`。
 - 工具调用的参数是 JSON 字符串时解析为 JSON 值；解析失败时 `arguments` 为 `null`，原文在 `argumentsText`。
-- `view.request.http` 是请求描述：`transport`（`http` 或 `websocket`）、`method`、`url` 与 `headers`（`{ name, value }` 的列表）。凭据的值是 `[redacted]`，没有描述的记录不带这个字段。规则见[请求查看器](../CurrentState/RequestInspector.md#3-线路请求)。
-- 失败信息只在 `view.response.error`。它与结束原因、用量的取值，以及视图的其余派生规则，见[请求查看器](../CurrentState/RequestInspector.md#5-视图)。
+- `view.request.http` 是请求描述，凭据的值是 `[redacted]`，没有描述的记录不带这个字段，见[请求查看器](../CurrentState/RequestInspector.md#4-线路请求)。
+- 失败信息只在 `view.response.error`。它与结束原因、用量的取值见[请求查看器](../CurrentState/RequestInspector.md#6-视图)。
+- `preview()` 只支持聊天补全下打开的角色聊天。条件不满足，或组装、准备失败时，它抛出错误。
+- `preview()` 返回的 `source`、`model`、`endpoint`、`requestRaw` 与 `view` 取值与日志相同，其余字段见下表，类型见 `src/types.d.ts` 的 `TauriTavernRequestPreview`。它与随后的发送可以不同之处见[请求查看器](../CurrentState/RequestInspector.md#3-准备与预览)。
+
+| 字段 | 含义 |
+| --- | --- |
+| `promptSources`、`toolSources` | 每条消息与每个工具的出处，见[请求查看器](../CurrentState/RequestInspector.md#2-组装) |
+| `promptNames` | 出处里各个 Prompt Manager 提示词的名称，按标识查 |
+| `chatHistory` | 纳入的聊天记录条数与候选条数 |
+| `mcpDiagnostics` | 这次用不上的 MCP 工具与原因 |
+| `assemblyError` | 组装带着错误继续时的原因，没有时为 `null` |
+| `agentMode` | 发送会启动 Agent，而不是发出这条请求 |
+| `draft` | 输入框里有内容，发送时会先写进聊天 |
 
 ## 5. `exportBundle()`
 

@@ -62,8 +62,8 @@ import {
 import { getActiveIosPolicyCapabilities } from './scripts/tauritavern/ios-policy.js';
 import { applyIosPolicyUiProjection } from './scripts/tauritavern/ios-policy-ui.js';
 import {
-    createEmptyLegacyMcpGenerationContext,
     createLegacyMcpGenerationContext,
+    createUnavailableLegacyMcpGenerationContext,
     LegacyMcpOutcomeUnknownError,
 } from './scripts/tauritavern/legacy-mcp-tools.js';
 import { applyOutputPatches, buildOutputRevisionRequest } from './scripts/tauritavern/legacy-output-revision.js';
@@ -200,6 +200,7 @@ import {
 } from './scripts/power-user.js';
 
 import {
+    CHAT_MESSAGE_ID,
     setOpenAIMessageExamples,
     setOpenAIMessages,
     setupChatCompletionPromptManager,
@@ -5272,7 +5273,7 @@ async function exitGeneration() {
  * @param {string} type Generation type
  * @param {GenerateOptions} options Generation options
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
- * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
+ * @returns {Promise<any>} An assembled dry run returns `{ generateData, promptAssembly }`.
  */
 export async function Generate(type, options = {}, dryRun = false) {
     await enterGeneration(dryRun);
@@ -5299,10 +5300,11 @@ function cleanupGenerationAfterUnhandledError(type, dryRun) {
     unblockGeneration(type);
 }
 
-async function prepareLegacyMcpGenerationContext() {
+/** @param {boolean} dryRun */
+async function prepareLegacyMcpGenerationContext(dryRun) {
     try {
         const context = await createLegacyMcpGenerationContext({ locale: getCurrentLocale() });
-        if (context.diagnostics.length > 0) {
+        if (!dryRun && context.diagnostics.length > 0) {
             toastr.warning(
                 'Some MCP tools are unavailable for this generation. Check MCP Manager and the console for details.',
                 'MCP tools unavailable',
@@ -5311,11 +5313,13 @@ async function prepareLegacyMcpGenerationContext() {
         return context;
     } catch (error) {
         console.error('Failed to prepare Legacy MCP tools:', error);
-        toastr.warning(
-            'MCP tools are unavailable for this generation. Local tools and normal generation are unaffected.',
-            'MCP tools unavailable',
-        );
-        return createEmptyLegacyMcpGenerationContext();
+        if (!dryRun) {
+            toastr.warning(
+                'MCP tools are unavailable for this generation. Local tools and normal generation are unaffected.',
+                'MCP tools unavailable',
+            );
+        }
+        return createUnavailableLegacyMcpGenerationContext(error);
     }
 }
 
@@ -5523,20 +5527,21 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let this_max_context = getMaxPromptTokens();
 
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
-    if (chat.length && !quietToolRequest) {
-        chat[0].mes = substituteParams(chat[0].mes);
+    const firstMessageText = chat.length && !quietToolRequest ? substituteParams(chat[0].mes) : null;
+    if (firstMessageText !== null && !dryRun) {
+        chat[0].mes = firstMessageText;
     }
 
     // Collect messages with usable content
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    const canAdvertiseToolCalls = !dryRun && ToolManager.canAdvertiseToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
+    const canAdvertiseToolCalls = ToolManager.canAdvertiseToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
     const stripOldToolCalls = main_api === 'openai'
         && !agentMode
         && oai_settings.function_calling
         && oai_settings.strip_old_tool_calls;
     const useLegacyMcpTools = main_api === 'openai' && !agentMode && canAdvertiseToolCalls;
     const legacyMcpContext = useLegacyMcpTools
-        ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext()
+        ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext(dryRun)
         : inheritedLegacyMcpContext;
     const legacyMcpToolRound = useLegacyMcpTools ? legacyMcpContext.createRound() : null;
     const hiddenToolOwners = new Map();
@@ -5562,11 +5567,12 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     const coreChatRegexedMessages = await getRegexedStringBatchAsync(coreChat.map((/** @type {ChatMessage} */ chatItem, index) => ({
-        rawString: chatItem.role === 'tool' ? '' : chatItem.mes,
+        rawString: chatItem.role === 'tool' ? '' : chatItem === chat[0] && firstMessageText !== null ? firstMessageText : chatItem.mes,
         placement: chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT,
         params: { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) },
     })));
 
+    const chatMessageIds = new Map(chat.map((message, messageId) => [message, messageId]));
     coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
         if (chatItem.role === 'tool') {
             return { ...chatItem, index };
@@ -5593,6 +5599,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             ...chatItem,
             mes: regexedMessage,
             index,
+            [CHAT_MESSAGE_ID]: chatMessageIds.get(chatItem),
         };
     }));
 
@@ -6344,6 +6351,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let thisPromptBits = [];
 
     let generate_data;
+    let promptAssembly = null;
     let agentPromptInputs;
     switch (main_api) {
         case 'koboldhorde':
@@ -6419,7 +6427,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     }
                 }
             }
-            const [prompt, counts, toolData] = await prepareOpenAIMessages({
+            const [prompt, counts, toolData, assembly] = await prepareOpenAIMessages({
                 ...workingInputs,
                 allowToolCalls: canAdvertiseToolCalls,
                 agentMode,
@@ -6428,6 +6436,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 quietToolRequest,
             }, dryRun);
             generate_data = { prompt, toolData };
+            promptAssembly = assembly ? { ...assembly, mcpDiagnostics: legacyMcpToolRound ? legacyMcpContext.diagnostics : [] } : null;
 
             // TODO: move these side-effects somewhere else, so this switch-case solely sets generate_data
             // counts will return false if the user has not enabled the token breakdown feature
@@ -6445,7 +6454,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     await eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
 
     // Extensions finish their prompt work before the Run takes ownership of its inputs.
-    // This also runs for SDK dry-runs, whose listener retains generate_data until Generate returns.
     if (agentMode) {
         const context = captureMacroContext();
         context.state.lastGenerationType = type || 'normal';
@@ -6471,7 +6479,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     if (dryRun) {
-        return Promise.resolve();
+        return { generateData: generate_data, promptAssembly };
     }
 
     if (agentMode) {

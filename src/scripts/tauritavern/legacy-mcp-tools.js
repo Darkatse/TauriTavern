@@ -152,6 +152,14 @@ class LegacyMcpToolRound {
         }
     }
 
+    /**
+     * @param {string} alias
+     * @returns {string|null}
+     */
+    serverDisplayName(alias) {
+        return this.#initialBindings.get(alias)?.serverDisplayName ?? null;
+    }
+
     finalizeAdvertisedTools(generateData) {
         if (!this.#merged || this.#finalized) {
             throw new Error('Legacy MCP round must be merged once and finalized once');
@@ -213,10 +221,11 @@ class LegacyMcpGenerationContext {
     }
 }
 
-export function createEmptyLegacyMcpGenerationContext() {
+/** @param {unknown} error */
+export function createUnavailableLegacyMcpGenerationContext(error) {
     return new LegacyMcpGenerationContext(
         [],
-        [],
+        [{ code: 'mcp.legacy_tools_unavailable', message: error instanceof Error ? error.message : String(error) }],
         hostSafeInvoke,
         () => globalThis.crypto.randomUUID(),
     );
