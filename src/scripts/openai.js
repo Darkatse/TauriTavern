@@ -4572,7 +4572,6 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if (settings.reverse_proxy && proxySupportedSources.includes(settings.chat_completion_source)) {
-        await validateReverseProxy();
         generate_data.reverse_proxy = settings.reverse_proxy;
         generate_data.proxy_password = settings.proxy_password;
     }
@@ -4871,6 +4870,9 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
     }
 
     const { generate_data, stream, canMultiSwipe } = await createCurrentGenerationParameters(type, messages, { jsonSchema, allowToolCalls, toolData });
+    if (generate_data.reverse_proxy) {
+        await validateReverseProxy();
+    }
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
     legacyMcpToolRound?.finalizeAdvertisedTools(generate_data);
     const requestContext = getChatCompletionRequestContext(generate_data);

@@ -178,3 +178,29 @@ test('previews asked for before one starts to assemble are one preview', async (
     await first;
     expect(asked).toBe(1);
 });
+
+test('a preview asks nothing about the reverse proxy, and the send confirms it', async () => {
+    const { Popup } = (await load('scripts/popup.js'));
+    const proxied = { chat_completion_source: 'openai', openai_model: 'gpt-4o', reverse_proxy: 'https://proxy.invalid/v1' };
+    const settings = Object.fromEntries(Object.keys(proxied).map(key => [key, openai.oai_settings[key]]));
+    const confirm = Popup.show.confirm;
+    let asked = 0;
+    Popup.show.confirm = async () => {
+        asked += 1;
+        return false;
+    };
+    Object.assign(openai.oai_settings, proxied);
+    try {
+        await preview();
+        expect(asked).toBe(0);
+        expect(handed.previewed.reverse_proxy).toBe(proxied.reverse_proxy);
+        expect(script.online_status).toBe('Valid');
+
+        await expect(script.Generate('normal')).rejects.toThrow();
+        expect(asked).toBe(1);
+    } finally {
+        Object.assign(openai.oai_settings, settings);
+        Popup.show.confirm = confirm;
+        script.setOnlineStatus('Valid');
+    }
+});
