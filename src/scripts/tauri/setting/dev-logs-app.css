@@ -1,3 +1,10 @@
+/* Up to 1000px the panel popup rule gives it the whole window. */
+@media (min-width: 1001px) {
+    .popup.tt-dev-logs-popup {
+        width: min(980px, 90vw);
+    }
+}
+
 .tt-dev-logs-root {
     display: flex;
     flex-direction: column;

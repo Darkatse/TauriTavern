@@ -3,9 +3,10 @@ import { translate } from '../../i18n.js';
 import { trimFrontendLogEntriesInPlace } from '../../../tauri/main/services/dev-logging/frontend-log-retention.js';
 import { writeClipboardText } from '../../../tauri-bridge.js';
 import { runTaskOrPopup, showErrorPopup } from './setting-panel/popup-utils.js';
-import { callTauriTavernPanelPopup } from './panel-popup.js';
+import { createTauriTavernPanelPopup } from './panel-popup.js';
 
 const DEV_LOGS_STYLE_ID = 'tauritavern-dev-logs-style';
+const DEV_LOGS_POPUP_CLASS = 'tt-dev-logs-popup';
 
 function getDevApi() {
     const api = window.__TAURITAVERN__?.api?.dev;
@@ -52,12 +53,12 @@ async function openDevLogsPopup(options) {
     });
 
     try {
-        await callTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
+        const popup = createTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
             okButton: translate('Close'),
             allowVerticalScrolling: true,
-            wide: true,
-            large: true,
         });
+        popup.dlg.classList.add(DEV_LOGS_POPUP_CLASS);
+        await popup.show();
     } finally {
         appHandle.unmount();
     }

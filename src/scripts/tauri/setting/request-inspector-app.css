@@ -7,9 +7,16 @@ body .popup.tt-request-inspector-popup .popup-content {
     text-align: start;
 }
 
+/* The popup has a fixed height, so its body fills it rather than fitting its content. */
+body .popup.tt-request-inspector-popup .popup-body {
+    height: 100%;
+}
+
+/* Up to 1000px the panel popup rule gives it the whole window. */
 @media (min-width: 1001px) {
     .popup.tt-request-inspector-popup {
         width: min(980px, 90vw);
+        height: calc(var(--doc-height) * 0.9);
     }
 }
 

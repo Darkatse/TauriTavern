@@ -70,8 +70,6 @@ export async function openRequestInspector({ select }) {
     const popup = createTauriTavernPanelPopup(mount, POPUP_TYPE.TEXT, '', {
         okButton: translate('Close'),
         allowVerticalScrolling: false,
-        wide: true,
-        large: true,
     });
     popup.dlg.classList.add(POPUP_CLASS);
     try {
