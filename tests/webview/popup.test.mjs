@@ -234,3 +234,30 @@ test('input Enter respects editing rules and legacy result actions retain their 
     await popup.completeCancelled();
     await shown;
 });
+
+test('a popup drops the page selection behind it, and a field it focuses keeps the caret', async () => {
+    (await load('scripts/tauri/perf/modal-selection.js')).installModalSelectionRelease();
+    const text = document.createElement('p');
+    text.textContent = 'Page text';
+    document.body.append(text);
+    const selection = document.getSelection();
+    try {
+        selection.collapse(text.firstChild, 2);
+        const notice = new Popup('Notice', POPUP_TYPE.TEXT, '', { animation: 'none' });
+        const noticeShown = notice.show();
+        expect(selection.rangeCount).toBe(0);
+        await notice.completeAffirmative();
+        await noticeShown;
+
+        selection.collapse(text.firstChild, 2);
+        const prompt = new Popup('Name', POPUP_TYPE.INPUT, 'abc', { animation: 'none' });
+        const promptShown = prompt.show();
+        expect(document.activeElement).toBe(prompt.mainInput);
+        document.execCommand('insertText', false, 'X');
+        expect(prompt.mainInput.value).toContain('X');
+        await prompt.completeCancelled();
+        await promptShown;
+    } finally {
+        text.remove();
+    }
+});

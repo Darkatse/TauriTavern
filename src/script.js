@@ -25,6 +25,7 @@ import {
 import { createBlockContent } from './scripts/tauri/message/block-content.js';
 import { splitMessageBlocks } from './scripts/tauri/message/message-blocks.js';
 import { getCodeHighlightCoordinator } from './scripts/tauri/perf/code-highlight-coordinator.js';
+import { installModalSelectionRelease } from './scripts/tauri/perf/modal-selection.js';
 import { ChatSurfaceForeignChildError } from './tauri/main/adapters/chat-surface/chat-dom-adapter.js';
 import { assertRequiredChatSurfaceParticipants, ChatSurfaceMissingParticipantError } from './tauri/main/services/chat-surface/capability-gate.js';
 import { installChatSurfaceRuntime } from './tauri/main/services/chat-surface/install.js';
@@ -1185,6 +1186,7 @@ async function firstLoadInit() {
         addDOMPurifyHooks();
         reloadMarkdownProcessor();
         applyBrowserFixes();
+        installModalSelectionRelease();
 
         // Ensure bridge/interceptors are installed before first /api/* calls.
         setStage('core', t`Starting: connecting to the backend…`);
