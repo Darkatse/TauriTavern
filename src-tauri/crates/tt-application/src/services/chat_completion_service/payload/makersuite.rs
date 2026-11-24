@@ -289,42 +289,45 @@ fn build_google_payload(
         );
     }
 
-    let mut tools = Vec::<Value>::new();
+    let mut function_declarations = Vec::<Value>::new();
+    let mut built_in_tools = Vec::<Value>::new();
 
     if is_custom || (!enable_image_modality && !is_gemma3) {
         if let Some(raw_tools) = payload.get("tools") {
-            let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
-
-            if !function_declarations.is_empty() {
-                tools.push(json!({ "function_declarations": function_declarations }));
-            } else if !custom_tools.is_empty() {
-                tools.extend(custom_tools);
-            }
+            (function_declarations, built_in_tools) = split_openai_tools(raw_tools);
         }
 
         if enable_web_search
             && (is_custom || (!is_learnlm && !GOOGLE_NO_SEARCH_MODELS.contains(&model)))
-            && !tools
-                .iter()
-                .any(|tool| tool.get("function_declarations").is_some())
         {
-            tools.push(json!({ "google_search": {} }));
+            built_in_tools.push(json!({ "google_search": {} }));
         }
     }
 
-    if !tools.is_empty() {
-        request.insert("tools".to_string(), Value::Array(tools));
-
-        if request_has_function_declarations(&request)
-            && let Some(tool_choice) = payload.get("tool_choice")
-        {
-            request.insert(
-                "toolConfig".to_string(),
-                json!({
-                    "functionCallingConfig": map_tool_choice_to_makersuite(tool_choice)?
-                }),
+    let mut tools = Vec::<Value>::new();
+    let mut tool_config = Map::new();
+    if !function_declarations.is_empty() {
+        if let Some(tool_choice) = payload.get("tool_choice") {
+            tool_config.insert(
+                "functionCallingConfig".to_string(),
+                map_tool_choice_to_makersuite(tool_choice)?,
             );
         }
+        if !built_in_tools.is_empty() {
+            tool_config.insert(
+                "includeServerSideToolInvocations".to_string(),
+                Value::Bool(true),
+            );
+        }
+        tools.push(json!({ "function_declarations": function_declarations }));
+    }
+    tools.extend(built_in_tools);
+
+    if !tools.is_empty() {
+        request.insert("tools".to_string(), Value::Array(tools));
+    }
+    if !tool_config.is_empty() {
+        request.insert("toolConfig".to_string(), Value::Object(tool_config));
     }
 
     Ok(request)
@@ -804,7 +807,7 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
     };
 
     let mut function_declarations = Vec::<Value>::new();
-    let mut custom_tools = Vec::<Value>::new();
+    let mut built_in_tools = Vec::<Value>::new();
 
     for entry in entries {
         let Some(tool) = entry.as_object() else {
@@ -828,16 +831,16 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
             continue;
         }
 
-        let Some(custom_tool) = tool.get(tool_type) else {
+        let Some(built_in_tool) = tool.get(tool_type) else {
             continue;
         };
 
-        let mut custom_tool_object = Map::new();
-        custom_tool_object.insert(tool_type.to_string(), custom_tool.clone());
-        custom_tools.push(Value::Object(custom_tool_object));
+        let mut built_in_tool_object = Map::new();
+        built_in_tool_object.insert(tool_type.to_string(), built_in_tool.clone());
+        built_in_tools.push(Value::Object(built_in_tool_object));
     }
 
-    (function_declarations, custom_tools)
+    (function_declarations, built_in_tools)
 }
 
 fn function_declaration(function: &Map<String, Value>) -> Value {
@@ -938,17 +941,6 @@ fn inject_google_thinking_config(
 
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
     Ok(())
-}
-
-fn request_has_function_declarations(request: &Map<String, Value>) -> bool {
-    request
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| {
-            tools
-                .iter()
-                .any(|tool| tool.get("function_declarations").is_some())
-        })
 }
 
 fn google_safety_settings(use_vertex_ai: bool) -> Vec<Value> {
@@ -1699,24 +1691,38 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_enable_web_search_adds_google_search_tool() {
+    fn makersuite_sends_web_search_and_built_in_tools_with_function_calling() {
         let payload = json!({
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.8-flash",
             "enable_web_search": true,
-            "messages": [{"role": "user", "content": "hello"}]
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                { "type": "function", "function": { "name": "roll_dice" } },
+                { "type": "url_context", "url_context": {} }
+            ],
+            "tool_choice": "auto"
         })
         .as_object()
         .cloned()
         .expect("payload must be object");
 
         let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let tools = body
-            .get("tools")
-            .and_then(Value::as_array)
-            .expect("tools must be array");
 
-        assert!(tools.iter().any(|tool| tool.get("google_search").is_some()));
+        assert_eq!(
+            upstream["tools"],
+            json!([
+                { "function_declarations": [{ "name": "roll_dice" }] },
+                { "url_context": {} },
+                { "google_search": {} }
+            ])
+        );
+        assert_eq!(
+            upstream["toolConfig"],
+            json!({
+                "functionCallingConfig": { "mode": "AUTO" },
+                "includeServerSideToolInvocations": true
+            })
+        );
     }
 
     #[test]

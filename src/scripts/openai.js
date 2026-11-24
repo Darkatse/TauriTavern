@@ -437,6 +437,31 @@ function usesClaudeMessagesSemantics(settings, model = getChatCompletionModel(se
     }
 }
 
+function usesGeminiGenerateContent(settings, model = getChatCompletionModel(settings)) {
+    switch (settings.chat_completion_source) {
+        case chat_completion_sources.MAKERSUITE:
+            return true;
+        case chat_completion_sources.OPENCODE:
+            return settings.opencode_api_format === OPENCODE_API_FORMAT.GEMINI;
+        case chat_completion_sources.CUSTOM:
+            return settings.custom_api_format === custom_api_formats.GEMINI_GENERATE_CONTENT;
+        case chat_completion_sources.VERTEXAI:
+            return !isVertexAiClaudeModelId(model);
+        default:
+            return false;
+    }
+}
+
+function replaysNativeContent(settings, native) {
+    const model = getChatCompletionModel(settings);
+    if (usesClaudeMessagesSemantics(settings, model)) {
+        return hasClaudeToolUse(native);
+    }
+    return usesGeminiGenerateContent(settings, model)
+        || (settings.chat_completion_source === chat_completion_sources.CUSTOM
+            && settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS);
+}
+
 /**
  * Sources whose request is built by the Claude Messages path below
  * (top_k, use_sysprompt, stop, assistant_prefill). Bedrock speaks the same
@@ -1049,10 +1074,6 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
     const requestContext = getChatCompletionRequestContext(oai_settings, currentModel);
     const includeReasoningContent = oai_settings.show_thoughts
         && replaysToolReasoningContent(oai_settings, currentModel);
-    const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
-    const includeNative = includeClaudeNative
-        || (currentApi === chat_completion_sources.CUSTOM
-            && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(oai_settings.custom_api_format));
 
     for (let i = projectedChat.length - 1; i >= 0; i--) {
         const entry = projectedChat[j];
@@ -1114,11 +1135,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             && canReplayProviderMetadata(metadataMessage, contentMessage?.mes ?? '', requestContext);
         const signature = canReplayProviderTurnMetadata ? contentMessage?.extra?.reasoning_signature : null;
         const reasoning = isSameModel && !isOtherGroupMember ? String(contentMessage?.extra?.reasoning ?? '') : '';
-        const native = includeNative
-            && canReplayProviderTurnMetadata
-            && (!includeClaudeNative || hasClaudeToolUse(metadataMessage?.extra?.native))
-            ? metadataMessage?.extra?.native
-            : null;
+        const native = canReplayProviderTurnMetadata ? metadataMessage?.extra?.native : null;
         const reasoningContent = includeReasoningContent && isSameModel && !isOtherGroupMember
             ? metadataMessage?.extra?.tool_reasoning_content : null;
         // Remove provider metadata from invocations if the API/model/speaker don't match.
@@ -1627,12 +1644,6 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const videoInlining = isVideoInliningSupported(settings);
     const audioInlining = isAudioInliningSupported(settings);
     const includeSignature = isReasoningSignatureSupported(settings);
-    const includeClaudeNative = usesClaudeMessagesSemantics(settings);
-    const includeNative = includeClaudeNative
-        || (settings.chat_completion_source === chat_completion_sources.CUSTOM
-            && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(settings.custom_api_format));
-    const canIncludeNative = native => includeNative
-        && (!includeClaudeNative || hasClaudeToolUse(native));
     // A connection replays tool reasoning through reasoning_content or interleaved reasoning, never both.
     const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source)
         && !replaysToolReasoningContent(settings);
@@ -1793,7 +1804,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (includeSignature && chatPrompt.signature) {
                 chatMessage.signature = chatPrompt.signature;
             }
-            if (canIncludeNative(chatPrompt.native)) {
+            if (replaysNativeContent(settings, chatPrompt.native)) {
                 chatMessage.native = chatPrompt.native;
             }
             if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
@@ -1872,7 +1883,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (includeSignature && promptSource.signature) {
                 chatMessage.signature = promptSource.signature;
             }
-            if (canIncludeNative(promptSource.native)) {
+            if (replaysNativeContent(settings, promptSource.native)) {
                 chatMessage.native = promptSource.native;
             }
 
@@ -8866,25 +8877,12 @@ function moveHiddenPrefillReasoning(chatCompletion) {
 }
 
 /**
- * Check whether the selected source uses Gemini's native GenerateContent protocol.
- * @param {ChatCompletionSettings} settings Settings object to use
- * @returns {boolean} True for direct Gemini providers
- */
-function isDirectGeminiSource(settings = oai_settings) {
-    return isCustomGeminiGenerateContent(settings)
-        || settings.chat_completion_source === chat_completion_sources.MAKERSUITE
-        || (settings.chat_completion_source === chat_completion_sources.VERTEXAI
-            && !isVertexAiClaudeModelId(getChatCompletionModel(settings) ?? ''));
-}
-
-/**
  * Check if the model supports encrypted reasoning signatures.
  * @param {ChatCompletionSettings} settings Settings object to use
  * @returns {boolean} True if reasoning signatures should be included in the request
  */
 export function isReasoningSignatureSupported(settings = oai_settings) {
-    // If it's Vertex AI Gemini or Makersuite, that's OK - convertGooglePrompt() will handle it later
-    const isGoogle = isDirectGeminiSource(settings);
+    const isGoogle = usesGeminiGenerateContent(settings);
     // Need a more crunchy check for OpenRouter: look for Gemini models
     const isOpenRouterGemini = settings.chat_completion_source === chat_completion_sources.OPENROUTER && /google\/gemini/i.test(settings.openrouter_model);
     return isGoogle || isOpenRouterGemini;
