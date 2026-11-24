@@ -79,8 +79,12 @@ body .popup.tt-request-inspector-popup .popup-body {
     overflow: hidden;
 }
 
-.tt-ri-segments:first-child {
-    margin-inline-end: auto;
+/* The view switch and the icons are one group at the end of the bar. */
+.tt-ri-view {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-inline-start: auto;
 }
 
 .tt-ri-segment {
@@ -92,6 +96,7 @@ body .popup.tt-request-inspector-popup .popup-body {
     background-color: transparent;
     color: var(--tt-ri-dim);
     font: inherit;
+    white-space: nowrap;
     cursor: pointer;
 }
 
@@ -105,6 +110,7 @@ body .popup.tt-request-inspector-popup .popup-body {
 select.tt-ri-logs {
     min-width: 0;
     max-width: 280px;
+    field-sizing: content;
     padding-inline-end: 24px;
     border-inline-start: 1px solid var(--tt-ri-line);
     text-overflow: ellipsis;
@@ -603,6 +609,15 @@ button.tt-ri-row:focus-visible {
 
 /* Narrow: the text gets the full width; the role sits inline and the lead moves to its own line. */
 @media (max-width: 700px) {
+    /* The view group takes a line of its own, with the icons at its end. */
+    .tt-ri-view {
+        flex: 1 1 100%;
+    }
+
+    .tt-ri-view > .tt-ri-segments {
+        margin-inline-end: auto;
+    }
+
     .tt-ri-root {
         --tt-ri-indent: 10px;
     }
@@ -646,9 +661,5 @@ button.tt-ri-row:focus-visible {
     .tt-ri-body,
     .tt-ri-open > .tt-ri-body {
         padding: 0 10px 10px;
-    }
-
-    select.tt-ri-logs {
-        max-width: 46vw;
     }
 }

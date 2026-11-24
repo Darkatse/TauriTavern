@@ -92,31 +92,33 @@ export function Toolbar({ entries, selection, onSelect, mode, onMode, panel, onP
                         ))}
                     </select>
                 </div>
-                <div className="tt-ri-segments" role="group" aria-label={tr('View')}>
-                    {modes.map(([value, label]) => (
-                        <button
-                            key={value}
-                            type="button"
-                            className="tt-ri-segment"
-                            aria-pressed={mode === value}
-                            onClick={() => onMode(value)}
-                        >
-                            {label}
-                        </button>
-                    ))}
+                <div className="tt-ri-view">
+                    <div className="tt-ri-segments" role="group" aria-label={tr('View')}>
+                        {modes.map(([value, label]) => (
+                            <button
+                                key={value}
+                                type="button"
+                                className="tt-ri-segment"
+                                aria-pressed={mode === value}
+                                onClick={() => onMode(value)}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <IconButton
+                        icon="fa-magnifying-glass"
+                        label={tr('Search')}
+                        expanded={panel === 'search'}
+                        onClick={() => onPanel(panel === 'search' ? null : 'search')}
+                    />
+                    <IconButton
+                        icon="fa-ellipsis"
+                        label={tr('More')}
+                        expanded={panel === 'more'}
+                        onClick={() => onPanel(panel === 'more' ? null : 'more')}
+                    />
                 </div>
-                <IconButton
-                    icon="fa-magnifying-glass"
-                    label={tr('Search')}
-                    expanded={panel === 'search'}
-                    onClick={() => onPanel(panel === 'search' ? null : 'search')}
-                />
-                <IconButton
-                    icon="fa-ellipsis"
-                    label={tr('More')}
-                    expanded={panel === 'more'}
-                    onClick={() => onPanel(panel === 'more' ? null : 'more')}
-                />
             </div>
             {panel === 'search' && <SearchRow query={query} onQuery={onQuery} tr={tr} />}
             {panel === 'more' && more}
