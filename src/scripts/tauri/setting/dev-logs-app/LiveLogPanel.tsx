@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
-import type { DevLogsActions, DevLogsTranslate, LiveLogClient, LiveLogEntry } from './DevLogsContract';
+import type { DevLogsMountOptions, LiveLogEntry } from './DevLogsContract';
 import { DevLogButton, DevLogToggle, LogRow } from './DevLogComponents';
-import { useAsyncSubscription } from './useAsyncSubscription';
+import { useAsyncSubscription } from '../shared/useAsyncSubscription';
 import {
     LIVE_LOG_PANEL_BUFFER_LIMIT,
     LIVE_LOG_PANEL_DEFAULT_WINDOW_SIZE,
@@ -37,17 +37,6 @@ function countMatching(entries: LiveLogEntry[], filter: string): number {
     return entries.reduce((count, entry) => count + (entryMatchesLevel(entry, filter) ? 1 : 0), 0);
 }
 
-export type LiveLogPanelProps = {
-    title: string;
-    initialEntries?: LiveLogEntry[];
-    client: LiveLogClient;
-    actions: DevLogsActions;
-    tr: DevLogsTranslate;
-    showConsoleCapture?: boolean;
-    consoleCaptureEnabled?: boolean;
-    trimEntriesInPlace?: ((entries: LiveLogEntry[]) => void) | null;
-};
-
 export function LiveLogPanel({
     title,
     initialEntries = [],
@@ -57,7 +46,7 @@ export function LiveLogPanel({
     showConsoleCapture = false,
     consoleCaptureEnabled = false,
     trimEntriesInPlace = null,
-}: LiveLogPanelProps) {
+}: DevLogsMountOptions) {
     // The canonical buffer is push-heavy but only the projected tail renders,
     // so it lives in a stable box instead of reactive state.
     const [buffer] = useState(() => {

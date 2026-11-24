@@ -14,10 +14,6 @@
     flex-wrap: wrap;
 }
 
-.tt-dev-log-toolbar.compact {
-    gap: 8px;
-}
-
 .tt-dev-log-toolbar b {
     margin-right: auto;
 }
@@ -161,27 +157,6 @@
     border-left-color: var(--SmartThemeEmColor);
 }
 
-.tt-dev-llm-root {
-    max-width: 980px;
-}
-
-.tt-dev-log-settings-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.tt-dev-log-keep-input {
-    width: 120px;
-    min-width: 120px;
-    margin: 0;
-}
-
-.tt-dev-log-note {
-    opacity: 0.85;
-}
-
 .tt-dev-log-status {
     display: flex;
     align-items: center;
@@ -203,84 +178,12 @@
     opacity: 0.6;
 }
 
-.tt-dev-log-entry-select {
-    flex: 1 1 200px;
-    min-width: 0;
-    margin: 0;
-}
-
-.tt-dev-log-meta {
-    padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 58%, transparent);
-    border-radius: 8px;
-    background: var(--black10a);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-.tt-dev-log-meta-error {
-    color: var(--fullred);
-    border-color: color-mix(in srgb, var(--fullred) 45%, transparent);
-}
-
-.tt-dev-log-text-section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.tt-dev-log-text-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-.tt-dev-log-text-header > span {
-    opacity: 0.85;
-}
-
-.tt-dev-log-textarea {
-    width: 100%;
-    resize: vertical;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.tt-dev-log-raw {
-    padding: 8px;
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 72%, transparent);
-    border-radius: 8px;
-    background: var(--black10a);
-}
-
-.tt-dev-log-raw > summary {
-    cursor: pointer;
-    user-select: none;
-}
-
-.tt-dev-log-raw-body {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-top: 10px;
-}
-
 @media (max-width: 640px) {
-    .tt-dev-log-toolbar,
-    .tt-dev-log-settings-row {
+    .tt-dev-log-toolbar {
         align-items: stretch;
     }
 
-    .tt-dev-log-toolbar .tt-dev-log-button,
-    .tt-dev-log-settings-row .tt-dev-log-button {
-        width: 100%;
-    }
-
-    .tt-dev-log-entry-select {
-        flex-basis: 100%;
-    }
-
-    .tt-dev-log-keep-input {
+    .tt-dev-log-toolbar .tt-dev-log-button {
         width: 100%;
     }
 }

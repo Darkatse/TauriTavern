@@ -11,7 +11,8 @@ use tt_contracts::observability::{
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 use super::readable::{
-    extract_model, format_endpoint, pretty_json, project_request_view, wire_log_payload,
+    extract_model, format_endpoint, pretty_json, project_request_view, render_request_readable,
+    wire_log_payload,
 };
 
 pub(super) struct LoggedRequest<'a> {
@@ -74,13 +75,15 @@ pub fn preview_chat_completion_request(
         Some(http),
     );
     let request_raw = request.raw();
+    let view = request_view(RequestKindDto::Chat, &request.body, request.http);
     ChatCompletionRequestPreviewDto {
         source: request.source,
         model: request.model,
         endpoint: request.endpoint,
         request_raw,
+        request_readable: render_request_readable(&view),
         view: ExchangeViewDto {
-            request: request_view(RequestKindDto::Chat, &request.body, request.http),
+            request: view,
             response: None,
         },
     }

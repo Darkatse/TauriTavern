@@ -79,6 +79,18 @@
 
 合并与推理取值在适配器里另有一份，供实时生成使用。适配器遇到中途结束的流、多个候选或错误事件即报错，查看器要显示这些，所以保留一份不拒绝输入的实现。修改一份时核对另一份。
 
+## 7. 界面
+
+界面岛只渲染视图与组装结果，不认识线路格式。入口有两类：Prompt Manager 头部的"预览请求"打开预览，设置、快捷入口与 `/llmlog` 打开最新一条日志。
+
+- 两种看法出自同一份视图。结构是一份大纲，一段一行，点开才是正文；Payload 是请求行、请求头与请求体的树。
+- 大纲的一行是一个文本段、一次工具调用、一个工具结果、一段思考、一个媒体或一个未识别的块，同一条消息的行共用一条角色色带。连续的对话消息超过 6 条时，除最后 2 条外折成一行。
+- 预览的行带出处与 token。出处按发送顺序在线路请求的文本里定位，游标只前进；工具回合按调用 id 对应。定位不到的出处单独列出，不猜位置。
+- 树上折叠节点的摘要取自大纲里同一路径的行；没有对应行的对象按通用规则，数组里的对象只列出与兄弟不同的标量。
+- 搜索是筛选：结构只留下命中的行，Payload 只留下通向命中的分支。
+- 页面上的内容不随请求变大：没有展开的部分不渲染，长正文先截断，子节点分批显示。
+- 有含义的颜色只有四种角色色，是 `.tt-ri-root` 上的自定义属性，主题可以覆盖。
+
 ## 修改入口
 
 Rust 路径相对 `src-tauri/crates/`，前端路径相对 `src/`。
@@ -93,3 +105,4 @@ Rust 路径相对 `src-tauri/crates/`，前端路径相对 `src/`。
 - 适配器里的另一份合并：`http_chat_completion_repository/` 的 `openai.rs`、`claude.rs`、`gemini.rs`、`normalizers.rs`
 - 调试包：`tauritavern/src/infrastructure/logging/dev_bundle.rs`
 - 命令与宿主 API：`tauritavern/src/presentation/commands/`、`tauritavern/src/app/dev_observability.rs`，`tauri/main/api/dev.js`、`types.d.ts`
+- 界面：`scripts/tauri/setting/request-inspector-app/`（出处定位 `prompt-sources.ts`，大纲 `outline.ts` 与 `outline-message.ts`，树 `json-tree.ts`），外壳与入口 `scripts/tauri/setting/request-inspector.js`

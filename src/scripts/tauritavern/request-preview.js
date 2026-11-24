@@ -1,9 +1,7 @@
 import { characters, Generate, is_send_press, main_api, this_chid, waitForGenerationIdle } from '../../script.js';
-import { hasPendingFileAttachment } from '../chats.js';
 import { is_group_generating, selected_group } from '../group-chats.js';
 import { createCurrentGenerationParameters, promptManager } from '../openai.js';
 import { waitUntilCondition } from '../utils.js';
-import { loadAgentSystemSettings } from './agent/agent-system-settings.js';
 
 const SEND_WAIT_TIMEOUT_MS = 1024 * 1024;
 const SEND_WAIT_INTERVAL_MS = 100;
@@ -17,8 +15,6 @@ const SEND_WAIT_INTERVAL_MS = 100;
  * @property {{ included: number, candidates: number }} chatHistory
  * @property {string|null} assemblyError
  * @property {{ code: string, message: string }[]} mcpDiagnostics
- * @property {boolean} agentMode
- * @property {boolean} draft
  */
 
 /** @type {Promise<object>|null} Shared only until assembly starts. */
@@ -70,7 +66,6 @@ async function assemble() {
     }
     const { generateData, promptAssembly } = dryRun;
     const { generate_data: payload } = await createCurrentGenerationParameters('normal', generateData.prompt, { toolData: generateData.toolData });
-    const { agentModeEnabled } = await loadAgentSystemSettings();
 
     return {
         // Match the JSON body of a send, including omission of undefined fields.
@@ -81,8 +76,6 @@ async function assemble() {
         chatHistory: promptAssembly.chatHistory,
         assemblyError: promptAssembly.error,
         mcpDiagnostics: promptAssembly.mcpDiagnostics,
-        agentMode: agentModeEnabled,
-        draft: String($('#send_textarea').val()) !== '' || hasPendingFileAttachment(),
     };
 }
 

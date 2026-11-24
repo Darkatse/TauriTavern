@@ -77,6 +77,7 @@ pub struct ChatCompletionRequestPreviewDto {
     pub model: Option<String>,
     pub endpoint: String,
     pub request_raw: String,
+    pub request_readable: String,
     pub view: ExchangeViewDto,
 }
 

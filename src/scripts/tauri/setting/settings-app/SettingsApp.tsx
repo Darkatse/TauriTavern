@@ -404,7 +404,7 @@ function SettingsApp({
                     <ActionButton label={tr('Reload Frontend')} icon="fa-arrows-rotate" onClick={() => void actions.reloadFrontend()} />
                     <ActionButton label={tr('Frontend Logs')} icon="fa-terminal" onClick={() => void actions.openFrontendLogs()} />
                     <ActionButton label={tr('Backend Logs')} icon="fa-server" onClick={() => void actions.openBackendLogs()} />
-                    <ActionButton label={tr('LLM API Logs')} icon="fa-file-lines" onClick={() => void actions.openLlmApiLogs()} />
+                    <ActionButton label={tr('Request Inspector')} icon="fa-file-lines" onClick={() => void actions.openRequestInspector()} />
                 </div>
             </SettingsSection>
 

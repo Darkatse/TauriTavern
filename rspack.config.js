@@ -207,6 +207,7 @@ export function createRspackConfigs(mode = 'production') {
     entry: {
       settings: './src/scripts/tauri/setting/settings-app/SettingsApp.tsx',
       'dev-logs': './src/scripts/tauri/setting/dev-logs-app/DevLogsApp.tsx',
+      'request-inspector': './src/scripts/tauri/setting/request-inspector-app/RequestInspectorApp.tsx',
       sync: './src/scripts/tauri/setting/sync-app/index.ts',
       'web-storage': './src/scripts/tauri/setting/web-storage-app/WebStorageApp.tsx',
     },

@@ -1612,6 +1612,7 @@ type TauriTavernRequestPreview = {
     model: string | null;
     endpoint: string;
     requestRaw: string;
+    requestReadable: string;
     view: TauriTavernExchangeView;
     promptSources: TauriTavernPromptSource[];
     toolSources: TauriTavernToolSource[];
@@ -1619,10 +1620,6 @@ type TauriTavernRequestPreview = {
     chatHistory: { included: number; candidates: number };
     assemblyError: string | null;
     mcpDiagnostics: { code: string; message: string }[];
-    /** A send would start an Agent run instead of sending this preview. */
-    agentMode: boolean;
-    /** The pending draft is not part of the preview. */
-    draft: boolean;
 };
 
 type TauriTavernWorldInfoEntryRef = {

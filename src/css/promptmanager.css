@@ -265,6 +265,12 @@ body>.completion_prompt_manager_prompt[data-pm-identifier]>:not(.completion_prom
     width: fit-content;
 }
 
+#completion_prompt_manager .completion_prompt_manager_header .tt-request-preview-button {
+    display: inline-flex;
+    margin: 0 0 0 0.5em;
+    vertical-align: middle;
+}
+
 #completion_prompt_manager .completion_prompt_manager_header_advanced {
     display: flex;
     margin-right: 0.25em;

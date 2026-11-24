@@ -37,11 +37,11 @@ const SHORTCUTS = [
     },
     {
         id: 'llm-api-logs',
-        label: 'LLM API Logs',
+        label: 'Request Inspector',
         icon: 'fa-file-lines',
         open: async () => {
-            const { openLlmApiLogsPanel } = await import('./dev-logs.js');
-            await openLlmApiLogsPanel();
+            const { openRequestInspector } = await import('./request-inspector.js');
+            await openRequestInspector({ select: 'latest' });
         },
     },
     {

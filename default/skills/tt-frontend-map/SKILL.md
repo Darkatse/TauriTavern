@@ -23,7 +23,7 @@ The code you read from the page is the code the user is running.
 - **Bundled code is minified.** Read the source each bundle is built from:
   - `/dist/lib.*` is built from `/lib-bundle-core.js`, `/lib-bundle-optional.js` and `/lib-bundle-editor.js`.
   - The `dist/` of `/scripts/extensions/agent-system/`, `/scripts/extensions/mcp-manager/` and `/scripts/extensions/in-app-agent/` is built from `src/index.tsx` or `src/index.ts` in the same folder, for example `/scripts/extensions/in-app-agent/src/index.ts`.
-  - `/scripts/tauri/setting/dist/` is built from `/scripts/tauri/setting/settings-app/SettingsApp.tsx`, `/scripts/tauri/setting/dev-logs-app/DevLogsApp.tsx` and `/scripts/tauri/setting/sync-app/index.ts`.
+  - `/scripts/tauri/setting/dist/` is built from the `*-app` folders beside it, for example `/scripts/tauri/setting/settings-app/SettingsApp.tsx`.
 - **Types.** `/types.d.ts` declares `window.__TAURITAVERN__` and the page API.
 - **Third-party extensions** are served from `/scripts/extensions/third-party/<folder>/`. There a missing file is a real 404.
 - **What actually reached the model.** The Rust backend is not readable from the page. For a request's final payload, read the LLM API log (tt-troubleshooting skill).

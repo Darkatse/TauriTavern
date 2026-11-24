@@ -3708,16 +3708,16 @@ export function initDefaultSlashCommands() {
         aliases: ['apilog'],
         callback: async () => {
             if (!window.__TAURITAVERN__?.api?.dev) {
-                toastr.error(t`LLM API logs are only available in TauriTavern.`);
+                toastr.error(t`The request inspector is only available in TauriTavern.`);
                 return '';
             }
 
             return runTauriTavernPanelSlashCommand(async () => {
-                const { openLlmApiLogsPanel } = await import('./tauri/setting/dev-logs.js');
-                await openLlmApiLogsPanel();
-            }, (message) => toastr.error(t`Failed to open LLM API logs: ${message}`));
+                const { openRequestInspector } = await import('./tauri/setting/request-inspector.js');
+                await openRequestInspector({ select: 'latest' });
+            }, (message) => toastr.error(t`Failed to open the request inspector: ${message}`));
         },
-        helpString: t`Open the LLM API log viewer (TauriTavern only).`,
+        helpString: t`Open the request inspector on the latest sent request (TauriTavern only).`,
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({

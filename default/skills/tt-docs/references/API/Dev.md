@@ -186,7 +186,7 @@ const next = await dev.requestInspector.preview();
 - `view.request.http` 是请求描述，凭据的值是 `[redacted]`，没有描述的记录不带这个字段，见[请求查看器](../CurrentState/RequestInspector.md#4-线路请求)。
 - 失败信息只在 `view.response.error`。它与结束原因、用量的取值见[请求查看器](../CurrentState/RequestInspector.md#6-视图)。
 - `preview()` 只支持聊天补全下打开的角色聊天。条件不满足，或组装、准备失败时，它抛出错误。
-- `preview()` 返回的 `source`、`model`、`endpoint`、`requestRaw` 与 `view` 取值与日志相同，其余字段见下表，类型见 `src/types.d.ts` 的 `TauriTavernRequestPreview`。它与随后的发送可以不同之处见[请求查看器](../CurrentState/RequestInspector.md#3-准备与预览)。
+- `preview()` 返回的 `source`、`model`、`endpoint`、`requestRaw` 与 `view` 取值与日志相同，`requestReadable` 与 `llmApiLogs.getPreview()` 的同名字段出自同一个渲染。其余字段见下表，类型见 `src/types.d.ts` 的 `TauriTavernRequestPreview`。它与随后的发送可以不同之处见[请求查看器](../CurrentState/RequestInspector.md#3-准备与预览)。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -195,8 +195,6 @@ const next = await dev.requestInspector.preview();
 | `chatHistory` | 纳入的聊天记录条数与候选条数 |
 | `mcpDiagnostics` | 这次用不上的 MCP 工具与原因 |
 | `assemblyError` | 组装带着错误继续时的原因，没有时为 `null` |
-| `agentMode` | 发送会启动 Agent，而不是发出这条请求 |
-| `draft` | 输入框里有内容，发送时会先写进聊天 |
 
 ## 5. `exportBundle()`
 
