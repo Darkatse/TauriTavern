@@ -34,6 +34,9 @@ body .popup.tt-request-inspector-popup .popup-body {
     --tt-ri-tool: #c98a2b;
     --tt-ri-line: color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
     --tt-ri-dim: color-mix(in srgb, var(--SmartThemeBodyColor) 64%, transparent);
+    /* What Noto Sans Mono lacks, such as CJK, falls straight to sans-serif; through the monospace
+       fallback chain WebKit lays such text out several times slower. */
+    --tt-ri-mono: 'Noto Sans Mono', sans-serif;
     --tt-ri-faint: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
     --tt-ri-indent: 18px;
     --tt-ri-role-width: 64px;
@@ -344,7 +347,7 @@ button.tt-ri-row:focus-visible {
 
 .tt-ri-code {
     color: var(--SmartThemeBodyColor);
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     font-size: 0.9em;
 }
 
@@ -407,8 +410,15 @@ button.tt-ri-row:focus-visible {
     padding-inline-start: var(--tt-ri-indent);
 }
 
+/* An open body or a block of its text out of view is not laid out; once seen, it keeps its size. */
+.tt-ri-body,
+.tt-ri-block {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 300px;
+}
+
 .tt-ri-text {
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     font-size: 0.9em;
     line-height: 1.6;
     white-space: pre-wrap;
@@ -444,7 +454,7 @@ button.tt-ri-row:focus-visible {
     grid-template-columns: max-content minmax(0, 1fr);
     gap: 4px 14px;
     margin: 0;
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     font-size: 0.9em;
 }
 
@@ -496,7 +506,7 @@ button.tt-ri-row:focus-visible {
     align-items: baseline;
     gap: 8px;
     padding-block: 4px;
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     font-size: 0.9em;
 }
 
@@ -508,7 +518,7 @@ button.tt-ri-row:focus-visible {
 
 .tt-ri-tree {
     min-width: 0;
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     font-size: 0.9em;
     line-height: 1.5;
 }
@@ -544,7 +554,7 @@ button.tt-ri-row:focus-visible {
     max-width: 50%;
     overflow: hidden;
     color: var(--tt-ri-dim);
-    font-family: var(--monoFontFamily);
+    font-family: var(--tt-ri-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
 }

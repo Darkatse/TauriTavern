@@ -1,3 +1,5 @@
+import { LEAD_LENGTH, clip } from './format';
+
 /**
  * Plain-text search shared by both views. A query is matched without regard to
  * case; `needle` is the query already lowercased.
@@ -27,7 +29,7 @@ export function countMatches(text: string, needle: string): number {
 
 const LEAD_CONTEXT = 24;
 
-/** The line holding the first match, cut so the match stays near its start. */
+/** The line holding the first match, cut to a preview that starts near the match. */
 export function matchingLine(text: string, needle: string): string | null {
     const at = needle ? haystack(text).indexOf(needle) : -1;
     if (at < 0) {
@@ -36,6 +38,6 @@ export function matchingLine(text: string, needle: string): string | null {
     const lineStart = text.lastIndexOf('\n', at - 1) + 1;
     const lineEnd = text.indexOf('\n', at);
     const start = at - lineStart > LEAD_CONTEXT ? at - LEAD_CONTEXT : lineStart;
-    const line = text.slice(start, lineEnd < 0 ? undefined : lineEnd).trim();
+    const line = clip(text.slice(start, lineEnd < 0 ? undefined : lineEnd).trim(), LEAD_LENGTH);
     return start > lineStart ? `…${line}` : line;
 }

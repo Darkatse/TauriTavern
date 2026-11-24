@@ -107,7 +107,7 @@ export function buildMessage(
                 drafts.push(sourced(draft({
                     ...emptyRow(rowId, path),
                     name: (ref && pieceInfo(context, ref)?.name) ?? '',
-                    lead: callLead(part.name, part.arguments, part.argumentsText),
+                    lead: firstLine(callLead(part.name, part.arguments, part.argumentsText)),
                     code: true,
                     body: part.argumentsText === undefined
                         ? { kind: 'json', value: part.arguments }
@@ -132,7 +132,7 @@ export function buildMessage(
                 drafts.push(draft({
                     ...emptyRow(rowId, path),
                     name: part.label,
-                    lead: compact(part.value),
+                    lead: firstLine(compact(part.value)),
                     code: true,
                     body: { kind: 'json', value: part.value },
                 }));

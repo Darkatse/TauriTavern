@@ -9,6 +9,8 @@ const CLAMP_OVER_LINES = 30;
 const CLAMP_LINES = 20;
 const CLAMP_OVER_CHARS = 6000;
 const CLAMP_CHARS = 4000;
+/** A block of a long text ends at the first line break past this many characters. */
+const BLOCK_CHARS = 2000;
 
 /** The start of a long text, shown until the reader asks for all of it; `null` for a short one. */
 export function clampText(text: string): string | null {
@@ -24,6 +26,24 @@ export function clampText(text: string): string | null {
         return null;
     }
     return text.slice(0, Math.min(cut, CLAMP_CHARS));
+}
+
+/**
+ * Where a text splits into blocks, as `[start, end)`. The line break between two
+ * blocks belongs to neither: the block boundary draws it, and copying across
+ * blocks puts it back.
+ */
+function blocksOf(text: string): [start: number, end: number][] {
+    const blocks: [number, number][] = [];
+    for (let start = 0; ;) {
+        const lineEnd = text.indexOf('\n', start + BLOCK_CHARS);
+        if (lineEnd < 0) {
+            blocks.push([start, text.length]);
+            return blocks;
+        }
+        blocks.push([start, lineEnd]);
+        start = lineEnd + 1;
+    }
 }
 
 export function Highlight({ text, needle }: { text: string; needle: string }): ReactNode {
@@ -42,7 +62,10 @@ export function Highlight({ text, needle }: { text: string; needle: string }): R
     return nodes;
 }
 
-/** Text as it was sent: whitespace kept, long text cut until asked for. */
+/**
+ * Text as it was sent: whitespace kept, long text cut until asked for. It is
+ * drawn in blocks, so the browser lays out only the ones in view.
+ */
 export function TextBlock({ text, labels = [], needle, full, onShowFull, tr }: {
     text: string;
     labels?: TextLabel[];
@@ -53,21 +76,29 @@ export function TextBlock({ text, labels = [], needle, full, onShowFull, tr }: {
 }) {
     const head = full ? null : clampText(text);
     const shown = head ?? text;
-    const pieces: ReactNode[] = [];
-    let from = 0;
-    labels.filter(label => label.offset <= shown.length).forEach((label, index) => {
-        pieces.push(
-            <Highlight key={`text-${index}`} text={shown.slice(from, label.offset)} needle={needle} />,
-            <span key={`label-${index}`} className="tt-ri-label">{label.name}</span>,
-        );
-        from = label.offset;
-    });
 
     return (
         <>
             <div className="tt-ri-text">
-                {pieces}
-                <Highlight text={shown.slice(from)} needle={needle} />
+                {blocksOf(shown).map(([start, end]) => {
+                    const pieces: ReactNode[] = [];
+                    let from = start;
+                    labels.forEach((label, index) => {
+                        if (label.offset >= start && label.offset <= end) {
+                            pieces.push(
+                                <Highlight key={`text-${index}`} text={shown.slice(from, label.offset)} needle={needle} />,
+                                <span key={`label-${index}`} className="tt-ri-label">{label.name}</span>,
+                            );
+                            from = label.offset;
+                        }
+                    });
+                    return (
+                        <div key={start} className="tt-ri-block">
+                            {pieces}
+                            <Highlight text={shown.slice(from, end)} needle={needle} />
+                        </div>
+                    );
+                })}
             </div>
             {head !== null && (
                 <button type="button" className="tt-ri-link" onClick={onShowFull}>

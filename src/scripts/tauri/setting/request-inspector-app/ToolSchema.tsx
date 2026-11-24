@@ -1,6 +1,6 @@
 import { JsonTree } from './JsonTree';
 import type { Translate } from './RequestInspectorContract';
-import { clip } from './json-tree';
+import { clip } from './format';
 
 type SchemaRow = { name: string; nested: boolean; required: boolean; type: string; description: string };
 

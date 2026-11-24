@@ -1,3 +1,4 @@
+import { clip } from './format';
 import { countMatches } from './search';
 
 export type TreeKind = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
@@ -211,10 +212,6 @@ export function summarize(value: unknown, items: (count: number) => string, sibl
         .slice(0, SUMMARY_ENTRIES)
         .map(([key, leaf]) => `${key}: ${typeof leaf === 'string' ? JSON.stringify(clip(leaf, SUMMARY_STRING)) : String(leaf)}`);
     return `{ ${[...shown, ...(childrenOf(value).length > shown.length ? ['…'] : [])].join(', ')} }`;
-}
-
-export function clip(text: string, length: number): string {
-    return text.length > length ? `${text.slice(0, length)}…` : text;
 }
 
 /** The start of a long string, as its closed line shows it. */

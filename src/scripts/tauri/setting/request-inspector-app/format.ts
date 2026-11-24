@@ -15,14 +15,21 @@ export function formatTokens(value: number): string {
     return value < 1000 ? String(value) : `${(value / 1000).toFixed(1)}k`;
 }
 
-/** The first line with content, without surrounding whitespace. */
+/** Characters a one-line preview keeps; a browser lays out all of a line, however little of it shows. */
+export const LEAD_LENGTH = 160;
+
+export function clip(text: string, length: number): string {
+    return text.length > length ? `${text.slice(0, length)}…` : text;
+}
+
+/** The first line with content, without surrounding whitespace, as a one-line preview. */
 export function firstLine(text: string): string {
     const start = text.search(/\S/u);
     if (start < 0) {
         return '';
     }
     const end = text.indexOf('\n', start);
-    return (end < 0 ? text.slice(start) : text.slice(start, end)).trimEnd();
+    return clip((end < 0 ? text.slice(start) : text.slice(start, end)).trimEnd(), LEAD_LENGTH);
 }
 
 /** Fills the `{name}` slots of a translated string. */

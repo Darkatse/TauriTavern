@@ -179,11 +179,11 @@ function parametersRow({ request }: ExchangeView, tr: Translate): OutlineRow | n
     return {
         ...emptyRow('parameters', null),
         name: tr('Parameters'),
-        lead: entries
+        lead: firstLine(entries
             .filter(({ value }) => value === null || typeof value !== 'object')
             .slice(0, HEAD_PARAMETERS)
             .map(({ key, value }) => `${key} ${String(value)}`)
-            .join(' · '),
+            .join(' · ')),
         body: { kind: 'table', entries },
     };
 }
@@ -204,7 +204,7 @@ function toolsRow({ request }: ExchangeView, { tr, assembly }: Context): Outline
     return {
         ...emptyRow('tools', null),
         name: fill(tr('Tools {count}'), { count: request.tools.length }),
-        lead: request.tools.map(tool => tool.name).join(' · '),
+        lead: firstLine(request.tools.map(tool => tool.name).join(' · ')),
         body: {
             kind: 'rows',
             rows: request.tools.map((tool, index) => ({
