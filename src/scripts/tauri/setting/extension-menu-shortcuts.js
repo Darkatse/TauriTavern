@@ -4,7 +4,7 @@ import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js'
 
 const STORAGE_KEY = 'tauritavern:extensions_menu_shortcuts';
 const CONTAINER_ID = 'tauritavern_extensions_menu_shortcuts';
-const DEFAULT_SHORTCUT_IDS = ['sync'];
+const DEFAULT_SHORTCUT_IDS = ['sync', 'llm-api-logs'];
 
 const SHORTCUTS = [
     {
