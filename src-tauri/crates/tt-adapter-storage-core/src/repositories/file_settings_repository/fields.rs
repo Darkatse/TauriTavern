@@ -1,4 +1,4 @@
-use super::lazy_object::LazyObject;
+use tt_domain::json_document::JsonDocument;
 
 pub(super) use tt_contracts::settings::{
     APPEARANCE_FILE, CORE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
@@ -174,47 +174,46 @@ pub(super) const SECTION_FILES: [&str; 5] = [
 ];
 
 pub(super) struct UserSettingsSections {
-    pub(super) core: LazyObject,
-    pub(super) appearance: LazyObject,
-    pub(super) presets: LazyObject,
-    pub(super) layout: LazyObject,
-    pub(super) persona_state: LazyObject,
+    pub(super) core: JsonDocument,
+    pub(super) appearance: JsonDocument,
+    pub(super) presets: JsonDocument,
+    pub(super) layout: JsonDocument,
+    pub(super) persona_state: JsonDocument,
 }
 
 impl UserSettingsSections {
-    pub(super) fn split(mut settings: LazyObject) -> Self {
-        let mut appearance = LazyObject::default();
-        let mut presets = LazyObject::default();
-        let mut layout = LazyObject::default();
-        let mut persona_state = LazyObject::default();
-        move_fields(&mut settings, &mut appearance, APPEARANCE_FIELDS);
-        move_fields(&mut settings, &mut presets, PRESET_FIELDS);
-        move_fields(&mut settings, &mut layout, LAYOUT_FIELDS);
-        move_fields(&mut settings, &mut persona_state, PERSONA_STATE_FIELDS);
-        Self {
+    pub(super) fn split(mut settings: JsonDocument) -> serde_json::Result<Self> {
+        let mut appearance = JsonDocument::default();
+        let mut presets = JsonDocument::default();
+        let mut layout = JsonDocument::default();
+        let mut persona_state = JsonDocument::default();
+        move_fields(&mut settings, &mut appearance, APPEARANCE_FIELDS)?;
+        move_fields(&mut settings, &mut presets, PRESET_FIELDS)?;
+        move_fields(&mut settings, &mut layout, LAYOUT_FIELDS)?;
+        move_fields(&mut settings, &mut persona_state, PERSONA_STATE_FIELDS)?;
+        Ok(Self {
             core: settings,
             appearance,
             presets,
             layout,
             persona_state,
-        }
+        })
     }
 
-    pub(super) fn into_settings(mut self) -> LazyObject {
+    pub(super) fn into_settings(mut self) -> serde_json::Result<JsonDocument> {
         // A selected section cannot overwrite fields owned by another section.
-        move_fields(&mut self.appearance, &mut self.core, APPEARANCE_FIELDS);
-        move_fields(&mut self.presets, &mut self.core, PRESET_FIELDS);
-        move_fields(&mut self.layout, &mut self.core, LAYOUT_FIELDS);
+        move_fields(&mut self.appearance, &mut self.core, APPEARANCE_FIELDS)?;
+        move_fields(&mut self.presets, &mut self.core, PRESET_FIELDS)?;
+        move_fields(&mut self.layout, &mut self.core, LAYOUT_FIELDS)?;
         move_fields(
             &mut self.persona_state,
             &mut self.core,
             PERSONA_STATE_FIELDS,
-        );
-        self.core
+        )?;
+        Ok(self.core)
     }
 
-    /// The sections in [`SECTION_FILES`] order.
-    pub(super) fn into_files(self) -> [LazyObject; 5] {
+    pub(super) fn into_files(self) -> [JsonDocument; 5] {
         [
             self.appearance,
             self.presets,
@@ -225,7 +224,7 @@ impl UserSettingsSections {
     }
 
     pub(super) fn from_files(
-        [appearance, presets, layout, persona_state, core]: [LazyObject; 5],
+        [appearance, presets, layout, persona_state, core]: [JsonDocument; 5],
     ) -> Self {
         Self {
             core,
@@ -237,16 +236,21 @@ impl UserSettingsSections {
     }
 }
 
-fn move_fields(source: &mut LazyObject, target: &mut LazyObject, groups: &[FieldGroup]) {
+fn move_fields(
+    source: &mut JsonDocument,
+    target: &mut JsonDocument,
+    groups: &[FieldGroup],
+) -> serde_json::Result<()> {
     for (parents, fields) in groups {
-        let Some(source_object) = source.object_mut(parents) else {
+        let Some(source_object) = source.object_mut(parents)? else {
             continue;
         };
         for field in *fields {
             let Some(member) = source_object.remove(field) else {
                 continue;
             };
-            target.object_entry(parents).insert(field, member);
+            target.object_entry(parents)?.set(field, member);
         }
     }
+    Ok(())
 }

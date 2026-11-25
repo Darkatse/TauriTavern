@@ -2,11 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::settings::revision::UserSettingsRevision;
 use tt_ports::repositories::settings_repository::SettingsCommitResult;
 
 use super::FileSettingsRepository;
-use super::lazy_object::LazyObject;
 use super::sections::{self, StoredSections};
 
 impl FileSettingsRepository {
@@ -15,8 +15,7 @@ impl FileSettingsRepository {
     }
 }
 
-/// The service serializes settings saves and restores. The stored section texts are read once:
-/// for the conflict check against the revision the page loaded, and to write only what changed.
+/// The service serializes saves and restores; conflict detection and publishing use the same snapshot.
 pub(super) fn publish(
     root: &Path,
     received: &Path,
@@ -33,7 +32,7 @@ pub(super) fn publish(
     let text = fs::read(received).map_err(|error| {
         DomainError::InternalError(format!("Failed to read settings commit: {error}"))
     })?;
-    let mut settings = LazyObject::parse(&text).map_err(|error| {
+    let mut settings = JsonDocument::parse(&text).map_err(|error| {
         DomainError::InvalidData(format!("Invalid settings replacement: {error}"))
     })?;
     drop(text);

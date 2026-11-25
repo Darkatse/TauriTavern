@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-const UNSET_SENTINEL: &str = "__@@UNSET@@__";
+pub(crate) const UNSET_SENTINEL: &str = "__@@UNSET@@__";
 
 pub fn merge_json_value(current: &mut Value, updates: Value) {
     match (current, updates) {

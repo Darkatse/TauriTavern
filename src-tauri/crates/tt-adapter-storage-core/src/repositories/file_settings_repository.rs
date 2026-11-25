@@ -23,7 +23,6 @@ use tt_ports::repositories::settings_repository::{
 
 mod commit;
 mod fields;
-mod lazy_object;
 mod sections;
 mod snapshots;
 
