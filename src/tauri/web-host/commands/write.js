@@ -34,7 +34,7 @@ export function createWriteCommands(backend) {
             return readCharacter(backend, name);
         },
         merge_character_card_data: ({ name, dto }) => {
-            request('/api/characters/merge-attributes', JSON.stringify({ ...dto.update, avatar: characterAvatarFileNameFromStem(name) }));
+            request('/api/characters/merge-attributes', JSON.stringify({ ...JSON.parse(dto.update_json), avatar: characterAvatarFileNameFromStem(name) }));
             return readCharacter(backend, name);
         },
     };

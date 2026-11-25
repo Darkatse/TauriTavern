@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde_json::Value;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use tt_adapter_storage_core::png_metadata::{
 };
 pub use tt_adapter_storage_core::png_metadata::{TextChunk, read_text_chunks_from_png};
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_ports::avatar_images::AvatarImageProcessor;
 use tt_ports::external_import::CharacterCardEmbedder;
 
@@ -70,7 +72,7 @@ pub fn write_character_data_to_png(
 
     let mut chunks = Vec::new();
     write_text_chunk(&mut chunks, CHUNK_NAME_V2, &encode_base64(character_data));
-    if let Some(payload) = build_v3_payload(character_data)? {
+    if let Some(payload) = build_v3_payload(character_data) {
         write_text_chunk(&mut chunks, CHUNK_NAME_V3, &payload);
     }
     replace_text_chunks(image_data, &[CHUNK_NAME_V2, CHUNK_NAME_V3], &chunks)
@@ -104,8 +106,8 @@ impl CharacterCardEmbedder for PngCharacterCardEmbedder {
     }
 }
 
-fn encode_base64(data: &str) -> String {
-    BASE64.encode(data.as_bytes())
+fn encode_base64(data: impl AsRef<[u8]>) -> String {
+    BASE64.encode(data)
 }
 
 fn decode_base64(data: &str) -> Result<String, DomainError> {
@@ -117,29 +119,11 @@ fn decode_base64(data: &str) -> Result<String, DomainError> {
         .map_err(|e| DomainError::InvalidData(format!("Failed to convert from UTF-8: {}", e)))
 }
 
-fn build_v3_payload(character_data: &str) -> Result<Option<String>, DomainError> {
-    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(character_data) else {
-        return Ok(None);
-    };
-
-    let Some(object) = value.as_object_mut() else {
-        return Ok(None);
-    };
-
-    object.insert(
-        "spec".to_string(),
-        serde_json::Value::String("chara_card_v3".to_string()),
-    );
-    object.insert(
-        "spec_version".to_string(),
-        serde_json::Value::String("3.0".to_string()),
-    );
-
-    let serialized = serde_json::to_string(&value).map_err(|e| {
-        DomainError::InvalidData(format!("Failed to serialize V3 card data: {}", e))
-    })?;
-
-    Ok(Some(encode_base64(&serialized)))
+fn build_v3_payload(character_data: &str) -> Option<String> {
+    let mut card = JsonDocument::parse(character_data.as_bytes()).ok()?;
+    card.set("spec", &Value::from("chara_card_v3"));
+    card.set("spec_version", &Value::from("3.0"));
+    Some(encode_base64(card.to_vec()))
 }
 
 #[cfg(test)]

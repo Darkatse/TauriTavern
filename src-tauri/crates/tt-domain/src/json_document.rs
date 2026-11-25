@@ -2,6 +2,7 @@
 //! Edit only backend-owned fields; never write a user document back from a typed projection.
 //! Unopened values retain their text. Existing keys keep their relative order; new keys append.
 use std::collections::HashMap;
+use std::fmt;
 
 use indexmap::IndexMap;
 use serde::de::{DeserializeOwned, Deserializer};
@@ -9,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::value::{RawValue, to_raw_value};
 
-use crate::json_merge::UNSET_SENTINEL;
+const UNSET_SENTINEL: &str = "__@@UNSET@@__";
 
 /// Raw JSON can preserve lone surrogate escapes that Rust strings cannot represent.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(transparent)]
 pub struct JsonDocument {
     members: IndexMap<String, Node>,
@@ -122,6 +123,13 @@ impl JsonDocument {
     }
 }
 
+impl fmt::Display for JsonDocument {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let json = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        formatter.write_str(&json)
+    }
+}
+
 #[derive(Debug)]
 pub struct Member(Node);
 
@@ -144,7 +152,7 @@ impl From<&Value> for Member {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum Node {
     Text(Box<RawValue>),
@@ -302,10 +310,6 @@ mod tests {
         JsonDocument::parse(json.as_bytes()).expect("a JSON object")
     }
 
-    fn text(document: &JsonDocument) -> String {
-        String::from_utf8(document.to_vec()).expect("UTF-8")
-    }
-
     #[test]
     fn members_left_alone_keep_their_text_and_place() {
         let mut settings =
@@ -315,7 +319,7 @@ mod tests {
         mid.set("x", &json!(3));
 
         assert_eq!(
-            text(&settings),
+            settings.to_string(),
             r#"{"zeta":{"b": 1E3,"a":[ 1.0 ,-0]},"alpha":"é\/","mid":{"y":1,"x":3}}"#
         );
     }
@@ -328,7 +332,7 @@ mod tests {
         card.set("z", &json!(true));
         card.remove("c");
 
-        assert_eq!(text(&card), r#"{"a":"x","b":3,"z":true}"#);
+        assert_eq!(card.to_string(), r#"{"a":"x","b":3,"z":true}"#);
     }
 
     #[test]
@@ -341,7 +345,7 @@ mod tests {
         header.set("extensions", document(r#"{"b":1,"a":2}"#));
 
         assert_eq!(
-            text(&header),
+            header.to_string(),
             r#"{"user_name":"u","chat_metadata":{"zeta": 1E3,"alpha":{"y":1,"x":2}},"last":true,"extensions":{"b":1,"a":2}}"#
         );
     }
@@ -371,7 +375,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            text(&card),
+            card.to_string(),
             r#"{"zeta":{"b":1,"a":{"k":1},"c":3},"list":{"now":"object"},"alpha":[2],"new":{"y":1,"x":2}}"#
         );
     }
@@ -386,7 +390,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            text(&card),
+            card.to_string(),
             r#"{"keep":1,"nested":{"y":2},"replaced":{"b":{"d":1}},"added":{}}"#
         );
     }
@@ -420,6 +424,6 @@ mod tests {
 
         assert!(settings.get::<Value>(&["value"]).is_err());
         assert!(settings.object_mut(&["object"]).is_err());
-        assert_eq!(text(&settings), json);
+        assert_eq!(settings.to_string(), json);
     }
 }

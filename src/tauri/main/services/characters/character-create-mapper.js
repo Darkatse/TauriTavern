@@ -1,6 +1,6 @@
 // @ts-check
 
-import { mergeObjects } from './form-object-utils.js';
+import { getByPath, mergeObjects, setByPath } from './form-object-utils.js';
 import { assertCharacterFileName } from './character-request-utils.js';
 
 /** @param {string} message */
@@ -101,23 +101,6 @@ function greetingsFromValue(value) {
     return [];
 }
 
-/** @param {Record<string, any>} payload */
-function jsonDataFromPayload(payload) {
-    if (!Object.prototype.hasOwnProperty.call(payload, 'json_data')) {
-        return null;
-    }
-
-    if (
-        payload.json_data === null
-        || payload.json_data === undefined
-        || (typeof payload.json_data === 'string' && !payload.json_data.trim())
-    ) {
-        return null;
-    }
-
-    return JSON.stringify(optionalObjectFromValue(payload.json_data, 'character json_data'));
-}
-
 /** @param {any} value @param {Record<string, any>} [fallback] @param {string} [label] */
 function objectFromValue(value, fallback = {}, label = 'JSON payload') {
     if (value === null || value === undefined || value === '') {
@@ -175,24 +158,32 @@ function buildCharacterExtensions(payload, data) {
     const explicitExtensions = optionalObjectFromValue(payload.extensions, 'extensions JSON');
     const world = hasOwn(payload, 'world') ? String(payload.world ?? '') : '';
     const defaults = {
+        talkativeness: numberFromValue(payload.talkativeness ?? dataExtensions.talkativeness, 0.5),
+        fav: boolFromValue(payload.fav ?? dataExtensions.fav),
         world,
         depth_prompt: {
             prompt: String(payload.depth_prompt_prompt ?? dataExtensions.depth_prompt?.prompt ?? ''),
             depth: numberFromValue(payload.depth_prompt_depth ?? dataExtensions.depth_prompt?.depth, 4),
             role: String(payload.depth_prompt_role ?? dataExtensions.depth_prompt?.role ?? 'system'),
         },
-        talkativeness: numberFromValue(payload.talkativeness ?? dataExtensions.talkativeness, 0.5),
-        fav: boolFromValue(payload.fav ?? dataExtensions.fav),
     };
 
     return mergeObjects({}, defaults, dataExtensions, explicitExtensions);
 }
 
+/** @param {Record<string, any>} payload */
+function baseCardFromPayload(payload) {
+    const card = optionalObjectFromValue(payload.json_data, 'character json_data');
+    // An object passed as `json_data` belongs to the caller.
+    return card === payload.json_data ? mergeObjects({}, card) : card;
+}
+
 /**
- * Maps upstream-compatible JSON character create payloads to Rust DTOs.
+ * Builds the card upstream `charaFormatData` writes for a create or edit request.
+ * Keys the request does not own keep their place in its `json_data` card.
  * @param {Record<string, any>} payload
  */
-export function payloadToCreateCharacterDto(payload) {
+export function buildCharacterCard(payload) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         throw badRequest('Expected JSON object body');
     }
@@ -203,9 +194,61 @@ export function payloadToCreateCharacterDto(payload) {
         throw badRequest('Character name is required');
     }
 
+    const description = stringFromPayload(payload, data, ['description']);
+    const personality = stringFromPayload(payload, data, ['personality']);
+    const scenario = stringFromPayload(payload, data, ['scenario']);
+    const firstMes = stringFromPayload(payload, data, ['first_mes', 'firstMessage']);
+    const mesExample = stringFromPayload(payload, data, ['mes_example', 'messageExamples']);
+    const creatorNotes = stringFromPayload(payload, data, ['creator_notes', 'creatorNotes', 'creatorcomment']);
+    const tags = splitTags(payload.tags ?? data.tags);
     const extensions = buildCharacterExtensions(payload, data);
-    const tags = payload.tags ?? data.tags;
-    const alternateGreetings = payload.alternate_greetings ?? data.alternate_greetings;
+
+    const card = baseCardFromPayload(payload);
+    delete card.json_data;
+
+    const fields = {
+        name,
+        description,
+        personality,
+        scenario,
+        first_mes: firstMes,
+        mes_example: mesExample,
+        creatorcomment: creatorNotes,
+        avatar: 'none',
+        talkativeness: numberFromValue(payload.talkativeness ?? extensions.talkativeness, 0.5),
+        fav: boolFromValue(payload.fav ?? extensions.fav),
+        tags,
+        spec: 'chara_card_v2',
+        spec_version: '2.0',
+        'data.name': name,
+        'data.description': description,
+        'data.personality': personality,
+        'data.scenario': scenario,
+        'data.first_mes': firstMes,
+        'data.mes_example': mesExample,
+        'data.creator_notes': creatorNotes,
+        'data.system_prompt': stringFromPayload(payload, data, ['system_prompt', 'systemPrompt']),
+        'data.post_history_instructions': stringFromPayload(payload, data, ['post_history_instructions', 'postHistoryInstructions']),
+        'data.tags': tags,
+        'data.creator': stringFromPayload(payload, data, ['creator']),
+        'data.character_version': stringFromPayload(payload, data, ['character_version', 'characterVersion']),
+        'data.alternate_greetings': greetingsFromValue(payload.alternate_greetings ?? data.alternate_greetings),
+        'data.extensions': mergeObjects({}, getByPath(card, 'data.extensions', {}), extensions),
+    };
+    for (const [path, value] of Object.entries(fields)) {
+        setByPath(card, path, value);
+    }
+
+    return card;
+}
+
+/**
+ * Maps upstream-compatible character create payloads to the Rust DTO.
+ * @param {Record<string, any>} payload
+ */
+export function payloadToCreateCharacterDto(payload) {
+    const card = buildCharacterCard(payload);
+    const data = objectFromValue(payload.data, {}, 'data');
     const fileName = assertCharacterFileName(
         stringFromPayload(payload, data, ['file_name', 'fileName']),
         'file_name',
@@ -213,35 +256,19 @@ export function payloadToCreateCharacterDto(payload) {
     const primaryLorebook = hasOwn(payload, 'world') ? String(payload.world ?? '') : '';
 
     return {
+        card_json: JSON.stringify(card),
         file_name: fileName || null,
-        json_data: jsonDataFromPayload(payload),
         primary_lorebook: primaryLorebook === '' ? null : primaryLorebook,
-        name,
-        description: stringFromPayload(payload, data, ['description']),
-        personality: stringFromPayload(payload, data, ['personality']),
-        scenario: stringFromPayload(payload, data, ['scenario']),
-        first_mes: stringFromPayload(payload, data, ['first_mes', 'firstMessage']),
-        mes_example: stringFromPayload(payload, data, ['mes_example', 'messageExamples']),
-        creator: stringFromPayload(payload, data, ['creator']),
-        creator_notes: stringFromPayload(payload, data, ['creator_notes', 'creatorNotes', 'creatorcomment']),
-        character_version: stringFromPayload(payload, data, ['character_version', 'characterVersion']),
-        tags: splitTags(tags),
-        talkativeness: numberFromValue(payload.talkativeness ?? extensions.talkativeness, 0.5),
-        fav: boolFromValue(payload.fav ?? extensions.fav),
-        alternate_greetings: greetingsFromValue(alternateGreetings),
-        system_prompt: stringFromPayload(payload, data, ['system_prompt', 'systemPrompt']),
-        post_history_instructions: stringFromPayload(payload, data, ['post_history_instructions', 'postHistoryInstructions']),
-        extensions,
     };
 }
 
 /** @param {FormData} formData */
-export function formDataToCreateCharacterDto(formData) {
+export function formDataToCharacterPayload(formData) {
     const alternateGreetings = formData.getAll('alternate_greetings');
     const bracketAlternateGreetings = arrayNotationValuesFromForm(formData, 'alternate_greetings');
     const bracketTags = splitTags(arrayNotationValuesFromForm(formData, 'tags'));
 
-    return payloadToCreateCharacterDto({
+    return {
         file_name: stringFromForm(formData, 'file_name', ''),
         ch_name: stringFromForm(formData, 'ch_name', ''),
         description: stringFromForm(formData, 'description', ''),
@@ -264,5 +291,5 @@ export function formDataToCreateCharacterDto(formData) {
         depth_prompt_role: stringFromForm(formData, 'depth_prompt_role', 'system'),
         extensions: stringFromForm(formData, 'extensions', ''),
         json_data: stringFromForm(formData, 'json_data', ''),
-    });
+    };
 }

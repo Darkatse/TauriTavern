@@ -87,12 +87,10 @@ mod tests {
     use tt_domain::models::character::Character;
 
     fn character(name: &str) -> Character {
-        Character::new(
-            name.to_string(),
-            String::new(),
-            String::new(),
-            String::new(),
-        )
+        Character {
+            name: name.to_string(),
+            ..Default::default()
+        }
     }
 
     #[test]

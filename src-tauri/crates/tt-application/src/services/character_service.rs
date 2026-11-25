@@ -9,22 +9,24 @@ use crate::dto::character_dto::{
     DuplicateCharacterDto, ExportCharacterContentDto, ExportCharacterContentResultDto,
     GetCharacterChatsDto, ImportCharacterDto, ImportCharacterResultDto, MergeCharacterCardDataDto,
     RenameCharacterDto, ReplaceCharacterDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::{
     AgentChatWorkspaceTarget, AgentWorkspaceLifecycleService,
 };
 use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
+use chrono::{SecondsFormat, Utc};
+use serde::de::IgnoredAny;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
-use tt_domain::json_merge::{merge_json_value, merge_json_value_with_unset};
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::character::Character;
+use tt_domain::models::chat::humanized_date;
 use tt_ports::avatar_images::ImageCrop;
-use tt_ports::repositories::character_repository::CharacterRepository;
+use tt_ports::repositories::character_repository::{CharacterCreateResult, CharacterRepository};
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
@@ -37,12 +39,6 @@ pub struct CharacterService {
     world_info_repository: Arc<dyn WorldInfoRepository>,
     agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
     chat_history_coordinator: Arc<ChatHistoryCoordinator>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CharacterCardValidationMode {
-    ReadableOnly,
-    Strict,
 }
 
 impl CharacterService {
@@ -85,22 +81,7 @@ impl CharacterService {
         &self,
         dto: CreateCharacterDto,
     ) -> Result<CharacterDto, ApplicationError> {
-        tracing::debug!("Creating character: {}", dto.name);
-        let primary_lorebook = dto.primary_lorebook.clone();
-
-        // Convert DTO to domain model
-        let mut character = Character::try_from(dto).map_err(Self::map_extensions_error)?;
-
-        // Validate character
-        self.validate_character(&character)?;
-        self.materialize_create_lorebook(&mut character, primary_lorebook.as_deref())
-            .await;
-
-        let created = self
-            .repository
-            .create_with_avatar(&character, None, None)
-            .await?;
-
+        let created = self.create_character_card(dto, None, None).await?;
         Ok(CharacterDto::from(created.character))
     }
 
@@ -109,139 +90,64 @@ impl CharacterService {
         &self,
         dto: CreateWithAvatarDto,
     ) -> Result<CreateCharacterWithAvatarResultDto, ApplicationError> {
-        tracing::debug!("Creating character with avatar: {}", dto.character.name);
-        let primary_lorebook = dto.character.primary_lorebook.clone();
-
-        // Convert DTO to domain model
-        let mut character =
-            Character::try_from(dto.character).map_err(Self::map_extensions_error)?;
-
-        // Validate character
-        self.validate_character(&character)?;
-        self.materialize_create_lorebook(&mut character, primary_lorebook.as_deref())
-            .await;
-
-        // Convert avatar path
-        let avatar_path_ref: Option<&Path> = dto.avatar_path.as_deref().map(Path::new);
-
-        // Convert crop parameters
+        let avatar_path = dto.avatar_path.as_deref().map(Path::new);
         let crop = dto.crop.map(ImageCrop::from);
-
-        // Create character with avatar
         let created = self
-            .repository
-            .create_with_avatar(&character, avatar_path_ref, crop)
+            .create_character_card(dto.character, avatar_path, crop)
             .await?;
-
         Ok(CreateCharacterWithAvatarResultDto::from(created))
     }
 
-    /// Update a character
-    pub async fn update_character(
+    async fn create_character_card(
         &self,
-        name: &str,
-        dto: UpdateCharacterDto,
-    ) -> Result<CharacterDto, ApplicationError> {
-        tracing::debug!("Updating character: {}", name);
-        let raw_json = self.repository.read_character_card_json(name).await?;
-        let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
-        let UpdateCharacterDto {
-            name: character_name,
-            chat,
-            description,
-            personality,
-            scenario,
-            first_mes,
-            mes_example,
-            creator,
-            creator_notes,
-            character_version,
-            tags,
-            talkativeness,
-            fav,
-            alternate_greetings,
-            system_prompt,
-            post_history_instructions,
-            extensions,
-        } = dto;
+        dto: CreateCharacterDto,
+        avatar_path: Option<&Path>,
+        crop: Option<ImageCrop>,
+    ) -> Result<CharacterCreateResult, ApplicationError> {
+        let mut card = card_contract::parse_character_card_json(&dto.card_json)?;
+        let name = card
+            .get::<String>(&["name"])
+            .map_err(card_contract::invalid_character_card_json)?
+            .unwrap_or_default();
+        self.validate_character_name(&name)?;
+        tracing::debug!("Creating character: {}", name);
 
-        let mut root_update = serde_json::Map::new();
-        let mut data_update = serde_json::Map::new();
-        let mut extension_update = match extensions {
-            Some(Value::Object(extensions)) => extensions,
-            Some(_) => {
-                return Err(ApplicationError::ValidationError(
-                    "Invalid character extensions: expected a JSON object".to_string(),
-                ));
-            }
-            None => serde_json::Map::new(),
-        };
-
-        for (field, value) in [
-            ("name", character_name.map(Value::String)),
-            ("description", description.map(Value::String)),
-            ("personality", personality.map(Value::String)),
-            ("scenario", scenario.map(Value::String)),
-            ("first_mes", first_mes.map(Value::String)),
-            ("mes_example", mes_example.map(Value::String)),
-            ("creator", creator.map(Value::String)),
-            ("creator_notes", creator_notes.map(Value::String)),
-            ("character_version", character_version.map(Value::String)),
-            ("tags", tags.map(|tags| serde_json::json!(tags))),
-        ] {
-            if let Some(value) = value {
-                root_update.insert(field.to_string(), value.clone());
-                data_update.insert(field.to_string(), value);
-            }
-        }
-
-        if let Some(chat) = chat {
-            root_update.insert("chat".to_string(), Value::String(chat));
-        }
-        if let Some(alternate_greetings) = alternate_greetings {
-            data_update.insert(
-                "alternate_greetings".to_string(),
-                serde_json::json!(alternate_greetings),
-            );
-        }
-        if let Some(system_prompt) = system_prompt {
-            data_update.insert("system_prompt".to_string(), Value::String(system_prompt));
-        }
-        if let Some(post_history_instructions) = post_history_instructions {
-            data_update.insert(
-                "post_history_instructions".to_string(),
-                Value::String(post_history_instructions),
-            );
-        }
-        if let Some(talkativeness) = talkativeness {
-            let value = serde_json::json!(talkativeness);
-            root_update.insert("talkativeness".to_string(), value.clone());
-            extension_update.insert("talkativeness".to_string(), value);
-        }
-        if let Some(fav) = fav {
-            let value = Value::Bool(fav);
-            root_update.insert("fav".to_string(), value.clone());
-            extension_update.insert("fav".to_string(), value);
-        }
-        if !extension_update.is_empty() {
-            data_update.insert("extensions".to_string(), Value::Object(extension_update));
-        }
-        if !data_update.is_empty() {
-            root_update.insert("data".to_string(), Value::Object(data_update));
-        }
-        merge_json_value(&mut card_value, Value::Object(root_update));
-
-        let updated = self
-            .write_character_card_value(
+        if let Some(world_name) = dto
+            .primary_lorebook
+            .as_deref()
+            .filter(|world_name| !world_name.is_empty())
+            && let Err(error) = self.materialize_lorebook(&mut card, world_name).await
+        {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Creating character '{}' without embedding lorebook '{}': {}",
                 name,
-                card_value,
-                None,
-                None,
-                CharacterCardValidationMode::ReadableOnly,
-            )
-            .await?;
+                world_name,
+                error
+            );
+        }
 
-        Ok(CharacterDto::from(updated))
+        let now = Utc::now();
+        let chat = format!("{} - {}", name, humanized_date(now));
+        card.set("chat", &Value::from(chat));
+        card.set(
+            "create_date",
+            &Value::from(now.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        );
+
+        let file_name = dto
+            .file_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.strip_suffix(".png").unwrap_or(value))
+            .unwrap_or(&name);
+        let card_json = card_contract::into_character_card_json(card);
+
+        self.repository
+            .create_with_avatar(file_name, &card_json, avatar_path, crop)
+            .await
+            .map_err(Into::into)
     }
 
     /// Update a character card using upstream-compatible raw card JSON semantics.
@@ -260,11 +166,9 @@ impl CharacterService {
         } = dto;
         let crop = crop.map(ImageCrop::from);
         let avatar_path = avatar_path.as_deref().map(Path::new);
-        let mut card_value = card_contract::parse_character_card_json(&card_json)?;
+        let mut card = card_contract::parse_character_card_json(&card_json)?;
         if materialize_primary_lorebook
-            && let Err(error) = self
-                .materialize_primary_lorebook_value(&mut card_value)
-                .await
+            && let Err(error) = self.materialize_primary_lorebook(&mut card).await
         {
             tracing::error!(
                 target: tt_contracts::observability::USER_VISIBLE_ERROR,
@@ -274,13 +178,7 @@ impl CharacterService {
             );
         }
         let updated = self
-            .write_character_card_value(
-                name,
-                card_value,
-                avatar_path,
-                crop,
-                CharacterCardValidationMode::ReadableOnly,
-            )
+            .write_character_card(name, card, avatar_path, crop)
             .await?;
 
         Ok(CharacterDto::from(updated))
@@ -295,16 +193,15 @@ impl CharacterService {
         tracing::debug!("Merging character card data: {}", name);
 
         let raw_json = self.repository.read_character_card_json(name).await?;
-        let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
-        merge_json_value_with_unset(&mut card_value, dto.update);
+        let mut card = card_contract::parse_character_card_json(&raw_json)?;
+        let update = card_contract::parse_character_card_json(&dto.update_json)?;
+        card.merge_with_unset(update)
+            .map_err(card_contract::invalid_character_card_json)?;
+        let card_json = card_contract::into_character_card_json(card);
+        card_contract::validate_character_card_schema(&card_json)?;
         let updated = self
-            .write_character_card_value(
-                name,
-                card_value,
-                None,
-                None,
-                CharacterCardValidationMode::Strict,
-            )
+            .repository
+            .write_character_card_json(name, &card_json, None, None)
             .await?;
 
         Ok(CharacterDto::from(updated))
@@ -315,11 +212,9 @@ impl CharacterService {
         &self,
         dto: BulkMergeCharacterCardDataDto,
     ) -> Result<BulkMergeCharacterCardDataResultDto, ApplicationError> {
-        if !dto.data.is_object() {
-            return Err(ApplicationError::ValidationError(
-                "No valid update data provided.".to_string(),
-            ));
-        }
+        let update = JsonDocument::parse(dto.data_json.as_bytes()).map_err(|_| {
+            ApplicationError::ValidationError("No valid update data provided.".to_string())
+        })?;
 
         let target_avatars = if dto.avatars.is_empty() {
             self.repository.list_avatar_filenames().await?
@@ -327,11 +222,12 @@ impl CharacterService {
             dto.avatars
         };
 
-        let filter_path = dto
+        let filter_path: Option<Vec<&str>> = dto
             .filter
             .as_ref()
             .map(|filter| filter.path.trim())
-            .filter(|path| !path.is_empty());
+            .filter(|path| !path.is_empty())
+            .map(|path| path.split('.').collect());
         let mut result = BulkMergeCharacterCardDataResultDto {
             updated: Vec::new(),
             skipped: Vec::new(),
@@ -342,7 +238,7 @@ impl CharacterService {
             let avatar = Self::normalize_merge_avatar_filename(&avatar)?;
             let name = Self::avatar_file_stem(&avatar);
             let merge_result = self
-                .merge_character_card_value_for_bulk(name, dto.data.clone(), filter_path)
+                .merge_character_card_for_bulk(name, update.clone(), filter_path.as_deref())
                 .await;
 
             match merge_result {
@@ -490,14 +386,10 @@ impl CharacterService {
             .repository
             .read_character_card_json(&dto.name)
             .await
-            .map_err(ApplicationError::from)
             .and_then(|raw| card_contract::parse_character_card_json(&raw))
+            .and_then(|card| card_contract::character_world(&card))
         {
-            Ok(card) => card
-                .pointer("/data/extensions/world")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
+            Ok(world) => world.unwrap_or_default(),
             Err(error) => {
                 tracing::error!(
                     target: tt_contracts::observability::USER_VISIBLE_ERROR,
@@ -554,31 +446,17 @@ impl CharacterService {
             )));
         }
 
-        let export_value = self.build_export_card_value(&dto.name).await?;
+        let card = self.build_export_card(&dto.name).await?;
 
         if format == "json" {
-            let pretty_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
-                ApplicationError::InternalError(format!(
-                    "Failed to serialize exported character JSON: {}",
-                    error
-                ))
-            })?;
-
             return Ok(ExportCharacterContentResultDto {
-                data: pretty_json.into_bytes(),
+                data: card.to_pretty_vec(),
             });
         }
 
-        let card_json = serde_json::to_string(&export_value).map_err(|error| {
-            ApplicationError::InternalError(format!(
-                "Failed to serialize exported character card JSON: {}",
-                error
-            ))
-        })?;
-
         let png_bytes = self
             .repository
-            .export_character_png_bytes(&dto.name, &card_json)
+            .export_character_png_bytes(&dto.name, &card.to_string())
             .await?;
 
         Ok(ExportCharacterContentResultDto { data: png_bytes })
@@ -587,16 +465,16 @@ impl CharacterService {
     /// Update a character's avatar
     pub async fn update_avatar(&self, dto: UpdateAvatarDto) -> Result<(), ApplicationError> {
         tracing::debug!("Updating avatar for character: {}", dto.name);
-        let raw_json = self.repository.read_character_card_json(&dto.name).await?;
+        let card_json = self.repository.read_character_card_json(&dto.name).await?;
         let crop = dto.crop.map(ImageCrop::from);
-        self.write_character_card_value(
-            &dto.name,
-            card_contract::parse_character_card_json(&raw_json)?,
-            Some(Path::new(&dto.avatar_path)),
-            crop,
-            CharacterCardValidationMode::ReadableOnly,
-        )
-        .await?;
+        self.repository
+            .write_character_card_json(
+                &dto.name,
+                &card_json,
+                Some(Path::new(&dto.avatar_path)),
+                crop,
+            )
+            .await?;
         Ok(())
     }
 
@@ -617,11 +495,6 @@ impl CharacterService {
     pub async fn clear_cache(&self) -> Result<(), DomainError> {
         tracing::debug!("Clearing character cache");
         self.repository.clear_cache().await
-    }
-
-    /// Validate a character
-    fn validate_character(&self, character: &Character) -> Result<(), DomainError> {
-        self.validate_character_name(&character.name)
     }
 
     fn validate_character_name(&self, name: &str) -> Result<(), DomainError> {
@@ -666,72 +539,40 @@ impl CharacterService {
         }
     }
 
-    fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-        if path.trim().is_empty() {
-            return Some(value);
-        }
-
-        let mut current = value;
-        for segment in path.split('.') {
-            if segment.is_empty() {
-                return None;
-            }
-
-            current = match current {
-                Value::Object(object) => object.get(segment)?,
-                Value::Array(array) => {
-                    let index = segment.parse::<usize>().ok()?;
-                    array.get(index)?
-                }
-                _ => return None,
-            };
-        }
-
-        Some(current)
-    }
-
-    async fn merge_character_card_value_for_bulk(
+    /// Upstream skips a card when `_.get(card, filter.path)` is undefined.
+    async fn merge_character_card_for_bulk(
         &self,
         name: &str,
-        update: Value,
-        filter_path: Option<&str>,
+        update: JsonDocument,
+        filter_path: Option<&[&str]>,
     ) -> Result<bool, ApplicationError> {
         let raw_json = self.repository.read_character_card_json(name).await?;
-        let mut card_value = card_contract::parse_character_card_json(&raw_json)?;
+        let mut card = card_contract::parse_character_card_json(&raw_json)?;
 
-        if let Some(filter_path) = filter_path
-            && Self::value_at_path(&card_value, filter_path).is_none()
+        if let Some(path) = filter_path
+            && card
+                .get::<IgnoredAny>(path)
+                .map_err(card_contract::invalid_character_card_json)?
+                .is_none()
         {
             return Ok(false);
         }
 
-        merge_json_value_with_unset(&mut card_value, update);
-        self.write_character_card_value(
-            name,
-            card_value,
-            None,
-            None,
-            CharacterCardValidationMode::ReadableOnly,
-        )
-        .await?;
+        card.merge_with_unset(update)
+            .map_err(card_contract::invalid_character_card_json)?;
+        self.write_character_card(name, card, None, None).await?;
 
         Ok(true)
     }
 
-    fn map_extensions_error(error: serde_json::Error) -> ApplicationError {
-        ApplicationError::ValidationError(format!("Invalid character extensions: {}", error))
-    }
-
-    async fn write_character_card_value(
+    async fn write_character_card(
         &self,
         name: &str,
-        mut card_value: Value,
+        card: JsonDocument,
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
-        validation_mode: CharacterCardValidationMode,
     ) -> Result<Character, ApplicationError> {
-        let card_json =
-            self.prepare_character_card_json_for_write(&mut card_value, validation_mode)?;
+        let card_json = card_contract::into_character_card_json(card);
 
         self.repository
             .write_character_card_json(name, &card_json, avatar_path, crop)
@@ -739,98 +580,11 @@ impl CharacterService {
             .map_err(Into::into)
     }
 
-    fn prepare_character_card_json_for_write(
-        &self,
-        card_value: &mut Value,
-        validation_mode: CharacterCardValidationMode,
-    ) -> Result<String, ApplicationError> {
-        card_contract::strip_character_card_json_data(card_value);
-        self.validate_character_card_for_write(card_value, validation_mode)?;
-
-        serde_json::to_string(card_value).map_err(|error| {
-            ApplicationError::ValidationError(format!(
-                "Failed to serialize character card payload: {}",
-                error
-            ))
-        })
-    }
-
-    fn validate_character_card_for_write(
-        &self,
-        card_value: &Value,
-        validation_mode: CharacterCardValidationMode,
-    ) -> Result<(), ApplicationError> {
-        match validation_mode {
-            CharacterCardValidationMode::ReadableOnly => {
-                let name = card_contract::character_card_name(card_value)?;
-                self.validate_character_name(name).map_err(Into::into)
-            }
-            CharacterCardValidationMode::Strict => self
-                .validate_character_card_value(card_value)
-                .map_err(Into::into),
-        }
-    }
-
-    fn validate_character_card_value(&self, card_value: &Value) -> Result<(), DomainError> {
-        card_contract::validate_character_card_schema(card_value)?;
-        let name = card_contract::character_card_name(card_value)?;
-        self.validate_character_name(name)
-    }
-
-    async fn materialize_create_lorebook(
-        &self,
-        character: &mut Character,
-        primary_lorebook: Option<&str>,
-    ) {
-        let Some(world_name) = primary_lorebook.filter(|value| !value.is_empty()) else {
-            return;
-        };
-
-        let materialized = match self.world_info_repository.get_world_info(world_name).await {
-            Ok(Some(world_info)) => {
-                Self::apply_materialized_lorebook(character, world_name, &world_info)
-            }
-            Ok(None) => Err(DomainError::NotFound(format!(
-                "World info file {} doesn't exist",
-                world_name
-            ))),
-            Err(error) => Err(error),
-        };
-
-        if let Err(error) = materialized {
-            tracing::error!(
-                target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                "Creating character '{}' without embedding lorebook '{}': {}",
-                character.name,
-                world_name,
-                error
-            );
-        }
-    }
-
-    fn apply_materialized_lorebook(
-        character: &mut Character,
-        world_name: &str,
-        world_info: &Value,
-    ) -> Result<(), DomainError> {
-        let character_book = world_info_to_character_book(world_name, world_info)?;
-        character.data.character_book = Some(character_book);
-        Ok(())
-    }
-
-    async fn build_export_card_value(&self, name: &str) -> Result<Value, DomainError> {
+    async fn build_export_card(&self, name: &str) -> Result<JsonDocument, DomainError> {
         let raw_json = self.repository.read_character_card_json(name).await?;
-        let mut export_value: Value = serde_json::from_str(&raw_json).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Failed to parse stored character payload: {}",
-                error
-            ))
-        })?;
+        let mut card = card_contract::parse_character_card_json(&raw_json)?;
 
-        if let Err(error) = self
-            .materialize_primary_lorebook_value(&mut export_value)
-            .await
-        {
+        if let Err(error) = self.materialize_primary_lorebook(&mut card).await {
             tracing::error!(
                 target: tt_contracts::observability::USER_VISIBLE_ERROR,
                 "Exporting character '{}' with its stored embedded lorebook because the linked lorebook could not be refreshed: {}",
@@ -838,26 +592,27 @@ impl CharacterService {
                 error
             );
         }
-        card_contract::unset_private_fields(&mut export_value)?;
-        card_contract::sanitize_agent_profiles_for_export(&mut export_value);
+        card_contract::unset_private_fields(&mut card)?;
+        card_contract::sanitize_agent_profiles_for_export(&mut card)?;
 
-        Ok(export_value)
+        Ok(card)
     }
 
-    async fn materialize_primary_lorebook_value(
+    async fn materialize_primary_lorebook(
         &self,
-        export_value: &mut Value,
+        card: &mut JsonDocument,
     ) -> Result<(), DomainError> {
-        let Some(world_name) = export_value
-            .pointer("/data/extensions/world")
-            .and_then(Value::as_str)
-        else {
-            return Ok(());
-        };
-        if world_name.is_empty() {
-            return Ok(());
+        match card_contract::character_world(card)? {
+            Some(world_name) => self.materialize_lorebook(card, &world_name).await,
+            None => Ok(()),
         }
+    }
 
+    async fn materialize_lorebook(
+        &self,
+        card: &mut JsonDocument,
+        world_name: &str,
+    ) -> Result<(), DomainError> {
         let world_info = self
             .world_info_repository
             .get_world_info(world_name)
@@ -866,23 +621,9 @@ impl CharacterService {
                 DomainError::NotFound(format!("World info file {} doesn't exist", world_name))
             })?;
         let character_book = world_info_to_character_book(world_name, &world_info)?;
-
-        let Some(root_object) = export_value.as_object_mut() else {
-            return Err(DomainError::InvalidData(
-                "Character payload must be a JSON object".to_string(),
-            ));
-        };
-
-        let data = root_object
-            .entry("data")
-            .or_insert_with(|| Value::Object(serde_json::Map::new()));
-        let Some(data_object) = data.as_object_mut() else {
-            return Err(DomainError::InvalidData(
-                "Character payload data must be a JSON object".to_string(),
-            ));
-        };
-
-        data_object.insert("character_book".to_string(), character_book);
+        card.object_entry(&["data"])
+            .map_err(card_contract::invalid_character_card_json)?
+            .set("character_book", &character_book);
 
         Ok(())
     }

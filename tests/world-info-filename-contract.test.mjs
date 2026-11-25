@@ -12,6 +12,6 @@ test('character create payload preserves exact primary lorebook name', () => {
         extensions: '{}',
     });
 
-    assert.equal(dto.extensions.world, ' Lore ');
+    assert.equal(JSON.parse(dto.card_json).data.extensions.world, ' Lore ');
     assert.equal(dto.primary_lorebook, ' Lore ');
 });

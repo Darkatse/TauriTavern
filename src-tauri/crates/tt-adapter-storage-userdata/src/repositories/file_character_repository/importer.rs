@@ -1,7 +1,9 @@
 use chrono::{SecondsFormat, Utc};
+use serde::de::IgnoredAny;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tokio::fs;
 
@@ -9,6 +11,7 @@ use crate::png_card_metadata::{read_character_data_from_png, write_character_dat
 use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::character::Character;
 use tt_domain::models::chat::{
     humanized_date as humanized_chat_date,
@@ -20,7 +23,7 @@ use super::FileCharacterRepository;
 
 struct ImportedCharacterCard {
     character: Character,
-    card_value: Value,
+    card: JsonDocument,
 }
 
 #[derive(Clone, Copy)]
@@ -225,8 +228,14 @@ impl FileCharacterRepository {
         json_data: &str,
     ) -> Result<ImportedCharacterCard, DomainError> {
         let normalized_json = Self::normalize_json_surrogate_escapes(json_data);
+        let invalid_json = |error: serde_json::Error| {
+            DomainError::InvalidData(format!(
+                "Failed to parse imported character JSON: {}",
+                error
+            ))
+        };
 
-        let raw_value = Self::parse_card_json(&normalized_json, "imported character JSON")?;
+        let raw_value: Value = serde_json::from_str(&normalized_json).map_err(invalid_json)?;
         let has_talkativeness = raw_value.get("talkativeness").is_some()
             || raw_value
                 .pointer("/data/extensions/talkativeness")
@@ -249,7 +258,7 @@ impl FileCharacterRepository {
 
         Ok(ImportedCharacterCard {
             character,
-            card_value: raw_value,
+            card: JsonDocument::parse(normalized_json.as_bytes()).map_err(invalid_json)?,
         })
     }
 
@@ -447,7 +456,6 @@ impl FileCharacterRepository {
         character.avatar = format!("{}.png", file_stem);
         character.chat = Self::chat_file_stem(&character.name, &humanized_chat_date(now));
         character.fav = false;
-        character.data.extensions.set_fav(false);
     }
 
     fn prepare_imported_character(
@@ -456,103 +464,114 @@ impl FileCharacterRepository {
         source_path: &Path,
         mode: CharacterImportMode<'_>,
     ) -> Result<String, DomainError> {
-        let (file_stem, primary_lorebook) = match mode {
-            CharacterImportMode::New { preserve_file_name } => (
-                self.resolve_import_file_stem(character, source_path, preserve_file_name)?,
-                None,
-            ),
-            CharacterImportMode::Replace {
-                file_stem,
-                primary_lorebook,
-            } => (file_stem.to_string(), Some(primary_lorebook)),
+        let file_stem = match mode {
+            CharacterImportMode::New { preserve_file_name } => {
+                self.resolve_import_file_stem(character, source_path, preserve_file_name)?
+            }
+            CharacterImportMode::Replace { file_stem, .. } => file_stem.to_string(),
         };
 
         Self::prepare_imported_character_for_storage(character, &file_stem);
-        if let Some(primary_lorebook) = primary_lorebook {
-            character.data.extensions.set_world(primary_lorebook);
-        }
 
         Ok(file_stem)
     }
 
     fn apply_spec_card_import_state(
-        card_value: &mut Value,
+        card: &mut JsonDocument,
         character: &Character,
         primary_lorebook: Option<&str>,
-    ) -> Result<(), DomainError> {
-        for (field, path) in [
-            ("description", "/data/description"),
-            ("personality", "/data/personality"),
-            ("scenario", "/data/scenario"),
-            ("first_mes", "/data/first_mes"),
-            ("mes_example", "/data/mes_example"),
-            ("tags", "/data/tags"),
-            ("talkativeness", "/data/extensions/talkativeness"),
-        ] {
-            if let Some(value) = card_value.pointer(path).cloned() {
-                card_value[field] = value;
-            }
-        }
+    ) -> serde_json::Result<()> {
+        let name = Value::from(character.name.as_str());
+        card.set("name", &name);
+        card.set("chat", &Value::from(character.chat.as_str()));
+        card.set("create_date", &Value::from(character.create_date.as_str()));
+        card.set("fav", &Value::Bool(false));
 
-        let root = card_value.as_object_mut().ok_or_else(|| {
-            DomainError::InvalidData("Imported character payload must be a JSON object".to_string())
-        })?;
-        root.remove("json_data");
-        root.insert("name".to_string(), Value::String(character.name.clone()));
-        root.insert("chat".to_string(), Value::String(character.chat.clone()));
-        root.insert(
-            "create_date".to_string(),
-            Value::String(character.create_date.clone()),
-        );
-        root.insert("fav".to_string(), Value::Bool(false));
-
-        let Some(data) = root.get_mut("data").and_then(Value::as_object_mut) else {
+        let Some(data) = card.object_mut(&["data"])? else {
             return Ok(());
         };
-        data.insert("name".to_string(), Value::String(character.name.clone()));
+        data.set("name", &name);
 
-        match data.get_mut("extensions").and_then(Value::as_object_mut) {
+        match data.object_mut(&["extensions"])? {
             Some(extensions) => {
-                extensions.insert("fav".to_string(), Value::Bool(false));
+                extensions.set("fav", &Value::Bool(false));
                 if let Some(primary_lorebook) = primary_lorebook {
-                    extensions.insert(
-                        "world".to_string(),
-                        Value::String(primary_lorebook.to_string()),
-                    );
+                    extensions.set("world", &Value::from(primary_lorebook));
                 }
             }
             None => {
                 if let Some(primary_lorebook) = primary_lorebook {
-                    data.insert(
-                        "extensions".to_string(),
-                        json!({ "fav": false, "world": primary_lorebook }),
+                    data.set(
+                        "extensions",
+                        &json!({ "fav": false, "world": primary_lorebook }),
                     );
                 }
+            }
+        }
+
+        for (field, path) in [
+            ("description", &["data", "description"][..]),
+            ("personality", &["data", "personality"]),
+            ("scenario", &["data", "scenario"]),
+            ("first_mes", &["data", "first_mes"]),
+            ("mes_example", &["data", "mes_example"]),
+            ("tags", &["data", "tags"]),
+            ("talkativeness", &["data", "extensions", "talkativeness"]),
+        ] {
+            if let Some(text) = card.get::<Box<RawValue>>(path)? {
+                card.set(field, text);
             }
         }
 
         Ok(())
     }
 
-    fn prepare_imported_card_value(
-        card_value: &mut Value,
+    /// The projection supplies the V2 fields of a V1 card, except the open `data.extensions` and `data.character_book`.
+    fn convert_legacy_card(
+        card: &mut JsonDocument,
+        character: &Character,
+        primary_lorebook: Option<&str>,
+    ) -> serde_json::Result<()> {
+        let mut projection = JsonDocument::from_serialize(&character.to_v2())?;
+        let data = projection.object_entry(&["data"])?;
+        data.remove("extensions");
+        data.remove("character_book");
+        card.merge(projection)?;
+
+        let extensions = card.object_entry(&["data", "extensions"])?;
+        extensions.set("talkativeness", &json!(character.talkativeness));
+        extensions.set("fav", &Value::Bool(false));
+        if let Some(primary_lorebook) = primary_lorebook {
+            extensions.set("world", &Value::from(primary_lorebook));
+        }
+
+        Ok(())
+    }
+
+    fn prepare_imported_card(
+        card: &mut JsonDocument,
         character: &Character,
         mode: CharacterImportMode<'_>,
     ) -> Result<(), DomainError> {
-        if card_value.get("spec").is_none() {
-            Self::merge_existing_character_projection_into_card_value(card_value, character)?;
-            card_value["spec"] = Value::String("chara_card_v2".to_string());
-            card_value["spec_version"] = Value::String("2.0".to_string());
-            return Ok(());
-        }
-
         let primary_lorebook = match mode {
             CharacterImportMode::Replace {
                 primary_lorebook, ..
             } => Some(primary_lorebook),
             CharacterImportMode::New { .. } => None,
         };
-        Self::apply_spec_card_import_state(card_value, character, primary_lorebook)
+
+        card.remove("json_data");
+        card.get::<IgnoredAny>(&["spec"])
+            .and_then(|spec| match spec {
+                Some(_) => Self::apply_spec_card_import_state(card, character, primary_lorebook),
+                None => Self::convert_legacy_card(card, character, primary_lorebook),
+            })
+            .map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Failed to prepare imported character card: {}",
+                    error
+                ))
+            })
     }
 
     async fn persist_character_card_json(
@@ -560,8 +579,9 @@ impl FileCharacterRepository {
         file_stem: &str,
         base_image_data: &[u8],
         card_json: &str,
-    ) -> Result<PathBuf, DomainError> {
+    ) -> Result<Character, DomainError> {
         let image_data = write_character_data_to_png(base_image_data, card_json)?;
+        let character = Self::decode_character_png(&image_data)?;
         let target_path = self.get_character_path(file_stem);
         let temp_path = unique_temp_path(&target_path);
 
@@ -575,7 +595,7 @@ impl FileCharacterRepository {
         self.discard_character_read_cache(file_stem).await;
         replace_file(&temp_path, &target_path).await?;
 
-        Ok(target_path)
+        self.with_file_facts(character, &target_path).await
     }
 
     async fn import_from_png_file(
@@ -587,17 +607,13 @@ impl FileCharacterRepository {
         let card_json = read_character_data_from_png(file_data)?;
         let ImportedCharacterCard {
             mut character,
-            mut card_value,
+            mut card,
         } = self.parse_imported_character_json(&card_json)?;
         let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
-        Self::prepare_imported_card_value(&mut card_value, &character, mode)?;
-        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
+        Self::prepare_imported_card(&mut card, &character, mode)?;
 
-        let target_path = self
-            .persist_character_card_json(&file_stem, file_data, &stored_card_json)
-            .await?;
-
-        self.read_character_from_file(&target_path).await
+        self.persist_character_card_json(&file_stem, file_data, &card.to_string())
+            .await
     }
 
     async fn import_from_json_file(
@@ -611,18 +627,14 @@ impl FileCharacterRepository {
         })?;
         let ImportedCharacterCard {
             mut character,
-            mut card_value,
+            mut card,
         } = self.parse_imported_character_json(&card_json)?;
         let file_stem = self.prepare_imported_character(&mut character, source_path, mode)?;
-        Self::prepare_imported_card_value(&mut card_value, &character, mode)?;
-        let stored_card_json = Self::serialize_card_value(&card_value, "imported character card")?;
+        Self::prepare_imported_card(&mut card, &character, mode)?;
 
         let default_avatar = self.read_default_avatar().await?;
-        let target_path = self
-            .persist_character_card_json(&file_stem, &default_avatar, &stored_card_json)
-            .await?;
-
-        self.read_character_from_file(&target_path).await
+        self.persist_character_card_json(&file_stem, &default_avatar, &card.to_string())
+            .await
     }
 
     pub(super) async fn import_character_file(

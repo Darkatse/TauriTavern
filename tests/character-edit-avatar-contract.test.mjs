@@ -9,7 +9,7 @@ import {
     CHARACTER_CREATE_WARNINGS,
     createCharacterCreateService,
 } from '../src/tauri/main/services/characters/character-create-service.js';
-import { formDataToCreateCharacterDto, payloadToCreateCharacterDto } from '../src/tauri/main/services/characters/character-create-mapper.js';
+import { buildCharacterCard, payloadToCreateCharacterDto } from '../src/tauri/main/services/characters/character-create-mapper.js';
 import { createCharacterFormService } from '../src/tauri/main/services/characters/character-form-service.js';
 
 test('/api/characters/edit-avatar delegates multipart avatar replacement only', async () => {
@@ -128,14 +128,14 @@ test('character form edit keeps blank alternate greetings', async () => {
     const written = JSON.parse(calls[0].args.dto.card_json);
     assert.deepEqual(written.data.alternate_greetings, ['Hi', '', ' ']);
     assert.deepEqual(
-        payloadToCreateCharacterDto({ ch_name: 'Alice', alternate_greetings: '' }).alternate_greetings,
+        buildCharacterCard({ ch_name: 'Alice', alternate_greetings: '' }).data.alternate_greetings,
         [],
     );
     assert.deepEqual(
-        payloadToCreateCharacterDto({
+        buildCharacterCard({
             ch_name: 'Alice',
             alternate_greetings: ['Hi', '', null, undefined, { ignored: true }, 7],
-        }).alternate_greetings,
+        }).data.alternate_greetings,
         ['Hi', '', '7'],
     );
 });
@@ -344,7 +344,7 @@ test('character create mapper only materializes flat world payloads', () => {
     });
 
     assert.equal(dto.primary_lorebook, null);
-    assert.equal(dto.extensions.world, 'extension-book');
+    assert.equal(JSON.parse(dto.card_json).data.extensions.world, 'extension-book');
 });
 
 
@@ -394,34 +394,48 @@ test('character create service uses default avatar when upload materialization f
                 command: 'create_character',
                 args: {
                     dto: {
-                        file_name: 'Assistant',
-                        json_data: null,
-                        primary_lorebook: null,
-                        name: 'Neutral Assistant',
-                        description: '',
-                        personality: '',
-                        scenario: '',
-                        first_mes: '',
-                        mes_example: '',
-                        creator: '',
-                        creator_notes: '',
-                        character_version: '',
-                        tags: [],
-                        talkativeness: 0.5,
-                        fav: false,
-                        alternate_greetings: [],
-                        system_prompt: '',
-                        post_history_instructions: '',
-                        extensions: {
-                            world: '',
-                            depth_prompt: {
-                                prompt: '',
-                                depth: 4,
-                                role: 'system',
-                            },
+                        card_json: JSON.stringify({
+                            name: 'Neutral Assistant',
+                            description: '',
+                            personality: '',
+                            scenario: '',
+                            first_mes: '',
+                            mes_example: '',
+                            creatorcomment: '',
+                            avatar: 'none',
                             talkativeness: 0.5,
                             fav: false,
-                        },
+                            tags: [],
+                            spec: 'chara_card_v2',
+                            spec_version: '2.0',
+                            data: {
+                                name: 'Neutral Assistant',
+                                description: '',
+                                personality: '',
+                                scenario: '',
+                                first_mes: '',
+                                mes_example: '',
+                                creator_notes: '',
+                                system_prompt: '',
+                                post_history_instructions: '',
+                                tags: [],
+                                creator: '',
+                                character_version: '',
+                                alternate_greetings: [],
+                                extensions: {
+                                    talkativeness: 0.5,
+                                    fav: false,
+                                    world: '',
+                                    depth_prompt: {
+                                        prompt: '',
+                                        depth: 4,
+                                        role: 'system',
+                                    },
+                                },
+                            },
+                        }),
+                        file_name: 'Assistant',
+                        primary_lorebook: null,
                     },
                 },
             },

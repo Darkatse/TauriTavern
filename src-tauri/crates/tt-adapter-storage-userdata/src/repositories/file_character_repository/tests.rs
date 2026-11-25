@@ -18,7 +18,6 @@ use tt_adapter_storage_core::{
     png_metadata::{replace_text_chunks, write_text_chunk},
 };
 use tt_domain::errors::DomainError;
-use tt_domain::models::character::Character;
 use tt_ports::avatar_images::{AvatarImageProcessor, ImageCrop};
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterRepository,
@@ -105,9 +104,19 @@ async fn repository_for_root(root: &Path) -> FileCharacterRepository {
     )
 }
 
-async fn create_character(repository: &FileCharacterRepository, character: &Character) {
+fn character_card(name: &str, first_mes: &str) -> Value {
+    json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "name": name,
+        "first_mes": first_mes,
+        "data": { "name": name, "first_mes": first_mes },
+    })
+}
+
+async fn create_character(repository: &FileCharacterRepository, name: &str) {
     repository
-        .create_with_avatar(character, None, None)
+        .create_with_avatar(name, &character_card(name, "hello").to_string(), None, None)
         .await
         .expect("create character");
 }
@@ -170,26 +179,24 @@ async fn create_with_avatar_allocates_unique_file_stems() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let first = Character::new(
-        "Duplicate".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "First greeting".to_string(),
-    );
     let created_first = repository
-        .create_with_avatar(&first, None, None)
+        .create_with_avatar(
+            "Duplicate",
+            &character_card("Duplicate", "First greeting").to_string(),
+            None,
+            None,
+        )
         .await
         .expect("create first character")
         .character;
 
-    let second = Character::new(
-        "Duplicate".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "Second greeting".to_string(),
-    );
     let created_second = repository
-        .create_with_avatar(&second, None, None)
+        .create_with_avatar(
+            "Duplicate",
+            &character_card("Duplicate", "Second greeting").to_string(),
+            None,
+            None,
+        )
         .await
         .expect("create second character")
         .character;
@@ -215,13 +222,7 @@ async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Dirty Chunks".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Dirty Chunks").await;
     repository
         .find_all(true)
         .await
@@ -268,13 +269,7 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Avatar Edit".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Avatar Edit").await;
     repository
         .find_all(true)
         .await
@@ -284,7 +279,7 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
     fs::write(&avatar_path, build_distinct_png())
         .await
         .expect("write replacement avatar");
-    let card_json = serde_json::to_string(&character.to_v2()).expect("serialize card");
+    let card_json = character_card("Avatar Edit", "hello").to_string();
 
     repository
         .write_character_card_json("Avatar Edit", &card_json, Some(&avatar_path), None)
@@ -307,14 +302,13 @@ async fn create_with_avatar_sanitizes_file_stem_like_sillytavern() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Unsafe/Name".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "Hi".to_string(),
-    );
     let created = repository
-        .create_with_avatar(&character, None, None)
+        .create_with_avatar(
+            "Unsafe/Name",
+            &character_card("Unsafe/Name", "Hi").to_string(),
+            None,
+            None,
+        )
         .await
         .expect("create character")
         .character;
@@ -332,15 +326,13 @@ async fn create_with_avatar_invalid_avatar_bytes_falls_back_to_default_avatar() 
         .await
         .expect("write invalid avatar");
 
-    let character = Character::new(
-        "Invalid Avatar".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-
     let result = repository
-        .create_with_avatar(&character, Some(&invalid_avatar_path), None)
+        .create_with_avatar(
+            "Invalid Avatar",
+            &character_card("Invalid Avatar", "hello").to_string(),
+            Some(&invalid_avatar_path),
+            None,
+        )
         .await
         .expect("create character with invalid avatar fallback");
     assert_eq!(result.warnings.len(), 1);
@@ -441,19 +433,11 @@ async fn import_png_does_not_eagerly_create_chat_file() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let mut character = Character::new(
-        "Test Character".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "Hello from import".to_string(),
-    );
-    character.chat = "Imported Chat".to_string();
+    let mut card = character_card("Test Character", "Hello from import");
+    card["chat"] = json!("Imported Chat");
 
-    let source_png = write_character_data_to_png(
-        &build_minimal_png(),
-        &serde_json::to_string(&character.to_v2()).expect("serialize card"),
-    )
-    .expect("embed card in png");
+    let source_png = write_character_data_to_png(&build_minimal_png(), &card.to_string())
+        .expect("embed card in png");
     let import_path = temp.path().join("upload.png");
     fs::write(&import_path, source_png)
         .await
@@ -483,16 +467,10 @@ async fn import_json_uses_exact_preserved_file_name() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Another Character".to_string(),
-        "".to_string(),
-        "".to_string(),
-        "Hi".to_string(),
-    );
     let import_path = temp.path().join("upload.json");
     fs::write(
         &import_path,
-        serde_json::to_vec(&character.to_v2()).expect("serialize json card"),
+        character_card("Another Character", "Hi").to_string(),
     )
     .await
     .expect("write import json");
@@ -522,13 +500,15 @@ async fn import_json_uses_exact_preserved_file_name() {
 async fn failed_replace_keeps_existing_character() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
-    let character = Character::new(
-        "Preserved".to_string(),
-        "old description".to_string(),
-        "old personality".to_string(),
-        "old first message".to_string(),
-    );
-    create_character(&repository, &character).await;
+    repository
+        .create_with_avatar(
+            "Preserved",
+            &character_card("Preserved", "old first message").to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("create character");
 
     let import_path = temp.path().join("invalid.png");
     fs::write(&import_path, b"not a character card")
@@ -1225,13 +1205,7 @@ async fn legacy_cards_get_data_size_after_normalization() {
 async fn unreadable_chat_statistics_do_not_hide_the_character() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
-    let character = Character::new(
-        "Stats Fallback".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Stats Fallback").await;
     let chat_dir = temp.path().join("chats").join("Stats Fallback");
     fs::create_dir_all(&chat_dir)
         .await
@@ -1264,16 +1238,7 @@ async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() 
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
     for name in ["Alice", "Broken"] {
-        create_character(
-            &repository,
-            &Character::new(
-                name.to_string(),
-                "desc".to_string(),
-                "persona".to_string(),
-                "hello".to_string(),
-            ),
-        )
-        .await;
+        create_character(&repository, name).await;
     }
     repository
         .find_all(true)
@@ -1310,13 +1275,7 @@ async fn character_chat_listing_reads_legacy_alias_directory() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Alice#1".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Alice#1").await;
 
     let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1365,13 +1324,7 @@ async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Alice#1".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Alice#1").await;
 
     let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1410,13 +1363,7 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Alice#1".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Alice#1").await;
 
     let legacy_chat_dir = temp.path().join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1440,21 +1387,9 @@ async fn rename_uses_next_available_file_stem_when_target_exists() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let source = Character::new(
-        "Source".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &source).await;
+    create_character(&repository, "Source").await;
 
-    let existing = Character::new(
-        "Taken".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &existing).await;
+    create_character(&repository, "Taken").await;
 
     let renamed = repository
         .rename("Source", "Taken")
@@ -1478,15 +1413,13 @@ async fn rename_preserves_avatar_pixel_data() {
         .await
         .expect("write custom avatar png");
 
-    let character = Character::new(
-        "Original".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-
     let created = repository
-        .create_with_avatar(&character, Some(&avatar_path), None)
+        .create_with_avatar(
+            "Original",
+            &character_card("Original", "hello").to_string(),
+            Some(&avatar_path),
+            None,
+        )
         .await
         .expect("create character with avatar")
         .character;
@@ -1518,13 +1451,7 @@ async fn write_character_card_json_rejects_invalid_avatar_bytes() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = repository_for_root(temp.path()).await;
 
-    let character = Character::new(
-        "Strict Avatar Target".to_string(),
-        "desc".to_string(),
-        "personality".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
+    create_character(&repository, "Strict Avatar Target").await;
     let card_json = repository
         .read_character_card_json("Strict Avatar Target")
         .await
@@ -1545,4 +1472,43 @@ async fn write_character_card_json_rejects_invalid_avatar_bytes() {
         .await;
 
     assert!(result.is_err(), "invalid avatar replacement should fail");
+}
+
+#[tokio::test]
+async fn writes_reject_an_unreadable_card_before_changing_files() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = repository_for_root(temp.path()).await;
+
+    // A lone surrogate escape is valid JSON text that Rust cannot decode.
+    let card = r#"{"name":"Alice","data":{"name":"Alice","extensions":{"note":"\ud83d"}}}"#;
+    let stored_png =
+        write_character_data_to_png(&build_minimal_png(), card).expect("embed card in png");
+    let character_path = temp.path().join("characters").join("Alice.png");
+    fs::write(&character_path, &stored_png)
+        .await
+        .expect("write character png");
+    let chat_dir = temp.path().join("chats").join("Alice");
+    fs::create_dir_all(&chat_dir)
+        .await
+        .expect("create chat directory");
+    let avatar_path = temp.path().join("replacement-avatar.png");
+    fs::write(&avatar_path, build_distinct_png())
+        .await
+        .expect("write replacement avatar");
+
+    repository
+        .rename("Alice", "Bob")
+        .await
+        .expect_err("rename must reject the card");
+    repository
+        .write_character_card_json("Alice", card, Some(&avatar_path), None)
+        .await
+        .expect_err("avatar replacement must reject the card");
+
+    assert_eq!(
+        fs::read(&character_path).await.expect("read character png"),
+        stored_png
+    );
+    assert!(!temp.path().join("characters").join("Bob.png").exists());
+    assert!(chat_dir.exists());
 }

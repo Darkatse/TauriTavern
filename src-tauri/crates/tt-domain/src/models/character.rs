@@ -1,8 +1,6 @@
-use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::models::chat::humanized_date as humanized_chat_date;
 use crate::models::filename::sanitize_filename;
 
 /// Backend projection of a SillyTavern character card.
@@ -131,10 +129,6 @@ impl CharacterExtensions {
 
     pub fn world(&self) -> &str {
         self.get("world").and_then(Value::as_str).unwrap_or("")
-    }
-
-    pub fn set_world(&mut self, value: impl Into<String>) {
-        self.insert("world", Value::String(value.into()));
     }
 }
 
@@ -281,59 +275,6 @@ impl Character {
         })
     }
 
-    /// Create a new character with basic information
-    pub fn new(name: String, description: String, personality: String, first_mes: String) -> Self {
-        let now = Utc::now();
-        let timestamp = now.timestamp_millis();
-        let create_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-        let chat = format!("{} - {}", name, humanized_chat_date(now));
-
-        Self {
-            spec: default_spec(),
-            spec_version: default_spec_version(),
-            name: name.clone(),
-            description: description.clone(),
-            personality: personality.clone(),
-            scenario: String::new(),
-            first_mes: first_mes.clone(),
-            mes_example: String::new(),
-            avatar: "none".to_string(),
-            chat: chat.clone(),
-            creator: String::new(),
-            creator_notes: String::new(),
-            character_version: String::new(),
-            tags: Vec::new(),
-            create_date,
-            talkativeness: 0.5,
-            fav: false,
-            data: CharacterData {
-                name: name.clone(),
-                description: description.clone(),
-                personality: personality.clone(),
-                first_mes: first_mes.clone(),
-                extensions: {
-                    let mut extensions = CharacterExtensions::default();
-                    extensions.set_talkativeness(0.5);
-                    extensions.set_fav(false);
-                    extensions.set_world("");
-                    extensions.insert(
-                        "depth_prompt",
-                        json!({ "prompt": "", "depth": 4, "role": "system" }),
-                    );
-                    extensions
-                },
-                ..Default::default()
-            },
-            file_name: None,
-            chat_size: 0,
-            data_size: 0,
-            date_added: timestamp,
-            date_last_chat: 0,
-            json_data: None,
-            shallow: false,
-        }
-    }
-
     /// Convert character to V2 format
     pub fn to_v2(&self) -> Self {
         let mut character = self.clone();
@@ -443,12 +384,13 @@ mod tests {
 
     #[test]
     fn into_shallow_drops_heavy_character_payload() {
-        let mut character = Character::new(
-            "Alice".to_string(),
-            "A very long description".to_string(),
-            "A personality".to_string(),
-            "Hello!".to_string(),
-        );
+        let mut character = Character {
+            name: "Alice".to_string(),
+            description: "A very long description".to_string(),
+            personality: "A personality".to_string(),
+            first_mes: "Hello!".to_string(),
+            ..Default::default()
+        };
 
         character.data.system_prompt = "system prompt".to_string();
         character.data.post_history_instructions = "jailbreak".to_string();
@@ -481,13 +423,10 @@ mod tests {
 
     #[test]
     fn talkativeness_serializes_as_clean_json_number() {
-        let mut character = Character::new(
-            "Alice".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hello".to_string(),
-        );
-        character.talkativeness = 0.8;
+        let mut character = Character {
+            talkativeness: 0.8,
+            ..Default::default()
+        };
         character.data.extensions.set_talkativeness(0.8);
 
         let value = serde_json::to_value(character.to_v2()).expect("serialize character");

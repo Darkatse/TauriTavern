@@ -1,7 +1,7 @@
 use super::avatar_image_dto::ImageCropDto;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use tt_domain::models::character::{Character, CharacterExtensions};
+use tt_domain::models::character::Character;
 use tt_ports::repositories::character_repository::{
     CharacterChat, CharacterCreateResult, CharacterCreateWarning,
 };
@@ -76,47 +76,9 @@ impl From<CharacterCreateResult> for CreateCharacterWithAvatarResultDto {
 /// Character creation DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateCharacterDto {
+    pub card_json: String,
     pub file_name: Option<String>,
-    pub json_data: Option<String>,
     pub primary_lorebook: Option<String>,
-    pub name: String,
-    pub description: String,
-    pub personality: String,
-    pub scenario: String,
-    pub first_mes: String,
-    pub mes_example: String,
-    pub creator: Option<String>,
-    pub creator_notes: Option<String>,
-    pub character_version: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub talkativeness: Option<f64>,
-    pub fav: Option<bool>,
-    pub alternate_greetings: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
-    pub post_history_instructions: Option<String>,
-    pub extensions: Option<serde_json::Value>,
-}
-
-/// Character update DTO
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateCharacterDto {
-    pub name: Option<String>,
-    pub chat: Option<String>,
-    pub description: Option<String>,
-    pub personality: Option<String>,
-    pub scenario: Option<String>,
-    pub first_mes: Option<String>,
-    pub mes_example: Option<String>,
-    pub creator: Option<String>,
-    pub creator_notes: Option<String>,
-    pub character_version: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub talkativeness: Option<f64>,
-    pub fav: Option<bool>,
-    pub alternate_greetings: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
-    pub post_history_instructions: Option<String>,
-    pub extensions: Option<serde_json::Value>,
 }
 
 /// Raw character card update DTO used by upstream-compatible HTTP routes.
@@ -176,7 +138,7 @@ pub struct ImportCharacterResultDto {
 /// Raw character card merge DTO used by upstream-compatible HTTP routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeCharacterCardDataDto {
-    pub update: serde_json::Value,
+    pub update_json: String,
 }
 
 /// Bulk character card merge filter DTO used by upstream-compatible HTTP routes.
@@ -190,7 +152,7 @@ pub struct BulkMergeCharacterCardDataFilterDto {
 pub struct BulkMergeCharacterCardDataDto {
     #[serde(default)]
     pub avatars: Vec<String>,
-    pub data: serde_json::Value,
+    pub data_json: String,
     pub filter: Option<BulkMergeCharacterCardDataFilterDto>,
 }
 
@@ -361,55 +323,6 @@ impl From<Character> for CharacterDto {
     }
 }
 
-/// Convert from DTO to domain model
-impl TryFrom<CreateCharacterDto> for Character {
-    type Error = serde_json::Error;
-
-    fn try_from(dto: CreateCharacterDto) -> Result<Self, Self::Error> {
-        let file_name = dto
-            .file_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.strip_suffix(".png").unwrap_or(value).to_string());
-        let mut character =
-            Character::new(dto.name, dto.description, dto.personality, dto.first_mes);
-        character.file_name = file_name;
-        character.json_data = dto.json_data;
-
-        character.scenario = dto.scenario;
-        character.mes_example = dto.mes_example;
-        character.creator = dto.creator.unwrap_or_default();
-        character.creator_notes = dto.creator_notes.unwrap_or_default();
-        character.character_version = dto.character_version.unwrap_or_default();
-        character.tags = dto.tags.unwrap_or_default();
-        character.talkativeness = dto.talkativeness.unwrap_or(0.5);
-        character.fav = dto.fav.unwrap_or(false);
-
-        // Update data fields
-        character.data.scenario = character.scenario.clone();
-        character.data.mes_example = character.mes_example.clone();
-        character.data.creator = character.creator.clone();
-        character.data.creator_notes = character.creator_notes.clone();
-        character.data.character_version = character.character_version.clone();
-        character.data.tags = character.tags.clone();
-        character.data.alternate_greetings = dto.alternate_greetings.unwrap_or_default();
-        character.data.system_prompt = dto.system_prompt.unwrap_or_default();
-        character.data.post_history_instructions =
-            dto.post_history_instructions.unwrap_or_default();
-        if let Some(extensions) = dto.extensions {
-            character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
-        }
-        character
-            .data
-            .extensions
-            .set_talkativeness(character.talkativeness);
-        character.data.extensions.set_fav(character.fav);
-
-        Ok(character)
-    }
-}
-
 /// Convert from domain model to DTO
 impl From<CharacterChat> for CharacterChatDto {
     fn from(chat: CharacterChat) -> Self {
@@ -431,15 +344,10 @@ mod tests {
 
     #[test]
     fn character_dto_falls_back_to_date_added_when_create_date_missing() {
-        let mut character = Character::new(
-            "Fallback".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hi".to_string(),
-        );
-
-        character.create_date = "".to_string();
-        character.date_added = 1_700_000_000_123;
+        let character = Character {
+            date_added: 1_700_000_000_123,
+            ..Default::default()
+        };
 
         let dto = CharacterDto::from(character);
         let expected = Utc

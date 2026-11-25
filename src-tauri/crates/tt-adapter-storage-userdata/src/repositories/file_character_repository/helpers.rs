@@ -4,7 +4,7 @@ use std::time::UNIX_EPOCH;
 
 use tokio::fs;
 
-use crate::png_card_metadata::read_character_data_from_png_file;
+use crate::png_card_metadata::{read_character_data_from_png, read_character_data_from_png_file};
 use tt_adapter_storage_core::chat_directory_identity::{self, SharedChatAliasStore};
 use tt_adapter_storage_core::file_system::list_files_with_extension;
 use tt_domain::errors::DomainError;
@@ -217,18 +217,18 @@ impl FileCharacterRepository {
     ) -> Result<Character, DomainError> {
         tracing::debug!("Reading character from file: {:?}", path);
 
-        let metadata = fs::metadata(path).await.map_err(|e| {
-            tracing::error!("Failed to read file metadata: {}", e);
-            DomainError::InternalError(format!("Failed to read file metadata: {}", e))
-        })?;
-        let modified_millis = file_modified_millis(&metadata);
-        let timestamp_millis = file_ctime_millis(&metadata)
-            .or_else(|| (modified_millis > 0).then_some(modified_millis));
-
         let json_data = read_character_data_from_png_file(path).await?;
+        self.with_file_facts(Self::decode_character(json_data)?, path)
+            .await
+    }
 
+    /// Decode what a write is about to store before it changes any file.
+    pub(crate) fn decode_character_png(image_data: &[u8]) -> Result<Character, DomainError> {
+        Self::decode_character(read_character_data_from_png(image_data)?)
+    }
+
+    pub(crate) fn decode_character(json_data: String) -> Result<Character, DomainError> {
         let raw_value: Value = serde_json::from_str(&json_data).map_err(|e| {
-            tracing::error!("Failed to parse character data: {}", e);
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
         let mut character = Character::from_card_value(&raw_value).ok_or_else(|| {
@@ -236,32 +236,43 @@ impl FileCharacterRepository {
         })?;
         Self::sync_canonical_data_fields(&mut character, &raw_value);
         Self::normalize_imported_character(&mut character)?;
-        let data_size = Self::calculate_character_data_size(&raw_value, &character);
-        character.shallow = false;
+        character.data_size = Self::calculate_character_data_size(&raw_value, &character);
+        character.json_data = Some(json_data);
+
+        Ok(character)
+    }
+
+    pub(crate) async fn with_file_facts(
+        &self,
+        mut character: Character,
+        path: &Path,
+    ) -> Result<Character, DomainError> {
+        let metadata = fs::metadata(path).await.map_err(|e| {
+            tracing::error!("Failed to read file metadata: {}", e);
+            DomainError::InternalError(format!("Failed to read file metadata: {}", e))
+        })?;
+        let modified_millis = file_modified_millis(&metadata);
+        let timestamp_millis = file_ctime_millis(&metadata)
+            .or_else(|| (modified_millis > 0).then_some(modified_millis));
+        if let Some(timestamp_millis) = timestamp_millis {
+            character.date_added = timestamp_millis;
+        }
 
         let file_name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        character.file_name = Some(file_name.clone());
-
         character.avatar = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
 
-        if let Some(timestamp_millis) = timestamp_millis {
-            character.date_added = timestamp_millis;
-        }
-
-        character.json_data = Some(json_data);
-
         let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await;
         character.chat_size = chat_size;
-        character.data_size = data_size;
         character.date_last_chat = date_last_chat;
+        character.file_name = Some(file_name);
 
         Ok(character)
     }
