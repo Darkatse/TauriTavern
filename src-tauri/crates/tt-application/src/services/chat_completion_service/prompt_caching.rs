@@ -128,7 +128,8 @@ fn apply_claude_prompt_caching_with_options(
         );
     }
 
-    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
+    let previous = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION);
+    if let Some(previous) = previous {
         let lcp_len = common_prefix_len(&previous.digests, &snapshot.digests);
         if lcp_len > 0 {
             let candidate = locations.get(lcp_len - 1).copied();
@@ -160,7 +161,40 @@ fn apply_claude_prompt_caching_with_options(
         );
     }
 
+    // When messages were cut off the front of the history, the prompt stops matching the previous one
+    // where the history starts, so the marker on the last common block has nothing to mark. A slot left
+    // free goes on the last block that still continues the previous history. Text injected at a depth
+    // moves with every new message, so the next request stops matching shortly after this block and
+    // reads up to it instead of missing a second time.
+    if let Some(previous) = previous
+        && let Some(index) = last_block_continuing_previous(&previous.digests, &snapshot.digests)
+        && let Some(location) = locations.get(index).copied()
+        && matches!(location, ClaudeDigestLocation::Message { .. })
+        && !(automatic_root && Some(location) == last_message_location)
+    {
+        insert_unique_claude_breakpoint(
+            payload,
+            &mut explicit_breakpoints,
+            location,
+            ttl,
+            max_explicit_breakpoints,
+        );
+    }
+
     snapshot
+}
+
+/// Index in `current` of the last block of the longest run that matches `previous` in order,
+/// starting at the first block where the two differ and picking `previous` up after blocks it had
+/// there, such as chat messages cut off the front of the history.
+fn last_block_continuing_previous(previous: &[String], current: &[String]) -> Option<usize> {
+    let start = common_prefix_len(previous, current);
+    let first_changed = current.get(start)?;
+    let run = (start + 1..previous.len())
+        .filter(|&resumed| &previous[resumed] == first_changed)
+        .map(|resumed| common_prefix_len(&previous[resumed..], &current[start..]))
+        .max()?;
+    Some(start + run - 1)
 }
 
 fn insert_unique_claude_breakpoint(
@@ -214,7 +248,9 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
         insert_cache_control_openrouter(messages, location, ttl);
     }
 
-    if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
+    let previous = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION);
+    let mut last_common_block_marked = false;
+    if let Some(previous) = previous {
         let lcp_len = common_prefix_len(&previous.digests, &snapshot.digests);
         if lcp_len > 0 {
             let candidate = locations.get(lcp_len - 1).copied();
@@ -225,9 +261,24 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
 
                 if !is_duplicate && matches!(candidate, OpenRouterDigestLocation::Message { .. }) {
                     insert_cache_control_openrouter(messages, candidate, ttl);
+                    last_common_block_marked = true;
                 }
             }
         }
+    }
+
+    // As for Claude above: when the last common block was not marked, its slot goes on the last block
+    // that still continues the previous history, so the next request does not miss a second time.
+    if !last_common_block_marked
+        && let Some(previous) = previous
+        && let Some(index) = last_block_continuing_previous(&previous.digests, &snapshot.digests)
+        && let Some(location) = locations.get(index).copied()
+        && matches!(location, OpenRouterDigestLocation::Message { .. })
+        && Some(location) != system_location
+        && Some(location) != pre_history_location
+        && Some(location) != last_location
+    {
+        insert_cache_control_openrouter(messages, location, ttl);
     }
 
     snapshot
@@ -726,7 +777,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        apply_claude_explicit_prompt_caching, apply_claude_prompt_caching,
+        PromptDigestSnapshot, apply_claude_explicit_prompt_caching, apply_claude_prompt_caching,
         apply_openrouter_claude_prompt_caching,
     };
 
@@ -967,5 +1018,150 @@ mod tests {
             .and_then(|parts| parts.last())
             .expect("last message block must exist");
         assert!(!has_cache_control(last_block));
+    }
+
+    type ApplyClaudeCaching =
+        fn(&mut Value, Option<&PromptDigestSnapshot>, &str) -> PromptDigestSnapshot;
+    type BuildChat = fn(usize, usize, usize) -> Value;
+
+    /// The same chat as `chat_with_note`, as TauriTavern sends it to OpenRouter: plain messages, with
+    /// the system prompt and the note as system messages of their own.
+    fn openrouter_chat_with_note(first: usize, end: usize, note_depth: usize) -> Value {
+        let mut messages: Vec<Value> = (first..end)
+            .map(|number| {
+                let role = if number % 2 == 0 { "user" } else { "assistant" };
+                json!({ "role": role, "content": format!("message {number}") })
+            })
+            .collect();
+        messages.insert(
+            messages.len() - note_depth,
+            json!({ "role": "system", "content": "note" }),
+        );
+        messages.insert(0, json!({ "role": "system", "content": "sys" }));
+
+        json!({ "model": "anthropic/claude-haiku-5.5", "messages": messages })
+    }
+
+    /// A Claude request with chat messages `first..end` (the user wrote the even ones) and a note
+    /// injected `note_depth` messages before the end. Like the payload builder, it sends the note as
+    /// user text and merges it into the neighbouring user message.
+    fn chat_with_note(first: usize, end: usize, note_depth: usize) -> Value {
+        let mut entries: Vec<(&str, String)> = (first..end)
+            .map(|number| {
+                let role = if number % 2 == 0 { "user" } else { "assistant" };
+                (role, format!("message {number}"))
+            })
+            .collect();
+        entries.insert(entries.len() - note_depth, ("user", "note".to_string()));
+
+        let mut messages: Vec<Value> = Vec::new();
+        for (role, text) in entries {
+            let block = json!({ "type": "text", "text": text });
+            match messages.last_mut() {
+                Some(last) if last["role"] == role => last["content"]
+                    .as_array_mut()
+                    .expect("content must be array")
+                    .push(block),
+                _ => messages.push(json!({ "role": role, "content": [block] })),
+            }
+        }
+
+        json!({
+            "model": "claude-haiku-5-5",
+            "system": [{ "type": "text", "text": "sys" }],
+            "messages": messages,
+        })
+    }
+
+    fn marked_message_texts(payload: &Value) -> Vec<String> {
+        payload["messages"]
+            .as_array()
+            .expect("messages must be array")
+            .iter()
+            .flat_map(|message| {
+                message["content"]
+                    .as_array()
+                    .expect("content must be array")
+            })
+            .filter(|block| has_cache_control(block))
+            .map(|block| block["text"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    fn count_cache_control(value: &Value) -> usize {
+        match value {
+            Value::Object(object) => {
+                usize::from(object.contains_key("cache_control"))
+                    + object.values().map(count_cache_control).sum::<usize>()
+            }
+            Value::Array(array) => array.iter().map(count_cache_control).sum(),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn claude_prompt_caching_marks_where_a_trimmed_history_continues_the_previous_one() {
+        let modes: [ApplyClaudeCaching; 2] = [
+            apply_claude_prompt_caching,
+            apply_claude_explicit_prompt_caching,
+        ];
+        for apply in modes {
+            let mut previous = chat_with_note(0, 40, 4);
+            let snapshot = apply(&mut previous, None, "5m");
+            // Ten messages were cut off the front and two were added, so the note moved down by two.
+            let mut current = chat_with_note(10, 42, 4);
+            apply(&mut current, Some(&snapshot), "5m");
+
+            // Message 35 came right before the note last time, so the next request reads up to it.
+            assert!(marked_message_texts(&current).contains(&"message 35".to_string()));
+        }
+
+        let mut previous = chat_with_note(0, 40, 4);
+        let snapshot = apply_claude_explicit_prompt_caching(&mut previous, None, "5m");
+        let mut current = chat_with_note(10, 42, 4);
+        apply_claude_explicit_prompt_caching(&mut current, Some(&snapshot), "5m");
+        assert!(marked_message_texts(&current).contains(&"message 41".to_string()));
+    }
+
+    #[test]
+    fn openrouter_prompt_caching_marks_where_a_trimmed_history_continues_the_previous_one() {
+        let mut previous = openrouter_chat_with_note(0, 40, 4);
+        let snapshot = apply_openrouter_claude_prompt_caching(&mut previous, None, "5m");
+        let mut current = openrouter_chat_with_note(10, 42, 4);
+        apply_openrouter_claude_prompt_caching(&mut current, Some(&snapshot), "5m");
+
+        assert!(marked_message_texts(&current).contains(&"message 35".to_string()));
+    }
+
+    #[test]
+    fn claude_prompt_caching_never_sends_more_than_four_markers() {
+        // A trimmed chat with a note: replies, and twice ten messages cut off the front.
+        let windows = [(0, 40), (0, 42), (10, 44), (10, 46), (20, 48)];
+        let modes: [(ApplyClaudeCaching, BuildChat, bool); 4] = [
+            (apply_claude_prompt_caching, chat_with_note, false),
+            (apply_claude_explicit_prompt_caching, chat_with_note, false),
+            (apply_claude_explicit_prompt_caching, chat_with_note, true),
+            (
+                apply_openrouter_claude_prompt_caching,
+                openrouter_chat_with_note,
+                false,
+            ),
+        ];
+        for (apply, build_chat, with_tool) in modes {
+            let mut snapshot = None;
+            for (first, end) in windows {
+                let mut payload = build_chat(first, end, 4);
+                if with_tool {
+                    payload["tools"] =
+                        json!([{ "name": "lookup", "input_schema": { "type": "object" } }]);
+                }
+                let next = apply(&mut payload, snapshot.as_ref(), "5m");
+                assert!(
+                    count_cache_control(&payload) <= 4,
+                    "messages {first}..{end}: {payload}"
+                );
+                snapshot = Some(next);
+            }
+        }
     }
 }
