@@ -3,7 +3,7 @@ import { afterEach, expect, test } from '@rstest/core';
 
 import { mountTauriTavernRequestInspectorApp } from './RequestInspectorApp';
 import type {
-    LogIndexEntry, LogView, PromptSource, RequestInspectorActions, RequestInspectorHandle,
+    EarlierPreview, LogIndexEntry, LogView, PromptSource, RequestInspectorActions, RequestInspectorHandle,
     RequestInspectorMountOptions, RequestPreview,
 } from './RequestInspectorContract';
 
@@ -40,7 +40,7 @@ function logView(id: number): LogView {
     };
 }
 
-function createHarness(preview: RequestPreview | null = null) {
+function createHarness(preview: RequestPreview | null = null, earlier: EarlierPreview | null = null) {
     let handler: ((entry: LogIndexEntry) => void) | null = null;
     let keepError: Error | null = null;
     const gatedViews = new Map<number, () => void>();
@@ -78,7 +78,9 @@ function createHarness(preview: RequestPreview | null = null) {
             });
         },
         setKeep: () => keepError ? Promise.reject(keepError) : Promise.resolve(),
-        preview: () => preview ? Promise.resolve(preview) : Promise.reject(new Error('no preview')),
+        preview: () => preview
+            ? Promise.resolve({ preview, timestampMs: 1750000100000, earlier })
+            : Promise.reject(new Error('no preview')),
     };
 
     return {
@@ -296,4 +298,61 @@ test('a preview is outlined by source: merged system rows, folded chat, tool tur
     // A request sent meanwhile does not take the preview away.
     await flushAct(() => harness.emit(indexEntry(2)));
     expect(view.getByRole('button', { name: 'Preview request' }).getAttribute('aria-pressed')).toBe('true');
+});
+
+test('a comparison lists what differs from the request before, and the base can be changed', async () => {
+    const previewOf = (style: string, temperature: number): RequestPreview => ({
+        source: 'custom',
+        model: 'model-x',
+        endpoint: 'https://api.example.com/v1/chat/completions',
+        requestRaw: '{}',
+        requestReadable: '',
+        view: {
+            request: {
+                kind: 'chat',
+                system: [],
+                messages: [
+                    { role: 'system', parts: [text(`You are a narrator.\n${style}`)] },
+                    { role: 'user', parts: [text('Open the door.')] },
+                ],
+                tools: [],
+                parameters: [{ key: 'temperature', path: '/temperature', value: temperature }],
+            },
+        },
+        promptSources: [
+            { role: 'system', tokens: 10, pieces: [{ type: 'prompt', identifier: 'main', text: 'You are a narrator.', tokens: 10 }] },
+            { role: 'system', tokens: 8, pieces: [{ type: 'prompt', identifier: 'style', text: style, tokens: 8 }] },
+            { role: 'user', tokens: 4, pieces: [{ type: 'chat', messageId: 0, text: 'Open the door.', tokens: 4 }] },
+        ],
+        toolSources: [],
+        promptNames: { main: 'Main Prompt', style: 'Style' },
+        chatHistory: { included: 1, candidates: 1 },
+        assemblyError: null,
+        mcpDiagnostics: [],
+    });
+    // Assembled after the one sent request, so it is the nearest base.
+    const earlier = { ...previewOf('Keep a restrained tone.', 1), timestampMs: 1750000050000 };
+    const harness = createHarness(previewOf('Keep a cold tone.', 0.8), earlier);
+    const container = mountApp(harness, [1], 'preview');
+    const view = within(container);
+    await flushAct();
+    await flushAct(() => fireEvent.click(view.getByRole('button', { name: 'Compare' })));
+
+    const base = view.getByRole<HTMLSelectElement>('combobox', { name: 'Compared with' });
+    expect(base.value).toBe('earlier');
+    expect(view.getByRole('button', { name: /Changed.*Parameters.*temperature 1 → 0\.8/u })).toBeTruthy();
+    expect(view.getByRole('button', { name: /1 unchanged.*Main Prompt/u })).toBeTruthy();
+    expect(view.getByRole('button', { name: /1 unchanged.*Chat #0/u })).toBeTruthy();
+    expect(view.queryByText('Open the door.')).toBeNull();
+
+    const style = view.getByRole('button', { name: /Changed.*Style.*Keep a cold tone\./u });
+    expect(style.querySelector('ins')?.textContent).toBe('cold');
+    await flushAct(() => fireEvent.click(style));
+    const lines = [...container.querySelectorAll('.tt-ri-diff-line')].map(line => `${line.getAttribute('data-op')}: ${line.textContent}`);
+    expect(lines).toEqual(['removed: −Keep a restrained tone.', 'added: +Keep a cold tone.']);
+
+    await flushAct(() => fireEvent.change(base, { target: { value: '1' } }));
+    await flushAct();
+    expect(view.getByRole('button', { name: /Removed.*request-1/u })).toBeTruthy();
+    expect(view.getByRole('button', { name: /Added.*Merged message · 2.*You are a narrator\./u })).toBeTruthy();
 });

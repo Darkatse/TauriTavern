@@ -13,13 +13,15 @@ import {
 } from './RequestInspectorContract';
 import { SubjectView, type Subject } from './SubjectView';
 import { MorePanel, Toolbar, type Mode, type Panel } from './Toolbar';
+import type { Comparable } from './compare';
+import { type BaseRef, baseKey, baseOptions, nearestBase } from './compare-base';
 import { buildCurl, hasInlineMedia } from './curl';
 import { mapLoad, useLoad, type LoadState } from './useLoad';
 import { useLogIndex } from './useLogIndex';
 
 const MODE_KEY = 'tt-request-inspector-mode';
 
-/** The view is a per-device habit; where storage is unavailable it lasts for this popup. */
+/** Structure or payload is a per-device habit; where storage is unavailable it lasts for this popup. */
 function readMode(): Mode {
     try {
         return localStorage.getItem(MODE_KEY) === 'payload' ? 'payload' : 'structure';
@@ -73,6 +75,7 @@ function RequestInspectorApp({ options }: { options: RequestInspectorMountOption
     const index = useLogIndex(options);
     const { selection } = index;
     const [mode, setMode] = useState(readMode);
+    const [pickedBase, setPickedBase] = useState<BaseRef | null>(null);
     const [reveal, setReveal] = useState<Reveal | null>(null);
     const [panel, setPanel] = useState<Panel>(null);
     const [query, setQuery] = useState('');
@@ -85,14 +88,14 @@ function RequestInspectorApp({ options }: { options: RequestInspectorMountOption
 
     const subject = useMemo((): LoadState<Subject> | null => {
         if (preview) {
-            return mapLoad(preview, value => ({ kind: 'preview', preview: value }));
+            return mapLoad(preview, value => ({ kind: 'preview', preview: value.preview }));
         }
         return log && mapLoad(log, value => ({ kind: 'log', log: value }));
     }, [preview, log]);
 
     const raw = useMemo((): LoadState<RawPayload> => {
         if (preview) {
-            return mapLoad(preview, ({ requestRaw }) => ({ requestRaw, responseRaw: null, responseRawKind: null }));
+            return mapLoad(preview, value => ({ requestRaw: value.preview.requestRaw, responseRaw: null, responseRawKind: null }));
         }
         return mapLoad(logRaw ?? { status: 'loading' }, ({ requestRaw, responseRaw, responseRawKind }) => ({
             requestRaw,
@@ -101,14 +104,34 @@ function RequestInspectorApp({ options }: { options: RequestInspectorMountOption
         }));
     }, [preview, logRaw]);
 
+    const assembled = preview?.status === 'ready' ? preview.value : null;
+    const earlier = assembled?.earlier ?? null;
+    const bases = baseOptions(selection, index.entries, earlier, tr);
+    const madeAt = selection.kind === 'preview'
+        ? assembled?.timestampMs
+        : index.entries.find(entry => entry.id === selection.id)?.timestampMs;
+    const base = (pickedBase && bases.find(option => option.key === baseKey(pickedBase)))
+        ?? nearestBase(bases, madeAt ?? Infinity);
+    const baseKind = base?.ref.kind ?? null;
+    const baseLog = useLoad(mode === 'compare' && base?.ref.kind === 'log' ? base.ref.id : null, client.getLogView, actions.errorText);
+    const baseRequest = useMemo((): LoadState<Comparable> | null => {
+        if (baseKind === 'earlier') {
+            return earlier && { status: 'ready', value: { view: earlier.view, assembly: earlier } };
+        }
+        return baseLog && mapLoad(baseLog, value => ({ view: value.view, assembly: null }));
+    }, [baseKind, earlier, baseLog]);
+
     const select = (next: Selection) => {
         setReveal(null);
+        setPickedBase(null);
         index.select(next);
     };
     const changeMode = (next: Mode) => {
         setReveal(null);
         setMode(next);
-        writeMode(next);
+        if (next !== 'compare') {
+            writeMode(next);
+        }
     };
     const copy = (produce: () => string | Promise<string>) => () => {
         void (async () => {
@@ -134,6 +157,9 @@ function RequestInspectorApp({ options }: { options: RequestInspectorMountOption
                 onSelect={select}
                 mode={mode}
                 onMode={changeMode}
+                bases={bases}
+                base={base?.key ?? null}
+                onBase={setPickedBase}
                 panel={panel}
                 onPanel={(next) => {
                     setPanel(next);
@@ -168,6 +194,7 @@ function RequestInspectorApp({ options }: { options: RequestInspectorMountOption
                     <SubjectView
                         key={shown.kind === 'preview' ? 'preview' : shown.log.id}
                         subject={shown}
+                        base={baseRequest}
                         raw={raw}
                         mode={mode}
                         reveal={reveal}

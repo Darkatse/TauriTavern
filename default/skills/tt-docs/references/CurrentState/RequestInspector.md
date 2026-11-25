@@ -83,13 +83,22 @@
 
 界面岛只渲染视图与组装结果，不认识线路格式。入口有两类：Prompt Manager 头部的"预览请求"打开预览，设置、快捷入口与 `/llmlog` 打开最新一条日志。
 
-- 两种看法出自同一份视图。结构是一份大纲，一段一行，点开才是正文；Payload 是请求行、请求头与请求体的树。
+- 三种看法出自同一份视图。结构是一份大纲，一段一行，点开才是正文；Payload 是请求行、请求头与请求体的树；对比见[第 8 节](#8-对比)。
 - 大纲的一行是一个文本段、一次工具调用、一个工具结果、一段思考、一个媒体或一个未识别的块，同一条消息的行共用一条角色色带。连续的对话消息超过 6 条时，除最后 2 条外折成一行。
 - 预览的行带出处与 token。出处按发送顺序在线路请求的文本里定位，游标只前进；工具回合按调用 id 对应。定位不到的出处单独列出，不猜位置。
 - 树上折叠节点的摘要取自大纲里同一路径的行；没有对应行的对象按通用规则，数组里的对象只列出与兄弟不同的标量。
 - 搜索是筛选：结构只留下命中的行，Payload 只留下通向命中的分支。
 - 页面上的内容不随请求变大：没有展开的部分不渲染，长正文先截断，子节点分批显示。
-- 有含义的颜色只有四种角色色，是 `.tt-ri-root` 上的自定义属性，主题可以覆盖。
+- 有含义的颜色是四种角色色与对比的增、删两色，都是 `.tt-ri-root` 上的自定义属性，主题可以覆盖。增删同时有行首的符号。
+
+## 8. 对比
+
+对比把选中的请求与一条基准相比。结果仍是一份大纲，用同一套渲染与搜索：有变化的行逐条列出，相同的行折叠。只比较请求。
+
+- 比较的是每一行发出的内容，文本末尾的空白不算。
+- 聊天与预设放置的内容分开对齐，按深度插入的条目才不会随聊天增长显示为变化。
+- 两条请求按同一粒度比较。合并消息只在两边都有组装结果时逐段比较，否则两边都按整条消息。
+- 基准默认是时间上紧挨在前的一条。预览另有"上一次预览"：与当前预览不同的最近一次预览，由外壳保存，弹窗关闭后仍在。
 
 ## 修改入口
 
@@ -105,4 +114,4 @@ Rust 路径相对 `src-tauri/crates/`，前端路径相对 `src/`。
 - 适配器里的另一份合并：`http_chat_completion_repository/` 的 `openai.rs`、`claude.rs`、`gemini.rs`、`normalizers.rs`
 - 调试包：`tauritavern/src/infrastructure/logging/dev_bundle.rs`
 - 命令与宿主 API：`tauritavern/src/presentation/commands/`、`tauritavern/src/app/dev_observability.rs`，`tauri/main/api/dev.js`、`types.d.ts`
-- 界面：`scripts/tauri/setting/request-inspector-app/`（出处定位 `prompt-sources.ts`，大纲 `outline.ts` 与 `outline-message.ts`，树 `json-tree.ts`），外壳与入口 `scripts/tauri/setting/request-inspector.js`
+- 界面：`scripts/tauri/setting/request-inspector-app/`（出处定位 `prompt-sources.ts`，大纲 `outline.ts` 与 `outline-message.ts`，树 `json-tree.ts`，对比 `compare*.ts`，序列比较 `text-diff.ts`），外壳与入口 `scripts/tauri/setting/request-inspector.js`

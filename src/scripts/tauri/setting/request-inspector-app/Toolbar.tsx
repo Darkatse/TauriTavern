@@ -1,9 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { LogIndexEntry, Selection, Translate } from './RequestInspectorContract';
-import { fill, formatClock, formatDuration } from './format';
+import type { BaseOption, BaseRef } from './compare-base';
+import { fill, logLabel } from './format';
 
-export type Mode = 'structure' | 'payload';
+export type Mode = 'structure' | 'payload' | 'compare';
 
 /** The row that opens under the bar; one at a time. */
 export type Panel = 'search' | 'more' | null;
@@ -44,13 +45,16 @@ function SearchRow({ query, onQuery, tr }: { query: string; onQuery: (query: str
     );
 }
 
-/** Which request, which view, and the two rows that open under the bar. */
-export function Toolbar({ entries, selection, onSelect, mode, onMode, panel, onPanel, query, onQuery, more, tr }: {
+/** Which request, which view, what it is compared with, and the two rows that open under the bar. */
+export function Toolbar({ entries, selection, onSelect, mode, onMode, bases, base, onBase, panel, onPanel, query, onQuery, more, tr }: {
     entries: LogIndexEntry[];
     selection: Selection;
     onSelect: (selection: Selection) => void;
     mode: Mode;
     onMode: (mode: Mode) => void;
+    bases: BaseOption[];
+    base: string | null;
+    onBase: (base: BaseRef) => void;
     panel: Panel;
     onPanel: (panel: Panel) => void;
     query: string;
@@ -59,7 +63,7 @@ export function Toolbar({ entries, selection, onSelect, mode, onMode, panel, onP
     tr: Translate;
 }) {
     const logId = selection.kind === 'log' ? selection.id : null;
-    const modes: [Mode, string][] = [['structure', tr('Structure')], ['payload', 'Payload']];
+    const modes: [Mode, string][] = [['structure', tr('Structure')], ['payload', 'Payload'], ['compare', tr('Compare')]];
 
     return (
         <header className="tt-ri-top">
@@ -86,9 +90,7 @@ export function Toolbar({ entries, selection, onSelect, mode, onMode, panel, onP
                             {entries.length === 0 ? tr('Nothing sent yet') : fill(tr('Sent ({count})'), { count: entries.length })}
                         </option>
                         {[...entries].reverse().map(entry => (
-                            <option key={entry.id} value={entry.id}>
-                                {`${entry.ok ? '✓' : '✗'} ${formatClock(entry.timestampMs)} · ${entry.model ?? entry.source} · ${formatDuration(entry.durationMs)}`}
-                            </option>
+                            <option key={entry.id} value={entry.id}>{logLabel(entry)}</option>
                         ))}
                     </select>
                 </div>
@@ -120,6 +122,23 @@ export function Toolbar({ entries, selection, onSelect, mode, onMode, panel, onP
                     />
                 </div>
             </div>
+            {mode === 'compare' && bases.length > 0 && (
+                <label className="tt-ri-base">
+                    <span>{tr('Compared with')}</span>
+                    <select
+                        className="text_pole tt-ri-base-select"
+                        value={base ?? ''}
+                        onChange={(event) => {
+                            const picked = bases.find(option => option.key === event.target.value);
+                            if (picked) {
+                                onBase(picked.ref);
+                            }
+                        }}
+                    >
+                        {bases.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+                    </select>
+                </label>
+            )}
             {panel === 'search' && <SearchRow query={query} onQuery={onQuery} tr={tr} />}
             {panel === 'more' && more}
         </header>

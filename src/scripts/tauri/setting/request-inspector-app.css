@@ -26,12 +26,15 @@ body .popup.tt-request-inspector-popup .popup-body {
     min-height: 0;
 }
 
-/* Role colours are the only colours with a meaning here; a theme may redefine them. */
+/* The role colours and the two colours of a comparison are the only colours with a meaning here; a theme may redefine them. */
 .tt-ri-root {
     --tt-ri-system: color-mix(in srgb, var(--SmartThemeBodyColor) 42%, transparent);
     --tt-ri-user: #4a90d9;
     --tt-ri-assistant: #2fa37c;
     --tt-ri-tool: #c98a2b;
+    --tt-ri-added: #4ca64c;
+    --tt-ri-removed: #d9574f;
+    --tt-ri-sign-width: 12px;
     --tt-ri-line: color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
     --tt-ri-dim: color-mix(in srgb, var(--SmartThemeBodyColor) 64%, transparent);
     /* What Noto Sans Mono lacks, such as CJK, falls straight to sans-serif; through the monospace
@@ -132,6 +135,27 @@ select.tt-ri-logs {
     margin: 0;
 }
 
+.tt-ri-base {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--tt-ri-dim);
+}
+
+.tt-ri-base > span {
+    flex: none;
+}
+
+select.tt-ri-base-select {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    text-overflow: ellipsis;
+}
+
 .tt-ri-more {
     display: flex;
     flex-direction: column;
@@ -169,6 +193,12 @@ select.tt-ri-logs {
 
 .tt-ri-facts .tt-ri-icon {
     margin-inline-start: auto;
+}
+
+.tt-ri-differences {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 14px;
 }
 
 .tt-ri-notice {
@@ -379,9 +409,113 @@ button.tt-ri-row:focus-visible {
     background: color-mix(in srgb, var(--SmartThemeBodyColor) 36%, transparent);
 }
 
+/* Comparison */
+
+.tt-ri-sign {
+    flex: none;
+    width: var(--tt-ri-sign-width);
+    color: var(--tt-ri-dim);
+    text-align: center;
+}
+
+.tt-ri-sign[data-change="added"],
+.tt-ri-counts > [data-change="added"],
+.tt-ri-key[data-change="added"] {
+    color: var(--tt-ri-added);
+}
+
+.tt-ri-sign[data-change="removed"],
+.tt-ri-counts > [data-change="removed"],
+.tt-ri-key[data-change="removed"] {
+    color: var(--tt-ri-removed);
+}
+
+.tt-ri-row[data-change="same"] > .tt-ri-name {
+    color: var(--tt-ri-dim);
+    font-weight: 400;
+}
+
+.tt-ri-row[data-change="added"],
+.tt-ri-diff-line[data-op="added"] {
+    background: color-mix(in srgb, var(--tt-ri-added) 13%, transparent);
+}
+
+.tt-ri-row[data-change="removed"],
+.tt-ri-diff-line[data-op="removed"] {
+    background: color-mix(in srgb, var(--tt-ri-removed) 13%, transparent);
+}
+
+button.tt-ri-row[data-change="added"]:hover,
+button.tt-ri-row[data-change="added"]:focus-visible {
+    background: color-mix(in srgb, var(--tt-ri-added) 21%, transparent);
+}
+
+button.tt-ri-row[data-change="removed"]:hover,
+button.tt-ri-row[data-change="removed"]:focus-visible {
+    background: color-mix(in srgb, var(--tt-ri-removed) 21%, transparent);
+}
+
+.tt-ri-root ins,
+.tt-ri-root del {
+    border-radius: 2px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.tt-ri-root ins {
+    background: color-mix(in srgb, var(--tt-ri-added) 30%, transparent);
+}
+
+.tt-ri-root del {
+    background: color-mix(in srgb, var(--tt-ri-removed) 30%, transparent);
+}
+
+.tt-ri-counts {
+    display: inline-flex;
+    flex: none;
+    gap: 6px;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+}
+
+.tt-ri-row > .tt-ri-counts {
+    margin-inline-start: auto;
+}
+
+.tt-ri-diff-line {
+    display: flex;
+    gap: 8px;
+    min-height: 1.6em;
+    padding-inline: 6px;
+}
+
+.tt-ri-diff-text {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.tt-ri-diff-skip,
+.tt-ri-diff-cut {
+    color: var(--tt-ri-dim);
+    font-family: var(--mainFontFamily);
+}
+
+.tt-ri-diff-skip {
+    padding: 2px 6px 2px calc(var(--tt-ri-sign-width) + 14px);
+    font-size: 0.9em;
+}
+
+.tt-ri-diff-cut {
+    padding-inline: 4px;
+}
+
 .tt-ri-body {
     min-width: 0;
     padding: 2px 10px 10px calc(var(--tt-ri-role-width) + 18px);
+}
+
+.tt-ri-signed .tt-ri-body {
+    padding-inline-start: calc(var(--tt-ri-role-width) + var(--tt-ri-sign-width) + 26px);
 }
 
 .tt-ri-open {
@@ -669,7 +803,12 @@ button.tt-ri-row:focus-visible {
     }
 
     .tt-ri-body,
-    .tt-ri-open > .tt-ri-body {
+    .tt-ri-open > .tt-ri-body,
+    .tt-ri-signed .tt-ri-body {
         padding: 0 10px 10px;
+    }
+
+    .tt-ri-signed .tt-ri-lead {
+        padding-inline-start: calc(var(--tt-ri-sign-width) + 8px);
     }
 }

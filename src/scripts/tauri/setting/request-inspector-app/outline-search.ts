@@ -8,6 +8,7 @@ export function rowText(row: OutlineRow): string {
         case 'json': return `${row.lead}\n${JSON.stringify(row.body.value, null, 1) ?? ''}`;
         case 'table': return row.body.entries.map(({ key, value }) => `${key} ${JSON.stringify(value) ?? ''}`).join('\n');
         case 'tool': return `${row.body.description}\n${JSON.stringify(row.body.schema, null, 1) ?? ''}`;
+        case 'diff': return row.body.lines.map(line => line.text).join('\n');
         default: return row.lead;
     }
 }

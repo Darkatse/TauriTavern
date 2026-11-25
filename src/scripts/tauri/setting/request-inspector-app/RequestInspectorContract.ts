@@ -19,6 +19,17 @@ export type RequestDescription = TauriTavernRequestDescription;
 export type PromptSource = TauriTavernPromptSource;
 export type PromptPiece = TauriTavernPromptPiece;
 
+/** The last preview assembled before the shown one that differed from it. */
+export type EarlierPreview =
+    Pick<RequestPreview, 'view' | 'promptSources' | 'toolSources' | 'promptNames' | 'chatHistory'>
+    & { timestampMs: number };
+
+export type PreviewResult = {
+    preview: RequestPreview;
+    timestampMs: number;
+    earlier: EarlierPreview | null;
+};
+
 /** The readable text of a logged exchange, as `llmApiLogs.getPreview` renders it. */
 export type LogText = Pick<TauriTavernLlmApiLogPreview, 'requestReadable' | 'responseReadable'>;
 
@@ -32,7 +43,7 @@ export type RequestInspectorClient = {
     getRaw: (id: number) => Promise<LogRaw>;
     subscribeIndex: (handler: (entry: LogIndexEntry) => void) => Promise<Unsubscribe>;
     setKeep: (value: number) => Promise<void>;
-    preview: () => Promise<RequestPreview>;
+    preview: () => Promise<PreviewResult>;
 };
 
 export type TextViewerOptions = {

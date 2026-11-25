@@ -1,4 +1,5 @@
 import type { ExchangeView, RequestPreview, Translate } from './RequestInspectorContract';
+import type { DiffLine, TextRange } from './text-diff';
 import { fill, firstLine } from './format';
 import { type Context, buildMessage, emptyRow, promptMessage } from './outline-message';
 import { SYSTEM_MESSAGE, locateSources } from './prompt-sources';
@@ -9,12 +10,28 @@ export type Tone = 'system' | 'user' | 'assistant' | 'tool';
 /** A name shown inside a row's text, where an attached entry starts. */
 export type TextLabel = { offset: number; name: string };
 
+export type ValueChange = { kind: 'added' } | { kind: 'removed' } | { kind: 'changed'; before: unknown };
+
+export type TableEntry = { key: string; value: unknown; change: ValueChange | null };
+
 export type RowBody =
     | { kind: 'text'; text: string; labels: TextLabel[] }
     | { kind: 'json'; value: unknown }
-    | { kind: 'table'; entries: { key: string; value: unknown }[] }
+    | { kind: 'table'; entries: TableEntry[] }
     | { kind: 'tool'; description: string; schema: unknown }
-    | { kind: 'rows'; rows: OutlineRow[] };
+    | { kind: 'rows'; rows: OutlineRow[] }
+    | { kind: 'diff'; lines: DiffLine[] };
+
+/** Offsets into the row's `lead`: the mark holds only while that lead does. */
+export type LeadMark = TextRange & { op: 'added' | 'removed' };
+
+export type RowChange =
+    | { kind: 'added' }
+    | { kind: 'removed' }
+    | { kind: 'changed'; added: number; removed: number; mark: LeadMark | null };
+
+/** `key` names a piece, not a row: the text and the tool calls of one chat record share it. */
+export type RowOrigin = { chat: boolean; key: string | null };
 
 /** One line of the outline: something with a name that can be opened. */
 export type OutlineRow = {
@@ -31,6 +48,8 @@ export type OutlineRow = {
     tags: string[];
     /** Open before the reader touches it. */
     open: boolean;
+    origin: RowOrigin | null;
+    change: RowChange | null;
 };
 
 export type OutlineMessage = {
@@ -52,6 +71,7 @@ export type OutlineFold = {
     note: string;
     tokens: number | null;
     messages: OutlineMessage[];
+    change: 'same' | 'added' | 'removed' | null;
 };
 
 export type OutlineItem =
@@ -73,15 +93,16 @@ export type Outline = {
 /** What a preview knows about how the request was assembled. */
 export type Assembly = Pick<RequestPreview, 'promptSources' | 'toolSources' | 'promptNames' | 'chatHistory'>;
 
-const FOLD_OVER = 6;
+export const FOLD_OVER = 6;
 const FOLD_KEEP = 2;
 const HEAD_PARAMETERS = 4;
 
-export function buildOutline(view: ExchangeView, assembly: Assembly | null, tr: Translate): Outline {
+export function buildOutline(view: ExchangeView, assembly: Assembly | null, tr: Translate, split = true): Outline {
     const { request, response } = view;
     const context: Context = {
         tr,
         assembly,
+        split,
         located: assembly ? locateSources(request, assembly.promptSources) : null,
         toolNames: toolNames(view),
     };
@@ -165,13 +186,14 @@ function makeFold(messages: OutlineMessage[], earliest: boolean, { tr, assembly 
         ].filter(Boolean).join(' · '),
         tokens: sizes.length > 0 ? sizes.reduce((sum, value) => sum + value, 0) : null,
         messages,
+        change: null,
     };
 }
 
 function parametersRow({ request }: ExchangeView, tr: Translate): OutlineRow | null {
-    const entries = [
-        ...request.parameters.map(({ key, value }) => ({ key, value })),
-        ...(request.toolChoice === undefined ? [] : [{ key: tr('Tool choice'), value: request.toolChoice }]),
+    const entries: TableEntry[] = [
+        ...request.parameters.map(({ key, value }) => ({ key, value, change: null })),
+        ...(request.toolChoice === undefined ? [] : [{ key: tr('Tool choice'), value: request.toolChoice, change: null }]),
     ];
     if (entries.length === 0) {
         return null;
@@ -269,5 +291,11 @@ export function defaultOpenRows(outline: Outline): Set<string> {
 export function openableRows(outline: Outline): Set<string> {
     const ids = new Set(outline.items.flatMap(item => item.kind === 'fold' ? [item.fold.id] : []));
     eachRow(outline, row => row.body !== null && ids.add(row.id));
+    return ids;
+}
+
+export function changedRows(outline: Outline): Set<string> {
+    const ids = new Set<string>();
+    eachRow(outline, row => row.change !== null && row.body !== null && ids.add(row.id));
     return ids;
 }

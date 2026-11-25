@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Row, Size, type RowContext } from './OutlineRows';
+import { Row, Sign, Size, type RowContext } from './OutlineRows';
 import { fill, formatCount } from './format';
 import type { Outline, OutlineFold, OutlineMessage } from './outline';
 
@@ -38,10 +38,18 @@ function MessageBlock({ message, ctx }: { message: OutlineMessage; ctx: RowConte
 
 function FoldBlock({ fold, ctx }: { fold: OutlineFold; ctx: RowContext }) {
     const open = ctx.expanded.has(fold.id);
+    const change = fold.change === 'same' ? null : fold.change;
     return (
         <>
             <section className="tt-ri-message tt-ri-fold">
-                <button type="button" className="tt-ri-row" aria-expanded={open} onClick={() => ctx.onToggle(fold.id)}>
+                <button
+                    type="button"
+                    className="tt-ri-row"
+                    data-change={fold.change ?? undefined}
+                    aria-expanded={open}
+                    onClick={() => ctx.onToggle(fold.id)}
+                >
+                    {ctx.signed && <Sign change={change} tr={ctx.tr} />}
                     <span className="tt-ri-role" />
                     <span className="tt-ri-name">{fold.label}</span>
                     <span className="tt-ri-lead">{fold.note}</span>
@@ -72,7 +80,7 @@ export function OutlineView({ outline, onReveal, ...shared }: Omit<RowContext, '
     const rest = outline.items.length - limit;
 
     return (
-        <div className="tt-ri-outline">
+        <div className={`tt-ri-outline${shared.signed ? ' tt-ri-signed' : ''}`}>
             {outline.head.map(row => (
                 <section key={row.id} className="tt-ri-message">
                     <Row row={row} speaker="" messageNote="" ctx={request} />

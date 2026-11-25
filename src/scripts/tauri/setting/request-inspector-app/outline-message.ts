@@ -1,7 +1,7 @@
 import { formatBytes } from '../format-bytes.js';
 import type { MessageView, PartView, PromptPiece, Translate } from './RequestInspectorContract';
 import { fill, firstLine, formatCount } from './format';
-import type { Assembly, OutlineMessage, OutlineRow, TextLabel, Tone } from './outline';
+import type { Assembly, OutlineMessage, OutlineRow, RowOrigin, TextLabel, Tone } from './outline';
 import { type PieceRef, type SourceMap, textPartKey } from './prompt-sources';
 import { pieceName, promptName } from './source-names';
 
@@ -21,6 +21,8 @@ export type Context = {
     assembly: Assembly | null;
     located: SourceMap | null;
     toolNames: Map<string, string>;
+    /** A text assembled from several pieces gets a row for each. */
+    split: boolean;
 };
 
 /** A row and the assembled piece its size comes from. */
@@ -51,12 +53,18 @@ export function buildMessage(
         if (!info) {
             return draft;
         }
-        if (info.piece.type !== 'chat') {
+        const { piece } = info;
+        const chat = piece.type === 'chat';
+        if (!chat) {
             placed = true;
-        } else if (info.piece.messageId !== undefined) {
-            chatIds.push(info.piece.messageId);
+        } else if (piece.messageId !== undefined) {
+            chatIds.push(piece.messageId);
         }
-        return { row: draft.row, unit: `${ref.source}:${ref.piece}`, unitTokens: info.tokens };
+        return {
+            row: { ...draft.row, origin: pieceOrigin(piece) },
+            unit: `${ref.source}:${ref.piece}`,
+            unitTokens: info.tokens,
+        };
     };
 
     message.parts.forEach((part, partIndex) => {
@@ -66,9 +74,14 @@ export function buildMessage(
             case 'text': {
                 const pieces = located?.segments.get(textPartKey(index, partIndex)) ?? [];
                 segments += pieces.length;
-                const rows = pieces.length === 0
-                    ? [draft(textRow(rowId, part.text, path, open))]
-                    : pieces.map((segment, at) => {
+                const whole = draft(textRow(rowId, part.text, path, open));
+                let rows: Draft[];
+                if (pieces.length === 0) {
+                    rows = [whole];
+                } else if (pieces.length > 1 && !context.split) {
+                    rows = [together(whole, pieces.map(segment => sourced(whole, segment)))];
+                } else {
+                    rows = pieces.map((segment, at) => {
                         const text = part.text.slice(at === 0 ? 0 : segment.start, pieces[at + 1]?.start);
                         const info = pieceInfo(context, segment);
                         return sourced(draft({
@@ -77,6 +90,7 @@ export function buildMessage(
                             note: info?.note ?? '',
                         }), segment);
                     });
+                }
                 if (part.cacheBreakpoint) {
                     rows.at(-1)?.row.tags.push(tr('Cache breakpoint'));
                 }
@@ -198,6 +212,20 @@ function pieceInfo(context: Context, ref: PieceRef): { piece: PromptPiece; name:
     };
 }
 
+function pieceOrigin(piece: PromptPiece): RowOrigin {
+    const chat = piece.type === 'chat';
+    const key = chat ? piece.messageId : piece.identifier;
+    return { chat, key: key === undefined ? null : `${piece.type}:${key}` };
+}
+
+function together(whole: Draft, pieces: Draft[]): Draft {
+    return {
+        row: whole.row,
+        unit: whole.row.id,
+        unitTokens: pieces.reduce((sum, piece) => sum + piece.unitTokens, 0),
+    };
+}
+
 function attachedLabels(text: string, piece: PromptPiece | undefined, context: Context): TextLabel[] {
     const labels: TextLabel[] = [];
     let from = 0;
@@ -217,7 +245,10 @@ function draft(row: OutlineRow): Draft {
 }
 
 export function emptyRow(id: string, path: string | null): OutlineRow {
-    return { id, name: '', note: '', lead: '', code: false, body: null, tokens: null, path, tags: [], open: false };
+    return {
+        id, name: '', note: '', lead: '', code: false, body: null, tokens: null, path, tags: [], open: false,
+        origin: null, change: null,
+    };
 }
 
 function textRow(id: string, text: string, path: string | null, open: boolean, labels: TextLabel[] = []): OutlineRow {
