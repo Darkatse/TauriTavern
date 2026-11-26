@@ -19,6 +19,7 @@ mod extension_fields;
 mod gemini_interactions;
 mod makersuite;
 mod minimax;
+mod mistralai;
 mod moonshot;
 mod nanogpt;
 mod openai;
@@ -87,6 +88,7 @@ pub(super) fn build_payload(
         ChatCompletionSource::Xai => xai::build(payload),
         ChatCompletionSource::ElectronHub => electronhub::build(payload),
         ChatCompletionSource::Perplexity => perplexity::build(payload),
+        ChatCompletionSource::MistralAi => Ok(mistralai::build(payload)),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => zai::build(payload),

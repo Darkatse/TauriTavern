@@ -25,6 +25,7 @@ pub enum ChatCompletionSource {
     ElectronHub,
     Fireworks,
     Perplexity,
+    MistralAi,
 }
 
 impl ChatCompletionSource {
@@ -52,6 +53,7 @@ impl ChatCompletionSource {
         Self::ElectronHub,
         Self::Fireworks,
         Self::Perplexity,
+        Self::MistralAi,
     ];
 
     pub fn parse(raw: &str) -> Option<Self> {
@@ -81,6 +83,7 @@ impl ChatCompletionSource {
             "electronhub" => Some(Self::ElectronHub),
             "fireworks" => Some(Self::Fireworks),
             "perplexity" => Some(Self::Perplexity),
+            "mistralai" => Some(Self::MistralAi),
             _ => None,
         }
     }
@@ -110,6 +113,7 @@ impl ChatCompletionSource {
             Self::ElectronHub => "electronhub",
             Self::Fireworks => "fireworks",
             Self::Perplexity => "perplexity",
+            Self::MistralAi => "mistralai",
         }
     }
 
@@ -138,6 +142,7 @@ impl ChatCompletionSource {
             Self::ElectronHub => "electronhub_model",
             Self::Fireworks => "fireworks_model",
             Self::Perplexity => "perplexity_model",
+            Self::MistralAi => "mistralai_model",
         }
     }
 
@@ -166,6 +171,7 @@ impl ChatCompletionSource {
             Self::ElectronHub => "Electron Hub",
             Self::Fireworks => "Fireworks AI",
             Self::Perplexity => "Perplexity",
+            Self::MistralAi => "Mistral AI",
         }
     }
 
@@ -194,6 +200,7 @@ impl ChatCompletionSource {
             Self::ElectronHub => SecretKeys::ELECTRONHUB,
             Self::Fireworks => SecretKeys::FIREWORKS,
             Self::Perplexity => SecretKeys::PERPLEXITY,
+            Self::MistralAi => SecretKeys::MISTRALAI,
         }
     }
 
@@ -209,6 +216,7 @@ impl ChatCompletionSource {
                 | Self::Moonshot
                 | Self::Zai
                 | Self::Xai
+                | Self::MistralAi
         )
     }
 }

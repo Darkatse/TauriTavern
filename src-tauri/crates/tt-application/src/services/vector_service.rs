@@ -606,14 +606,11 @@ impl VectorSource {
             Self::SiliconFlow => Some(ChatCompletionSource::SiliconFlow),
             Self::WorkersAi => Some(ChatCompletionSource::WorkersAi),
             Self::ElectronHub => Some(ChatCompletionSource::ElectronHub),
+            Self::Mistral => Some(ChatCompletionSource::MistralAi),
             Self::Extras | Self::Ollama | Self::LlamaCpp | Self::Vllm | Self::KoboldCpp => {
                 Some(ChatCompletionSource::Custom)
             }
-            Self::Transformers
-            | Self::Mistral
-            | Self::TogetherAi
-            | Self::NomicAi
-            | Self::WebLlm => None,
+            Self::Transformers | Self::TogetherAi | Self::NomicAi | Self::WebLlm => None,
         }
     }
 

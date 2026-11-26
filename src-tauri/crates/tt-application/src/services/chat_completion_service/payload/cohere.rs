@@ -5,9 +5,8 @@ use crate::errors::ApplicationError;
 use super::content_parts::{
     InputPart, MediaSource, media_kind_in_value, parse_openai_chat_content,
 };
-use super::prompt_post_processing::{PromptNames, prefixes_speaker_name};
+use super::prompt_post_processing::{PromptNames, fold_speaker_name};
 use super::shared::insert_if_present;
-use super::shared::message_content_to_text;
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 const PROMPT_PLACEHOLDER: &str = "Let's get started.";
@@ -131,7 +130,11 @@ fn convert_messages(
 
     validate_multimodal_content(&messages)?;
     apply_tool_call_primer(&mut messages);
-    strip_unsupported_names(&mut messages, names);
+    for message in messages.iter_mut().filter_map(Value::as_object_mut) {
+        fold_speaker_name(message, names);
+        // Cohere reads no `name`, not even on tool results.
+        message.remove("name");
+    }
 
     Ok(messages)
 }
@@ -310,138 +313,6 @@ fn build_tool_call_primer(tool_calls: &Value) -> String {
         "I'm going to call a tool for that.".to_string()
     } else {
         format!("I'm going to call a tool for that: {}", names.join(", "))
-    }
-}
-
-fn strip_unsupported_names(messages: &mut [Value], names: &PromptNames) {
-    for message in messages.iter_mut() {
-        let Some(message_object) = message.as_object_mut() else {
-            continue;
-        };
-
-        let role = message_object
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user")
-            .trim()
-            .to_ascii_lowercase();
-
-        let name = message_object
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-
-        let Some(name) = name else {
-            continue;
-        };
-
-        let content_text = message_content_to_text(message_object.get("content"));
-
-        if role == "system" && name == "example_assistant" {
-            let prefix = format!("{}: ", names.char_name);
-            if !names.char_name.is_empty()
-                && !content_text.starts_with(&prefix)
-                && !names.starts_with_group_name(&content_text)
-            {
-                prefix_content(
-                    message_object.entry("content").or_insert(Value::Null),
-                    &prefix,
-                );
-            }
-        } else if role == "system" && name == "example_user" {
-            let prefix = format!("{}: ", names.user_name);
-            if !names.user_name.is_empty() && !content_text.starts_with(&prefix) {
-                prefix_content(
-                    message_object.entry("content").or_insert(Value::Null),
-                    &prefix,
-                );
-            }
-        } else if prefixes_speaker_name(&role) {
-            let prefix = format!("{name}: ");
-            if !content_text.starts_with(&prefix) {
-                prefix_content(
-                    message_object.entry("content").or_insert(Value::Null),
-                    &prefix,
-                );
-            }
-        }
-
-        message_object.remove("name");
-    }
-}
-
-fn prefix_content(content: &mut Value, prefix: &str) {
-    match content {
-        Value::String(text) => {
-            if !text.starts_with(prefix) {
-                *text = format!("{prefix}{text}");
-            }
-        }
-        Value::Array(parts) => {
-            for part in parts.iter_mut() {
-                match part {
-                    Value::String(fragment) => {
-                        if !fragment.starts_with(prefix) {
-                            *fragment = format!("{prefix}{fragment}");
-                        }
-                        return;
-                    }
-                    Value::Object(object) => {
-                        if object.get("type").and_then(Value::as_str) != Some("text") {
-                            continue;
-                        }
-
-                        let Some(text_value) = object.get_mut("text") else {
-                            continue;
-                        };
-
-                        if let Value::String(fragment) = text_value {
-                            if !fragment.starts_with(prefix) {
-                                *fragment = format!("{prefix}{fragment}");
-                            }
-                            return;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            parts.insert(
-                0,
-                json!({
-                    "type": "text",
-                    "text": prefix,
-                }),
-            );
-        }
-        Value::Null => {
-            *content = Value::String(prefix.to_string());
-        }
-        Value::Object(object) => {
-            if object.get("type").and_then(Value::as_str) == Some("text")
-                && let Some(Value::String(fragment)) = object.get_mut("text")
-            {
-                if !fragment.starts_with(prefix) {
-                    *fragment = format!("{prefix}{fragment}");
-                }
-                return;
-            }
-
-            let original = Value::Object(std::mem::take(object));
-            *content = json!([
-                {
-                    "type": "text",
-                    "text": prefix,
-                },
-                original,
-            ]);
-        }
-        _ => {
-            let text = content.to_string();
-            *content = Value::String(format!("{prefix}{text}"));
-        }
     }
 }
 

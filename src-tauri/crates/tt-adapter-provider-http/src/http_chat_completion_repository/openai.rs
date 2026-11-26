@@ -266,7 +266,8 @@ impl OpenAiChatAccumulator {
             .get_mut("delta")
             .and_then(Value::as_object_mut)
             .ok_or_else(|| invalid_openai_response("choice is missing delta"))?;
-        if let Some(value) = take_optional_string(delta, "content")? {
+        normalize_message_reasoning(delta)?;
+        if let Some(value) = take_content_text(delta)? {
             if !value.is_empty() {
                 on_delta(ChatCompletionStreamDelta::Text {
                     text: value.clone(),
@@ -277,7 +278,6 @@ impl OpenAiChatAccumulator {
         if let Some(value) = take_optional_string(delta, "refusal")? {
             append_string_fragment(&mut self.refusal, value);
         }
-        normalize_message_reasoning(delta)?;
         if let Some(value) = take_optional_string(delta, "reasoning")? {
             append_string_fragment(&mut self.reasoning, value);
         }
@@ -527,30 +527,54 @@ fn normalize_message_reasoning(message: &mut Map<String, Value>) -> Result<(), D
             }
         }
     }
-    let details = match message.get("reasoning_details") {
-        None | Some(Value::Null) => return Ok(()),
-        Some(Value::Array(details)) => details,
+    let mut text = String::new();
+    match message.get("reasoning_details") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(details)) => {
+            for detail in details {
+                let field = match detail.get("type").and_then(Value::as_str) {
+                    Some("reasoning.text") => "text",
+                    Some("reasoning.summary") => "summary",
+                    _ => continue,
+                };
+                if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
+                    text.push_str(fragment);
+                }
+            }
+        }
         Some(_) => {
             return Err(invalid_openai_response(
                 "reasoning_details must be an array",
             ));
         }
-    };
-    let mut text = String::new();
-    for detail in details {
-        let field = match detail.get("type").and_then(Value::as_str) {
-            Some("reasoning.text") => "text",
-            Some("reasoning.summary") => "summary",
-            _ => continue,
-        };
-        if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
-            text.push_str(fragment);
-        }
+    }
+    // Mistral sends reasoning as `thinking` chunks inside `content`.
+    if let Some(Value::Array(chunks)) = message.get("content") {
+        text.extend(
+            chunks
+                .iter()
+                .filter(|chunk| chunk.get("type").and_then(Value::as_str) == Some("thinking"))
+                .filter_map(|chunk| chunk.get("thinking").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|part| part.get("text").and_then(Value::as_str)),
+        );
     }
     if !text.is_empty() {
         message.insert("reasoning_content".to_string(), Value::String(text));
     }
     Ok(())
+}
+
+fn take_content_text(delta: &mut Map<String, Value>) -> Result<Option<String>, DomainError> {
+    let Some(Value::Array(chunks)) = delta.get("content") else {
+        return take_optional_string(delta, "content");
+    };
+    let text = chunks
+        .iter()
+        .filter_map(|chunk| chunk.get("text").and_then(Value::as_str))
+        .collect();
+    delta.remove("content");
+    Ok(Some(text))
 }
 
 fn take_optional_string(
@@ -598,6 +622,10 @@ mod tests {
                 {"type": "reasoning.summary", "summary": " act"},
                 {"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}
             ]}),
+            json!({"content": [
+                {"type": "thinking", "thinking": [{"type": "text", "text": " and check"}]},
+                {"type": "text", "text": "Done"}
+            ]}),
         ] {
             let event = json!({"choices": [{"index": 0, "delta": delta}]});
             accumulator
@@ -615,11 +643,12 @@ mod tests {
             )
             .unwrap();
         let response = accumulator.finish().unwrap().body;
-        assert_eq!(streamed, "plan then act");
+        assert_eq!(streamed, "plan then act and check");
         assert_eq!(
             response["choices"][0]["message"]["reasoning_content"],
             streamed
         );
+        assert_eq!(response["choices"][0]["message"]["content"], "Done");
         assert_eq!(
             response["choices"][0]["message"]["reasoning_details"][3]["data"],
             "opaque"
@@ -645,12 +674,20 @@ mod tests {
                 json!({"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}]}),
                 json!(null),
             ),
+            (
+                json!({"content": [
+                    {"type": "thinking", "thinking": [{"type": "text", "text": "plan"}]},
+                    {"type": "text", "text": "answer"}
+                ]}),
+                json!("plan"),
+            ),
         ] {
             let original = message.clone();
             normalize_message_reasoning(message.as_object_mut().unwrap()).unwrap();
             assert_eq!(message["reasoning_content"], expected);
             assert_eq!(message["reasoning"], original["reasoning"]);
             assert_eq!(message["reasoning_details"], original["reasoning_details"]);
+            assert_eq!(message["content"], original["content"]);
         }
         let mut invalid =
             json!({"reasoning_content": 42, "reasoning": "must not mask invalid data"});

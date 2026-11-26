@@ -367,7 +367,8 @@ fn provider_api(
                 | ChatCompletionSource::Pollinations
                 | ChatCompletionSource::ElectronHub
                 | ChatCompletionSource::Fireworks
-                | ChatCompletionSource::Perplexity,
+                | ChatCompletionSource::Perplexity
+                | ChatCompletionSource::MistralAi,
                 _,
             ) => (ProviderApi::OpenAi, source_name),
             (ChatCompletionSource::Cohere, _) => (ProviderApi::Cohere, source_name),
@@ -429,7 +430,8 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Chutes
             | ChatCompletionSource::Zai
-            | ChatCompletionSource::ElectronHub => {
+            | ChatCompletionSource::ElectronHub
+            | ChatCompletionSource::MistralAi => {
                 openai::list_models(self, config, source_name).await
             }
             ChatCompletionSource::SiliconFlow => {

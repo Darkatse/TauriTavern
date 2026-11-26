@@ -53,6 +53,7 @@ const ELECTRONHUB_API_BASE: &str = "https://api.electronhub.ai/v1";
 const FIREWORKS_API_BASE: &str = "https://api.fireworks.ai/inference/v1";
 const FIREWORKS_STATUS_API_BASE: &str = "https://api.fireworks.ai/v1";
 const PERPLEXITY_API_BASE: &str = "https://api.perplexity.ai";
+const MISTRALAI_API_BASE: &str = "https://api.mistral.ai/v1";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
@@ -489,6 +490,7 @@ fn default_base_url(
             ApiConfigPurpose::Generate => FIREWORKS_API_BASE.to_string(),
         },
         ChatCompletionSource::Perplexity => PERPLEXITY_API_BASE.to_string(),
+        ChatCompletionSource::MistralAi => MISTRALAI_API_BASE.to_string(),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
