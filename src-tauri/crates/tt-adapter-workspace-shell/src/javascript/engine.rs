@@ -14,12 +14,14 @@ use super::runtime::{
     MAX_OUTPUT_BYTES, Output, RUNTIME_MODULE, RuntimeModule, RuntimeState, output_object,
     process_object,
 };
+use super::shell::Nesting;
 
 pub(super) fn execute(
     script: Script,
     cwd: String,
     files: Files,
     host: Arc<WorkspaceShellContext>,
+    nesting: Arc<Nesting>,
 ) -> Result<ExecResult, DomainError> {
     let (name, source, entry) = match source(script.source, &cwd, &files) {
         Ok(source) => source,
@@ -42,6 +44,7 @@ pub(super) fn execute(
             files: files.clone(),
             context: host,
             output: output.clone(),
+            nesting,
         })
         .map_err(|_| rquickjs::Error::Unknown)?;
         ctx.globals()
