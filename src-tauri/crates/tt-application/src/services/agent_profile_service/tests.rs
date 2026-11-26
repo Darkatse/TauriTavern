@@ -5,6 +5,7 @@ use serde_json::json;
 
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::agent::profile::{
     AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding, AgentModelBindingMode,
     AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition, AgentProfileId,
@@ -12,7 +13,7 @@ use tt_domain::models::agent::profile::{
 };
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
 use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::models::preset::PresetType;
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
@@ -488,7 +489,12 @@ impl TestPresetRepository {
 
 #[async_trait]
 impl PresetRepository for TestPresetRepository {
-    async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+    async fn save_preset(
+        &self,
+        _name: &str,
+        _preset_type: &PresetType,
+        _preset: JsonDocument,
+    ) -> Result<(), DomainError> {
         Ok(())
     }
 
@@ -513,13 +519,9 @@ impl PresetRepository for TestPresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         if self.preset_exists(name, preset_type).await? {
-            return Ok(Some(Preset::new(
-                name.to_string(),
-                preset_type.clone(),
-                json!({ "chat_completion_source": "openai" }),
-            )));
+            return Ok(Some(openai_preset()));
         }
         Ok(None)
     }
@@ -535,20 +537,18 @@ impl PresetRepository for TestPresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         if *preset_type != PresetType::OpenAI
             || !self.default_openai.iter().any(|preset| preset == name)
         {
             return Ok(None);
         }
-        Ok(Some(DefaultPreset {
-            filename: format!("{name}.json"),
-            name: name.to_string(),
-            preset_type: PresetType::OpenAI,
-            is_default: true,
-            data: json!({ "chat_completion_source": "openai" }),
-        }))
+        Ok(Some(openai_preset()))
     }
+}
+
+fn openai_preset() -> JsonDocument {
+    JsonDocument::parse(br#"{"chat_completion_source":"openai"}"#).unwrap()
 }
 
 fn tool(name: &str, model_alias: &str) -> AgentModelTool {

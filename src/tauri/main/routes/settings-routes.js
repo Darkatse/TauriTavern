@@ -152,7 +152,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
             dto: {
                 name: body?.name || '',
                 apiId: body?.apiId || '',
-                preset: body?.preset || {},
+                preset_json: JSON.stringify(body?.preset ?? null),
             },
         });
 

@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use tokio::fs;
 
 use crate::commit_stage::{CommitSessions, PageGeneration};
-use crate::file_system::{list_files_with_extension, read_json_file};
+use crate::file_system::list_files_with_extension;
 use crate::preset_file_naming::load_named_preset_files;
 use crate::sillytavern_sorting::{
     sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
@@ -16,9 +16,7 @@ use tt_domain::errors::DomainError;
 use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::Personas;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{
-    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
-};
+use tt_domain::models::settings::{ChatBackupSettings, SettingsSnapshot, TauriTavernSettings};
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsCommitResult, SettingsRepository, StoredUserSettings,
 };
@@ -94,16 +92,14 @@ impl FileSettingsRepository {
     async fn read_json_files_from_directory(
         &self,
         dir: &Path,
-    ) -> Result<Vec<UserSettings>, DomainError> {
+    ) -> Result<Vec<JsonDocument>, DomainError> {
         let mut result = Vec::new();
         let mut paths = list_files_with_extension(dir, "json").await?;
         sort_paths_by_file_name_js_default(&mut paths)?;
 
         for path in paths {
-            match read_json_file::<UserSettings>(&path).await {
-                Ok(settings) => {
-                    result.push(settings);
-                }
+            match read_document(&path).await {
+                Ok(document) => result.push(document),
                 Err(e) => {
                     tracing::warn!("Failed to read settings file {}: {}", path.display(), e);
                 }
@@ -116,7 +112,7 @@ impl FileSettingsRepository {
     async fn read_presets_from_directory(
         &self,
         dir_name: &str,
-    ) -> Result<Vec<UserSettings>, DomainError> {
+    ) -> Result<Vec<JsonDocument>, DomainError> {
         let dir = self.base_directory.join(dir_name);
         self.read_json_files_from_directory(&dir).await
     }
@@ -230,6 +226,15 @@ impl FileSettingsRepository {
 
         SettingsAggregateSignature::new(signature)
     }
+}
+
+async fn read_document(path: &Path) -> Result<JsonDocument, DomainError> {
+    let bytes = fs::read(path).await.map_err(|error| {
+        DomainError::InternalError(format!("Failed to read {}: {error}", path.display()))
+    })?;
+    JsonDocument::parse(&bytes).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid JSON in {}: {error}", path.display()))
+    })
 }
 
 #[async_trait]
@@ -410,31 +415,31 @@ impl SettingsRepository for FileSettingsRepository {
         Ok(Self::settings_signature_from_entries(&entries))
     }
 
-    async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("themes").await
     }
 
-    async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("movingUI").await
     }
 
-    async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("QuickReplies").await
     }
 
-    async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("instruct").await
     }
 
-    async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("context").await
     }
 
-    async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("sysprompt").await
     }
 
-    async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         self.read_presets_from_directory("reasoning").await
     }
 
@@ -923,15 +928,9 @@ mod tests {
             .expect("write symbol theme");
 
         let themes = repository.get_themes().await.expect("load themes");
-        let ids: Vec<&str> = themes
+        let ids: Vec<String> = themes
             .iter()
-            .map(|theme| {
-                theme
-                    .data
-                    .get("id")
-                    .and_then(|value| value.as_str())
-                    .expect("theme id should be string")
-            })
+            .map(|theme| theme.get(&["id"]).unwrap().expect("theme id"))
             .collect();
 
         assert_eq!(ids, vec!["symbol", "latin", "emoji"]);

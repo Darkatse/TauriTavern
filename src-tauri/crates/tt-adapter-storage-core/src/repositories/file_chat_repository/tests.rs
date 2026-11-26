@@ -2706,10 +2706,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
             "session",
             "my-ext",
             "index",
-            json!({
-                "a": 1,
-                "nested": { "x": 1 },
-            }),
+            r#"{"zeta":1,"nested":{"x":1}}"#,
         )
         .await
         .expect("seed store json");
@@ -2733,10 +2730,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
             "session",
             "my-ext",
             "index",
-            json!({
-                "b": 2,
-                "nested": { "y": 2 },
-            }),
+            r#"{"alpha":2,"nested":{"y":2}}"#,
         )
         .await
         .expect("merge-update store json");
@@ -2746,16 +2740,12 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         .await
         .expect("read merged store json");
     assert_eq!(
-        merged,
-        json!({
-            "a": 1,
-            "b": 2,
-            "nested": { "x": 1, "y": 2 },
-        })
+        merged.get(),
+        r#"{"zeta":1,"nested":{"x":1,"y":2},"alpha":2}"#
     );
 
     repository
-        .update_character_chat_store_json("alice", "session", "my-ext", "index", json!(42))
+        .update_character_chat_store_json("alice", "session", "my-ext", "index", "42")
         .await
         .expect("replace store json");
 
@@ -2763,7 +2753,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         .get_character_chat_store_json("alice", "session", "my-ext", "index")
         .await
         .expect("read replaced store json");
-    assert_eq!(replaced, json!(42));
+    assert_eq!(replaced.get(), "42");
 
     repository
         .update_character_chat_store_json(
@@ -2771,7 +2761,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
             "session",
             "my-ext",
             "missing",
-            json!({ "created": true }),
+            r#"{"created":true}"#,
         )
         .await
         .expect("upsert store json");
@@ -2797,7 +2787,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         .get_character_chat_store_json("alice", "session", "my-ext", "renamed")
         .await
         .expect("read created store json");
-    assert_eq!(created, json!({ "created": true }));
+    assert_eq!(created.get(), r#"{"created":true}"#);
 
     commit_payload_bytes(
         &repository,
@@ -2809,7 +2799,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
     .unwrap();
     assert!(matches!(
         repository
-            .set_character_chat_store_json("alice", "unsafe", "my-ext", "index", json!({}))
+            .set_character_chat_store_json("alice", "unsafe", "my-ext", "index", "{}")
             .await,
         Err(DomainError::InvalidData(_))
     ));
@@ -2822,12 +2812,7 @@ async fn group_chat_store_update_json_and_key_work() {
     let repository = setup_repository(temp.path()).await;
 
     repository
-        .update_group_chat_store_json(
-            "group-session",
-            "my-ext",
-            "index",
-            json!({ "hello": "world" }),
-        )
+        .update_group_chat_store_json("group-session", "my-ext", "index", r#"{"hello":"world"}"#)
         .await
         .expect("upsert group store json");
 
@@ -2840,7 +2825,7 @@ async fn group_chat_store_update_json_and_key_work() {
         .get_group_chat_store_json("group-session", "my-ext", "index-v2")
         .await
         .expect("read renamed group key");
-    assert_eq!(value, json!({ "hello": "world" }));
+    assert_eq!(value.get(), r#"{"hello":"world"}"#);
 }
 
 #[tokio::test]

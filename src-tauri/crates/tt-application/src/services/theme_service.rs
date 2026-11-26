@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::sync::Arc;
 
 use crate::errors::ApplicationError;
@@ -18,28 +17,12 @@ impl ThemeService {
     }
 
     /// Save a theme
-    pub async fn save_theme(&self, name: &str, data: Value) -> Result<(), ApplicationError> {
-        tracing::info!("Saving theme: {}", name);
+    pub async fn save_theme(&self, theme_json: &str) -> Result<(), ApplicationError> {
+        let theme = Theme::parse(theme_json)?;
+        tracing::info!("Saving theme: {}", theme.name);
 
-        if name.is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Theme name is required".to_string(),
-            ));
-        }
-
-        // Validate the theme data
-        if !data.is_object() {
-            return Err(ApplicationError::ValidationError(
-                "Theme data must be a JSON object".to_string(),
-            ));
-        }
-
-        // Create a new theme
-        let theme = Theme::new(name.to_string(), data);
-
-        // Save the theme
         self.theme_repository.save_theme(&theme).await.map_err(|e| {
-            tracing::error!("Failed to save theme {}: {}", name, e);
+            tracing::error!("Failed to save theme {}: {}", theme.name, e);
             e.into()
         })
     }

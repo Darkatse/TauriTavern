@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::path::Path;
 
 use tt_domain::errors::DomainError;
@@ -92,7 +93,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Write a JSON value to the group chat extension store.
     async fn set_group_chat_store_json(
@@ -100,7 +101,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Merge-update a JSON value in the group chat extension store.
@@ -109,7 +110,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Rename a JSON key in the group chat extension store.

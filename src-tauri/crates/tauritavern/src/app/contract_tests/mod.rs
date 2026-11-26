@@ -71,7 +71,7 @@ use tt_domain::models::chat::Chat;
 use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
 };
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::models::preset::PresetType;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -757,16 +757,21 @@ impl AgentRunActivity for NoActiveAgentRuns {
 
 #[derive(Default)]
 struct TestPresetRepository {
-    presets: Mutex<HashMap<(String, PresetType), Preset>>,
+    presets: Mutex<HashMap<(String, PresetType), JsonDocument>>,
 }
 
 #[async_trait]
 impl PresetRepository for TestPresetRepository {
-    async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        self.presets.lock().await.insert(
-            (preset.name.clone(), preset.preset_type.clone()),
-            preset.clone(),
-        );
+    async fn save_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+        preset: JsonDocument,
+    ) -> Result<(), DomainError> {
+        self.presets
+            .lock()
+            .await
+            .insert((name.to_string(), preset_type.clone()), preset);
         Ok(())
     }
 
@@ -794,7 +799,7 @@ impl PresetRepository for TestPresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         Ok(self
             .presets
             .lock()
@@ -811,7 +816,7 @@ impl PresetRepository for TestPresetRepository {
         &self,
         _name: &str,
         _preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         Ok(None)
     }
 }

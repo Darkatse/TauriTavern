@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tt_domain::errors::DomainError;
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::json_document::JsonDocument;
+use tt_domain::models::preset::PresetType;
 use tt_ports::repositories::preset_repository::PresetRepository;
 
 /// Service for managing presets
@@ -14,28 +15,21 @@ impl PresetService {
         Self { preset_repository }
     }
 
-    /// Save a preset
-    ///
-    /// # Arguments
-    ///
-    /// * `preset` - The preset to save
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), DomainError>` - Success or error
-    pub async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        tracing::debug!(
-            "Saving preset: {} (type: {})",
-            preset.name,
-            preset.preset_type
-        );
+    pub async fn save_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+        preset_json: &str,
+    ) -> Result<(), DomainError> {
+        tracing::debug!("Saving preset: {} (type: {})", name, preset_type);
 
-        preset.validate().map_err(DomainError::InvalidData)?;
+        let preset = JsonDocument::parse(preset_json.as_bytes())
+            .map_err(|error| DomainError::InvalidData(format!("Invalid preset JSON: {error}")))?;
+        self.preset_repository
+            .save_preset(name, preset_type, preset)
+            .await?;
 
-        // Save the preset
-        self.preset_repository.save_preset(preset).await?;
-
-        tracing::debug!("Preset saved successfully: {}", preset.name);
+        tracing::debug!("Preset saved successfully: {}", name);
         Ok(())
     }
 
@@ -73,34 +67,6 @@ impl PresetService {
         Ok(())
     }
 
-    /// Get a preset by name and type
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the preset
-    /// * `preset_type` - Type of the preset
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Option<Preset>, DomainError>` - The preset if found, None otherwise
-    pub async fn get_preset(
-        &self,
-        name: &str,
-        preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError> {
-        tracing::debug!("Getting preset: {} (type: {})", name, preset_type);
-
-        let preset = self.preset_repository.get_preset(name, preset_type).await?;
-
-        if preset.is_some() {
-            tracing::debug!("Preset found: {}", name);
-        } else {
-            tracing::debug!("Preset not found: {}", name);
-        }
-
-        Ok(preset)
-    }
-
     /// List all presets of a specific type
     ///
     /// # Arguments
@@ -129,12 +95,12 @@ impl PresetService {
     ///
     /// # Returns
     ///
-    /// * `Result<Option<DefaultPreset>, DomainError>` - The default preset if found, None otherwise
+    /// * `Result<Option<JsonDocument>, DomainError>` - The bundled document if found, None otherwise
     pub async fn restore_default_preset(
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         tracing::debug!("Restoring default preset: {} (type: {})", name, preset_type);
 
         let default_preset = self
@@ -180,36 +146,5 @@ impl PresetService {
         tracing::debug!("Preset {} exists: {}", name, exists);
 
         Ok(exists)
-    }
-
-    /// Create a preset from raw data
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Name of the preset
-    /// * `api_id` - API ID string
-    /// * `data` - Preset data as JSON value
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Preset, DomainError>` - The created preset
-    pub fn create_preset(
-        &self,
-        name: String,
-        api_id: &str,
-        data: serde_json::Value,
-    ) -> Result<Preset, DomainError> {
-        tracing::debug!("Creating preset: {} (api_id: {})", name, api_id);
-
-        let preset_type = PresetType::from_api_id(api_id)
-            .ok_or_else(|| DomainError::InvalidData(format!("Unknown API ID: {}", api_id)))?;
-
-        let preset = Preset::new(name, preset_type, data);
-
-        preset.validate().map_err(DomainError::InvalidData)?;
-
-        tracing::debug!("Preset created successfully: {}", preset.name);
-
-        Ok(preset)
     }
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::file_system::{delete_file, write_json_file};
+use crate::file_system::{delete_file, write_bytes_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_domain::models::quick_reply::QuickReplySet;
@@ -50,7 +50,7 @@ impl QuickReplyRepository for FileQuickReplyRepository {
     async fn save_quick_reply_set(&self, set: &QuickReplySet) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
         let file_path = self.get_quick_reply_path(&set.name)?;
-        write_json_file(&file_path, &set.data).await
+        write_bytes_file(&file_path, &set.data.to_pretty_vec()).await
     }
 
     async fn delete_quick_reply_set(&self, name: &str) -> Result<(), DomainError> {

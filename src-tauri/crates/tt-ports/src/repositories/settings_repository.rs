@@ -4,9 +4,7 @@ use tt_domain::errors::DomainError;
 use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::Personas;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{
-    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
-};
+use tt_domain::models::settings::{ChatBackupSettings, SettingsSnapshot, TauriTavernSettings};
 
 pub struct SettingsCommitResult {
     pub revision: UserSettingsRevision,
@@ -73,13 +71,13 @@ pub trait SettingsRepository: Send + Sync {
         &self,
     ) -> Result<SettingsAggregateSignature, DomainError>;
 
-    async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
+    async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
 
     async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError>;
     async fn get_novelai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError>;

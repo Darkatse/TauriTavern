@@ -2,6 +2,7 @@ pub mod chat_directory_identity;
 mod chat_format_importers;
 mod chat_jsonl;
 pub mod commit_stage;
+mod extension_store_json;
 pub mod file_system;
 pub mod png_metadata;
 pub mod preset_file_naming;

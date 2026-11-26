@@ -318,11 +318,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::preset_commands::save_preset,
         super::preset_commands::delete_preset,
         super::preset_commands::restore_preset,
-        super::preset_commands::save_openai_preset,
         super::preset_commands::delete_openai_preset,
         super::preset_commands::list_presets,
         super::preset_commands::preset_exists,
-        super::preset_commands::get_preset,
         // Quick reply commands
         super::quick_reply_commands::save_quick_reply_set,
         super::quick_reply_commands::delete_quick_reply_set,

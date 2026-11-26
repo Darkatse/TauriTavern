@@ -2,7 +2,7 @@ pub mod repair;
 pub mod revision;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use url::Url;
 
 use crate::errors::DomainError;
@@ -489,24 +489,10 @@ pub struct StartupUpdatePopupSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettings {
-    #[serde(flatten)]
-    pub data: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSnapshot {
     pub date: i64,
     pub name: String,
     pub size: u64,
-}
-
-impl Default for UserSettings {
-    fn default() -> Self {
-        Self {
-            data: Value::Object(Map::new()),
-        }
-    }
 }
 
 #[cfg(test)]

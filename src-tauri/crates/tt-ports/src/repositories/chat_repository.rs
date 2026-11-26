@@ -1,6 +1,7 @@
 use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::path::Path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
@@ -204,7 +205,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Write a JSON value to the character chat extension store.
     async fn set_character_chat_store_json(
@@ -213,7 +214,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Merge-update a JSON value in the character chat extension store.
@@ -223,7 +224,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Rename a JSON key in the character chat extension store.

@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
 
@@ -9,7 +8,7 @@ use crate::presentation::commands::helpers::{
 use crate::presentation::errors::CommandError;
 use tt_application::dto::preset_dto::{
     DeleteOpenAIPresetDto, DeleteOpenAIPresetResponseDto, DeletePresetDto, RestorePresetDto,
-    RestorePresetResponseDto, SaveOpenAIPresetDto, SavePresetDto, SavePresetResponseDto,
+    RestorePresetResponseDto, SavePresetDto, SavePresetResponseDto,
 };
 use tt_domain::models::preset::PresetType;
 
@@ -31,30 +30,18 @@ pub async fn save_preset(
         ));
     }
 
-    if dto.preset.is_null() {
-        tracing::warn!("Preset data is null");
-        return Err(CommandError::BadRequest(
-            "Preset data cannot be null".to_string(),
-        ));
-    }
-
-    // Create preset from DTO
-    let preset = app_state
-        .services
-        .preset_service
-        .create_preset(dto.name.clone(), &dto.api_id, dto.preset)
-        .map_err(map_command_error("Failed to create preset"))?;
+    let preset_type = preset_type_from_api_id(&dto.api_id)?;
 
     // Save preset
     app_state
         .services
         .preset_service
-        .save_preset(&preset)
+        .save_preset(&dto.name, &preset_type, &dto.preset_json)
         .await
         .map_err(map_command_error("Failed to save preset"))?;
 
-    tracing::debug!("Preset saved successfully: {}", preset.name);
-    Ok(SavePresetResponseDto::new(preset.name))
+    tracing::debug!("Preset saved successfully: {}", dto.name);
+    Ok(SavePresetResponseDto::new(dto.name))
 }
 
 /// Delete a preset
@@ -135,7 +122,7 @@ pub async fn restore_preset(
     {
         Ok(Some(default_preset)) => {
             tracing::debug!("Default preset found for restoration: {}", dto.name);
-            Ok(RestorePresetResponseDto::new(true, default_preset.data))
+            Ok(RestorePresetResponseDto::new(true, default_preset))
         }
         Ok(None) => {
             tracing::debug!("Default preset not found: {}", dto.name);
@@ -143,42 +130,6 @@ pub async fn restore_preset(
         }
         Err(e) => Err(map_command_error("Failed to restore preset")(e)),
     }
-}
-
-/// Save an OpenAI preset (specialized endpoint)
-#[tauri::command]
-pub async fn save_openai_preset(
-    app_state: State<'_, Arc<AppState>>,
-    name: String,
-    dto: SaveOpenAIPresetDto,
-) -> Result<SavePresetResponseDto, CommandError> {
-    log_command(format!("save_openai_preset {}", name));
-
-    // Validate input
-    if name.trim().is_empty() {
-        tracing::warn!("Preset name is empty");
-        return Err(CommandError::BadRequest(
-            "Preset name cannot be empty".to_string(),
-        ));
-    }
-
-    // Create preset
-    let preset = app_state
-        .services
-        .preset_service
-        .create_preset(name.clone(), "openai", dto.preset)
-        .map_err(map_command_error("Failed to create OpenAI preset"))?;
-
-    // Save preset
-    app_state
-        .services
-        .preset_service
-        .save_preset(&preset)
-        .await
-        .map_err(map_command_error("Failed to save OpenAI preset"))?;
-
-    tracing::debug!("OpenAI preset saved successfully: {}", preset.name);
-    Ok(SavePresetResponseDto::new(preset.name))
 }
 
 /// Delete an OpenAI preset (specialized endpoint)
@@ -285,36 +236,4 @@ pub async fn preset_exists(
 
     tracing::debug!("Preset {} exists: {}", name, exists);
     Ok(exists)
-}
-
-/// Get a preset by name and type
-#[tauri::command]
-pub async fn get_preset(
-    app_state: State<'_, Arc<AppState>>,
-    name: String,
-    api_id: String,
-) -> Result<Option<Value>, CommandError> {
-    log_command(format!("get_preset {} {}", api_id, name));
-
-    // Get preset type
-    let preset_type = preset_type_from_api_id(&api_id)?;
-
-    // Get preset
-    let preset = app_state
-        .services
-        .preset_service
-        .get_preset(&name, &preset_type)
-        .await
-        .map_err(map_command_error("Failed to get preset"))?;
-
-    match preset {
-        Some(preset) => {
-            tracing::debug!("Preset found: {}", name);
-            Ok(Some(preset.data_with_name()))
-        }
-        None => {
-            tracing::debug!("Preset not found: {}", name);
-            Ok(None)
-        }
-    }
 }

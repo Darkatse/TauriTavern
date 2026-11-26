@@ -41,7 +41,7 @@ tauri-plugin-notification = "2.6.0"
 tauri-plugin-dialog = "2.8.2"
 tauri-plugin-clipboard-manager = "2.4.2"
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }

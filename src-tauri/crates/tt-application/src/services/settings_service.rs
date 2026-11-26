@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +15,7 @@ use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
-    DevLoggingSettings, RequestProxySettings, UserSettings,
+    DevLoggingSettings, RequestProxySettings,
 };
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
@@ -559,14 +558,6 @@ impl SettingsService {
             ),
         ) = tokio::try_join!(settings_json, ai_settings, world_names, presets)?;
 
-        let themes_json = Self::settings_values(themes);
-        let moving_ui_presets_json = Self::settings_values(moving_ui_presets);
-        let quick_reply_presets_json = Self::settings_values(quick_reply_presets);
-        let instruct_presets_json = Self::settings_values(instruct_presets);
-        let context_presets_json = Self::settings_values(context_presets);
-        let sysprompt_presets_json = Self::settings_values(sysprompt_presets);
-        let reasoning_presets_json = Self::settings_values(reasoning_presets);
-
         let response = SillyTavernSettingsResponseDto {
             settings: settings_json,
             tauritavern_settings_revision,
@@ -579,23 +570,19 @@ impl SettingsService {
             openai_setting_names,
             textgenerationwebui_presets: textgen_settings,
             textgenerationwebui_preset_names: textgen_setting_names,
-            themes: themes_json,
-            moving_ui_presets: moving_ui_presets_json,
-            quick_reply_presets: quick_reply_presets_json,
-            instruct: instruct_presets_json,
-            context: context_presets_json,
-            sysprompt: sysprompt_presets_json,
-            reasoning: reasoning_presets_json,
+            themes,
+            moving_ui_presets,
+            quick_reply_presets,
+            instruct: instruct_presets,
+            context: context_presets,
+            sysprompt: sysprompt_presets,
+            reasoning: reasoning_presets,
             enable_extensions: true,
             enable_extensions_auto_update: true,
             enable_accounts: false,
         };
 
         Ok(response)
-    }
-
-    fn settings_values(settings: Vec<UserSettings>) -> Vec<Value> {
-        settings.into_iter().map(|settings| settings.data).collect()
     }
 
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
@@ -669,7 +656,7 @@ mod tests {
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
     use tt_domain::json_document::JsonDocument;
-    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings};
 
     #[test]
     fn agent_retention_update_applies_partial_settings() {
@@ -1053,31 +1040,31 @@ mod tests {
             unreachable!()
         }
 
-        async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 

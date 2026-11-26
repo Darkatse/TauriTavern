@@ -8,6 +8,7 @@ use tokio::fs;
 use crate::file_system::list_files_with_extension;
 use crate::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::filename::sanitize_filename;
 
 #[derive(Debug, Clone)]
@@ -172,14 +173,16 @@ async fn read_named_preset_file(path: &Path) -> Result<NamedPresetFile, DomainEr
             error
         ))
     })?;
-    let value: Value = serde_json::from_str(&raw_content).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Invalid preset JSON in '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
-    let name = preset_name_from_value(file_stem, &value);
+    let name = JsonDocument::parse(raw_content.as_bytes())
+        .and_then(|preset| preset.get::<Value>(&["name"]))
+        .map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid preset JSON in '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
+    let name = preset_name(file_stem, name.as_ref());
     let is_canonical = canonical_preset_file_stem(&name)? == file_stem;
 
     Ok(NamedPresetFile {
@@ -198,10 +201,8 @@ fn report_skipped_preset(reason: impl std::fmt::Display) {
     );
 }
 
-fn preset_name_from_value(file_stem: &str, value: &Value) -> String {
-    value
-        .get("name")
-        .and_then(Value::as_str)
+fn preset_name(file_stem: &str, name: Option<&Value>) -> String {
+    name.and_then(Value::as_str)
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .unwrap_or(file_stem)
