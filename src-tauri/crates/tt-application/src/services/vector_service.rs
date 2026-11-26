@@ -9,6 +9,7 @@ use crate::dto::vector_dto::{
     VectorRouteRequestDto, VectorRouteResponseDto, VectorRouteResponseKindDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::openrouter;
 use tt_domain::ios_policy::{
     AllowlistMode, AllowlistSetting, IosPolicyActivationReport, IosPolicyScope,
 };
@@ -379,13 +380,7 @@ impl VectorService {
                     .await?,
                 model: context.model.clone(),
                 omit_model: false,
-                headers: HashMap::from([
-                    (
-                        "HTTP-Referer".to_string(),
-                        "https://tauritavern.github.io".to_string(),
-                    ),
-                    ("X-Title".to_string(), "TauriTavern".to_string()),
-                ]),
+                headers: openrouter::attribution_headers(),
             },
             VectorSource::Chutes => RemoteEmbeddingProtocol::OpenAi {
                 provider: "Chutes".to_string(),

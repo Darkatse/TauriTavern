@@ -8,12 +8,12 @@ use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::openrouter;
 use crate::services::selected_secret::{read_selected_secret, requested_secret_id};
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_domain::models::endpoint_url::{
     HostLabel, append_endpoint_segments, parse_user_http_endpoint,
 };
-use tt_domain::models::secret::SecretKeys;
 use tt_domain::models::siliconflow::SiliconFlowEndpoint;
 use tt_domain::models::vertex_ai::{
     VERTEX_AI_GLOBAL_HOST, VertexAiAuthMode, VertexAiCredential, VertexAiSettings,
@@ -49,9 +49,6 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 const POLLINATIONS_API_BASE: &str = "https://gen.pollinations.ai/v1";
 const POLLINATIONS_API_BASE_ANONYMOUS: &str = "https://text.pollinations.ai/v1";
 const POLLINATIONS_STATUS_API_BASE: &str = "https://gen.pollinations.ai/text";
-const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
-const OPENROUTER_TITLE: &str = "TauriTavern";
-const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
@@ -229,7 +226,7 @@ async fn resolve_api_config(
             } else {
                 read_selected_secret(
                     secret_repository.as_ref(),
-                    SecretKeys::CUSTOM,
+                    source.secret_key(),
                     hints.secret_id,
                 )
                 .await?
@@ -258,16 +255,18 @@ async fn resolve_api_config(
 
             let mut api_key = if user_configured_endpoint {
                 proxy_password.to_string()
-            } else if let Some(secret_key) = source_secret_key(source, &hints) {
+            } else if source == ChatCompletionSource::Pollinations
+                && is_pollinations_anonymous(hints.pollinations_endpoint)
+            {
+                String::new()
+            } else {
                 read_required_secret(
                     secret_repository,
-                    secret_key,
+                    source.secret_key(),
                     hints.secret_id,
                     source.display_name(),
                 )
                 .await?
-            } else {
-                String::new()
             };
 
             let mut extra_headers = source_extra_headers(source);
@@ -486,37 +485,6 @@ fn default_base_url(
     Ok(base_url)
 }
 
-fn source_secret_key(
-    source: ChatCompletionSource,
-    hints: &ApiConfigHints<'_>,
-) -> Option<&'static str> {
-    match source {
-        ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
-        ChatCompletionSource::OpenCode => Some(SecretKeys::OPENCODE),
-        ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
-        ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
-        ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
-        ChatCompletionSource::VertexAi => Some(SecretKeys::VERTEXAI),
-        ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
-        ChatCompletionSource::Cohere => Some(SecretKeys::COHERE),
-        ChatCompletionSource::Groq => Some(SecretKeys::GROQ),
-        ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
-        ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
-        ChatCompletionSource::Chutes => Some(SecretKeys::CHUTES),
-        ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
-        ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
-        ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
-        ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
-        ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
-        ChatCompletionSource::Xai => Some(SecretKeys::XAI),
-        ChatCompletionSource::Pollinations => {
-            (!is_pollinations_anonymous(hints.pollinations_endpoint))
-                .then_some(SecretKeys::POLLINATIONS)
-        }
-        ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
-    }
-}
-
 fn workers_ai_base_url(
     account_id: &str,
     purpose: ApiConfigPurpose,
@@ -638,16 +606,7 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
         headers.insert("Accept-Language".to_string(), "en-US,en".to_string());
     }
     if source == ChatCompletionSource::OpenRouter {
-        headers.insert("HTTP-Referer".to_string(), OPENROUTER_REFERER.to_string());
-        headers.insert(
-            "X-OpenRouter-Title".to_string(),
-            OPENROUTER_TITLE.to_string(),
-        );
-        headers.insert("X-Title".to_string(), OPENROUTER_TITLE.to_string());
-        headers.insert(
-            "X-OpenRouter-Categories".to_string(),
-            OPENROUTER_CATEGORIES.to_string(),
-        );
+        headers.extend(openrouter::attribution_headers());
     }
 
     headers

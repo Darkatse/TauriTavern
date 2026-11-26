@@ -1,3 +1,5 @@
+use crate::models::secret::SecretKeys;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatCompletionSource {
     OpenAi,
@@ -146,6 +148,31 @@ impl ChatCompletionSource {
             Self::AwsBedrock => "AWS Bedrock",
             Self::Xai => "xAI",
             Self::Pollinations => "Pollinations",
+        }
+    }
+
+    pub const fn secret_key(self) -> &'static str {
+        match self {
+            Self::OpenAi => SecretKeys::OPENAI,
+            Self::OpenCode => SecretKeys::OPENCODE,
+            Self::OpenRouter => SecretKeys::OPENROUTER,
+            Self::Custom => SecretKeys::CUSTOM,
+            Self::Claude => SecretKeys::CLAUDE,
+            Self::Makersuite => SecretKeys::MAKERSUITE,
+            Self::VertexAi => SecretKeys::VERTEXAI,
+            Self::DeepSeek => SecretKeys::DEEPSEEK,
+            Self::Cohere => SecretKeys::COHERE,
+            Self::Groq => SecretKeys::GROQ,
+            Self::Moonshot => SecretKeys::MOONSHOT,
+            Self::NanoGpt => SecretKeys::NANOGPT,
+            Self::Chutes => SecretKeys::CHUTES,
+            Self::SiliconFlow => SecretKeys::SILICONFLOW,
+            Self::WorkersAi => SecretKeys::WORKERS_AI,
+            Self::Zai => SecretKeys::ZAI,
+            Self::MiniMax => SecretKeys::MINIMAX,
+            Self::AwsBedrock => SecretKeys::AWS_BEDROCK,
+            Self::Xai => SecretKeys::XAI,
+            Self::Pollinations => SecretKeys::POLLINATIONS,
         }
     }
 

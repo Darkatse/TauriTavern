@@ -9,7 +9,6 @@ use tt_domain::models::llm_connection::{
     LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION, LlmConnectionDefinition, LlmConnectionId,
     LlmConnectionReverseProxy, LlmConnectionSummary,
 };
-use tt_domain::models::secret::SecretKeys;
 use tt_domain::models::vertex_ai::VertexAiAuthMode;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
@@ -811,45 +810,24 @@ fn expected_secret_key(
     connection: &LlmConnectionDefinition,
     source: ChatCompletionSource,
 ) -> Result<&'static str, ApplicationError> {
-    if source == ChatCompletionSource::VertexAi {
-        let mode = connection
-            .endpoint
-            .source_specific
-            .get("vertexai_auth_mode")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        return VertexAiAuthMode::parse(mode)
-            .map(VertexAiAuthMode::secret_key)
-            .map_err(|_| {
-                ApplicationError::ValidationError(format!(
-                    "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{}`",
-                    mode.trim()
-                ))
-            });
+    if source != ChatCompletionSource::VertexAi {
+        return Ok(source.secret_key());
     }
 
-    match source {
-        ChatCompletionSource::OpenAi => Ok(SecretKeys::OPENAI),
-        ChatCompletionSource::OpenCode => Ok(SecretKeys::OPENCODE),
-        ChatCompletionSource::OpenRouter => Ok(SecretKeys::OPENROUTER),
-        ChatCompletionSource::Custom => Ok(SecretKeys::CUSTOM),
-        ChatCompletionSource::Claude => Ok(SecretKeys::CLAUDE),
-        ChatCompletionSource::Makersuite => Ok(SecretKeys::MAKERSUITE),
-        ChatCompletionSource::DeepSeek => Ok(SecretKeys::DEEPSEEK),
-        ChatCompletionSource::Cohere => Ok(SecretKeys::COHERE),
-        ChatCompletionSource::Groq => Ok(SecretKeys::GROQ),
-        ChatCompletionSource::Moonshot => Ok(SecretKeys::MOONSHOT),
-        ChatCompletionSource::NanoGpt => Ok(SecretKeys::NANOGPT),
-        ChatCompletionSource::Chutes => Ok(SecretKeys::CHUTES),
-        ChatCompletionSource::SiliconFlow => Ok(SecretKeys::SILICONFLOW),
-        ChatCompletionSource::WorkersAi => Ok(SecretKeys::WORKERS_AI),
-        ChatCompletionSource::Zai => Ok(SecretKeys::ZAI),
-        ChatCompletionSource::MiniMax => Ok(SecretKeys::MINIMAX),
-        ChatCompletionSource::AwsBedrock => Ok(SecretKeys::AWS_BEDROCK),
-        ChatCompletionSource::Xai => Ok(SecretKeys::XAI),
-        ChatCompletionSource::Pollinations => Ok(SecretKeys::POLLINATIONS),
-        ChatCompletionSource::VertexAi => unreachable!("Vertex AI handled above"),
-    }
+    let mode = connection
+        .endpoint
+        .source_specific
+        .get("vertexai_auth_mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    VertexAiAuthMode::parse(mode)
+        .map(VertexAiAuthMode::secret_key)
+        .map_err(|_| {
+            ApplicationError::ValidationError(format!(
+                "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{}`",
+                mode.trim()
+            ))
+        })
 }
 
 fn trimmed_option(value: Option<&str>) -> Option<&str> {

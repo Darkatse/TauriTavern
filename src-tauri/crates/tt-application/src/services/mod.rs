@@ -40,6 +40,7 @@ pub mod image_metadata_service;
 pub mod lan_sync_service;
 pub mod llm_connection_service;
 pub mod mcp_service;
+mod openrouter;
 pub mod preset_service;
 pub mod prompt_assembly_service;
 pub mod provider_metadata_service;
