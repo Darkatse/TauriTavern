@@ -179,12 +179,8 @@ fn build_chat_completion_payload(
         );
     }
 
-    if (source == "custom"
-        || (source == "pollinations"
-            && payload.get("pollinations_endpoint").and_then(Value::as_str) != Some("anonymous")))
-        && let Some(reasoning_effort) = payload.get("reasoning_effort")
-    {
-        request.insert("reasoning_effort".to_string(), reasoning_effort.clone());
+    if forwards_reasoning_effort_as_is(source, payload) {
+        insert_if_present(&mut request, payload, "reasoning_effort");
     }
 
     if let Some(model) = payload.get("model").and_then(Value::as_str) {
@@ -235,6 +231,16 @@ fn build_chat_completion_payload(
     }
 
     Ok(request)
+}
+
+fn forwards_reasoning_effort_as_is(source: &str, payload: &Map<String, Value>) -> bool {
+    match source {
+        "custom" | "chutes" | "electronhub" | "fireworks" | "perplexity" => true,
+        "pollinations" => {
+            payload.get("pollinations_endpoint").and_then(Value::as_str) != Some("anonymous")
+        }
+        _ => false,
+    }
 }
 
 fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {

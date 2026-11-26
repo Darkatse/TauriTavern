@@ -2,7 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::{canonical_request_messages, canonical_request_tools};
-use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
+use crate::services::chat_completion_service::STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelTool,
@@ -218,17 +218,10 @@ pub(super) fn prepare_agent_tool_request(
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
-    if request
-        .payload
-        .get("chat_completion_source")
-        .and_then(Value::as_str)
-        == Some("opencode")
-    {
-        request.payload.insert(
-            OPENCODE_STABLE_CHAT_ID_FIELD.to_string(),
-            Value::String(stable_chat_id.to_string()),
-        );
-    }
+    request.payload.insert(
+        STABLE_CHAT_ID_FIELD.to_string(),
+        Value::String(stable_chat_id.to_string()),
+    );
 
     let mut provider_state = json!({
         "sessionId": model_session_id(run_id, invocation_id),
@@ -421,7 +414,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, request_from_prompt_snapshot,
+        STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, request_from_prompt_snapshot,
         validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -472,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn opencode_agent_uses_the_run_chat_identity() {
+    fn agent_requests_carry_the_run_chat_identity() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
                 "chat_completion_source": "opencode",
@@ -491,10 +484,7 @@ mod tests {
         )
         .expect("agent request");
 
-        assert_eq!(
-            request.payload[OPENCODE_STABLE_CHAT_ID_FIELD],
-            json!("stable-chat")
-        );
+        assert_eq!(request.payload[STABLE_CHAT_ID_FIELD], json!("stable-chat"));
     }
 
     #[test]

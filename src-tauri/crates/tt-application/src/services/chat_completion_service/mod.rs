@@ -45,8 +45,9 @@ use self::exchange::{
 };
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
-pub(crate) const OPENCODE_STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
+pub(crate) const STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
 const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+const FIREWORKS_SESSION_HEADER: &str = "x-session-affinity";
 const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
 const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "messages",
@@ -122,7 +123,9 @@ impl ChatCompletionService {
         self.ensure_endpoint_overrides_allowed_for_status(dto)?;
 
         match source {
-            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax => Ok(None),
+            ChatCompletionSource::VertexAi
+            | ChatCompletionSource::MiniMax
+            | ChatCompletionSource::Perplexity => Ok(None),
             _ => Ok(Some(source)),
         }
     }
@@ -501,7 +504,7 @@ impl ChatCompletionService {
             &self.secret_repository,
         )
         .await?;
-        apply_opencode_session_header(source, &dto.payload, &mut config)?;
+        apply_chat_session_header(source, &dto.payload, &mut config)?;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, dto.payload)?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         let mut prepared = PreparedChatCompletionRequest {
@@ -678,13 +681,13 @@ impl ChatCompletionService {
                 prepared.prompt_digests = Some((key, snapshot));
                 prepared.config.anthropic_beta_header_mode = anthropic_beta_header_mode;
             }
-            prompt_caching_plan::PromptCachingPlan::OpenRouterClaude { key } => {
+            prompt_caching_plan::PromptCachingPlan::OpenAiCompatibleClaude { key } => {
                 let previous = self
                     .prompt_cache_repository
                     .load_prompt_digests(key.clone())
                     .await
                     .map_err(ApplicationError::from)?;
-                let snapshot = prompt_caching::apply_openrouter_claude_prompt_caching(
+                let snapshot = prompt_caching::apply_openai_compatible_claude_prompt_caching(
                     &mut prepared.upstream_payload,
                     previous.as_ref(),
                     ttl,
@@ -758,35 +761,49 @@ fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) ->
         .any(|key| key.eq_ignore_ascii_case(header_name))
 }
 
-fn apply_opencode_session_header(
+fn apply_chat_session_header(
     source: ChatCompletionSource,
     payload: &Map<String, Value>,
     config: &mut ChatCompletionApiConfig,
 ) -> Result<(), ApplicationError> {
-    if source != ChatCompletionSource::OpenCode
-        || has_configured_header(config, OPENCODE_SESSION_HEADER)
-    {
-        return Ok(());
-    }
-
     let stable_chat_id = payload
-        .get(OPENCODE_STABLE_CHAT_ID_FIELD)
+        .get(STABLE_CHAT_ID_FIELD)
         .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "OpenCode requires a stable chat id for x-opencode-session".to_string(),
-            )
-        })?;
-    const ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
-    config.extra_headers.insert(
-        OPENCODE_SESSION_HEADER.to_string(),
-        utf8_percent_encode(stable_chat_id, ENCODE_SET).to_string(),
-    );
+        .filter(|value| !value.is_empty());
+
+    match source {
+        ChatCompletionSource::OpenCode
+            if !has_configured_header(config, OPENCODE_SESSION_HEADER) =>
+        {
+            let stable_chat_id = stable_chat_id.ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "OpenCode requires a stable chat id for x-opencode-session".to_string(),
+                )
+            })?;
+            const ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+                .remove(b'-')
+                .remove(b'.')
+                .remove(b'_')
+                .remove(b'~');
+            config.extra_headers.insert(
+                OPENCODE_SESSION_HEADER.to_string(),
+                utf8_percent_encode(stable_chat_id, ENCODE_SET).to_string(),
+            );
+        }
+        // A group chat id is its file name, so Fireworks receives a digest instead.
+        ChatCompletionSource::Fireworks
+            if !has_configured_header(config, FIREWORKS_SESSION_HEADER) =>
+        {
+            if let Some(stable_chat_id) = stable_chat_id {
+                let digest = Sha256::digest(stable_chat_id.as_bytes());
+                config.extra_headers.insert(
+                    FIREWORKS_SESSION_HEADER.to_string(),
+                    hex_lower(&digest)[..16].to_string(),
+                );
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -832,8 +849,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        AdditionalParameters, ChatCompletionService, apply_nanogpt_claude_cache_control,
-        apply_opencode_session_header, apply_vertexai_prompt_cache_session_header,
+        AdditionalParameters, ChatCompletionService, apply_chat_session_header,
+        apply_nanogpt_claude_cache_control, apply_vertexai_prompt_cache_session_header,
         ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
     };
     use tt_ports::repositories::chat_completion_repository::{
@@ -904,9 +921,9 @@ mod tests {
     }
 
     #[test]
-    fn opencode_uses_stable_chat_id_as_session_header() {
-        let mut config = ChatCompletionApiConfig {
-            base_url: "https://opencode.ai/inference/v1".to_string(),
+    fn chat_sessions_derive_their_headers_from_the_stable_chat_id() {
+        let config = || ChatCompletionApiConfig {
+            base_url: "https://example.test/v1".to_string(),
             user_configured_endpoint: false,
             api_key: "secret".to_string(),
             authorization_header: None,
@@ -918,25 +935,45 @@ mod tests {
             aws_bedrock_custom_stream_path: None,
         };
         let missing_id = json!({});
+        let payload = json!({ "_tauritavern_stable_chat_id": " stable-空% \n" });
+
+        let mut opencode = config();
         assert!(
-            apply_opencode_session_header(
+            apply_chat_session_header(
                 ChatCompletionSource::OpenCode,
                 missing_id.as_object().unwrap(),
-                &mut config,
+                &mut opencode,
             )
             .is_err()
         );
-        let payload = json!({ "_tauritavern_stable_chat_id": " stable-空% \n" });
-        apply_opencode_session_header(
+        apply_chat_session_header(
             ChatCompletionSource::OpenCode,
             payload.as_object().unwrap(),
-            &mut config,
+            &mut opencode,
         )
         .unwrap();
         assert_eq!(
-            config.extra_headers["x-opencode-session"],
+            opencode.extra_headers["x-opencode-session"],
             "%20stable-%E7%A9%BA%25%20%0A"
         );
+
+        let mut fireworks = config();
+        apply_chat_session_header(
+            ChatCompletionSource::Fireworks,
+            missing_id.as_object().unwrap(),
+            &mut fireworks,
+        )
+        .unwrap();
+        assert!(fireworks.extra_headers.is_empty());
+        apply_chat_session_header(
+            ChatCompletionSource::Fireworks,
+            payload.as_object().unwrap(),
+            &mut fireworks,
+        )
+        .unwrap();
+        let affinity = &fireworks.extra_headers["x-session-affinity"];
+        assert_eq!(affinity.len(), 16);
+        assert!(affinity.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 
     #[test]

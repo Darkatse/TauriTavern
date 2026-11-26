@@ -4202,7 +4202,7 @@
     "Claude Prompt Cache": "Claude 提示词缓存",
     "5m (Default TTL)": "5m（默认 TTL）",
     "1h (Extended)": "1h（延长）",
-    "Prompt Cache help: scope": "适用于 Claude、Google Vertex AI Claude、OpenRouter（anthropic/claude*）以及已显式启用的自定义 Claude Messages 请求。",
+    "Prompt Cache help: scope": "适用于 Claude、Google Vertex AI Claude、OpenRouter（anthropic/claude*）、Electron Hub（claude-*）、NanoGPT 的 Claude 模型，以及已显式启用的自定义 Claude Messages 请求。",
     "Apply Claude Prompt Caching Strategy": "应用 Claude 提示词缓存策略",
     "Apply Claude Prompt Caching Strategy Description": "仅当该端点支持 Anthropic Claude 提示词缓存时才启用。启用后，TauriTavern 会为自定义 Claude Messages 请求自动添加 Claude 缓存断点和所需的 caching 标头。",
     "Enable Responses WebSocket Mode": "启用 Responses WebSocket 模式",

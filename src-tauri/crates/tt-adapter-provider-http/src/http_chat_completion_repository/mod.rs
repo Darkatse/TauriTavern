@@ -23,6 +23,7 @@ use crate::provider_response;
 mod aws_bedrock;
 mod claude;
 mod cohere;
+mod fireworks;
 mod gemini;
 mod gemini_interactions;
 mod makersuite;
@@ -363,7 +364,10 @@ fn provider_api(
                 | ChatCompletionSource::Zai
                 | ChatCompletionSource::MiniMax
                 | ChatCompletionSource::Xai
-                | ChatCompletionSource::Pollinations,
+                | ChatCompletionSource::Pollinations
+                | ChatCompletionSource::ElectronHub
+                | ChatCompletionSource::Fireworks
+                | ChatCompletionSource::Perplexity,
                 _,
             ) => (ProviderApi::OpenAi, source_name),
             (ChatCompletionSource::Cohere, _) => (ProviderApi::Cohere, source_name),
@@ -424,7 +428,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             | ChatCompletionSource::Groq
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Chutes
-            | ChatCompletionSource::Zai => openai::list_models(self, config, source_name).await,
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::ElectronHub => {
+                openai::list_models(self, config, source_name).await
+            }
             ChatCompletionSource::SiliconFlow => {
                 openai::list_models_with_path(
                     self,
@@ -437,14 +444,17 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             ChatCompletionSource::WorkersAi => workers_ai::list_models(self, config).await,
             ChatCompletionSource::Pollinations => pollinations::list_models(self, config).await,
             ChatCompletionSource::Xai => xai::list_models(self, config).await,
+            ChatCompletionSource::Fireworks => fireworks::list_models(self, config).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
             ChatCompletionSource::NanoGpt => {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
                     .await
             }
-            ChatCompletionSource::MiniMax => Err(DomainError::InvalidData(
-                "MiniMax does not expose dynamic model listing; status bypass belongs to the application service".to_string(),
-            )),
+            ChatCompletionSource::MiniMax | ChatCompletionSource::Perplexity => {
+                Err(DomainError::InvalidData(format!(
+                    "{source_name} does not expose dynamic model listing; status bypass belongs to the application service"
+                )))
+            }
             ChatCompletionSource::AwsBedrock => aws_bedrock::list_models(self, config).await,
             ChatCompletionSource::Claude => claude::list_models(self, config).await,
             ChatCompletionSource::Makersuite => makersuite::list_models(self, config).await,

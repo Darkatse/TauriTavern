@@ -605,6 +605,7 @@ impl VectorSource {
             Self::NanoGpt => Some(ChatCompletionSource::NanoGpt),
             Self::SiliconFlow => Some(ChatCompletionSource::SiliconFlow),
             Self::WorkersAi => Some(ChatCompletionSource::WorkersAi),
+            Self::ElectronHub => Some(ChatCompletionSource::ElectronHub),
             Self::Extras | Self::Ollama | Self::LlamaCpp | Self::Vllm | Self::KoboldCpp => {
                 Some(ChatCompletionSource::Custom)
             }
@@ -612,8 +613,7 @@ impl VectorSource {
             | Self::Mistral
             | Self::TogetherAi
             | Self::NomicAi
-            | Self::WebLlm
-            | Self::ElectronHub => None,
+            | Self::WebLlm => None,
         }
     }
 

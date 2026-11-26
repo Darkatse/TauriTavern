@@ -3903,23 +3903,20 @@ function saveModelList(data) {
 
     if (oai_settings.chat_completion_source === chat_completion_sources.FIREWORKS) {
         $('#model_fireworks_select').empty();
+        model_list.sort((a, b) => (a?.name || a?.id || '').localeCompare(b?.name || b?.id || ''));
         model_list.forEach((model) => {
-            if (!model?.supports_chat) {
-                return;
-            }
             $('#model_fireworks_select').append(
                 $('<option>', {
                     value: model.id,
-                    text: model.id,
+                    text: model.name || model.id,
                 }));
         });
 
-        const chatModels = model_list.filter(model => model?.supports_chat);
         oai_settings.fireworks_model = chooseModelOrCurrentCustom(
             chat_completion_sources.FIREWORKS,
-            chatModels.map(model => model.id),
+            model_list.map(model => model.id),
             oai_settings.fireworks_model,
-            chatModels[0]?.id || '',
+            model_list[0]?.id || '',
         );
 
         setModelSelectValue(chat_completion_sources.FIREWORKS, oai_settings.fireworks_model);
@@ -4304,6 +4301,7 @@ function getReasoningEffort(settings = null, model = null) {
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.CHUTES,
         chat_completion_sources.AWS_BEDROCK,
+        chat_completion_sources.FIREWORKS,
     ];
 
     if (!reasoningEffortSources.includes(settings.chat_completion_source)) {
@@ -4322,7 +4320,7 @@ function getReasoningEffort(settings = null, model = null) {
         }
 
         function resolveMaximumReasoningEffort() {
-            if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+            if ([chat_completion_sources.AWS_BEDROCK, chat_completion_sources.FIREWORKS].includes(settings.chat_completion_source)) {
                 return reasoning_effort_types.max;
             }
             return reasoning_effort_types.high;
@@ -5102,7 +5100,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.MINIMAX, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.MINIMAX, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI, chat_completion_sources.FIREWORKS].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -8655,6 +8653,8 @@ export function isImageInliningSupported(settings = oai_settings) {
             const model = Array.isArray(model_list) && model_list.find(m => m.id === settings.workers_ai_model);
             return Boolean(model && Array.isArray(model.properties) && model.properties.some(p => p.property_id === 'vision' && p.value === 'true'));
         }
+        case chat_completion_sources.FIREWORKS:
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.fireworks_model)?.supports_image_input);
         default:
             return false;
     }

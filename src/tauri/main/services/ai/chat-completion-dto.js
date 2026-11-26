@@ -3,7 +3,7 @@
 import { mustGetSillyTavernContext } from '../../adapters/st/active-chat-ref.js';
 import { createRandomId } from '../../kernel/random-id.js';
 
-const OPENCODE_STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
+const STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
 
 /** @param {Record<string, unknown>} payload */
 export function getChatCompletionSource(payload) {
@@ -15,16 +15,29 @@ export function getChatCompletionSource(payload) {
  * @returns {Promise<Record<string, unknown>>}
  */
 export async function createChatCompletionDto(payload) {
-    if (getChatCompletionSource(payload) !== 'opencode') {
-        return payload;
-    }
-
-    return { ...payload, [OPENCODE_STABLE_CHAT_ID_FIELD]: await getOpenCodeStableChatId() };
+    const stableChatId = await getSessionChatId(payload);
+    return stableChatId === null ? payload : { ...payload, [STABLE_CHAT_ID_FIELD]: stableChatId };
 }
 
-async function getOpenCodeStableChatId() {
+/**
+ * @param {Record<string, unknown>} payload
+ * @returns {Promise<string | null>}
+ */
+async function getSessionChatId(payload) {
+    switch (getChatCompletionSource(payload)) {
+        case 'opencode':
+            return await getCurrentStableChatId() ?? createRandomId();
+        case 'fireworks':
+            return payload.type === 'quiet' ? null : getCurrentStableChatId();
+        default:
+            return null;
+    }
+}
+
+/** @returns {Promise<string | null>} */
+async function getCurrentStableChatId() {
     if (!mustGetSillyTavernContext().getCurrentChatId()) {
-        return createRandomId();
+        return null;
     }
 
     const chatApi = (/** @type {Window} */ (/** @type {unknown} */ (globalThis))).__TAURITAVERN__?.api?.chat;
