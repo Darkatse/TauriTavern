@@ -150,8 +150,7 @@ impl ProviderMetadataService {
             .ios_policy
             .capabilities
             .llm
-            .chat_completion_sources
-            .allows_source(source)
+            .allows_chat_completion_source(source)
         {
             return Ok(());
         }

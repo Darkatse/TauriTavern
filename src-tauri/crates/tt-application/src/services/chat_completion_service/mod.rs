@@ -119,7 +119,7 @@ impl ChatCompletionService {
 
         let source = self.resolve_source(&dto.chat_completion_source)?;
         self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_status(source, dto)?;
+        self.ensure_endpoint_overrides_allowed_for_status(dto)?;
 
         match source {
             ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax => Ok(None),
@@ -136,7 +136,7 @@ impl ChatCompletionService {
                 .unwrap_or(OPENAI_SOURCE),
         )?;
         self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
+        self.ensure_endpoint_overrides_allowed_for_payload(&dto.payload)?;
         self.ensure_chat_completion_features_allowed(&dto.payload)?;
         Ok(source)
     }
@@ -178,8 +178,7 @@ impl ChatCompletionService {
             .ios_policy
             .capabilities
             .llm
-            .chat_completion_sources
-            .allows_source(source)
+            .allows_chat_completion_source(source)
         {
             return Ok(());
         }
@@ -192,7 +191,6 @@ impl ChatCompletionService {
 
     fn ensure_endpoint_overrides_allowed_for_status(
         &self,
-        source: ChatCompletionSource,
         dto: &ChatCompletionStatusRequestDto,
     ) -> Result<(), ApplicationError> {
         if !self.ios_policy_is_active() {
@@ -201,12 +199,6 @@ impl ChatCompletionService {
 
         if self.ios_policy.capabilities.llm.endpoint_overrides {
             return Ok(());
-        }
-
-        if source == ChatCompletionSource::Custom {
-            return Err(ApplicationError::PermissionDenied(
-                "iOS policy disabled capability: llm.endpoint_overrides".to_string(),
-            ));
         }
 
         let mut overridden = Vec::new();
@@ -239,7 +231,6 @@ impl ChatCompletionService {
 
     fn ensure_endpoint_overrides_allowed_for_payload(
         &self,
-        source: ChatCompletionSource,
         payload: &Map<String, Value>,
     ) -> Result<(), ApplicationError> {
         if !self.ios_policy_is_active() {
@@ -248,12 +239,6 @@ impl ChatCompletionService {
 
         if self.ios_policy.capabilities.llm.endpoint_overrides {
             return Ok(());
-        }
-
-        if source == ChatCompletionSource::Custom {
-            return Err(ApplicationError::PermissionDenied(
-                "iOS policy disabled capability: llm.endpoint_overrides".to_string(),
-            ));
         }
 
         let mut overridden = Vec::new();

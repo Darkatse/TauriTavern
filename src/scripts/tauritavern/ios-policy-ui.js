@@ -1,4 +1,4 @@
-import { allowlistSettingAllows, getActiveIosPolicyActivationReport } from './ios-policy.js';
+import { getActiveIosPolicyActivationReport } from './ios-policy.js';
 import { syncMainApiOptionParking } from '../../tauri/main/adapters/st/main-api-selector-option-parking.js';
 
 const STYLE_ID = 'tt-ios-policy-ui-projection';
@@ -30,49 +30,6 @@ function hideElement(element) {
 
     element.hidden = true;
     element.setAttribute('data-tt-ios-policy-hidden', '1');
-}
-
-function normalizeChatCompletionSourceKey(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized.startsWith('custom_')) {
-        return 'custom';
-    }
-    return normalized;
-}
-
-function filterChatCompletionSourceOptions({ allowlist, endpointOverridesAllowed }) {
-    const select = requireElement('#chat_completion_source');
-    if (!(select instanceof HTMLSelectElement)) {
-        throw new Error('[TauriTavern][iOSPolicy] #chat_completion_source must be a <select>');
-    }
-
-    const isAllowed = (value) => {
-        const key = normalizeChatCompletionSourceKey(value);
-        if (!key) {
-            return false;
-        }
-
-        if (!endpointOverridesAllowed && key === 'custom') {
-            return false;
-        }
-
-        return allowlistSettingAllows(allowlist, key);
-    };
-
-    const options = Array.from(select.options);
-    for (const option of options) {
-        if (!isAllowed(option.value)) {
-            option.remove();
-        }
-    }
-
-    if (select.options.length === 0) {
-        throw new Error('[TauriTavern][iOSPolicy] Chat completion source list became empty after applying iOS policy');
-    }
-
-    if (!isAllowed(select.value)) {
-        select.value = select.options[0].value;
-    }
 }
 
 export function applyIosPolicyUiProjection() {
@@ -166,13 +123,7 @@ export function applyIosPolicyUiProjection() {
         hideElement(label);
     }
 
-    const endpointOverridesAllowed = caps.llm?.endpoint_overrides !== false;
-    filterChatCompletionSourceOptions({
-        allowlist: caps.llm?.chat_completion_sources?.allowlist,
-        endpointOverridesAllowed,
-    });
-
-    if (!endpointOverridesAllowed) {
+    if (caps.llm?.endpoint_overrides === false) {
         const reverseProxyUrl = requireElement('#openai_reverse_proxy');
         const reverseProxyDrawer = reverseProxyUrl.closest('.inline-drawer');
         if (!(reverseProxyDrawer instanceof HTMLElement)) {

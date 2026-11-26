@@ -1,5 +1,6 @@
 import { Fuse, DOMPurify } from '../lib.js';
 import { isMainApiAvailable } from '../tauri/main/adapters/st/main-api-selector-option-parking.js';
+import { isChatCompletionSourceAvailable } from '../tauri/main/adapters/st/chat-completion-source-availability.js';
 import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight, resolveAvatarData } from './utils.js';
 
 import {
@@ -155,6 +156,15 @@ export const CONNECT_API_MAP = {};
 
 /** @type {string[]} */
 export const UNIQUE_APIS = [];
+
+/**
+ * @param {ConnectAPIMap} apiConfig
+ * @returns {boolean}
+ */
+function isConnectApiAvailable(apiConfig) {
+    return isMainApiAvailable(apiConfig.selected)
+        && (!apiConfig.source || isChatCompletionSourceAvailable(apiConfig.source));
+}
 
 function setupConnectAPIMap() {
     /** @type {Record<string, ConnectAPIMap>} */
@@ -334,6 +344,9 @@ export function initDefaultSlashCommands() {
         return '';
     }
 
+    const availableConnectApis = Object.entries(CONNECT_API_MAP)
+        .filter(([, apiConfig]) => isConnectApiAvailable(apiConfig))
+        .sort(([a], [b]) => a.localeCompare(b));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'api',
         callback: async function (args, text) {
@@ -375,7 +388,7 @@ export function initDefaultSlashCommands() {
                 toastr.error(t`Error: ${text} is not a valid API`);
                 return '';
             }
-            if (!isMainApiAvailable(apiConfig.selected)) {
+            if (!isConnectApiAvailable(apiConfig)) {
                 toastr.error(t`Error: ${text} is not available`);
                 return '';
             }
@@ -447,7 +460,7 @@ export function initDefaultSlashCommands() {
             SlashCommandArgument.fromProps({
                 description: t`API to connect to`,
                 typeList: [ARGUMENT_TYPE.STRING],
-                enumList: Object.entries(CONNECT_API_MAP).sort(([a], [b]) => a.localeCompare(b)).map(([api, { selected }]) =>
+                enumList: availableConnectApis.map(([api, { selected }]) =>
                     new SlashCommandEnumValue(api, selected, enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === selected)),
                         selected[0].toUpperCase() ?? enumIcons.default)),
             }),
@@ -458,7 +471,7 @@ export function initDefaultSlashCommands() {
             </div>
             <div>
                 <strong>${t`Available APIs:`}</strong>
-                <pre><code>${Object.keys(CONNECT_API_MAP).sort((a, b) => a.localeCompare(b)).join(', ')}</code></pre>
+                <pre><code>${availableConnectApis.map(([api]) => api).join(', ')}</code></pre>
             </div>
         `,
     }));
@@ -491,6 +504,10 @@ export function initDefaultSlashCommands() {
             const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions', 'gemini_generate_content'];
             if (!allowed.includes(normalized)) {
                 toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
+                return '';
+            }
+            if (!isConnectApiAvailable(CONNECT_API_MAP[chat_completion_sources.CUSTOM])) {
+                toastr.error(t`Error: ${chat_completion_sources.CUSTOM} is not available`);
                 return '';
             }
 

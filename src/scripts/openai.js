@@ -31,7 +31,7 @@ import {
 } from '../script.js';
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
-import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { resolveAvailableChatCompletionSource } from '../tauri/main/adapters/st/chat-completion-source-availability.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -6323,63 +6323,13 @@ function resolveChatCompletionSourceSelectValue(settings) {
 }
 
 function syncChatCompletionSourceSelector() {
-    const value = resolveChatCompletionSourceSelectValue(oai_settings);
+    const requested = resolveChatCompletionSourceSelectValue(oai_settings);
+    const value = resolveAvailableChatCompletionSource(requested, getChatCompletionModelControl()?.label ?? requested);
+    if (value !== requested) {
+        applyChatCompletionSourceSelection(value);
+    }
     $('#chat_completion_source').val(value);
     $('#chat_completion_source').find(`option[value="${CSS.escape(value)}"]`).prop('selected', true);
-}
-
-function normalizeIosPolicyChatCompletionSourceKey(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized.startsWith('custom_')) {
-        return chat_completion_sources.CUSTOM;
-    }
-    return normalized;
-}
-
-function enforceIosPolicyChatCompletionSourceSelector() {
-    const caps = getActiveIosPolicyCapabilities();
-    if (!caps) {
-        return;
-    }
-
-    const select = document.getElementById('chat_completion_source');
-    if (!(select instanceof HTMLSelectElement)) {
-        throw new Error('[TauriTavern][iOSPolicy] Chat completion source selector not found');
-    }
-
-    const allowlist = caps.llm?.chat_completion_sources?.allowlist;
-    const endpointOverridesAllowed = caps.llm?.endpoint_overrides !== false;
-
-    const isAllowed = (value) => {
-        const key = normalizeIosPolicyChatCompletionSourceKey(value);
-        if (!key) {
-            return false;
-        }
-
-        if (!endpointOverridesAllowed && key === chat_completion_sources.CUSTOM) {
-            return false;
-        }
-
-        return allowlistSettingAllows(allowlist, key);
-    };
-
-    const currentValue = String(select.value || '').trim();
-    if (currentValue && isAllowed(currentValue)) {
-        return;
-    }
-
-    const fallback = Array.from(select.options)
-        .map((option) => option.value)
-        .find(isAllowed);
-
-    if (!fallback) {
-        throw new Error('[TauriTavern][iOSPolicy] No allowed chat completion source remains after applying policy');
-    }
-
-    if (fallback !== currentValue) {
-        select.value = fallback;
-        globalThis.toastr?.warning?.('Chat Completion Source was reset due to your iOS policy.');
-    }
 }
 
 function updateCustomEndpointPreview() {
@@ -6515,7 +6465,6 @@ function loadOpenAISettings(data, settings) {
     $('#openrouter_quantizations_chat').trigger('change');
     $('#nanogpt_provider').trigger('change');
     syncChatCompletionSourceSelector();
-    enforceIosPolicyChatCompletionSourceSelector();
     applyCustomModelOptionsToAllSources();
     $('#chat_completion_source').trigger('change');
     updateCustomEndpointPreview();
@@ -9391,7 +9340,6 @@ export function initOpenAI() {
     });
 
     $('#chat_completion_source').on('change', function () {
-        enforceIosPolicyChatCompletionSourceSelector();
         cancelStatusCheck('Chat Completion source changed');
         model_list = [];
         applyChatCompletionSourceSelection(String($(this).find(':selected').val()));

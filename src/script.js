@@ -53,6 +53,7 @@ import {
     saveCharacterChatMetadata,
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
+import { installChatCompletionSourceAvailability } from './tauri/main/adapters/st/chat-completion-source-availability.js';
 import { composeAuthorsNote, extension_prompt_roles, extension_prompt_types, isWorldInfoInjection } from './scripts/extension-prompts.js';
 import {
     ChatInputFocusIntent,
@@ -1226,6 +1227,7 @@ async function firstLoadInit() {
         } else if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
             window.__TAURITAVERN__.iosPolicy = bootstrapMetadata.ios_policy;
         }
+        installChatCompletionSourceAvailability(bootstrapMetadata.available_chat_completion_sources);
         applyIosPolicyUiProjection();
         const extensionsEnabled = Boolean(settingsSnapshot?.enable_extensions)
             && settingsSnapshot?.result != 'file not find'

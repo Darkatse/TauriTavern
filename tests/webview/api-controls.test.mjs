@@ -7,6 +7,7 @@ await startHost();
 await load('script.js');
 const $ = window.jQuery;
 const script = (await load('script.js'));
+(await load('tauri/main/adapters/st/chat-completion-source-availability.js')).installChatCompletionSourceAvailability('all');
 const kai = (await load('scripts/kai-settings.js'));
 const textgen = (await load('scripts/textgen-settings.js'));
 const power = (await load('scripts/power-user.js'));

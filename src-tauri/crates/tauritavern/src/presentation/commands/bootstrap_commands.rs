@@ -70,8 +70,17 @@ pub async fn get_bootstrap_metadata(
     let avatars = avatars.unwrap_or_default();
     let secret_state = secret_state.unwrap_or_default();
 
+    let available_chat_completion_sources = app_state
+        .ios_policy
+        .capabilities
+        .llm
+        .available_chat_completion_sources()
+        .map(|source| source.key().to_string())
+        .collect();
+
     Ok(BootstrapMetadataDto {
         ios_policy: app_state.ios_policy.clone(),
+        available_chat_completion_sources,
         characters,
         groups,
         avatars,

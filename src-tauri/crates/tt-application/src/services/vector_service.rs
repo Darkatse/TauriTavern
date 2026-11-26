@@ -480,35 +480,22 @@ impl VectorService {
             return Ok(());
         }
 
-        let allowlist = &self
-            .ios_policy
-            .capabilities
-            .llm
-            .chat_completion_sources
-            .allowlist;
-        let allowed = match allowlist {
-            AllowlistSetting::Mode(AllowlistMode::All) => true,
-            AllowlistSetting::List(_) => source.policy_source().is_some_and(|source| {
-                self.ios_policy
-                    .capabilities
-                    .llm
-                    .chat_completion_sources
-                    .allows_source(source)
-            }),
+        let llm = &self.ios_policy.capabilities.llm;
+        let allowed = match source.policy_source() {
+            Some(chat_source) => llm.allows_chat_completion_source(chat_source),
+            None => matches!(
+                llm.chat_completion_sources.allowlist,
+                AllowlistSetting::Mode(AllowlistMode::All)
+            ),
         };
-        if !allowed {
-            return Err(ApplicationError::PermissionDenied(format!(
-                "iOS policy disabled vector source: {}",
-                source.key()
-            )));
+        if allowed {
+            return Ok(());
         }
 
-        if source.uses_custom_endpoint() && !self.ios_policy.capabilities.llm.endpoint_overrides {
-            return Err(ApplicationError::PermissionDenied(
-                "iOS policy disabled capability: llm.endpoint_overrides".to_string(),
-            ));
-        }
-        Ok(())
+        Err(ApplicationError::PermissionDenied(format!(
+            "iOS policy disabled vector source: {}",
+            source.key()
+        )))
     }
 
     async fn required_secret(&self, key: &str, provider: &str) -> Result<String, ApplicationError> {

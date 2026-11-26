@@ -17,15 +17,3 @@ export function getActiveIosPolicyCapabilities() {
     return getActiveIosPolicyActivationReport()?.capabilities ?? null;
 }
 
-export function allowlistSettingAllows(allowlist, value) {
-    if (allowlist === 'all') {
-        return true;
-    }
-
-    if (Array.isArray(allowlist)) {
-        return allowlist.includes(value);
-    }
-
-    throw new Error(`[TauriTavern][iOSPolicy] Unsupported allowlist setting: ${JSON.stringify(allowlist)}`);
-}
-
