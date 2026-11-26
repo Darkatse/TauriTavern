@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -15,11 +14,14 @@ use tt_domain::models::endpoint_url::{
     HostLabel, append_endpoint_segments, parse_user_http_endpoint,
 };
 use tt_domain::models::secret::SecretKeys;
-use tt_domain::models::vertex_ai::{VERTEX_AI_GLOBAL_HOST, vertex_ai_host, vertex_ai_region};
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::vertex_ai::{
+    VERTEX_AI_GLOBAL_HOST, VertexAiAuthMode, VertexAiCredential, VertexAiSettings,
+};
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
-use tt_ports::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use tt_ports::repositories::secret_repository::SecretRepository;
 
 use super::additional_parameters::AdditionalParameters;
@@ -38,9 +40,6 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const MOONSHOT_API_BASE_CN: &str = "https://api.moonshot.cn/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
-const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
-const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
-const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
@@ -455,7 +454,9 @@ fn default_base_url(
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
         ChatCompletionSource::SiliconFlow => {
-            siliconflow_base_url(hints.siliconflow_endpoint)?.to_string()
+            SiliconFlowEndpoint::parse(hints.siliconflow_endpoint)?
+                .base_url()
+                .to_string()
         }
         ChatCompletionSource::WorkersAi => {
             workers_ai_base_url(hints.workers_ai_account_id, purpose)?
@@ -516,32 +517,16 @@ fn source_secret_key(
     }
 }
 
-fn siliconflow_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
-    match SiliconFlowEndpoint::parse_frontend(endpoint)
-        .map_err(ApplicationError::ValidationError)?
-    {
-        SiliconFlowEndpoint::Global => Ok(SILICONFLOW_API_BASE),
-        SiliconFlowEndpoint::China => Ok(SILICONFLOW_API_BASE_CN),
-    }
-}
-
 fn workers_ai_base_url(
     account_id: &str,
     purpose: ApiConfigPurpose,
 ) -> Result<String, ApplicationError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Err(ApplicationError::ValidationError(
-            "workers_ai_account_id is required".to_string(),
-        ));
-    }
-
-    let account_id = utf8_percent_encode(account_id, NON_ALPHANUMERIC).to_string();
-    let suffix = match purpose {
-        ApiConfigPurpose::Status => "ai",
-        ApiConfigPurpose::Generate => "ai/v1",
+    let account = WorkersAiAccount::parse(account_id)?;
+    let url = match purpose {
+        ApiConfigPurpose::Status => account.ai_url("")?,
+        ApiConfigPurpose::Generate => account.openai_base_url()?,
     };
-    Ok(format!("{WORKERS_AI_API_BASE}/{account_id}/{suffix}"))
+    Ok(url.into())
 }
 
 fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
@@ -603,119 +588,47 @@ async fn resolve_vertexai_generate_api_config(
         });
     }
 
-    let mode = payload
-        .get("vertexai_auth_mode")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("express")
-        .to_ascii_lowercase();
-
-    let region = vertex_ai_region(
-        payload
-            .get("vertexai_region")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
+    let settings = VertexAiSettings::parse(
+        &get_payload_string(payload, "vertexai_auth_mode")?,
+        &get_payload_string(payload, "vertexai_region")?,
+        &get_payload_string(payload, "vertexai_express_project_id")?,
     )?;
-
     let is_claude_model = payload
         .get("model")
         .and_then(Value::as_str)
         .is_some_and(is_vertex_ai_claude_model_id);
-
-    match mode.as_str() {
-        "express" => {
-            if is_claude_model {
-                return Err(ApplicationError::ValidationError(
-                    "Google Vertex AI Claude requires Full mode service account authentication or a reverse proxy with bearer authentication."
-                        .to_string(),
-                ));
-            }
-
-            let api_key = read_required_secret(
-                secret_repository,
-                SecretKeys::VERTEXAI,
-                secret_id,
-                "Google Vertex AI",
-            )
-            .await?;
-            let project_id = payload
-                .get("vertexai_express_project_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-
-            Ok(ChatCompletionApiConfig {
-                base_url: vertexai_base_url(&region, project_id),
-                user_configured_endpoint: false,
-                api_key,
-                authorization_header: None,
-                vertexai_service_account_json: None,
-                extra_headers,
-                additional_headers,
-                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-                aws_bedrock_custom_response_path: None,
-                aws_bedrock_custom_stream_path: None,
-            })
-        }
-        "full" => {
-            let service_account_json = read_required_secret(
-                secret_repository,
-                SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
-                secret_id,
-                "Google Vertex AI",
-            )
-            .await?;
-            let project_id = vertexai_service_account_project_id(&service_account_json)?;
-
-            Ok(ChatCompletionApiConfig {
-                base_url: vertexai_base_url(&region, Some(&project_id)),
-                user_configured_endpoint: false,
-                api_key: String::new(),
-                authorization_header: None,
-                vertexai_service_account_json: Some(service_account_json),
-                extra_headers,
-                additional_headers,
-                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-                aws_bedrock_custom_response_path: None,
-                aws_bedrock_custom_stream_path: None,
-            })
-        }
-        other => Err(ApplicationError::ValidationError(format!(
-            "Unsupported Vertex AI authentication mode: {other}",
-        ))),
+    if is_claude_model && settings.auth_mode() == VertexAiAuthMode::Express {
+        return Err(ApplicationError::ValidationError(
+            "Google Vertex AI Claude requires Full mode service account authentication or a reverse proxy with bearer authentication."
+                .to_string(),
+        ));
     }
-}
 
-/// Without a project, Vertex AI Express serves the location chosen at signup.
-fn vertexai_base_url(region: &HostLabel, project_id: Option<&str>) -> String {
-    let Some(project_id) = project_id else {
-        return format!("{VERTEX_AI_GLOBAL_HOST}/v1");
+    let credential = read_required_secret(
+        secret_repository,
+        settings.auth_mode().secret_key(),
+        secret_id,
+        "Google Vertex AI",
+    )
+    .await?;
+    let connection = settings.connect(credential)?;
+    let (api_key, vertexai_service_account_json) = match connection.credential {
+        VertexAiCredential::ApiKey(api_key) => (api_key, None),
+        VertexAiCredential::ServiceAccount(json) => (String::new(), Some(json)),
     };
-    let host = vertex_ai_host(region);
-    format!("{host}/v1/projects/{project_id}/locations/{region}")
-}
 
-fn vertexai_service_account_project_id(
-    service_account_json: &str,
-) -> Result<String, ApplicationError> {
-    let value = serde_json::from_str::<Value>(service_account_json).map_err(|error| {
-        ApplicationError::ValidationError(format!(
-            "Vertex AI service account JSON parse failed: {error}"
-        ))
-    })?;
-
-    value
-        .get("project_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "Vertex AI service account JSON is missing project_id".to_string(),
-            )
-        })
+    Ok(ChatCompletionApiConfig {
+        base_url: connection.base_url,
+        user_configured_endpoint: false,
+        api_key,
+        authorization_header: None,
+        vertexai_service_account_json,
+        extra_headers,
+        additional_headers,
+        anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+        aws_bedrock_custom_response_path: None,
+        aws_bedrock_custom_stream_path: None,
+    })
 }
 
 fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String> {

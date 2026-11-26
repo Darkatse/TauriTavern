@@ -9,10 +9,11 @@ use crate::dto::provider_metadata_dto::{
 use crate::errors::ApplicationError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, OpenRouterCredits, ProviderMetadataRepository,
-    SiliconFlowEndpoint,
 };
 use tt_ports::repositories::secret_repository::SecretRepository;
 
@@ -93,7 +94,7 @@ impl ProviderMetadataService {
         let api_key = self
             .read_required_secret(SecretKeys::SILICONFLOW, "SiliconFlow")
             .await?;
-        let endpoint = parse_siliconflow_endpoint(&dto.siliconflow_endpoint)?;
+        let endpoint = SiliconFlowEndpoint::parse(&dto.siliconflow_endpoint)?;
 
         self.provider_metadata_repository
             .siliconflow_embedding_models(&api_key, endpoint)
@@ -109,10 +110,10 @@ impl ProviderMetadataService {
         let api_key = self
             .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
             .await?;
-        let account_id = required_string(&dto.workers_ai_account_id, "workers_ai_account_id")?;
+        let account = WorkersAiAccount::parse(&dto.workers_ai_account_id)?;
 
         self.provider_metadata_repository
-            .workers_ai_embedding_models(&api_key, &account_id)
+            .workers_ai_embedding_models(&api_key, &account)
             .await
             .map_err(ApplicationError::from)
     }
@@ -125,10 +126,10 @@ impl ProviderMetadataService {
         let api_key = self
             .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
             .await?;
-        let account_id = required_string(&dto.workers_ai_account_id, "workers_ai_account_id")?;
+        let account = WorkersAiAccount::parse(&dto.workers_ai_account_id)?;
 
         self.provider_metadata_repository
-            .workers_ai_multimodal_models(&api_key, &account_id)
+            .workers_ai_multimodal_models(&api_key, &account)
             .await
             .map_err(ApplicationError::from)
     }
@@ -190,23 +191,4 @@ fn required_string(value: &str, field_name: &str) -> Result<String, ApplicationE
     }
 
     Ok(value.to_string())
-}
-
-fn parse_siliconflow_endpoint(value: &str) -> Result<SiliconFlowEndpoint, ApplicationError> {
-    SiliconFlowEndpoint::parse_frontend(value).map_err(ApplicationError::ValidationError)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_siliconflow_endpoint;
-
-    #[test]
-    fn siliconflow_endpoint_rejects_unknown_values() {
-        let error = parse_siliconflow_endpoint("edge").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unsupported SiliconFlow endpoint")
-        );
-    }
 }

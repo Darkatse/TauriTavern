@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use serde_json::Value;
 use url::Url;
@@ -16,12 +15,14 @@ use tt_domain::ios_policy::{
 use tt_domain::models::chat_completion_source::ChatCompletionSource;
 use tt_domain::models::endpoint_url::HostLabel;
 use tt_domain::models::secret::SecretKeys;
-use tt_domain::models::vertex_ai::vertex_ai_region;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::vertex_ai::VertexAiSettings;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::vector_repository::{
     LocalEmbeddingModel, LocalEmbeddingRepository, LocalEmbeddingRequest, RemoteEmbeddingProtocol,
     RemoteEmbeddingRepository, RemoteEmbeddingRequest, VectorMatch, VectorMetadata, VectorRecord,
-    VectorRepository, VectorScope, VertexEmbeddingAuth,
+    VectorRepository, VectorScope,
 };
 
 const DEFAULT_TOP_K: usize = 10;
@@ -405,27 +406,20 @@ impl VectorService {
             ),
             VectorSource::SiliconFlow => openai_protocol(
                 "SiliconFlow",
-                if request.siliconflow_endpoint.trim() == "cn" {
-                    "https://api.siliconflow.cn/v1"
-                } else {
-                    "https://api.siliconflow.com/v1"
-                },
+                SiliconFlowEndpoint::parse(&request.siliconflow_endpoint)?.base_url(),
                 self.required_secret(SecretKeys::SILICONFLOW, "SiliconFlow")
                     .await?,
                 &context.model,
             ),
-            VectorSource::WorkersAi => {
-                let account_id =
-                    required_value(&request.workers_ai_account_id, "workers_ai_account_id")?;
-                let account_id = utf8_percent_encode(account_id, NON_ALPHANUMERIC);
-                openai_protocol(
-                    "Cloudflare Workers AI",
-                    &format!("https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"),
-                    self.required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
-                        .await?,
-                    &context.model,
-                )
-            }
+            VectorSource::WorkersAi => openai_protocol(
+                "Cloudflare Workers AI",
+                WorkersAiAccount::parse(&request.workers_ai_account_id)?
+                    .openai_base_url()?
+                    .as_str(),
+                self.required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
+                    .await?,
+                &context.model,
+            ),
             VectorSource::NomicAi => RemoteEmbeddingProtocol::Nomic {
                 api_key: self
                     .required_secret(SecretKeys::NOMICAI, "Nomic AI")
@@ -445,31 +439,20 @@ impl VectorService {
                     .await?,
                 model: context.model.clone(),
             },
-            VectorSource::VertexAi => RemoteEmbeddingProtocol::VertexAi {
-                model: context.model.clone(),
-                region: vertex_ai_region(&request.vertexai_region)?,
-                auth: match defaulted(&request.vertexai_auth_mode, "express").as_str() {
-                    "express" => VertexEmbeddingAuth::Express {
-                        api_key: self
-                            .required_secret(SecretKeys::VERTEXAI, "Google Vertex AI")
-                            .await?,
-                        project_id: non_empty(&request.vertexai_express_project_id),
-                    },
-                    "full" => VertexEmbeddingAuth::ServiceAccount {
-                        json: self
-                            .required_secret(
-                                SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
-                                "Google Vertex AI service account",
-                            )
-                            .await?,
-                    },
-                    other => {
-                        return Err(ApplicationError::ValidationError(format!(
-                            "Unsupported Vertex AI authentication mode: {other}"
-                        )));
-                    }
-                },
-            },
+            VectorSource::VertexAi => {
+                let settings = VertexAiSettings::parse(
+                    &request.vertexai_auth_mode,
+                    &request.vertexai_region,
+                    &request.vertexai_express_project_id,
+                )?;
+                let credential = self
+                    .required_secret(settings.auth_mode().secret_key(), "Google Vertex AI")
+                    .await?;
+                RemoteEmbeddingProtocol::VertexAi {
+                    model: context.model.clone(),
+                    connection: settings.connect(credential)?,
+                }
+            }
             VectorSource::Ollama => RemoteEmbeddingProtocol::Ollama {
                 base_url: custom_endpoint(context.source, request)?.to_string(),
                 model: required_value(&context.model, "model")?.to_string(),
@@ -693,39 +676,18 @@ impl SourceContext {
         if source == VectorSource::KoboldCpp {
             required_value(&model, "model")?;
         }
-        let endpoint = match source {
-            VectorSource::Extras => request.extras_url.trim().to_string(),
-            VectorSource::Ollama
-            | VectorSource::LlamaCpp
-            | VectorSource::Vllm
-            | VectorSource::KoboldCpp => request.api_url.trim().to_string(),
-            VectorSource::SiliconFlow => {
-                if request.siliconflow_endpoint.trim() == "cn" {
-                    "https://api.siliconflow.cn/v1".to_string()
-                } else {
-                    "https://api.siliconflow.com/v1".to_string()
-                }
-            }
-            VectorSource::WorkersAi => request.workers_ai_account_id.trim().to_string(),
-            VectorSource::VertexAi => format!(
-                "{}|{}",
-                vertex_ai_region(&request.vertexai_region)?,
-                request.vertexai_express_project_id.trim()
-            ),
-            _ => String::new(),
+        // Only a user-run server can serve different weights under the same model name.
+        let endpoint = if source.uses_custom_endpoint() {
+            custom_endpoint(source, request)?
+                .trim()
+                .trim_end_matches('/')
+        } else {
+            ""
         };
         let embedding_profile = local_model
             .map(LocalEmbeddingModel::profile)
             .unwrap_or(&model);
-        let profile = format!(
-            "model={embedding_profile}\nendpoint={}\nauth={}",
-            endpoint.trim_end_matches('/'),
-            if source == VectorSource::VertexAi {
-                defaulted(&request.vertexai_auth_mode, "express")
-            } else {
-                String::new()
-            }
-        );
+        let profile = format!("model={embedding_profile}\nendpoint={endpoint}");
         Ok(Self {
             source,
             model,
@@ -937,10 +899,6 @@ fn non_empty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn defaulted(value: &str, default: &str) -> String {
-    non_empty(value).unwrap_or_else(|| default.to_string())
-}
-
 fn json_response(body: impl Serialize) -> Result<VectorRouteResponseDto, ApplicationError> {
     Ok(VectorRouteResponseDto {
         status: 200,
@@ -961,6 +919,16 @@ fn empty_response() -> VectorRouteResponseDto {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tt_domain::errors::DomainError;
+    use tt_domain::ios_policy::resolve_ios_policy_activation_report;
+    use tt_domain::models::secret::Secrets;
+    use tt_domain::models::vertex_ai::VertexAiCredential;
+    use tt_ports::repositories::vector_repository::RemoteEmbeddingBatch;
+
     use super::*;
 
     #[test]
@@ -1066,5 +1034,189 @@ mod tests {
         .expect("KoboldCpp without a reported model must fail");
 
         assert!(error.to_string().contains("model is required"));
+    }
+
+    #[derive(Default)]
+    struct RecordingEmbeddings {
+        protocols: Mutex<Vec<RemoteEmbeddingProtocol>>,
+    }
+
+    #[async_trait]
+    impl RemoteEmbeddingRepository for RecordingEmbeddings {
+        async fn embed(
+            &self,
+            request: RemoteEmbeddingRequest,
+        ) -> Result<RemoteEmbeddingBatch, DomainError> {
+            let embeddings = vec![vec![1.0, 0.0]; request.texts.len()];
+            self.protocols.lock().unwrap().push(request.protocol);
+            Ok(RemoteEmbeddingBatch {
+                embeddings,
+                reported_model: None,
+            })
+        }
+    }
+
+    struct EmptyIndex;
+
+    #[async_trait]
+    impl VectorRepository for EmptyIndex {
+        async fn list_hashes(&self, _scope: &VectorScope) -> Result<Vec<i64>, DomainError> {
+            unimplemented!()
+        }
+
+        async fn upsert(
+            &self,
+            _scope: &VectorScope,
+            _records: Vec<VectorRecord>,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn delete_hashes(
+            &self,
+            _scope: &VectorScope,
+            _hashes: &[i64],
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn query(
+            &self,
+            _scope: &VectorScope,
+            _embedding: Vec<f32>,
+            _limit: usize,
+        ) -> Result<Vec<VectorMatch>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn purge_collection(&self, _collection_id: &str) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn purge_all(&self) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct NoLocalModel;
+
+    #[async_trait]
+    impl LocalEmbeddingRepository for NoLocalModel {
+        async fn embed(
+            &self,
+            _request: LocalEmbeddingRequest,
+        ) -> Result<Vec<Vec<f32>>, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct ActiveSecrets(HashMap<&'static str, &'static str>);
+
+    #[async_trait]
+    impl SecretRepository for ActiveSecrets {
+        async fn save(&self, _secrets: &Secrets) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn load(&self) -> Result<Secrets, DomainError> {
+            unimplemented!()
+        }
+
+        async fn clear_cache(&self) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn write_secret(
+            &self,
+            _key: &str,
+            _value: &str,
+            _label: &str,
+        ) -> Result<String, DomainError> {
+            unimplemented!()
+        }
+
+        async fn read_secret(
+            &self,
+            key: &str,
+            _id: Option<&str>,
+        ) -> Result<Option<String>, DomainError> {
+            Ok(self.0.get(key).map(ToString::to_string))
+        }
+
+        async fn delete_secret(&self, _key: &str, _id: Option<&str>) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn rotate_secret(&self, _key: &str, _id: &str) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+
+        async fn rename_secret(
+            &self,
+            _key: &str,
+            _id: &str,
+            _label: &str,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_settings_from_the_upstream_body_reach_the_provider() {
+        let embeddings = Arc::new(RecordingEmbeddings::default());
+        let service = VectorService::new(
+            Arc::new(EmptyIndex),
+            embeddings.clone(),
+            Arc::new(NoLocalModel),
+            Arc::new(ActiveSecrets(HashMap::from([
+                (SecretKeys::SILICONFLOW, "siliconflow-key"),
+                (SecretKeys::WORKERS_AI, "workers-key"),
+                (
+                    SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
+                    r#"{"project_id":"vertex-project"}"#,
+                ),
+            ]))),
+            resolve_ios_policy_activation_report(IosPolicyScope::Ignored, None, None).unwrap(),
+        );
+
+        // Shaped like the Vector Storage extension's request bodies.
+        for connection in [
+            json!({ "source": "siliconflow", "siliconflow_endpoint": "cn" }),
+            json!({ "source": "workers_ai", "workers_ai_account_id": "account" }),
+            json!({
+                "source": "vertexai",
+                "vertexai_auth_mode": "full",
+                "vertexai_region": "europe-west4",
+                "vertexai_express_project_id": "",
+            }),
+        ] {
+            let mut body = json!({ "collectionId": "chat", "searchText": "hello" });
+            body.as_object_mut()
+                .unwrap()
+                .extend(connection.as_object().unwrap().clone());
+            service
+                .handle_request("query", serde_json::from_value(body).unwrap())
+                .await
+                .unwrap();
+        }
+
+        let protocols = embeddings.protocols.lock().unwrap();
+        assert!(matches!(
+            &protocols[0],
+            RemoteEmbeddingProtocol::OpenAi { base_url, .. }
+                if base_url == "https://api.siliconflow.cn/v1"
+        ));
+        assert!(matches!(
+            &protocols[1],
+            RemoteEmbeddingProtocol::OpenAi { base_url, .. }
+                if base_url == "https://api.cloudflare.com/client/v4/accounts/account/ai/v1"
+        ));
+        assert!(matches!(
+            &protocols[2],
+            RemoteEmbeddingProtocol::VertexAi { connection, .. }
+                if connection.base_url
+                    == "https://europe-west4-aiplatform.googleapis.com/v1/projects/vertex-project/locations/europe-west4"
+                    && matches!(connection.credential, VertexAiCredential::ServiceAccount(_))
+        ));
     }
 }

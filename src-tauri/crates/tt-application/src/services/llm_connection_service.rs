@@ -10,6 +10,7 @@ use tt_domain::models::llm_connection::{
     LlmConnectionReverseProxy, LlmConnectionSummary,
 };
 use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::vertex_ai::VertexAiAuthMode;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 use tt_ports::repositories::settings_repository::SettingsRepository;
@@ -816,16 +817,15 @@ fn expected_secret_key(
             .source_specific
             .get("vertexai_auth_mode")
             .and_then(Value::as_str)
-            .unwrap_or("express")
-            .trim()
-            .to_ascii_lowercase();
-        return match mode.as_str() {
-            "" | "express" => Ok(SecretKeys::VERTEXAI),
-            "full" => Ok(SecretKeys::VERTEXAI_SERVICE_ACCOUNT),
-            other => Err(ApplicationError::ValidationError(format!(
-                "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{other}`"
-            ))),
-        };
+            .unwrap_or_default();
+        return VertexAiAuthMode::parse(mode)
+            .map(VertexAiAuthMode::secret_key)
+            .map_err(|_| {
+                ApplicationError::ValidationError(format!(
+                    "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{}`",
+                    mode.trim()
+                ))
+            });
     }
 
     match source {

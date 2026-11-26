@@ -10,16 +10,15 @@ use url::Url;
 use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
     NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
-    SiliconFlowEndpoint,
 };
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api";
-const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
-const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
 
 pub struct HttpProviderMetadataRepository {
     http_clients: Arc<HttpClientPool>,
@@ -128,21 +127,6 @@ impl HttpProviderMetadataRepository {
 
         Self::send_json(request, "NanoGPT", "subscription usage").await
     }
-
-    async fn workers_ai_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-        task: &str,
-        per_page: u16,
-    ) -> Result<Vec<Value>, DomainError> {
-        let client = self.client()?;
-        fetch_workers_ai_models(&client, api_key, account_id, task, per_page)
-            .await?
-            .into_iter()
-            .map(add_workers_ai_model_id)
-            .collect()
-    }
 }
 
 #[async_trait]
@@ -222,10 +206,7 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
         api_key: &str,
         endpoint: SiliconFlowEndpoint,
     ) -> Result<Vec<Value>, DomainError> {
-        let base_url = match endpoint {
-            SiliconFlowEndpoint::Global => SILICONFLOW_API_BASE,
-            SiliconFlowEndpoint::China => SILICONFLOW_API_BASE_CN,
-        };
+        let base_url = endpoint.base_url();
         let client = self.client()?;
         let request = client
             .get(format!("{base_url}/models?type=text&sub_type=embedding"))
@@ -239,33 +220,27 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
     async fn workers_ai_embedding_models(
         &self,
         api_key: &str,
-        account_id: &str,
+        account: &WorkersAiAccount,
     ) -> Result<Vec<Value>, DomainError> {
-        self.workers_ai_models(api_key, account_id, "Text Embeddings", 100)
-            .await
-    }
-
-    async fn workers_ai_text_generation_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-    ) -> Result<Vec<Value>, DomainError> {
-        self.workers_ai_models(api_key, account_id, "Text Generation", 1000)
-            .await
+        let client = self.client()?;
+        fetch_workers_ai_models(&client, api_key, account, "Text Embeddings", 100)
+            .await?
+            .into_iter()
+            .map(add_workers_ai_model_id)
+            .collect()
     }
 
     async fn workers_ai_multimodal_models(
         &self,
         api_key: &str,
-        account_id: &str,
+        account: &WorkersAiAccount,
     ) -> Result<Vec<String>, DomainError> {
-        let models = self
-            .workers_ai_text_generation_models(api_key, account_id)
-            .await?;
-        models
+        let client = self.client()?;
+        fetch_workers_ai_models(&client, api_key, account, "Text Generation", 1000)
+            .await?
             .iter()
             .filter(|model| model_has_vision_property(model))
-            .map(|model| required_string_field(model, "name"))
+            .map(|model| workers_ai_model_name(model).map(str::to_string))
             .collect()
     }
 }
@@ -397,11 +372,13 @@ fn optional_usage_bucket(
     })
 }
 
-fn add_workers_ai_model_id(model: Value) -> Result<Value, DomainError> {
+fn add_workers_ai_model_id(mut model: Value) -> Result<Value, DomainError> {
     let name = workers_ai_model_name(&model)?.to_string();
-    let mut object = require_object(&model, "Workers AI model")?.clone();
+    let object = model
+        .as_object_mut()
+        .ok_or_else(|| invalid_response("Workers AI model is not an object"))?;
     object.insert("id".to_string(), Value::String(name));
-    Ok(Value::Object(object))
+    Ok(model)
 }
 
 fn parse_data_array(body: Value, label: &str) -> Result<Vec<Value>, DomainError> {
@@ -457,24 +434,6 @@ fn advisory_string_field(value: &Value, field_name: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn required_string_field(value: &Value, field_name: &str) -> Result<String, DomainError> {
-    let object = require_object(value, field_name)?;
-    required_string_map_field(object, field_name)
-}
-
-fn required_string_map_field(
-    object: &Map<String, Value>,
-    field_name: &str,
-) -> Result<String, DomainError> {
-    object
-        .get(field_name)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| invalid_response(format!("{field_name} is missing")))
 }
 
 fn optional_scalar_string_field(object: &Map<String, Value>, field_name: &str) -> String {

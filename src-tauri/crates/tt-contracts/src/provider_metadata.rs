@@ -1,21 +1,5 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SiliconFlowEndpoint {
-    Global,
-    China,
-}
-
-impl SiliconFlowEndpoint {
-    pub fn parse_frontend(value: &str) -> Result<Self, String> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "" | "global" | "com" | "https://api.siliconflow.com/v1" => Ok(Self::Global),
-            "cn" | "china" | "https://api.siliconflow.cn/v1" => Ok(Self::China),
-            other => Err(format!("Unsupported SiliconFlow endpoint: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenRouterCredits {
     pub remaining: f64,

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::endpoint_url::HostLabel;
+use tt_domain::models::vertex_ai::VertexAiConnection;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LocalEmbeddingModel {
@@ -128,8 +128,7 @@ pub enum RemoteEmbeddingProtocol {
     },
     VertexAi {
         model: String,
-        region: HostLabel,
-        auth: VertexEmbeddingAuth,
+        connection: VertexAiConnection,
     },
     Ollama {
         base_url: String,
@@ -148,17 +147,6 @@ pub enum RemoteEmbeddingProtocol {
     KoboldCpp {
         base_url: String,
         api_key: Option<String>,
-    },
-}
-
-#[derive(Clone)]
-pub enum VertexEmbeddingAuth {
-    Express {
-        api_key: String,
-        project_id: Option<String>,
-    },
-    ServiceAccount {
-        json: String,
     },
 }
 

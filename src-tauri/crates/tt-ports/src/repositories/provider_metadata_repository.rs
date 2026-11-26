@@ -2,10 +2,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 pub use tt_contracts::provider_metadata::{
     NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
-    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, SiliconFlowEndpoint,
+    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits,
 };
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 
 #[async_trait]
 pub trait ProviderMetadataRepository: Send + Sync {
@@ -29,18 +31,12 @@ pub trait ProviderMetadataRepository: Send + Sync {
     async fn workers_ai_embedding_models(
         &self,
         api_key: &str,
-        account_id: &str,
-    ) -> Result<Vec<Value>, DomainError>;
-
-    async fn workers_ai_text_generation_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
+        account: &WorkersAiAccount,
     ) -> Result<Vec<Value>, DomainError>;
 
     async fn workers_ai_multimodal_models(
         &self,
         api_key: &str,
-        account_id: &str,
+        account: &WorkersAiAccount,
     ) -> Result<Vec<String>, DomainError>;
 }

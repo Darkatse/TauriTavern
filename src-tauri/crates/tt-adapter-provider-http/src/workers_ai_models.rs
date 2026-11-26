@@ -2,18 +2,18 @@ use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 
-use crate::workers_ai_endpoint::workers_ai_models_search_url;
 use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 
 pub(crate) async fn fetch_workers_ai_models(
     client: &Client,
     api_key: &str,
-    account_id: &str,
+    account: &WorkersAiAccount,
     task: &str,
     per_page: u16,
 ) -> Result<Vec<Value>, DomainError> {
-    let mut url = workers_ai_models_search_url(account_id)?;
+    let mut url = account.ai_url("models/search")?;
     url.query_pairs_mut()
         .append_pair("task", task)
         .append_pair("per_page", &per_page.to_string());

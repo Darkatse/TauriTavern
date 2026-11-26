@@ -7,11 +7,10 @@ use serde_json::{Map, Value, json};
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
-use tt_domain::models::endpoint_url::HostLabel;
-use tt_domain::models::vertex_ai::vertex_ai_host;
+use tt_domain::models::vertex_ai::{VertexAiConnection, VertexAiCredential};
 use tt_ports::repositories::vector_repository::{
     RemoteEmbeddingBatch, RemoteEmbeddingProtocol, RemoteEmbeddingRepository,
-    RemoteEmbeddingRequest, VertexEmbeddingAuth,
+    RemoteEmbeddingRequest,
 };
 
 use crate::http_chat_completion_repository::vertexai_auth;
@@ -59,54 +58,30 @@ impl HttpEmbeddingRepository {
     async fn embed_vertex(
         &self,
         model: String,
-        region: HostLabel,
-        auth: VertexEmbeddingAuth,
+        connection: VertexAiConnection,
         texts: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, DomainError> {
-        let host = vertex_ai_host(&region);
+        let url = joined_url(
+            &connection.base_url,
+            &format!("publishers/google/models/{model}:predict"),
+        )?;
+        let request = self.client()?.post(url);
+        let request = match connection.credential {
+            VertexAiCredential::ApiKey(api_key) => request.header("x-goog-api-key", api_key),
+            VertexAiCredential::ServiceAccount(service_account_json) => {
+                let token = vertexai_auth::get_service_account_access_token(
+                    &self.http_clients,
+                    &service_account_json,
+                )
+                .await?;
+                request.header(AUTHORIZATION, format!("Bearer {token}"))
+            }
+        };
         let instances = texts
             .into_iter()
             .map(|content| json!({ "content": content }))
             .collect::<Vec<_>>();
-
-        let request = match auth {
-            VertexEmbeddingAuth::Express {
-                api_key,
-                project_id,
-            } => {
-                let path = match project_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                {
-                    Some(project_id) => format!(
-                        "/v1/projects/{project_id}/locations/{region}/publishers/google/models/{model}:predict"
-                    ),
-                    None => format!("/v1/publishers/google/models/{model}:predict"),
-                };
-                let url = Url::parse(&format!("{host}{path}")).map_err(invalid_url("Vertex AI"))?;
-                self.client()?
-                    .post(url)
-                    .header("x-goog-api-key", api_key)
-                    .json(&json!({ "instances": instances }))
-            }
-            VertexEmbeddingAuth::ServiceAccount { json: credentials } => {
-                let project_id = service_account_project_id(&credentials)?;
-                let token = vertexai_auth::get_service_account_access_token(
-                    &self.http_clients,
-                    &credentials,
-                )
-                .await?;
-                let url = Url::parse(&format!(
-                    "{host}/v1/projects/{project_id}/locations/{region}/publishers/google/models/{model}:predict"
-                ))
-                .map_err(invalid_url("Vertex AI"))?;
-                self.client()?
-                    .post(url)
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
-                    .json(&json!({ "instances": instances }))
-            }
-        };
+        let request = request.json(&json!({ "instances": instances }));
 
         let body = self.send_json(request, "Google Vertex AI").await?;
         let predictions = required_array(&body, "predictions", "Google Vertex AI")?;
@@ -257,11 +232,9 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
                     })
                     .collect()
             }
-            RemoteEmbeddingProtocol::VertexAi {
-                model,
-                region,
-                auth,
-            } => self.embed_vertex(model, region, auth, texts).await,
+            RemoteEmbeddingProtocol::VertexAi { model, connection } => {
+                self.embed_vertex(model, connection, texts).await
+            }
             RemoteEmbeddingProtocol::Ollama {
                 base_url,
                 model,
@@ -516,25 +489,6 @@ fn required_array<'a>(
     body.get(field)
         .and_then(Value::as_array)
         .ok_or_else(|| invalid_response(provider, &format!("missing {field} array")))
-}
-
-fn service_account_project_id(credentials: &str) -> Result<String, DomainError> {
-    serde_json::from_str::<Value>(credentials)
-        .map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Vertex AI service account JSON parse failed: {error}"
-            ))
-        })?
-        .get("project_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            DomainError::InvalidData(
-                "Vertex AI service account JSON is missing project_id".to_string(),
-            )
-        })
 }
 
 fn invalid_url(provider: &'static str) -> impl FnOnce(url::ParseError) -> DomainError {
