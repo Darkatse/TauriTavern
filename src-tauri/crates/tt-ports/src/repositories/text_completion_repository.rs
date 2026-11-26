@@ -12,6 +12,8 @@ pub use tt_domain::models::text_completion_type::TextCompletionType;
 pub struct TextCompletionEndpoint {
     pub api_type: TextCompletionType,
     pub base_url: String,
+    /// The user named this server, so requests use the user-endpoint HTTP policy.
+    pub user_configured_endpoint: bool,
     pub headers: Vec<(String, String)>,
 }
 
@@ -25,8 +27,7 @@ pub enum TextCompletionStreamFormat {
     OllamaNdjson,
 }
 
-/// Requests to a user-configured text completion server. Paths are relative to the endpoint's
-/// base URL and bodies are JSON.
+/// Paths are relative to the endpoint's base URL.
 #[async_trait]
 pub trait TextCompletionRepository: Send + Sync {
     /// Reads server metadata, such as the model list.

@@ -216,7 +216,7 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`
 - `llm.chat_completion_sources.allowlist` / `llm.endpoint_overrides`
   - bootstrap 的 `available_chat_completion_sources` 列出宿主已实现且策略允许的来源；前端删去其余 `#chat_completion_source` 选项，设置或预设指向不可用来源时切到列表中的第一个来源并提示；`/api`、`/custom-api-format` 与 Connection Manager 的请求服务按同一判断拒绝不可用的来源
-  - 实现：`src/tauri/main/adapters/st/chat-completion-source-availability.js`
+  - 实现：`src/tauri/main/adapters/st/host-availability.js` 的 `chatCompletionSources`
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）
 

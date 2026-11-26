@@ -13,4 +13,5 @@ pub struct BootstrapMetadataDto {
     pub secret_state: SecretStateDto,
     pub ios_policy: IosPolicyActivationReport,
     pub available_chat_completion_sources: Vec<String>,
+    pub available_text_completion_types: Vec<String>,
 }

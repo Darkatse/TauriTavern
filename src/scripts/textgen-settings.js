@@ -27,6 +27,7 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { getActiveManualApiSamplers, loadApiSelectedSamplers, isSamplerManualPriorityEnabled } from './samplerSelect.js';
 import { SECRET_KEYS, readSecretState, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';
+import { textCompletionTypes } from '../tauri/main/adapters/st/host-availability.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, TOKENIZER_SUPPORTED_KEY, getTextTokens, getTokenizerBestMatch, tokenizers } from './tokenizers.js';
 import { AbortReason } from './util/AbortReason.js';
@@ -595,6 +596,7 @@ export async function loadTextGenSettings(data, loadedSettings, adjustments = []
         setSettingByName(i, value, adjustments);
     }
 
+    textgenerationwebui_settings.type = textCompletionTypes.resolve(textgenerationwebui_settings.type);
     $('#textgen_type').val(textgenerationwebui_settings.type);
     $('#openrouter_providers_text').val(textgenerationwebui_settings.openrouter_providers).trigger('change');
     $('#openrouter_quantizations_text').val(textgenerationwebui_settings.openrouter_quantizations).trigger('change');

@@ -2456,6 +2456,7 @@
     "tauritavern_ai_notification_failure_body": "生成失败，点击返回 TauriTavern",
     "tauritavern_main_api_unavailable": "此 API 当前不可用，已切换为聊天补全。",
     "tauritavern_chat_completion_source_unavailable": "此来源当前不可用，已切换为其他来源。",
+    "tauritavern_text_completion_type_unavailable": "此 API 类型当前不可用，已切换为其他类型。",
     "tauritavern_notification_permission_rationale_title": "要开启系统通知吗？",
     "tauritavern_notification_permission_rationale_body": "AI 回复生成完成后，我可以发个通知提醒你回来～",
     "tauritavern_notification_permission_rationale_allow": "开启",

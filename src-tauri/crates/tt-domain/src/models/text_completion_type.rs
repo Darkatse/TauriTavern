@@ -1,4 +1,3 @@
-/// Text completion backends TauriTavern implements, each at an address the user configures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextCompletionType {
     Ooba,
@@ -10,9 +9,31 @@ pub enum TextCompletionType {
     Ollama,
     HuggingFace,
     Generic,
+    Featherless,
+    OpenRouter,
+    InfermaticAi,
+    DreamGen,
+    TogetherAi,
 }
 
 impl TextCompletionType {
+    pub const ALL: &'static [Self] = &[
+        Self::Ooba,
+        Self::Vllm,
+        Self::Aphrodite,
+        Self::Tabby,
+        Self::KoboldCpp,
+        Self::LlamaCpp,
+        Self::Ollama,
+        Self::HuggingFace,
+        Self::Generic,
+        Self::Featherless,
+        Self::OpenRouter,
+        Self::InfermaticAi,
+        Self::DreamGen,
+        Self::TogetherAi,
+    ];
+
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim() {
             "ooba" => Some(Self::Ooba),
@@ -24,6 +45,11 @@ impl TextCompletionType {
             "ollama" => Some(Self::Ollama),
             "huggingface" => Some(Self::HuggingFace),
             "generic" => Some(Self::Generic),
+            "featherless" => Some(Self::Featherless),
+            "openrouter" => Some(Self::OpenRouter),
+            "infermaticai" => Some(Self::InfermaticAi),
+            "dreamgen" => Some(Self::DreamGen),
+            "togetherai" => Some(Self::TogetherAi),
             _ => None,
         }
     }
@@ -39,6 +65,11 @@ impl TextCompletionType {
             Self::Ollama => "ollama",
             Self::HuggingFace => "huggingface",
             Self::Generic => "generic",
+            Self::Featherless => "featherless",
+            Self::OpenRouter => "openrouter",
+            Self::InfermaticAi => "infermaticai",
+            Self::DreamGen => "dreamgen",
+            Self::TogetherAi => "togetherai",
         }
     }
 
@@ -53,6 +84,11 @@ impl TextCompletionType {
             Self::Ollama => "Ollama",
             Self::HuggingFace => "HuggingFace",
             Self::Generic => "Generic text completion",
+            Self::Featherless => "Featherless",
+            Self::OpenRouter => "OpenRouter",
+            Self::InfermaticAi => "InfermaticAI",
+            Self::DreamGen => "DreamGen",
+            Self::TogetherAi => "Together AI",
         }
     }
 }

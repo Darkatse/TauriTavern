@@ -1,6 +1,6 @@
 import { Fuse, DOMPurify } from '../lib.js';
 import { isMainApiAvailable } from '../tauri/main/adapters/st/main-api-selector-option-parking.js';
-import { isChatCompletionSourceAvailable } from '../tauri/main/adapters/st/chat-completion-source-availability.js';
+import { chatCompletionSources, textCompletionTypes } from '../tauri/main/adapters/st/host-availability.js';
 import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight, resolveAvatarData } from './utils.js';
 
 import {
@@ -163,7 +163,8 @@ export const UNIQUE_APIS = [];
  */
 function isConnectApiAvailable(apiConfig) {
     return isMainApiAvailable(apiConfig.selected)
-        && (!apiConfig.source || isChatCompletionSourceAvailable(apiConfig.source));
+        && (!apiConfig.source || chatCompletionSources.isAvailable(apiConfig.source))
+        && (!apiConfig.type || textCompletionTypes.isAvailable(apiConfig.type));
 }
 
 function setupConnectAPIMap() {

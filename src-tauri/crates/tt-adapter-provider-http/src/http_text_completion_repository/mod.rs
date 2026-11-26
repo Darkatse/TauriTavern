@@ -36,9 +36,12 @@ impl HttpTextCompletionRepository {
         body: Option<&Value>,
         error_context: &str,
     ) -> Result<reqwest::Response, DomainError> {
-        let client = self
-            .http_clients
-            .user_endpoint_client(profile, &endpoint.base_url)?;
+        let client = if endpoint.user_configured_endpoint {
+            self.http_clients
+                .user_endpoint_client(profile, &endpoint.base_url)?
+        } else {
+            self.http_clients.client(profile)?
+        };
         let request = request.with_client(&client);
         let request = match body {
             Some(body) => request.json(body),

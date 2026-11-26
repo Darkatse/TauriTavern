@@ -31,7 +31,7 @@ import {
 } from '../script.js';
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
-import { resolveAvailableChatCompletionSource } from '../tauri/main/adapters/st/chat-completion-source-availability.js';
+import { chatCompletionSources } from '../tauri/main/adapters/st/host-availability.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -6322,7 +6322,7 @@ function resolveChatCompletionSourceSelectValue(settings) {
 
 function syncChatCompletionSourceSelector() {
     const requested = resolveChatCompletionSourceSelectValue(oai_settings);
-    const value = resolveAvailableChatCompletionSource(requested, getChatCompletionModelControl()?.label ?? requested);
+    const value = chatCompletionSources.resolve(requested);
     if (value !== requested) {
         applyChatCompletionSourceSelection(value);
     }

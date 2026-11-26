@@ -33,7 +33,7 @@ These are TauriTavern's own documents, from the same source revision as this app
 ## Features and platforms
 
 - `references/CurrentState/NativeApiFormats.md` — How chat completion payloads and responses translate to provider-native formats (Responses, Claude, Gemini).
-- `references/CurrentState/TextCompletion.md` — Text completion for local backends: supported backend types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.
+- `references/CurrentState/TextCompletion.md` — Text completion for self-hosted servers and cloud services: supported types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.
 - `references/CurrentState/Horde.md` — AI Horde, the crowdsourced network used as a main API: routes, host-side task polling, cancellation, error shapes and iOS policy.
 - `references/CurrentState/ThirdPartyExtensions.md` — Third-party extensions: install and update rules, local and global folders and which wins, supported compatibility, what is not supported (such as server plugins), and regression checks.
 - `references/CurrentState/EmbeddedRuntime.md` — The embedded runtime that manages message iframes for JS-Slash-Runner and LittleWhiteBox: its modes, how it runs, and how to debug it.

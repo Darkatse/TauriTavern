@@ -18,7 +18,7 @@
 | [文件传输](FileTransfer.md) | 原生选取、交付与暂存 |
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
-| [文本补全](TextCompletion.md) | 本地模型的类型、路由、生成与出错呈现 |
+| [文本补全](TextCompletion.md) | 自建服务器与云服务的类型、路由、生成与出错呈现 |
 | [AI Horde](Horde.md) | 众包网络的文本生成、路由与轮询 |
 | [预设工具条目](PresetToolEntries.md) | 工具定义、调用与响应条目，`fields` 与工具清单 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |

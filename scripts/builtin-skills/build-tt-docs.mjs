@@ -40,7 +40,7 @@ const GROUPS = [
         title: 'Features and platforms',
         documents: [
             ['CurrentState/NativeApiFormats.md', 'How chat completion payloads and responses translate to provider-native formats (Responses, Claude, Gemini).'],
-            ['CurrentState/TextCompletion.md', 'Text completion for local backends: supported backend types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.'],
+            ['CurrentState/TextCompletion.md', 'Text completion for self-hosted servers and cloud services: supported types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.'],
             ['CurrentState/Horde.md', 'AI Horde, the crowdsourced network used as a main API: routes, host-side task polling, cancellation, error shapes and iOS policy.'],
             ['CurrentState/ThirdPartyExtensions.md', 'Third-party extensions: install and update rules, local and global folders and which wins, supported compatibility, what is not supported (such as server plugins), and regression checks.'],
             ['CurrentState/EmbeddedRuntime.md', 'The embedded runtime that manages message iframes for JS-Slash-Runner and LittleWhiteBox: its modes, how it runs, and how to debug it.'],

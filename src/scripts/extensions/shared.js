@@ -1,4 +1,4 @@
-import { isChatCompletionSourceAvailable } from '../../tauri/main/adapters/st/chat-completion-source-availability.js';
+import { chatCompletionSources, textCompletionTypes } from '../../tauri/main/adapters/st/host-availability.js';
 import { isMainApiAvailable } from '../../tauri/main/adapters/st/main-api-selector-option-parking.js';
 import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
@@ -287,9 +287,9 @@ function getApiEndpointKey(apiMap) {
     // Some providers do not need a model, like koboldcpp, so support is decided by endpoint key.
     switch (apiMap?.selected) {
         case 'openai':
-            return isChatCompletionSourceAvailable(apiMap.source) ? apiMap.source : null;
+            return chatCompletionSources.isAvailable(apiMap.source) ? apiMap.source : null;
         case 'textgenerationwebui':
-            return apiMap.type;
+            return textCompletionTypes.isAvailable(apiMap.type) ? apiMap.type : null;
         default:
             return null;
     }

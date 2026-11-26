@@ -162,7 +162,7 @@ src/
 | `character-routes.js` | 角色列表、创建、编辑、导入导出、重命名 |
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 | `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini / OpenCode） |
-| `text-completion-routes.js` | Text Completion（本地 / 自建文本补全后端） |
+| `text-completion-routes.js` | Text Completion（自建服务器与云服务） |
 | `horde-routes.js` | AI Horde（状态、worker 与文本模型列表、用户信息与文本生成流） |
 | `tokenizer-routes.js` | tokenizer count/encode/decode/bias 与上游本地 tokenizer 兼容路由；本地 tokenizer 的文本计数走 `count-text`，不经 `encode`；文本补全的远程分词 |
 

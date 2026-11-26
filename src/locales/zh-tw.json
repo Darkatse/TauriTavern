@@ -2792,6 +2792,7 @@
     "tauritavern_ai_notification_failure_body": "生成失敗，點擊返回 TauriTavern",
     "tauritavern_main_api_unavailable": "此 API 目前無法使用，已切換為聊天補全。",
     "tauritavern_chat_completion_source_unavailable": "此來源目前無法使用，已切換為其他來源。",
+    "tauritavern_text_completion_type_unavailable": "此 API 類型目前無法使用，已切換為其他類型。",
     "tauritavern_notification_permission_rationale_title": "要開啟系統通知嗎？",
     "tauritavern_notification_permission_rationale_body": "AI 回覆生成完成後，我可以發個通知提醒你回來～",
     "tauritavern_notification_permission_rationale_allow": "開啟",
