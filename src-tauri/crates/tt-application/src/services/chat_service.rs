@@ -456,7 +456,7 @@ impl ChatService {
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .chat_repository
             .get_character_chat_metadata(character_name, file_name)

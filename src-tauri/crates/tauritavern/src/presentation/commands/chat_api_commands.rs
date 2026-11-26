@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use serde_json::Value;
 use serde_json::value::RawValue;
 use tauri::State;
 
@@ -66,7 +65,7 @@ pub async fn get_character_chat_metadata(
     character_name: String,
     file_name: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Value, CommandError> {
+) -> Result<Box<RawValue>, CommandError> {
     log_command(format!(
         "get_character_chat_metadata {}/{}",
         character_name, file_name

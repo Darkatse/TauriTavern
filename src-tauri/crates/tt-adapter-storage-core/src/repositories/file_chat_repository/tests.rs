@@ -227,11 +227,14 @@ async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
 async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let repository = setup_repository(temp.path()).await;
-    let header = json!({
-        "user_name": "Original user", "character_name": "Original character",
-        "create_date": "legacy date", "unknown": { "keep": [1, true] },
-        "chat_metadata": { "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "deleted": true },
-    });
+    // Neither alphabetical nor compact: untouched fields keep their place and their text.
+    let header = |metadata: &Value| {
+        format!(
+            r#"{{"user_name":"Original user","chat_metadata":{metadata},"character_name":"Original character","create_date":"legacy date","unknown":{{ "keep": [1, true] }}}}"#
+        )
+    };
+    let original_header =
+        header(&json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "deleted": true }));
     let mut body = format!(
         "\r\n{{ \"mes\": \"你好{}\", \"unknown\": [1, 2] }}\r\n\n{{\"mes\":\"last\"}}",
         "x".repeat(20_000)
@@ -248,10 +251,14 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
         .unwrap();
     for (original, expected_body) in [
         (
-            [format!("\r\n\u{feff}\r\n{header}\r\n").as_bytes(), &body].concat(),
+            [
+                format!("\r\n\u{feff}\r\n{original_header}\r\n").as_bytes(),
+                &body,
+            ]
+            .concat(),
             body.as_slice(),
         ),
-        (header.to_string().into_bytes(), b"".as_slice()),
+        (original_header.clone().into_bytes(), b"".as_slice()),
     ] {
         commit_payload_bytes(&repository, target.clone(), &original, false)
             .await
@@ -262,11 +269,9 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
             .unwrap();
         let updated = fs::read(&path).await.unwrap();
         let split = updated.iter().position(|byte| *byte == b'\n').unwrap();
-        let mut expected_header = header.clone();
-        expected_header["chat_metadata"] = metadata;
         assert_eq!(
-            serde_json::from_slice::<Value>(&updated[..split]).unwrap(),
-            expected_header
+            std::str::from_utf8(&updated[..split]).unwrap(),
+            header(&metadata)
         );
         assert_eq!(&updated[split + 1..], expected_body);
     }
@@ -342,8 +347,9 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
         repository
             .read_chat_metadata_from_path(&path)
             .await
-            .unwrap(),
-        json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" })
+            .unwrap()
+            .get(),
+        r#"{"integrity":"7f565cd0-b165-5376-82e9-dc222dc3d5cd"}"#
     );
     let mut files = fs::read_dir(path.parent().unwrap()).await.unwrap();
     while let Some(file) = files.next_entry().await.unwrap() {
@@ -383,10 +389,21 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         .await
         .unwrap();
 
-    let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "score": "1" } });
-    commit_metadata(&repository, target, metadata.clone())
-        .await
-        .unwrap();
+    // Keys are not alphabetical and `extensions` is not last: sorting or moving a key would show.
+    let metadata = |extensions: &str| {
+        format!(
+            r#"{{"variables":{{"score":"1"}},"integrity":"92698fe9-2d05-54b0-9734-a55213d002d5","extensions":{extensions},"tail":true}}"#
+        )
+    };
+    let original = metadata(r#"{"other":{"b":1,"a":2}}"#);
+    commit_bytes(
+        &repository,
+        target,
+        original.as_bytes(),
+        ChatCommitOperation::Metadata,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         repository
             .get_chat("Alice", "metadata")
@@ -401,11 +418,19 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
             .get_character_chat_summary("Alice", "metadata", true)
             .await
             .unwrap()
-            .chat_metadata,
-        Some(metadata)
+            .chat_metadata
+            .unwrap()
+            .get(),
+        original
     );
 
-    for value in [json!({ "floor": 42 }), Value::Null] {
+    for (value, extensions) in [
+        (
+            json!({ "floor": 42 }),
+            r#"{"other":{"b":1,"a":2},"example":{"floor":42}}"#,
+        ),
+        (Value::Null, r#"{"other":{"b":1,"a":2}}"#),
+    ] {
         commit_bytes(
             &repository,
             character_target("Alice", "metadata"),
@@ -427,11 +452,7 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
             .unwrap()
             .chat_metadata
             .unwrap();
-        assert_eq!(summary["variables"]["score"], "1");
-        assert_eq!(
-            summary["extensions"].get("example"),
-            value.as_object().map(|_| &value)
-        );
+        assert_eq!(summary.get(), metadata(extensions));
     }
 
     // Reopening must preserve the query result when the directory projection is

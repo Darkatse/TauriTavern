@@ -2,16 +2,15 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 
-use indexmap::IndexMap;
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::{Value, value::RawValue};
+use serde_json::value::RawValue;
 
 use crate::chat_jsonl::{
-    parse_header, parse_header_integrity, parse_metadata_integrity, read_header_record,
+    parse_header_integrity, parse_header_metadata, parse_metadata_integrity, read_header_record,
     read_header_record_async,
 };
 use crate::file_system::persist_file_blocking;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 
 use super::FileChatRepository;
 use super::integrity::verify_integrity_match;
@@ -31,10 +30,10 @@ impl FileChatRepository {
     pub(super) async fn read_chat_metadata_from_path(
         &self,
         path: &Path,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         self.read_optional_chat_metadata_from_path(path)
             .await?
-            .filter(Value::is_object)
+            .filter(|metadata| is_object(metadata))
             .ok_or_else(|| {
                 DomainError::InvalidData(format!(
                     "Chat header {} requires a chat_metadata object",
@@ -43,16 +42,17 @@ impl FileChatRepository {
             })
     }
 
+    /// Returns the stored text: decoding it into a `Value` would sort its keys.
     pub(super) async fn read_optional_chat_metadata_from_path(
         &self,
         path: &Path,
-    ) -> Result<Option<Value>, DomainError> {
+    ) -> Result<Option<Box<RawValue>>, DomainError> {
         let Some(header) = read_header_bytes(path).await? else {
             return Ok(None);
         };
-        Ok(parse_header(&header)
-            .map_err(|error| header_error(path, error))?
-            .remove("chat_metadata"))
+        parse_header_metadata(&header)
+            .map(|metadata| metadata.map(ToOwned::to_owned))
+            .map_err(|error| header_error(path, error))
     }
 
     /// Apply a staged metadata value to the latest target while owning its mutation lock.
@@ -100,95 +100,58 @@ fn header_error(path: &Path, error: DomainError) -> DomainError {
     }
 }
 
-type Fields<'a> = IndexMap<String, &'a RawValue>;
-
-fn fields<'a>(text: &'a str, label: &str) -> Result<Fields<'a>, DomainError> {
-    serde_json::from_str(text)
-        .map_err(|error| DomainError::InvalidData(format!("Invalid {label} object: {error}")))
+fn is_object(value: &RawValue) -> bool {
+    value.get().starts_with('{')
 }
 
-/// A serialization view: replace one field without copying the other JSON values.
-struct WithField<'a, T> {
-    fields: &'a Fields<'a>,
-    key: &'a str,
-    value: T,
+fn invalid_metadata(error: serde_json::Error) -> DomainError {
+    DomainError::InvalidData(format!("Invalid chat metadata: {error}"))
 }
 
-impl<T: Serialize> Serialize for WithField<'_, T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(None)?;
-        for (key, value) in self.fields {
-            if key != self.key {
-                map.serialize_entry(key, value)?;
-            }
-        }
-        map.serialize_entry(self.key, &self.value)?;
-        map.end()
-    }
+/// The header as a document, with its identity read the way every reader reads it.
+fn editable_header(line: &[u8]) -> Result<(JsonDocument, Option<String>), DomainError> {
+    let integrity = parse_header_integrity(line)?;
+    let header = JsonDocument::parse(line).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid chat header object: {error}"))
+    })?;
+    Ok((header, integrity))
 }
 
-fn write_header(
-    out: &mut impl Write,
-    header: &Fields<'_>,
-    value: &RawValue,
-    namespace: Option<&str>,
+fn replace_metadata(
+    header: &mut JsonDocument,
+    existing_integrity: Option<&str>,
+    metadata: Box<RawValue>,
 ) -> Result<(), DomainError> {
-    let existing_metadata = header.get("chat_metadata");
-    let existing_integrity = existing_metadata
-        .map(|metadata| parse_metadata_integrity(metadata))
-        .transpose()?
-        .flatten();
-    let result = if let Some(namespace) = namespace {
-        let metadata = fields(
-            existing_metadata
-                .ok_or_else(|| {
-                    DomainError::InvalidData("Chat header requires a chat_metadata object".into())
-                })?
-                .get(),
-            "chat_metadata",
-        )?;
-        let mut extensions = match metadata.get("extensions") {
-            Some(value) => fields(value.get(), "chat_metadata.extensions")?,
-            None => Fields::new(),
-        };
-        if value.get() == "null" {
-            extensions.shift_remove(namespace);
-        } else {
-            extensions.insert(namespace.to_owned(), value);
-        }
-        let metadata = WithField {
-            fields: &metadata,
-            key: "extensions",
-            value: &extensions,
-        };
-        serde_json::to_writer(
-            out,
-            &WithField {
-                fields: header,
-                key: "chat_metadata",
-                value: metadata,
-            },
-        )
+    if !is_object(&metadata) {
+        return Err(DomainError::InvalidData(
+            "Chat metadata must be a JSON object".into(),
+        ));
+    }
+    let incoming_integrity = parse_metadata_integrity(&metadata)?;
+    verify_integrity_match(existing_integrity, incoming_integrity.as_deref())?;
+    header.set("chat_metadata", metadata);
+    Ok(())
+}
+
+fn set_metadata_extension(
+    header: &mut JsonDocument,
+    namespace: &str,
+    value: Box<RawValue>,
+) -> Result<(), DomainError> {
+    let extensions = header
+        .object_mut(&["chat_metadata"])
+        .map_err(invalid_metadata)?
+        .ok_or_else(|| {
+            DomainError::InvalidData("Chat header requires a chat_metadata object".into())
+        })?
+        .object_entry(&["extensions"])
+        .map_err(invalid_metadata)?;
+    if value.get() == "null" {
+        extensions.remove(namespace);
     } else {
-        if !value.get().starts_with('{') {
-            return Err(DomainError::InvalidData(
-                "Chat metadata must be a JSON object".into(),
-            ));
-        }
-        let incoming_integrity = parse_metadata_integrity(value)?;
-        verify_integrity_match(existing_integrity.as_deref(), incoming_integrity.as_deref())?;
-        serde_json::to_writer(
-            out,
-            &WithField {
-                fields: header,
-                key: "chat_metadata",
-                value,
-            },
-        )
-    };
-    result.map_err(|error| {
-        DomainError::InternalError(format!("Failed to write chat header: {error}"))
-    })
+        extensions.set(namespace, value);
+    }
+    Ok(())
 }
 
 fn rewrite_chat_header_file(
@@ -204,9 +167,8 @@ fn rewrite_chat_header_file(
         .ok_or_else(|| {
             DomainError::InvalidData("Cannot update metadata in a chat without a header".into())
         })?;
-    let header_text = std::str::from_utf8(&header_line)
-        .map_err(|error| DomainError::InvalidData(format!("Invalid chat header UTF-8: {error}")))?;
-    let header = fields(header_text, "chat header").map_err(|error| header_error(path, error))?;
+    let (mut header, existing_integrity) =
+        editable_header(&header_line).map_err(|error| header_error(path, error))?;
     let incoming = fs::read_to_string(stage_path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read metadata stage {}: {error}",
@@ -214,7 +176,7 @@ fn rewrite_chat_header_file(
         ))
     })?;
     // Parse the entire staged document, including its end; never ignore trailing data.
-    let value: &RawValue = serde_json::from_str(&incoming).map_err(|error| {
+    let value = RawValue::from_string(incoming).map_err(|error| {
         DomainError::InvalidData(format!("Invalid metadata commit JSON: {error}"))
     })?;
     // Raw values are copied into one JSONL header, so internal line breaks cannot be published.
@@ -222,6 +184,10 @@ fn rewrite_chat_header_file(
         return Err(DomainError::InvalidData(
             "Metadata commit must be a single JSONL record".into(),
         ));
+    }
+    match namespace {
+        Some(namespace) => set_metadata_extension(&mut header, namespace, value)?,
+        None => replace_metadata(&mut header, existing_integrity.as_deref(), value)?,
     }
 
     let mut out = BufWriter::new(
@@ -236,7 +202,9 @@ fn rewrite_chat_header_file(
                 ))
             })?,
     );
-    write_header(&mut out, &header, value, namespace)?;
+    serde_json::to_writer(&mut out, &header).map_err(|error| {
+        DomainError::InternalError(format!("Failed to write chat header: {error}"))
+    })?;
     out.write_all(b"\n").map_err(io_error)?;
     // Keep the same reader: it may already hold buffered body bytes.
     io::copy(&mut source, &mut out).map_err(io_error)?;

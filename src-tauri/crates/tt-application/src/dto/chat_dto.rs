@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::collections::HashMap;
 use tt_domain::models::chat::{Chat, ChatMessage, MessageExtra};
 use tt_ports::repositories::chat_repository::{
@@ -93,7 +94,7 @@ pub struct ChatSearchResultDto {
     pub date: i64,
     pub chat_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_metadata: Option<serde_json::Value>,
+    pub chat_metadata: Option<Box<RawValue>>,
 }
 
 /// DTO for pinned character chat references in recent-chat queries.

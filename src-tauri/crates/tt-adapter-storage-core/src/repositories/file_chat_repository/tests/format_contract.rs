@@ -132,7 +132,10 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             .get_character_chat_summary("alice", "format", true)
             .await
             .unwrap();
-        assert_eq!(full.chat_metadata, metadata);
+        assert_eq!(
+            full.chat_metadata.map(|stored| stored.to_string()),
+            metadata.map(|value| value.to_string())
+        );
     }
     // All readers select the final metadata object before validating identity.
     // The overwritten null must not make a valid final header unreadable.
@@ -153,7 +156,10 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
         .get_character_chat_summary("alice", "format", true)
         .await
         .unwrap();
-    assert_eq!(summary.chat_metadata.as_ref(), full[0].get("chat_metadata"));
+    assert_eq!(
+        serde_json::to_value(summary.chat_metadata).unwrap(),
+        full[0]["chat_metadata"]
+    );
     assert_eq!(
         repository
             .get_character_chat_integrity("alice", "format")

@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use serde_json::value::RawValue;
 use std::path::Path;
 
@@ -84,8 +83,8 @@ pub trait GroupChatRepository: Send + Sync {
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError>;
 
-    /// Read the group chat metadata (header only).
-    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError>;
+    /// Read the group chat metadata (header only), as stored.
+    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Box<RawValue>, DomainError>;
 
     /// Read a JSON value from the group chat extension store.
     async fn get_group_chat_store_json(

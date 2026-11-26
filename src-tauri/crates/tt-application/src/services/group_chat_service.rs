@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use serde_json::Value;
 use serde_json::value::RawValue;
 
 use crate::dto::chat_dto::{
@@ -96,7 +95,10 @@ impl GroupChatService {
         Ok(ChatSearchResultDto::from(summary))
     }
 
-    pub async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, ApplicationError> {
+    pub async fn get_group_chat_metadata(
+        &self,
+        chat_id: &str,
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .group_chat_repository
             .get_group_chat_metadata(chat_id)

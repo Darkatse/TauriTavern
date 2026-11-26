@@ -625,7 +625,7 @@ impl ChatRepository for FileChatRepository {
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;

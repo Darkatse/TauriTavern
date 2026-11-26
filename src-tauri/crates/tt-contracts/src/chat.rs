@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatImportFormat {
@@ -36,7 +37,7 @@ pub struct ChatSearchResult {
     pub date: i64,
     pub chat_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_metadata: Option<Value>,
+    pub chat_metadata: Option<Box<RawValue>>,
 }
 
 /// Current file identity, read independently of rebuildable directory summaries.

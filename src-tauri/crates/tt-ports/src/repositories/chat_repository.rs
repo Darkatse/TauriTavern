@@ -168,12 +168,12 @@ pub trait ChatRepository: Send + Sync {
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError>;
 
-    /// Read the character chat metadata (header only).
+    /// Read the character chat metadata (header only), as stored.
     async fn get_character_chat_metadata(
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Read only the header identity. Missing identity is valid legacy data;
     /// missing files and unreadable or invalid headers are errors.

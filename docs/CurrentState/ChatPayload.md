@@ -32,7 +32,7 @@
 - header 合法时，损坏的末条预览显示“Preview unavailable”，保留条目和消息记录位置。正文缺省、空正文及 header-only 不属于损坏。
 - 日期使用末条有效 `send_date`，否则使用 mtime；正文不可用不抹去有效日期。
 - 角色列表返回完整末条正文，摘要只缓存短预览。搜索发现不可用投影时不缓存整查询，即使该文件未命中。
-- 普通摘要、搜索结果和备份详情使用轻量投影，完整 `chat_metadata` 仅在显式请求时读取并附加到本次响应。
+- 普通摘要、搜索结果和备份详情使用轻量投影，完整 `chat_metadata` 仅在显式请求时读取，按 header 里的原文附加到本次响应。
 - 目录索引是可重建缓存，版本不匹配或文件损坏时按需重建。旧索引在首次加载时清理；清理或持久化失败记录告警，不阻塞目录查询。
 - 删除聊天或角色前从当前 header 查询身份。合法旧聊天缺少 integrity 表示无身份；读取或格式错误会停止相关删除操作。目录展示按文件报告并跳过失败项。
 
@@ -83,7 +83,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 ### 3.1 Metadata 保存
 
-`saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留语义，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
+`saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留原文与顺序，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
 
 当前聊天的 metadata 与完整保存共用 `persistedChatMetadata()` 和保存队列。该 helper 排除 `lastInContextMessageId`，不修改活 metadata；metadata 保存不遍历或传输消息、不保存消息派生缓存，也不取消待执行的完整保存。integrity 弹窗及恢复留在同一次队列任务内：确认后强制完整保存，拒绝则 reload；缺文件或普通错误不回退。
 
@@ -91,7 +91,7 @@ metadata 操作要求目标文件存在。新群聊在首次问候扩展事件�
 
 storage-core 的 `chat_metadata.rs` 在路径 mutation lock 内读取最新 header、应用修改并复制正文，复用统一发布机制；成功后失效缓存并通知备份协调器。内容签名必须对应完整发布文件，不能用上传的 metadata 字节代替。integrity 表示身份而非内容版本，进程内锁不提供跨进程或 Sync 冲突隔离。
 
-JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。header 不保证字段顺序或格式，正文保持原字节。
+JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。
 
 ### 3.2 删除与重命名
 

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use serde_json::Value;
 use serde_json::value::RawValue;
 use tauri::State;
 
@@ -35,7 +34,7 @@ pub async fn get_group_chat_summary(
 pub async fn get_group_chat_metadata(
     chat_id: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Value, CommandError> {
+) -> Result<Box<RawValue>, CommandError> {
     log_command(format!("get_group_chat_metadata {}", chat_id));
 
     app_state
