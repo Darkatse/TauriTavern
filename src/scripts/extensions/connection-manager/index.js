@@ -1357,10 +1357,9 @@ export async function init() {
     }
     toggleProfileSpecificButtons();
 
-    profiles.addEventListener('change', async function () {
+    async function applyDropdownSelection() {
         const selectedOption = profiles.selectedOptions[0];
         if (!selectedOption) {
-            // Safety net for preventing the command getting stuck
             await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
             return;
         }
@@ -1391,6 +1390,12 @@ export async function init() {
             await applyModelTarget(selected.item);
             await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
         }
+    }
+
+    let selectionApplication = Promise.resolve();
+    profiles.addEventListener('change', () => {
+        selectionApplication = applyDropdownSelection();
+        selectionApplication.catch(error => console.error('Connection Manager: failed to apply the selection', error));
     });
 
     const reloadButton = document.getElementById('reload_connection_profile');
@@ -1625,14 +1630,11 @@ export async function init() {
                 return '';
             }
 
-            const shouldAwait = !isFalseBoolean(String(args?.await));
-            const awaitPromise = new Promise((resolve) => eventSource.once(event_types.CONNECTION_PROFILE_LOADED, resolve));
-
             profiles.selectedIndex = Array.from(profiles.options).findIndex(o => o.value === makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id));
             profiles.dispatchEvent(new Event('change'));
 
-            if (shouldAwait) {
-                await awaitPromise;
+            if (!isFalseBoolean(String(args?.await))) {
+                await selectionApplication;
 
                 // We should also await the connection to be established
                 const parsedTimeout = parseInt(args?.timeout?.toString());
