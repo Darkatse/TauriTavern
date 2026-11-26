@@ -244,8 +244,9 @@ mod tests {
     #[test]
     fn persona_migration_preserves_data_and_images() {
         use crate::persona_cards;
-        use serde_json::{Value, json};
+        use serde_json::json;
         use tt_adapter_storage_core::png_metadata::replace_text_chunks;
+        use tt_domain::json_document::JsonDocument;
         use tt_domain::models::persona::insert_personas;
 
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -269,12 +270,13 @@ mod tests {
         let settings_path = root.join("settings.json");
         fs::write(&settings_path, legacy.to_string()).unwrap();
         persona_cards::migrate_personas(root, root).unwrap();
-        let mut settings: Value =
-            serde_json::from_slice(&fs::read(settings_path).unwrap()).unwrap();
-        assert!(settings["power_user"].get("personas").is_none());
-        assert!(settings["power_user"].get("persona_descriptions").is_none());
-        insert_personas(&mut settings, &persona_cards::read_personas(root).unwrap());
-        assert_eq!(settings, legacy);
+        let mut settings = JsonDocument::parse(&fs::read(settings_path).unwrap()).unwrap();
+        assert_eq!(
+            settings.to_string(),
+            r#"{"other_setting":"keep","power_user":{}}"#
+        );
+        insert_personas(&mut settings, &persona_cards::read_personas(root).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(&settings).unwrap(), legacy);
         assert!(
             fs::read_dir(&avatars)
                 .unwrap()

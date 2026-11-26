@@ -4,15 +4,15 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 use std::time::SystemTime;
 
-use serde_json::Value;
 use tt_adapter_storage_core::file_system::{
-    KeptOriginal, persist_file_blocking, persist_json_file_blocking,
+    KeptOriginal, persist_bytes_file_blocking, persist_file_blocking,
     replace_keeping_original_blocking, unique_temp_path,
 };
 use tt_adapter_storage_core::png_metadata::{
     PNG_SIGNATURE, read_preferred_text_chunk, replace_text_chunks, write_utf8_text_chunk,
 };
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::{Persona, Personas, take_personas};
 
 use crate::avatar_images::avatar_png;
@@ -234,7 +234,7 @@ pub fn migrate_personas(user_root: &Path, target_user_root: &Path) -> Result<(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(io_error(error)),
     };
-    let mut settings: Value = serde_json::from_slice(&bytes)
+    let mut settings = JsonDocument::parse(&bytes)
         .map_err(|error| DomainError::InvalidData(format!("Invalid Persona settings: {error}")))?;
     let Some(personas) = take_personas(&mut settings)? else {
         return Ok(());
@@ -252,7 +252,7 @@ pub fn migrate_personas(user_root: &Path, target_user_root: &Path) -> Result<(),
         }
         import_persona(&directory, &id, &persona)?;
     }
-    persist_json_file_blocking(&path, &settings)
+    persist_bytes_file_blocking(&path, &settings.to_vec())
 }
 
 fn io_error(error: std::io::Error) -> DomainError {

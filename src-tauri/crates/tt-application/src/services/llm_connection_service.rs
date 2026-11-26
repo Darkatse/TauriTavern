@@ -415,9 +415,11 @@ impl LlmConnectionService {
             .load_user_settings()
             .await?
             .settings;
-        let saved = settings
-            .data
-            .get("proxies")
+        let proxies: Option<Value> = settings.get(&["proxies"]).map_err(|error| {
+            ApplicationError::ValidationError(format!("Invalid settings proxies: {error}"))
+        })?;
+        let saved = proxies
+            .as_ref()
             .and_then(Value::as_array)
             .and_then(|proxies| {
                 proxies

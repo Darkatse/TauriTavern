@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
 use tt_adapter_storage_core::file_system::DataDirectory;
+use tt_adapter_storage_core::validate_user_settings_blocking;
 use tt_domain::errors::DomainError;
 use tt_ports::data_archive::{
     DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
@@ -16,6 +17,15 @@ use tt_ports::data_archive::{
 };
 
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Runs on an archive's staged files: settings the app could not load never replace the target's.
+pub(crate) fn prepare_imported_user_data(
+    user_root: &Path,
+    target_user_root: &Path,
+) -> Result<(), DomainError> {
+    validate_user_settings_blocking(user_root)?;
+    tt_adapter_media::persona_cards::migrate_personas(user_root, target_user_root)
+}
 
 pub(crate) struct TauriDataArchiveFileGateway {
     app_handle: AppHandle,

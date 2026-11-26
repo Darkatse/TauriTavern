@@ -21,13 +21,11 @@ fn fixture(root: &Path) -> Fixture {
     let data = DataDirectory::new(root.to_path_buf());
     let settings = Arc::new(FileSettingsRepository::new(
         data.settings().to_path_buf(),
-        UserSettings {
-            data: json!({
-                "firstRun": true,
-                "extension_settings": { "disabledExtensions": ["memory"] },
-                "power_user": { "theme": "Default" },
-            }),
-        },
+        user_settings(json!({
+            "firstRun": true,
+            "extension_settings": { "disabledExtensions": ["memory"] },
+            "power_user": { "theme": "Default" },
+        })),
         TauriTavernSettings::default(),
         Arc::default(),
         4 * 1024 * 1024,
@@ -76,16 +74,14 @@ async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
         service,
     } = fixture(temp.path());
     settings
-        .save_user_settings(UserSettings {
-            data: json!({
-                "firstRun": false,
-                "username": "Alice",
-                "user_avatar": "alice.png",
-                "active_character": "Heavy.png",
-                "extension_settings": { "disabledExtensions": [], "Foo": { "blob": "x" } },
-                "power_user": { "theme": "Broken", "custom_css": "body { display: none }" },
-            }),
-        })
+        .save_user_settings(user_settings(json!({
+            "firstRun": false,
+            "username": "Alice",
+            "user_avatar": "alice.png",
+            "active_character": "Heavy.png",
+            "extension_settings": { "disabledExtensions": [], "Foo": { "blob": "x" } },
+            "power_user": { "theme": "Broken", "custom_css": "body { display: none }" },
+        })))
         .await
         .unwrap();
     let persona_state = std::fs::read(data.settings().join(PERSONA_STATE_FILE)).unwrap();
@@ -118,13 +114,17 @@ async fn safe_mode_resets_the_customization_layer_and_keeps_content() {
 
     assert!(report.auto_upload_paused);
     let [snapshot] = settings.get_snapshots().await.unwrap().try_into().unwrap();
-    let snapshot = settings.load_snapshot(&snapshot.name).await.unwrap().data;
+    let snapshot = settings.load_snapshot(&snapshot.name).await.unwrap();
     assert_eq!(
-        snapshot["power_user"]["custom_css"],
-        "body { display: none }"
+        snapshot
+            .get::<String>(&["power_user", "custom_css"])
+            .unwrap()
+            .as_deref(),
+        Some("body { display: none }")
     );
 
-    let reset = settings.load_user_settings().await.unwrap().settings.data;
+    let reset = settings.load_user_settings().await.unwrap().settings;
+    let reset = serde_json::to_value(reset).unwrap();
     assert_eq!(reset["firstRun"], false);
     assert_eq!(
         reset["extension_settings"]["disabledExtensions"],

@@ -10,10 +10,11 @@ use std::time::UNIX_EPOCH;
 
 use chrono::{DateTime, Local};
 use tt_domain::errors::DomainError;
-use tt_domain::models::settings::{SettingsSnapshot, UserSettings};
+use tt_domain::json_document::JsonDocument;
+use tt_domain::models::settings::SettingsSnapshot;
 
 use super::FileSettingsRepository;
-use crate::file_system::{BACKUP_TIMESTAMP_FORMAT, persist_json_file_blocking};
+use crate::file_system::{BACKUP_TIMESTAMP_FORMAT, persist_bytes_file_blocking};
 
 const BACKUPS_DIR: &str = "backups";
 const PREFIX: &str = "settings_default-user_";
@@ -32,13 +33,13 @@ impl FileSettingsRepository {
     }
 }
 
-pub(super) fn create(root: &Path, settings: &UserSettings) -> Result<String, DomainError> {
+pub(super) fn create(root: &Path, settings: &JsonDocument) -> Result<String, DomainError> {
     let dir = root.join(BACKUPS_DIR);
     let name = format!(
         "{PREFIX}{}.json",
         Local::now().format(BACKUP_TIMESTAMP_FORMAT)
     );
-    persist_json_file_blocking(&dir.join(&name), settings)?;
+    persist_bytes_file_blocking(&dir.join(&name), &settings.to_pretty_vec())?;
 
     let mut entries = entries(&dir)?;
     entries.sort_by_key(|entry| Reverse(entry.snapshot.date));
@@ -62,8 +63,21 @@ pub(super) fn list(root: &Path) -> Result<Vec<SettingsSnapshot>, DomainError> {
     Ok(snapshots)
 }
 
+pub(super) fn load(root: &Path, name: &str) -> Result<JsonDocument, DomainError> {
+    let path = path(root, name)?;
+    let text = fs::read(&path).map_err(|error| match error.kind() {
+        io::ErrorKind::NotFound => {
+            DomainError::NotFound(format!("Settings snapshot not found: {name}"))
+        }
+        _ => io_error("read", &path, error),
+    })?;
+    JsonDocument::parse(&text).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid settings snapshot {name}: {error}"))
+    })
+}
+
 /// Like upstream, accepts a single path component under the snapshot prefix.
-pub(super) fn path(root: &Path, name: &str) -> Result<PathBuf, DomainError> {
+fn path(root: &Path, name: &str) -> Result<PathBuf, DomainError> {
     let mut components = Path::new(name).components();
     let plain = matches!(
         (components.next(), components.next()),

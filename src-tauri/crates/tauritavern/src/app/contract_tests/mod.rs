@@ -72,7 +72,6 @@ use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
 };
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
-use tt_domain::models::settings::UserSettings;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -92,9 +91,11 @@ const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
 mod character;
+mod data_archive;
 mod host_resources;
 mod profile_migration;
 mod safe_mode;
+mod settings;
 mod world_info;
 
 struct AgentRuntimeFixture {
@@ -233,7 +234,7 @@ fn agent_runtime_fixture_with_shell(
         )),
         Arc::new(FileSettingsRepository::new(
             default_user.clone(),
-            UserSettings::default(),
+            JsonDocument::default(),
             Default::default(),
             Arc::default(),
             4 * 1024 * 1024,
@@ -504,6 +505,10 @@ fn character_card(name: &str, extensions: Value) -> Value {
             "kept": true
         }
     })
+}
+
+fn user_settings(settings: Value) -> JsonDocument {
+    JsonDocument::from_serialize(&settings).unwrap()
 }
 
 fn world_info(content: &str) -> Value {

@@ -1,6 +1,5 @@
 use super::*;
 use tt_domain::models::llm_connection::LlmConnectionDefinition;
-use tt_domain::models::settings::UserSettings;
 use tt_ports::repositories::settings_repository::SettingsRepository;
 
 fn connection_service(
@@ -8,7 +7,7 @@ fn connection_service(
 ) -> (Arc<FileSettingsRepository>, LlmConnectionService) {
     let settings = Arc::new(FileSettingsRepository::new(
         root.join("default-user"),
-        UserSettings::default(),
+        JsonDocument::default(),
         Default::default(),
         Arc::default(),
         4 * 1024 * 1024,
@@ -51,13 +50,16 @@ async fn agent_model_binding_follows_the_named_proxy_preset() {
         ("https://proxy.example/v1beta", "first-password"),
         ("https://new-proxy.example/v1beta", "updated-password"),
     ] {
-        settings.save_user_settings(UserSettings { data: json!({
-            "proxies": [
-                {"name": "Unrelated proxy", "url": "https://other.example", "password": "other"},
-                {"name": "Team proxy", "url": url, "password": password}
-            ],
-            "selected_proxy": {"name": "Unrelated proxy"}
-        }) }).await.unwrap();
+        settings
+            .save_user_settings(user_settings(json!({
+                "proxies": [
+                    {"name": "Unrelated proxy", "url": "https://other.example", "password": "other"},
+                    {"name": "Team proxy", "url": url, "password": password}
+                ],
+                "selected_proxy": {"name": "Unrelated proxy"}
+            })))
+            .await
+            .unwrap();
         let mut payload = payload_with_stale_proxy();
         service
             .apply_connection_to_payload("proxy-target", "[v]gemini-custom", &mut payload)
@@ -70,11 +72,9 @@ async fn agent_model_binding_follows_the_named_proxy_preset() {
     }
 
     settings
-        .save_user_settings(UserSettings {
-            data: json!({
-                "proxies": [{"name": "Team proxy", "url": "", "password": "unused"}]
-            }),
-        })
+        .save_user_settings(user_settings(json!({
+            "proxies": [{"name": "Team proxy", "url": "", "password": "unused"}]
+        })))
         .await
         .unwrap();
     let mut payload = payload_with_stale_proxy();
@@ -86,9 +86,7 @@ async fn agent_model_binding_follows_the_named_proxy_preset() {
     assert!(!payload.contains_key("proxy_password"));
 
     settings
-        .save_user_settings(UserSettings {
-            data: json!({"proxies": []}),
-        })
+        .save_user_settings(user_settings(json!({"proxies": []})))
         .await
         .unwrap();
     for error in [

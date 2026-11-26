@@ -12,6 +12,7 @@ use tauri_plugin_fs::FsExt;
 use tokio::fs;
 
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 
 static DEFAULT_FILES_MANIFEST: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
 
@@ -96,6 +97,17 @@ pub fn read_resource_json<T: DeserializeOwned>(
 ) -> Result<T, DomainError> {
     let text = read_resource_text(resources, relative_path)?;
     serde_json::from_str(&text).map_err(|e| {
+        tracing::error!("Failed to parse JSON resource {:?}: {}", relative_path, e);
+        DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
+    })
+}
+
+pub fn read_resource_document(
+    resources: &dyn BundledResources,
+    relative_path: &str,
+) -> Result<JsonDocument, DomainError> {
+    let bytes = resources.read_bytes(relative_path)?;
+    JsonDocument::parse(&bytes).map_err(|e| {
         tracing::error!("Failed to parse JSON resource {:?}: {}", relative_path, e);
         DomainError::InvalidData(format!("Invalid JSON resource '{}': {}", relative_path, e))
     })

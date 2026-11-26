@@ -3,14 +3,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tt_domain::models::persona::{Personas, insert_personas, take_personas};
+use tt_domain::models::persona::{Personas, insert_personas};
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 use crate::dto::settings_dto::{
     SettingsJsonDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateAgentSettingsDto, UpdateAppUpdateSettingsDto, UpdateChatBackupSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsRevisionDto,
-    UserSettingsSaveResultDto,
+    UpdateTauriTavernSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::GenerationRuntime;
@@ -488,15 +487,12 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         let settings_json = async {
             let StoredUserSettings {
-                settings: mut user_settings,
+                mut settings,
                 revision,
             } = self.settings_repository.load_user_settings().await?;
-            insert_personas(&mut user_settings.data, &self.avatars.get_personas().await?);
-            let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
-                ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
-            })?;
+            insert_personas(&mut settings, &self.avatars.get_personas().await?)?;
 
-            Ok::<_, ApplicationError>((settings_json, revision))
+            Ok::<_, ApplicationError>((settings.to_string(), revision))
         };
 
         let ai_settings = async {
@@ -620,25 +616,25 @@ impl SettingsService {
         Ok(snapshot_dtos)
     }
 
-    pub async fn load_snapshot(&self, name: &str) -> Result<UserSettingsDto, ApplicationError> {
+    /// The snapshot's settings as indented JSON text.
+    pub async fn load_snapshot(&self, name: &str) -> Result<Vec<u8>, ApplicationError> {
         tracing::info!("Loading settings snapshot: {}", name);
 
         let settings = self.settings_repository.load_snapshot(name).await?;
 
-        Ok(UserSettingsDto::from(settings))
+        Ok(settings.to_pretty_vec())
     }
 
     pub async fn restore_snapshot(&self, name: &str) -> Result<(), ApplicationError> {
         tracing::info!("Restoring settings snapshot: {}", name);
 
         let _guard = self.user_settings_save_lock.lock().await;
-        let mut settings = self.settings_repository.load_snapshot(name).await?;
-        if let Some(personas) = take_personas(&mut settings.data)? {
-            self.avatars.import_personas(&personas).await?;
-        }
-        self.settings_repository
+        let settings = self.settings_repository.load_snapshot(name).await?;
+        let personas = self
+            .settings_repository
             .save_user_settings(settings)
             .await?;
+        self.avatars.import_personas(&personas).await?;
         self.clear_sillytavern_settings_cache().await;
 
         Ok(())
@@ -651,7 +647,7 @@ pub(crate) async fn snapshot_user_settings(
     avatars: &dyn AvatarRepository,
 ) -> Result<String, ApplicationError> {
     let mut settings = settings_repository.load_user_settings().await?.settings;
-    insert_personas(&mut settings.data, &avatars.get_personas().await?);
+    insert_personas(&mut settings, &avatars.get_personas().await?)?;
     Ok(settings_repository.create_snapshot(settings).await?)
 }
 
@@ -672,6 +668,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
+    use tt_domain::json_document::JsonDocument;
     use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
 
     #[test]
@@ -1000,15 +997,16 @@ mod tests {
             unreachable!()
         }
 
-        async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn save_user_settings(
+            &self,
+            _settings: JsonDocument,
+        ) -> Result<Personas, DomainError> {
             unreachable!()
         }
 
         async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError> {
             Ok(StoredUserSettings {
-                settings: UserSettings {
-                    data: serde_json::json!({}),
-                },
+                settings: JsonDocument::default(),
                 revision: tt_domain::models::settings::revision::UserSettingsRevision {
                     hash_algorithm: String::new(),
                     settings_hash: String::new(),
@@ -1037,7 +1035,7 @@ mod tests {
             unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
+        async fn create_snapshot(&self, _settings: JsonDocument) -> Result<String, DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -1045,7 +1043,7 @@ mod tests {
             unimplemented!("not used by these tests")
         }
 
-        async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+        async fn load_snapshot(&self, _name: &str) -> Result<JsonDocument, DomainError> {
             unimplemented!("not used by these tests")
         }
 

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::fields::{
@@ -15,14 +15,11 @@ use crate::file_system::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::json_document::JsonDocument;
-use tt_domain::models::persona::{Personas, take_personas_with};
-use tt_domain::models::settings::repair::{
-    PROMPT_MANAGER_LISTS, PROMPT_MANAGER_SETTINGS, UserSettingsRepairReport,
-    repair_prompt_manager_object,
-};
+use tt_domain::models::persona::take_personas;
+use tt_domain::models::settings::repair::repair_prompt_manager_settings;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{DynamicThemeSettings, TauriTavernSettings, UserSettings};
-use tt_ports::repositories::settings_repository::StoredUserSettings;
+use tt_domain::models::settings::{DynamicThemeSettings, TauriTavernSettings};
+use tt_ports::repositories::settings_repository::{SettingsCommitResult, StoredUserSettings};
 
 const REVISION_ALGORITHM: &str = "tt-user-settings-sections-sha256-v2";
 const CORE: usize = SECTION_FILES.len() - 1;
@@ -30,10 +27,9 @@ const CORE: usize = SECTION_FILES.len() - 1;
 pub(super) struct DefaultSections([Vec<u8>; 5]);
 
 impl DefaultSections {
-    pub(super) fn new(defaults: &UserSettings) -> Self {
-        let sections = JsonDocument::from_serialize(&defaults.data)
-            .and_then(UserSettingsSections::split)
-            .expect("bundled default settings are a JSON object");
+    pub(super) fn new(defaults: JsonDocument) -> Self {
+        let sections = UserSettingsSections::split(defaults)
+            .expect("bundled default settings split into sections");
         Self(sections.into_files().map(|section| section.to_vec()))
     }
 }
@@ -111,18 +107,18 @@ pub(super) fn load_user(
         .map_err(json_error)?;
     repair(&mut settings);
     Ok(StoredUserSettings {
-        settings: UserSettings {
-            data: serde_json::to_value(&settings).map_err(json_error)?,
-        },
+        settings,
         revision: StoredSections::new(texts).revision(),
     })
 }
 
-pub(super) fn write_user(
+/// Everything that can reject the replacement runs before the first file changes.
+pub(super) fn replace_user(
     root: &Path,
     mut settings: JsonDocument,
     mut stored: StoredSections,
-) -> Result<UserSettingsRevision, DomainError> {
+) -> Result<SettingsCommitResult, DomainError> {
+    let personas = take_personas(&mut settings)?.unwrap_or_default();
     repair(&mut settings);
     let sections = UserSettingsSections::split(settings)
         .map_err(json_error)?
@@ -135,15 +131,26 @@ pub(super) fn write_user(
             stored.texts[index] = text;
         }
     }
-    Ok(stored.revision())
+    Ok(SettingsCommitResult {
+        revision: stored.revision(),
+        personas,
+    })
 }
 
-pub(super) fn save_user(
-    root: &Path,
-    settings: UserSettings,
-) -> Result<UserSettingsRevision, DomainError> {
-    let settings = JsonDocument::from_serialize(&settings.data).map_err(json_error)?;
-    write_user(root, settings, StoredSections::read(root)?)
+/// Rejects a core settings file that a load could not split, without changing it.
+pub(super) fn validate_core(root: &Path) -> Result<(), DomainError> {
+    let path = root.join(SECTION_FILES[CORE]);
+    let text = match fs::read(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(read_error(&path, error)),
+    };
+    JsonDocument::parse(&text)
+        .and_then(UserSettingsSections::split)
+        .map(drop)
+        .map_err(|error| {
+            DomainError::InvalidData(format!("Invalid settings {}: {error}", path.display()))
+        })
 }
 
 pub(super) fn reset_user(
@@ -185,50 +192,10 @@ pub(super) fn reset_user(
     Ok(())
 }
 
-pub(super) fn take_personas(settings: &mut JsonDocument) -> Result<Option<Personas>, DomainError> {
-    let Some(power_user) = settings.object_mut(&["power_user"]).map_err(json_error)? else {
-        return Ok(None);
-    };
-    take_personas_with(|field| {
-        let value = power_user.get(&[field]).map_err(|error| {
-            DomainError::InvalidData(format!("Invalid settings power_user.{field}: {error}"))
-        })?;
-        power_user.remove(field);
-        Ok(value)
-    })
-}
-
-/// Optional repair must leave undecodable lists intact.
 fn repair(settings: &mut JsonDocument) {
-    let mut report = UserSettingsRepairReport::default();
-    repair_prompt_lists(settings, &mut report);
-    match settings.object_mut(&[PROMPT_MANAGER_SETTINGS]) {
-        Ok(Some(prompt_manager)) => repair_prompt_lists(prompt_manager, &mut report),
-        Ok(None) => {}
-        Err(error) => tracing::warn!("Leaving {PROMPT_MANAGER_SETTINGS} unrepaired: {error}"),
-    }
+    let report = repair_prompt_manager_settings(settings);
     if report.changed() {
         tracing::warn!("Repaired SillyTavern PromptManager settings: {report}");
-    }
-}
-
-fn repair_prompt_lists(object: &mut JsonDocument, report: &mut UserSettingsRepairReport) {
-    let mut lists = Map::new();
-    for field in PROMPT_MANAGER_LISTS {
-        match object.get(&[field]) {
-            Ok(Some(list)) => {
-                lists.insert(field.to_owned(), list);
-            }
-            Ok(None) => {}
-            Err(error) => tracing::warn!("Leaving PromptManager {field} unrepaired: {error}"),
-        }
-    }
-    let before = *report;
-    repair_prompt_manager_object(&mut lists, report);
-    if *report != before {
-        for (field, value) in &lists {
-            object.set(field, value);
-        }
     }
 }
 

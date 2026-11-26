@@ -20,7 +20,7 @@ pub(crate) fn run_import_data_archive(
     workspace_root: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
-    prepare_personas: fn(&Path, &Path) -> Result<(), DomainError>,
+    prepare_user_data: fn(&Path, &Path) -> Result<(), DomainError>,
 ) -> Result<DataArchiveImportResult, DataArchiveImportFailure> {
     report_progress("preparing", 0.0, "Preparing import");
     ensure_not_cancelled(is_cancelled)?;
@@ -75,7 +75,7 @@ pub(crate) fn run_import_data_archive(
     report_progress("normalizing", 90.0, "Normalizing archive layout");
     extract::normalize_staged_archive(&staged_archive, &layout, &normalized_root, is_cancelled)?;
     drop(staged_archive);
-    prepare_personas(
+    prepare_user_data(
         &normalized_root.join(IMPORT_TARGET_USER_HANDLE),
         &data_root.join(IMPORT_TARGET_USER_HANDLE),
     )?;

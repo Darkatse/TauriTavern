@@ -13,8 +13,7 @@ use crate::presentation::commands::request_proxy::ensure_request_proxy_consent;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::settings_dto::{
     RequestProxySettingsDto, SettingsSnapshotDto, TauriTavernSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsRevisionDto,
-    UserSettingsSaveResultDto,
+    UpdateTauriTavernSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use tt_application::services::host_resource_service::HostResourceService;
 use tt_contracts::byte_commit::CommitBegin;
@@ -272,7 +271,7 @@ pub async fn get_settings_snapshots(
 pub async fn load_settings_snapshot(
     name: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<UserSettingsDto, CommandError> {
+) -> Result<tauri::ipc::Response, CommandError> {
     log_command(format!("load_settings_snapshot - {}", name));
 
     app_state
@@ -280,6 +279,7 @@ pub async fn load_settings_snapshot(
         .settings_service
         .load_snapshot(&name)
         .await
+        .map(tauri::ipc::Response::new)
         .map_err(map_command_error("Failed to load settings snapshot"))
 }
 

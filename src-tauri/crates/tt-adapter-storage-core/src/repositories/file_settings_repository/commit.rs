@@ -32,11 +32,9 @@ pub(super) fn publish(
     let text = fs::read(received).map_err(|error| {
         DomainError::InternalError(format!("Failed to read settings commit: {error}"))
     })?;
-    let mut settings = JsonDocument::parse(&text).map_err(|error| {
+    let settings = JsonDocument::parse(&text).map_err(|error| {
         DomainError::InvalidData(format!("Invalid settings replacement: {error}"))
     })?;
     drop(text);
-    let personas = sections::take_personas(&mut settings)?.unwrap_or_default();
-    let revision = sections::write_user(root, settings, stored)?;
-    Ok(SettingsCommitResult { revision, personas })
+    sections::replace_user(root, settings, stored)
 }

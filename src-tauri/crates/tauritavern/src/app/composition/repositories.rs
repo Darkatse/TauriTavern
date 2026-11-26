@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::app::startup_profile::initial_tauritavern_settings;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
-use crate::infrastructure::assets::read_resource_json;
+use crate::infrastructure::assets::read_resource_document;
 use crate::infrastructure::builtin_skills::materialize_builtin_skills;
 use crate::infrastructure::logging::llm_api_logs::{
     LoggingChatCompletionRepository, LoggingTextCompletionRepository,
@@ -36,7 +36,7 @@ use tt_adapter_storage_userdata::{FileSkillRepository, FileSpriteRepository};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_adapter_vector::{CandleLocalEmbeddingRepository, RedbVectorRepository};
 use tt_domain::errors::DomainError;
-use tt_domain::models::settings::{ChatBackupSettings, UserSettings};
+use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -148,8 +148,8 @@ pub(in crate::app::composition) async fn settings_repository(
     data_directory: &DataDirectory,
 ) -> Result<Arc<FileSettingsRepository>, DomainError> {
     let bundled_resources = environment.bundled_resources.clone();
-    let default_user_settings: UserSettings = tokio::task::spawn_blocking(move || {
-        read_resource_json(bundled_resources.as_ref(), "default/content/settings.json")
+    let default_user_settings = tokio::task::spawn_blocking(move || {
+        read_resource_document(bundled_resources.as_ref(), "default/content/settings.json")
     })
     .await
     .map_err(|error| {

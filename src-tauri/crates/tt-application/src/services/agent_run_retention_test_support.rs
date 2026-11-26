@@ -7,6 +7,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::agent::{
     AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, AgentRunSummaryProjection,
 };
@@ -60,7 +61,10 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("reset_user_settings"))
     }
 
-    async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+    async fn save_user_settings(
+        &self,
+        _settings: JsonDocument,
+    ) -> Result<tt_domain::models::persona::Personas, DomainError> {
         Err(unused_settings_method("save_user_settings"))
     }
 
@@ -91,7 +95,7 @@ impl SettingsRepository for TestSettingsRepository {
         unreachable!()
     }
 
-    async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
+    async fn create_snapshot(&self, _settings: JsonDocument) -> Result<String, DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 
@@ -99,7 +103,7 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("get_snapshots"))
     }
 
-    async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+    async fn load_snapshot(&self, _name: &str) -> Result<JsonDocument, DomainError> {
         Err(unused_settings_method("load_snapshot"))
     }
 

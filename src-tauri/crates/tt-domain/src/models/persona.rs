@@ -1,9 +1,15 @@
 use std::collections::BTreeMap;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value};
 
 use crate::errors::DomainError;
+use crate::json_document::JsonDocument;
+
+const POWER_USER: &str = "power_user";
+const NAMES: &str = "personas";
+const DESCRIPTIONS: &str = "persona_descriptions";
 
 /// The original name and descriptor entries, carried together by one avatar file.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -16,50 +22,46 @@ pub struct Persona {
 
 pub type Personas = BTreeMap<String, Persona>;
 
-pub fn take_personas(settings: &mut Value) -> Result<Option<Personas>, DomainError> {
+/// `None` when the settings hold neither Persona table.
+pub fn take_personas(settings: &mut JsonDocument) -> Result<Option<Personas>, DomainError> {
     let Some(power_user) = settings
-        .get_mut("power_user")
-        .and_then(Value::as_object_mut)
+        .object_mut(&[POWER_USER])
+        .map_err(|error| invalid_settings(POWER_USER, error))?
     else {
         return Ok(None);
     };
-    take_personas_with(|field| Ok(power_user.remove(field)))
-}
-
-pub fn take_personas_with(
-    mut take: impl FnMut(&str) -> Result<Option<Value>, DomainError>,
-) -> Result<Option<Personas>, DomainError> {
-    let names = take("personas")?;
-    let descriptions = take("persona_descriptions")?;
+    let names: Option<BTreeMap<String, String>> = take_table(power_user, NAMES)?;
+    let descriptions: Option<BTreeMap<String, Value>> = take_table(power_user, DESCRIPTIONS)?;
     if names.is_none() && descriptions.is_none() {
         return Ok(None);
     }
     let mut personas = Personas::new();
-    if let Some(names) = names {
-        let names: BTreeMap<String, String> = serde_json::from_value(names)
-            .map_err(|error| DomainError::InvalidData(format!("Invalid Persona names: {error}")))?;
-        for (id, name) in names {
-            personas.entry(id).or_default().name = Some(name);
-        }
+    for (id, name) in names.into_iter().flatten() {
+        personas.entry(id).or_default().name = Some(name);
     }
-    if let Some(descriptions) = descriptions {
-        let descriptions: BTreeMap<String, Value> =
-            serde_json::from_value(descriptions).map_err(|error| {
-                DomainError::InvalidData(format!("Invalid Persona descriptions: {error}"))
-            })?;
-        for (id, description) in descriptions {
-            personas.entry(id).or_default().description = Some(description);
-        }
+    for (id, description) in descriptions.into_iter().flatten() {
+        personas.entry(id).or_default().description = Some(description);
     }
     Ok(Some(personas))
 }
 
-pub fn insert_personas(settings: &mut Value, personas: &Personas) {
-    if !settings["power_user"].is_object() {
-        settings["power_user"] = json!({});
-    }
-    let mut names = serde_json::Map::new();
-    let mut descriptions = serde_json::Map::new();
+fn take_table<T: DeserializeOwned>(
+    power_user: &mut JsonDocument,
+    field: &str,
+) -> Result<Option<T>, DomainError> {
+    let table = power_user
+        .get(&[field])
+        .map_err(|error| invalid_settings(&format!("{POWER_USER}.{field}"), error))?;
+    power_user.remove(field);
+    Ok(table)
+}
+
+pub fn insert_personas(
+    settings: &mut JsonDocument,
+    personas: &Personas,
+) -> Result<(), DomainError> {
+    let mut names = Map::new();
+    let mut descriptions = Map::new();
     for (id, persona) in personas {
         if let Some(name) = &persona.name {
             names.insert(id.clone(), Value::String(name.clone()));
@@ -68,6 +70,14 @@ pub fn insert_personas(settings: &mut Value, personas: &Personas) {
             descriptions.insert(id.clone(), description.clone());
         }
     }
-    settings["power_user"]["personas"] = Value::Object(names);
-    settings["power_user"]["persona_descriptions"] = Value::Object(descriptions);
+    let power_user = settings
+        .object_entry(&[POWER_USER])
+        .map_err(|error| invalid_settings(POWER_USER, error))?;
+    power_user.set(NAMES, &Value::Object(names));
+    power_user.set(DESCRIPTIONS, &Value::Object(descriptions));
+    Ok(())
+}
+
+fn invalid_settings(field: &str, error: serde_json::Error) -> DomainError {
+    DomainError::InvalidData(format!("Invalid settings {field}: {error}"))
 }

@@ -11,7 +11,8 @@ use crate::data_archive::{
 };
 
 pub struct FileDataArchiveExecutor {
-    pub prepare_personas: fn(&std::path::Path, &std::path::Path) -> Result<(), DomainError>,
+    /// Runs on the staged user files and the target's; an error stops the import before the target changes.
+    pub prepare_user_data: fn(&std::path::Path, &std::path::Path) -> Result<(), DomainError>,
     pub read_personas:
         fn(&std::path::Path) -> Result<tt_domain::models::persona::Personas, DomainError>,
 }
@@ -29,7 +30,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
             &request.workspace_root,
             report_progress,
             is_cancelled,
-            self.prepare_personas,
+            self.prepare_user_data,
         )?;
 
         Ok(ArchiveImportExecutionReport {

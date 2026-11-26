@@ -25,7 +25,9 @@ pub use file_mcp_server_repository::FileMcpServerRepository;
 pub use file_prompt_cache_repository::FilePromptCacheRepository;
 pub use file_quick_reply_repository::FileQuickReplyRepository;
 pub use file_secret_repository::FileSecretRepository;
-pub use file_settings_repository::{FileSettingsRepository, load_tauritavern_settings_blocking};
+pub use file_settings_repository::{
+    FileSettingsRepository, load_tauritavern_settings_blocking, validate_user_settings_blocking,
+};
 pub use file_theme_repository::FileThemeRepository;
 pub use file_user_directory_repository::FileUserDirectoryRepository;
 pub use file_user_repository::FileUserRepository;
