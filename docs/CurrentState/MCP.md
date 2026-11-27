@@ -38,7 +38,7 @@ crate 责任：
 - `tt-ports::mcp` / `repositories::mcp_server_repository`：Tauri-free、RMCP-free 的 outbound ports 与 MCP call outcome。
 - `tt-application::McpService`：intent CRUD、permission、persistent catalog policy、discovery、test-call Active/JSON gate，以及 Agent/Legacy 共用的 cached model-tool resolution 与发送前 permission/arguments gate。
 - `tt-adapter-storage-core`：registration 与 endpoint-bound catalog snapshot 的严格 v1 单文件存储。
-- `tt-adapter-mcp`：协议版本偏好到 RMCP lifecycle 的映射与协商结果校验、Auto 下一次受限的 legacy initialize 重试、基于 RMCP 内置 reqwest backend 的 Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
+- `tt-adapter-mcp`：协议版本偏好到 RMCP lifecycle 的映射与协商结果校验、基于 RMCP 内置 reqwest backend 的 Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
 - `tt-adapter-http`：无 redirect、无 retry 的 MCP client profile；MCP adapter 每次 discovery/call 从共享 pool 取得当前 proxy/TLS/UA 配置。
 - `tauritavern`：composition、commands 与 Manager Host ABI。
 
@@ -75,7 +75,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 
 ## 当前固定边界
 
-- adapter 不设自有 HTTP 响应体上限：直接使用 RMCP 内置 reqwest backend，SSE 单事件沿用 RMCP 默认上限，JSON 响应体与 LLM provider 响应一样只受操作超时约束。结果大小由消费方决定：Agent 共用长结果外置，Legacy 与本地工具一致不另设上限。
+- adapter 不设自有 HTTP 响应体上限，沿用 RMCP 内置 reqwest backend 的默认上限：JSON 响应体与 SSE 单事件各 16 MiB，非 JSON 的错误响应体只读取前 64 KiB 作诊断。结果大小由消费方决定：Agent 共用长结果外置，Legacy 与本地工具一致不另设上限。
 - test-call arguments JSON：256 KiB，且必须为 object。
 - Agent MCP arguments 同样最多 256 KiB 且必须为 object；可广告 schema 的 root 必须显式为 `type: "object"`。
 - Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以 MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
@@ -96,7 +96,6 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
   | `2025-*` | 直接以所选版本 `initialize`，不发 discover 探测 | 所选版本 |
 
   启动完成后 adapter 校验协商版本；不在接受集合内时关闭连接并作为启动失败返回。
-- RMCP 目前把启动阶段 SSE 响应中的 JSON-RPC error 当作连接关闭。仅当 `auto` 启动以 `ConnectionClosed` 失败时，才在同一 lifecycle timeout 内用新 Peer 尝试一次 `2025-11-25` initialize，两次失败的原因都保留在错误中；其他错误与固定版本不触发该路径。
 - 协商到 `2026-07-28` 时，RMCP 会从 `tools/list` 结果中移除 `x-mcp-header` 注解无效的工具；这类工具不进入 catalog，也没有 diagnostic。
 
 协议版本候选集合由代码限定；其余边界不是 per-server 设置。超限不会静默截断：单 tool 超限产生 discovery diagnostic，无法确认完整分页或 catalog 总量超限则本次 server discovery 失败；test call 在找到目标前的 metadata 分页超限为 NotSent，server 已响应后无法显示的内容保留 KnownResponse 并产生 diagnostic。无效的可选 output schema 只移除该字段并产生 diagnostic，不隔离仍可调用的工具。
@@ -107,7 +106,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - registration description override 是 Agent MCP descriptor 的默认值；Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用并拥有更高优先级。
 - 模型 alias 为 `mcp__<normalized server displayName>__<normalized nativeName>`，碰撞用确定性数字后缀；alias 只从 invocation binding 解码，执行使用原始 native name。
 - 实际发送前重新读取 registration；不存在、读取失败、Paused、Off 或发送前 transport 配置失败都返回可恢复的 NotSent tool error。Ask 与 Allow 当前行为相同。
-- known `isError`、server error 与 unsupported response 作为可恢复 Agent tool result；MCP 不产生 `AgentToolEffect`。
+- known `isError`、server error、HTTP rejection 与 unsupported response 作为可恢复 Agent tool result；MCP 不产生 `AgentToolEffect`。
 - `outcome_unknown` 可能已经执行，绝不自动 retry，也不回填一个虚构结果。当前无用户决策 UI，因此以非 retryable error 终止 run；已有聊天 commit 时沿用 Agent 的 partial-success 终态。
 
 ## Legacy 调用语义

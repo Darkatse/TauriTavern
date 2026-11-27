@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tt_adapter_http::HttpClientPool;
 use tt_domain::models::endpoint_url::http_origin;
 use tt_domain::models::mcp::{McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders};
-use tt_ports::mcp::{McpCallOutcome, McpGateway, McpKnownResponse};
+use tt_ports::mcp::{McpCallOutcome, McpGateway, McpKnownResponse, McpRejection};
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::{
@@ -102,6 +102,9 @@ fn invalid_and_duplicate_tools_are_isolated_without_hiding_healthy_tools() {
 enum FixtureMode {
     Modern,
     ModernServerError,
+    ModernRateLimited,
+    ModernUnauthorized,
+    ModernUnavailable,
     ModernHang,
     ModernDisconnect,
     ModernMalformed,
@@ -118,6 +121,9 @@ impl FixtureMode {
             self,
             Self::Modern
                 | Self::ModernServerError
+                | Self::ModernRateLimited
+                | Self::ModernUnauthorized
+                | Self::ModernUnavailable
                 | Self::ModernHang
                 | Self::ModernDisconnect
                 | Self::ModernMalformed
@@ -408,6 +414,36 @@ async fn json_rpc_tool_error_is_a_known_response() {
 }
 
 #[tokio::test]
+async fn rate_limit_and_authorization_refusals_are_known_rejections() {
+    for (mode, http_status, retry_after) in [
+        (FixtureMode::ModernRateLimited, 429, Some("30")),
+        (FixtureMode::ModernUnauthorized, 401, None),
+    ] {
+        let (endpoint, _, server) = spawn_fixture(mode).await;
+        let outcome = gateway(&endpoint)
+            .call_tool(
+                &McpEndpoint::parse(endpoint).unwrap(),
+                &McpRequestHeaders::default(),
+                McpProtocolVersionPreference::Auto,
+                "first",
+                Map::from_iter([("region".to_string(), json!("us-east-1"))]),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        server.abort();
+
+        assert_eq!(
+            outcome,
+            McpCallOutcome::KnownResponse(McpKnownResponse::Rejected(McpRejection {
+                http_status,
+                retry_after: retry_after.map(str::to_owned),
+            }))
+        );
+    }
+}
+
+#[tokio::test]
 async fn invalid_http_headers_make_the_call_not_sent() {
     for (name, code) in [
         ("invalid name", "mcp.call_headers_invalid"),
@@ -517,8 +553,12 @@ async fn cancelling_after_tools_call_returns_unknown() {
 }
 
 #[tokio::test]
-async fn disconnect_and_malformed_response_after_commit_are_unknown() {
-    for mode in [FixtureMode::ModernDisconnect, FixtureMode::ModernMalformed] {
+async fn disconnect_malformed_and_unavailable_responses_after_commit_are_unknown() {
+    for mode in [
+        FixtureMode::ModernDisconnect,
+        FixtureMode::ModernMalformed,
+        FixtureMode::ModernUnavailable,
+    ] {
         let (endpoint, _, server) = spawn_fixture(mode).await;
         let outcome = gateway(&endpoint)
             .call_tool(
@@ -691,6 +731,28 @@ fn fixture_response(
                     "data": { "field": "region" }
                 }
             })),
+        ),
+        (FixtureMode::ModernRateLimited, "tools/call") => (
+            429,
+            "application/json",
+            vec![("Retry-After", "30")],
+            Some(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32000, "message": "fixture rate limited" }
+            })),
+        ),
+        (FixtureMode::ModernUnauthorized, "tools/call") => (
+            401,
+            "application/json",
+            vec![("WWW-Authenticate", "Bearer error=\"invalid_token\"")],
+            None,
+        ),
+        (FixtureMode::ModernUnavailable, "tools/call") => (
+            503,
+            "text/plain",
+            Vec::new(),
+            Some(json!("Service Unavailable")),
         ),
         (mode, "tools/call") if mode.is_modern() => (
             200,

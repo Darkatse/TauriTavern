@@ -79,6 +79,13 @@ pub struct McpServerError {
     pub data: Option<Value>,
 }
 
+/// The server refused the call at the HTTP layer, so the tool did not run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRejection {
+    pub http_status: u16,
+    pub retry_after: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpUnsupportedResponse {
     pub response_type: String,
@@ -89,6 +96,7 @@ pub struct McpUnsupportedResponse {
 pub enum McpKnownResponse {
     ToolResult(McpToolCallResult),
     ServerError(McpServerError),
+    Rejected(McpRejection),
     Unsupported(McpUnsupportedResponse),
 }
 

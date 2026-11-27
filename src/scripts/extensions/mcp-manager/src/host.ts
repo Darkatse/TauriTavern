@@ -72,6 +72,8 @@ const DEFAULT_MESSAGES = Object.freeze({
     protocolHint: 'Auto negotiates the newest mutually supported version.',
     protocolVersion: 'Protocol version',
     refreshTools: 'Refresh tools',
+    rejected: 'Server rejected the call',
+    rejectedHint: 'The tool did not run.',
     remove: 'Remove',
     removeHeader: 'Remove header',
     removeNote: 'The registration and all saved tool settings will be removed.',

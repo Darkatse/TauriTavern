@@ -494,6 +494,25 @@ pub(super) fn mcp_known_response_result(
             });
             (result, Vec::new())
         }
+        McpKnownResponse::Rejected(rejection) => {
+            let retry = rejection
+                .retry_after
+                .as_deref()
+                .map(|retry_after| format!("; retry after {retry_after}"))
+                .unwrap_or_default();
+            let message = format!(
+                "The MCP server rejected the call with HTTP {}; the tool did not run{retry}",
+                rejection.http_status
+            );
+            let mut result = AgentToolResult::error(call, "mcp.rejected", &message);
+            result.structured = json!({
+                "rejected": {
+                    "httpStatus": rejection.http_status,
+                    "retryAfter": rejection.retry_after,
+                }
+            });
+            (result, Vec::new())
+        }
         McpKnownResponse::Unsupported(response) => {
             let mut result =
                 AgentToolResult::error(call, "mcp.unsupported_response", &response.message);

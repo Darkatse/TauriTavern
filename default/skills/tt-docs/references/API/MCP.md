@@ -123,6 +123,7 @@ type McpTestCallOutcome =
             diagnostics: Array<{ code: string; message: string; contentIndex?: number }>;
           }
         | { kind: 'server_error'; code: number; message: string; dataJson?: string }
+        | { kind: 'rejected'; httpStatus: number; retryAfter?: string }
         | { kind: 'unsupported_response'; responseType: string; message: string };
     }
   | { outcome: 'not_sent'; code: string; message: string }
@@ -150,7 +151,7 @@ type McpTestCallOutcome =
 - transport 仅支持 Streamable HTTP；不实现 OAuth 流程，认证可由 registration custom headers 提供。
 - registration headers 会应用到 initialize、discovery、session 与 tool call 的全部 HTTP 请求；系统不在不同消费路径复制或重建认证状态。
 - endpoint 接受任意带 host 的 HTTP(S) URL，包括公网 HTTP、userinfo 与 query；未加密 HTTP 的风险由 Manager 在激活前提示。fragment 不会进入 HTTP 请求，因此仍作为无效 endpoint 显式报错；redirect 仍由 transport 禁止。
-- `protocolVersion: 'auto'` 使用 RMCP `ClientLifecycleMode::Auto`，以 `2026-07-28` 发起 `server/discover`。`-32022` 版本协商由 RMCP 处理；server 以其他非 modern JSON-RPC error 或无 session 的 4xx（401/403 除外）拒绝时，RMCP 在同一 transport 上回退到 `2025-11-25` initialize。RMCP 目前把启动阶段 SSE 响应中的 JSON-RPC error 当作连接关闭，因此 Auto 启动以 `ConnectionClosed` 失败时，adapter 用新 Peer 单次尝试 `2025-11-25` initialize，两次失败原因都保留在错误中；该额外路径不匹配其他错误。固定值见第 4 节。启动后协商版本不在接受范围内时，本次 discovery 失败。
+- `protocolVersion: 'auto'` 使用 RMCP `ClientLifecycleMode::Auto`，以 `2026-07-28` 发起 `server/discover`。`-32022` 版本协商由 RMCP 处理；server 以其他非 modern JSON-RPC error 或无 session 的 4xx（401/403 除外）拒绝时，RMCP 在同一 transport 上回退到 `2025-11-25` initialize。固定值见第 4 节。启动后协商版本不在接受范围内时，本次 discovery 失败。
 - `tools/list` 必须完整分页；cursor 循环、页数/工具数/catalog 总量超限或分页失败会使该 server 的本次 discovery 失败，不返回 partial catalog。
 - duplicate native name 隔离整个同名组；无效 input schema、单工具超限或名称无效只隔离该工具并返回 diagnostic。无效的可选 output schema 只移除该字段并返回 diagnostic，不阻止工具使用。
 - input/output schema 按 JSON Schema 2020-12 编译验证；不会读取远端 `$ref`。
@@ -173,11 +174,11 @@ type McpTestCallOutcome =
 
 顶层 outcome 是远端事实，而非 UI loading 状态：
 
-- `known_response`：server 已明确响应。`isError: true` 仍是 tool result；JSON-RPC error 是 `server_error`，都不变成 command rejection。
+- `known_response`：server 已明确响应。`isError: true` 仍是 tool result；JSON-RPC error 是 `server_error`；server 以 HTTP 429 或带 `WWW-Authenticate` 质询的 401/403 拒绝时是 `rejected`，工具没有执行，`retryAfter` 是原样的 `Retry-After`。这些都不变成 command rejection。
 - `not_sent`：backend 能证明目标 `tools/call` 尚未交给 transport，例如 registration 暂时无法读取、Paused、JSON 不合法、HTTP client/header 配置失败、协商版本不在接受范围内、metadata hydration 失败或发送前取消。
-- `outcome_unknown`：request handle 已建立后发生 cancel、timeout、disconnect 或无法确认响应；调用可能已经执行，系统绝不自动重试。
+- `outcome_unknown`：request handle 已建立后发生 cancel、timeout、disconnect 或无法确认响应（包括没有 JSON-RPC error 的 5xx）；调用可能已经执行，系统绝不自动重试。
 
-已知 tool result 按原顺序投影 text、确定性 structured JSON、`isError` 与 diagnostic。Manager 测试调用与 Legacy 聊天不显示 image，image/audio/resource block 与 metadata 会产生可见 diagnostic，不会抹掉“server 已响应”的事实。text 与 structured 原样投影、不截断；server 显式返回 `structuredContent: null` 时 `structuredJson` 为 `"null"`（`2026-07-28` 允许任意 JSON 值），字段缺失时省略。adapter 不设自有响应体上限；transport 无法读取或解析已发送 call 的响应（包括超过 RMCP SSE 单事件上限）时为 `outcome_unknown`。取得已知响应后的 client close/join 失败只记录日志，不会改写 outcome。
+已知 tool result 按原顺序投影 text、确定性 structured JSON、`isError` 与 diagnostic。Manager 测试调用与 Legacy 聊天不显示 image，image/audio/resource block 与 metadata 会产生可见 diagnostic，不会抹掉“server 已响应”的事实。text 与 structured 原样投影、不截断；server 显式返回 `structuredContent: null` 时 `structuredJson` 为 `"null"`（`2026-07-28` 允许任意 JSON 值），字段缺失时省略。adapter 不设自有响应体上限，沿用 RMCP 的内置上限；transport 无法读取或解析已发送 call 的响应（包括超过这些上限）时为 `outcome_unknown`。取得已知响应后的 client close/join 失败只记录日志，不会改写 outcome。
 
 该入口沿用当前 WebView trust model：同一 WebView 内的第一方/vendor extension script 被视为用户授权代码，backend 不声称能证明一次 command 源自物理点击或隔离 hostile extension。若 trust model 改变，应增加真实 command capability boundary，而不是在 DTO 中伪造 click flag。
 
