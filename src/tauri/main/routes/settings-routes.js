@@ -4,16 +4,11 @@ import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 const PROVIDER_METADATA_SECRET_KEYS = new Set([
     'api_key_openrouter',
     'api_key_nanogpt',
-    'api_key_siliconflow',
-    'api_key_workers_ai',
 ]);
 
 const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
     'get_openrouter_credits',
     'get_nanogpt_credits',
-    'get_siliconflow_embedding_models',
-    'get_workers_ai_embedding_models',
-    'get_workers_ai_multimodal_models',
 ];
 
 function invalidateSecretBackedProviderMetadata(context, key) {

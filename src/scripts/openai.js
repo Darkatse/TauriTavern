@@ -82,6 +82,7 @@ import {
 } from './utils.js';
 import { countOpenAIMessageTokensBatchAsync, getTokenizerModel } from './tokenizers.js';
 import { getOpenAIConversationTokenCount } from './util/openai-token-count.js';
+import { modelAcceptsImages } from './util/model-image-input.js';
 import { isMobile } from './RossAscends-mods.js';
 import { saveLogprobsForActiveMessage } from './logprobs.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -3051,7 +3052,7 @@ function getElectronHubModelTemplate(option) {
     const outputPrice = model.pricing?.output;
     const price = inputPrice && outputPrice ? `$${inputPrice}/$${outputPrice} in/out Mtoken` : 'Unknown';
 
-    const visionIcon = model.metadata?.vision ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
+    const visionIcon = modelAcceptsImages(chat_completion_sources.ELECTRONHUB, model) ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
     const reasoningIcon = model.metadata?.reasoning ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning"></i>' : '';
     const toolCallsIcon = model.metadata?.function_call ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools"></i>' : '';
     const premiumIcon = model?.premium_model ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a subscription"></i>' : '';
@@ -3114,7 +3115,7 @@ function getChutesModelTemplate(option) {
     }
 
     const contextLength = model.context_length || model.max_model_len || 'Unknown';
-    const visionIcon = model.input_modalities?.includes('image') ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
+    const visionIcon = modelAcceptsImages(chat_completion_sources.CHUTES, model) ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
     const reasoningIcon = model.supported_features?.includes('reasoning') ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning"></i>' : '';
     const toolCallsIcon = model.supported_features?.includes('structured_outputs') ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools"></i>' : '';
 
@@ -8617,30 +8618,12 @@ export function isImageInliningSupported(settings = oai_settings) {
             return visionSupportedModels.some(model => settings.claude_model.includes(model));
         case chat_completion_sources.DEEPSEEK:
             return ['deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(settings.deepseek_model);
-        case chat_completion_sources.OPENROUTER:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:
             return true;
-        case chat_completion_sources.MISTRALAI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.mistralai_model)?.capabilities?.vision);
         case chat_completion_sources.COHERE:
             return visionSupportedModels.some(model => settings.cohere_model.includes(model));
-        case chat_completion_sources.XAI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.xai_model)?.input_modalities?.includes('image'));
-        case chat_completion_sources.AIMLAPI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.aimlapi_model)?.features?.includes('openai/chat-completion.vision'));
-        case chat_completion_sources.CHUTES:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.chutes_model)?.input_modalities?.includes('image'));
-        case chat_completion_sources.ELECTRONHUB:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.electronhub_model)?.metadata?.vision);
-        case chat_completion_sources.POLLINATIONS:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.pollinations_model)?.input_modalities?.includes('image'));
         case chat_completion_sources.COMETAPI:
             return true;
-        case chat_completion_sources.MOONSHOT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.moonshot_model)?.supports_image_in);
-        case chat_completion_sources.NANOGPT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.nanogpt_model)?.capabilities?.vision);
         case chat_completion_sources.AWS_BEDROCK:
             return Boolean(getAwsBedrockModelCapabilities(settings.aws_bedrock_model)?.images);
         case chat_completion_sources.ZAI:
@@ -8649,14 +8632,10 @@ export function isImageInliningSupported(settings = oai_settings) {
             return visionSupportedModels.some(model => settings.minimax_model.includes(model));
         case chat_completion_sources.SILICONFLOW:
             return visionSupportedModels.some(model => settings.siliconflow_model.includes(model));
-        case chat_completion_sources.WORKERS_AI: {
-            const model = Array.isArray(model_list) && model_list.find(m => m.id === settings.workers_ai_model);
-            return Boolean(model && Array.isArray(model.properties) && model.properties.some(p => p.property_id === 'vision' && p.value === 'true'));
+        default: {
+            const modelId = getChatCompletionModel(settings);
+            return modelAcceptsImages(settings.chat_completion_source, model_list.find(model => model.id === modelId));
         }
-        case chat_completion_sources.FIREWORKS:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.fireworks_model)?.supports_image_input);
-        default:
-            return false;
     }
 }
 

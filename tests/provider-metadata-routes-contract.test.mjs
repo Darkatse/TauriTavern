@@ -11,9 +11,6 @@ import { registerVectorRoutes } from '../src/tauri/main/routes/vector-routes.js'
 const SECRET_BACKED_METADATA = [
     'get_openrouter_credits',
     'get_nanogpt_credits',
-    'get_siliconflow_embedding_models',
-    'get_workers_ai_embedding_models',
-    'get_workers_ai_multimodal_models',
 ];
 
 test('provider credential mutations invalidate only secret-backed metadata', async () => {
@@ -35,7 +32,7 @@ test('provider credential mutations invalidate only secret-backed metadata', asy
         },
         {
             path: '/api/secrets/rotate',
-            body: { key: 'api_key_workers_ai', id: 'secret-id' },
+            body: { key: 'api_key_openrouter', id: 'secret-id' },
         },
     ]) {
         invalidations.length = 0;
@@ -64,13 +61,13 @@ test('provider metadata routes preserve request identity and visible failures', 
 
     const response = await router.handle({
         method: 'POST',
-        path: '/api/openai/workers-ai/models/embedding',
-        body: { workers_ai_account_id: 'account-id' },
+        path: '/api/nanogpt/models/providers',
+        body: { model: 'model-id' },
     });
     assert.equal(response.status, 200);
     assert.deepEqual(calls, [{
-        command: 'get_workers_ai_embedding_models',
-        args: { dto: { workers_ai_account_id: 'account-id' } },
+        command: 'get_nanogpt_model_providers',
+        args: { dto: { model: 'model-id' } },
     }]);
 
     const failingRouter = createRouteRegistry();
@@ -82,8 +79,8 @@ test('provider metadata routes preserve request identity and visible failures', 
     await assert.rejects(
         failingRouter.handle({
             method: 'POST',
-            path: '/api/openai/workers-ai/models/embedding',
-            body: { workers_ai_account_id: 'account-id' },
+            path: '/api/nanogpt/models/providers',
+            body: { model: 'model-id' },
         }),
         /provider unavailable/,
     );
@@ -97,6 +94,9 @@ test('vector compatibility routes preserve success and validation responses', as
             calls.push({ command, payload });
             if (payload.path === 'query') {
                 throw new Error('Bad request: searchText is required');
+            }
+            if (payload.path === 'models') {
+                return { status: 200, kind: 'json', body: [{ id: '@cf/baai/bge-m3' }] };
             }
             return { status: 200, kind: 'empty', body: null };
         },
@@ -116,6 +116,15 @@ test('vector compatibility routes preserve success and validation responses', as
             locale: getSillyTavernLocale(),
         },
     });
+
+    const models = await router.handle({
+        method: 'POST',
+        path: '/api/openai/workers-ai/models/embedding',
+        body: { workers_ai_account_id: 'account-id' },
+    });
+    assert.deepEqual(await models.json(), [{ id: '@cf/baai/bge-m3' }]);
+    assert.deepEqual(calls[1].payload.request, { workers_ai_account_id: 'account-id', source: 'workers_ai' });
+    assert.equal(calls[1].payload.path, 'models');
 
     const invalid = await router.handle({
         method: 'POST',

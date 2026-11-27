@@ -7,11 +7,8 @@ use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
-use tt_domain::models::siliconflow::SiliconFlowEndpoint;
-use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
     NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
@@ -200,49 +197,6 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
 
         parse_nanogpt_credits(&balance, subscription.as_ref())
     }
-
-    async fn siliconflow_embedding_models(
-        &self,
-        api_key: &str,
-        endpoint: SiliconFlowEndpoint,
-    ) -> Result<Vec<Value>, DomainError> {
-        let base_url = endpoint.base_url();
-        let client = self.client()?;
-        let request = client
-            .get(format!("{base_url}/models?type=text&sub_type=embedding"))
-            .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, format!("Bearer {api_key}"));
-
-        let body = Self::send_json(request, "SiliconFlow", "embedding models").await?;
-        parse_data_array(body, "SiliconFlow embedding models")
-    }
-
-    async fn workers_ai_embedding_models(
-        &self,
-        api_key: &str,
-        account: &WorkersAiAccount,
-    ) -> Result<Vec<Value>, DomainError> {
-        let client = self.client()?;
-        fetch_workers_ai_models(&client, api_key, account, "Text Embeddings", 100)
-            .await?
-            .into_iter()
-            .map(add_workers_ai_model_id)
-            .collect()
-    }
-
-    async fn workers_ai_multimodal_models(
-        &self,
-        api_key: &str,
-        account: &WorkersAiAccount,
-    ) -> Result<Vec<String>, DomainError> {
-        let client = self.client()?;
-        fetch_workers_ai_models(&client, api_key, account, "Text Generation", 1000)
-            .await?
-            .iter()
-            .filter(|model| model_has_vision_property(model))
-            .map(|model| workers_ai_model_name(model).map(str::to_string))
-            .collect()
-    }
 }
 
 fn parse_openrouter_model_providers(body: &Value) -> Result<Vec<String>, DomainError> {
@@ -372,41 +326,6 @@ fn optional_usage_bucket(
     })
 }
 
-fn add_workers_ai_model_id(mut model: Value) -> Result<Value, DomainError> {
-    let name = workers_ai_model_name(&model)?.to_string();
-    let object = model
-        .as_object_mut()
-        .ok_or_else(|| invalid_response("Workers AI model is not an object"))?;
-    object.insert("id".to_string(), Value::String(name));
-    Ok(model)
-}
-
-fn parse_data_array(body: Value, label: &str) -> Result<Vec<Value>, DomainError> {
-    let data = body
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_response(format!("{label} data is not an array")))?;
-    Ok(data.clone())
-}
-
-fn model_has_vision_property(model: &Value) -> bool {
-    model
-        .get("properties")
-        .and_then(Value::as_array)
-        .is_some_and(|properties| {
-            properties.iter().any(|property| {
-                property
-                    .get("property_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| value == "vision")
-                    && property
-                        .get("value")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "true")
-            })
-        })
-}
-
 fn require_object<'a>(
     value: &'a Value,
     label: &str,
@@ -511,8 +430,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        model_has_vision_property, parse_nanogpt_credits, parse_nanogpt_model_providers,
-        parse_openrouter_credits, parse_openrouter_model_providers,
+        parse_nanogpt_credits, parse_nanogpt_model_providers, parse_openrouter_credits,
+        parse_openrouter_model_providers,
     };
 
     #[test]
@@ -605,15 +524,5 @@ mod tests {
         assert_eq!(subscription.limits.daily_input_tokens, 0.0);
         assert_eq!(subscription.limits.daily_images, 0.0);
         assert_eq!(subscription.weekly_tokens.unwrap().used, 7.0);
-    }
-
-    #[test]
-    fn workers_ai_vision_property_matches_upstream_shape() {
-        assert!(model_has_vision_property(&json!({
-            "properties": [{ "property_id": "vision", "value": "true" }]
-        })));
-        assert!(!model_has_vision_property(&json!({
-            "properties": [{ "property_id": "vision", "value": "false" }]
-        })));
     }
 }

@@ -1446,7 +1446,7 @@ async function loadRemoteEmbeddingModels(source) {
         body: JSON.stringify(body || {}),
     });
     if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        await throwVectorResponseError(response, 'list embedding models');
     }
 
     /** @type {Array<any>} */

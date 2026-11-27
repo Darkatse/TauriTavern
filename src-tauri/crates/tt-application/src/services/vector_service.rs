@@ -21,9 +21,9 @@ use tt_domain::models::vertex_ai::VertexAiSettings;
 use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::secret_repository::SecretRepository;
 use tt_ports::repositories::vector_repository::{
-    LocalEmbeddingModel, LocalEmbeddingRepository, LocalEmbeddingRequest, RemoteEmbeddingProtocol,
-    RemoteEmbeddingRepository, RemoteEmbeddingRequest, VectorMatch, VectorMetadata, VectorRecord,
-    VectorRepository, VectorScope,
+    LocalEmbeddingModel, LocalEmbeddingRepository, LocalEmbeddingRequest, RemoteEmbeddingCatalog,
+    RemoteEmbeddingProtocol, RemoteEmbeddingRepository, RemoteEmbeddingRequest, VectorMatch,
+    VectorMetadata, VectorRecord, VectorRepository, VectorScope,
 };
 
 const DEFAULT_TOP_K: usize = 10;
@@ -93,6 +93,7 @@ impl VectorService {
             "purge" => self.purge(request).await,
             "purge-all" => self.purge_all().await,
             "koboldcpp-embed" => self.koboldcpp_embed(request).await,
+            "models" => self.models(request).await,
             other => Err(ApplicationError::NotFound(format!(
                 "Unsupported vector endpoint: {other}"
             ))),
@@ -285,6 +286,46 @@ impl VectorService {
                 )
             })?,
         })
+    }
+
+    async fn models(
+        &self,
+        request: VectorRouteRequestDto,
+    ) -> Result<VectorRouteResponseDto, ApplicationError> {
+        let source = VectorSource::parse(&request.source)?;
+        self.ensure_remote_source_allowed(source)?;
+        let catalog = match source {
+            VectorSource::OpenRouter => RemoteEmbeddingCatalog::OpenRouter,
+            VectorSource::NanoGpt => RemoteEmbeddingCatalog::NanoGpt {
+                api_key: self.required_secret(SecretKeys::NANOGPT, "NanoGPT").await?,
+            },
+            VectorSource::Chutes => RemoteEmbeddingCatalog::Chutes {
+                api_key: self.required_secret(SecretKeys::CHUTES, "Chutes").await?,
+            },
+            VectorSource::SiliconFlow => RemoteEmbeddingCatalog::SiliconFlow {
+                api_key: self
+                    .required_secret(SecretKeys::SILICONFLOW, "SiliconFlow")
+                    .await?,
+                endpoint: SiliconFlowEndpoint::parse(&request.siliconflow_endpoint)?,
+            },
+            VectorSource::WorkersAi => RemoteEmbeddingCatalog::WorkersAi {
+                api_key: self
+                    .required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
+                    .await?,
+                account: WorkersAiAccount::parse(&request.workers_ai_account_id)?,
+            },
+            other => {
+                return Err(ApplicationError::ValidationError(format!(
+                    "Vector source {} does not list embedding models",
+                    other.key()
+                )));
+            }
+        };
+        json_response(
+            self.remote_embedding_repository
+                .list_models(catalog)
+                .await?,
+        )
     }
 
     async fn embeddings(
@@ -1032,6 +1073,13 @@ mod tests {
                 embeddings,
                 reported_model: None,
             })
+        }
+
+        async fn list_models(
+            &self,
+            _catalog: RemoteEmbeddingCatalog,
+        ) -> Result<Vec<Value>, DomainError> {
+            unimplemented!()
         }
     }
 

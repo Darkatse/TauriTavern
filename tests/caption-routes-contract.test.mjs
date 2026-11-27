@@ -7,9 +7,9 @@ import { registerCaptionRoutes } from '../src/tauri/main/routes/caption-routes.j
 
 const IMAGE = 'data:image/png;base64,AAAA';
 
-function createCaptionRouter(invokeChatCompletion) {
+function createCaptionRouter(invokeChatCompletion, listModels = async () => ({ data: [] })) {
     const router = createRouteRegistry();
-    registerCaptionRoutes(router, { jsonResponse, invokeChatCompletion });
+    registerCaptionRoutes(router, { jsonResponse, invokeChatCompletion, listModels });
     return router;
 }
 
@@ -31,9 +31,13 @@ test('native caption routes delegate supported providers to quiet multimodal cha
         ['vertexai', '/api/google/caption-image', 'vertexai'],
         ['cohere', '/api/openai/caption-image', 'cohere'],
         ['groq', '/api/openai/caption-image', 'groq'],
+        ['mistral', '/api/openai/caption-image', 'mistralai'],
+        ['xai', '/api/openai/caption-image', 'xai'],
         ['moonshot', '/api/openai/caption-image', 'moonshot'],
         ['nanogpt', '/api/openai/caption-image', 'nanogpt'],
         ['chutes', '/api/openai/caption-image', 'chutes'],
+        ['electronhub', '/api/openai/caption-image', 'electronhub'],
+        ['pollinations', '/api/openai/caption-image', 'pollinations'],
         ['workers_ai', '/api/openai/caption-image', 'workers_ai'],
         ['zai', '/api/openai/caption-image', 'zai'],
     ];
@@ -59,6 +63,7 @@ test('native caption routes delegate supported providers to quiet multimodal cha
                 zai_endpoint: 'coding',
                 workers_ai_account_id: 'account-id',
                 moonshot_endpoint: 'cn',
+                pollinations_endpoint: 'anonymous',
             },
             init: { signal },
         });
@@ -85,6 +90,7 @@ test('native caption routes delegate supported providers to quiet multimodal cha
     assert.equal(bySource.vertexai.vertexai_region, 'us-central1');
     assert.equal(bySource.workers_ai.workers_ai_account_id, 'account-id');
     assert.equal(bySource.moonshot.moonshot_endpoint, 'cn');
+    assert.equal(bySource.pollinations.pollinations_endpoint, 'anonymous');
     assert.equal(bySource.zai.zai_endpoint, 'coding');
     assert.equal(bySource.zai.max_tokens, 4096);
 });
@@ -108,10 +114,10 @@ test('native caption routes reject unsupported sources and invalid media before 
     const unsupported = await router.handle({
         method: 'POST',
         path: '/api/openai/caption-image',
-        body: { api: 'mistral', image: IMAGE, prompt: 'Describe.', model: 'pixtral' },
+        body: { api: 'aimlapi', image: IMAGE, prompt: 'Describe.', model: 'gpt-4o' },
     });
     assert.equal(unsupported.status, 501);
-    assert.match((await unsupported.json()).message, /mistral/);
+    assert.match((await unsupported.json()).message, /aimlapi/);
 
     const invalidImage = await router.handle({
         method: 'POST',
@@ -172,4 +178,38 @@ test('native caption routes preserve video parts and fail on missing or failed m
     const failed = await router.handle(request);
     assert.equal(failed.status, 502);
     assert.equal((await failed.json()).error.message, 'provider unavailable');
+});
+
+test('multimodal model routes list the vision models of the mapped source', async () => {
+    const requests = [];
+    const router = createCaptionRouter(async () => {
+        throw new Error('captioning is not expected');
+    }, async (dto) => {
+        requests.push(dto);
+        return {
+            data: dto.chat_completion_source === 'openrouter'
+                ? [
+                    { id: 'vision', architecture: { input_modalities: ['text', 'image'] } },
+                    { id: 'text', architecture: { input_modalities: ['text'] } },
+                ]
+                : [
+                    { id: 'kimi-vision', supports_image_in: true },
+                    { id: 'kimi', supports_image_in: false },
+                ],
+        };
+    });
+
+    const openrouter = await router.handle({ method: 'POST', path: '/api/openrouter/models/multimodal', body: {} });
+    assert.deepEqual(await openrouter.json(), ['vision']);
+
+    const moonshot = await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/multimodal-models/moonshot',
+        body: { moonshot_endpoint: 'cn' },
+    });
+    assert.deepEqual(await moonshot.json(), ['kimi-vision']);
+    assert.deepEqual(requests, [
+        { chat_completion_source: 'openrouter' },
+        { moonshot_endpoint: 'cn', chat_completion_source: 'moonshot' },
+    ]);
 });

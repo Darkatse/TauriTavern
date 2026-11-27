@@ -13,6 +13,7 @@
 - `/api/vector/query-multi`
 - `/api/vector/purge`
 - `/api/vector/purge-all`
+- 嵌入模型列表：`/api/openrouter/models/embedding` 与 `/api/openai/{chutes,nanogpt,siliconflow,workers-ai}/models/embedding`，返回形状与上游相同
 
 前端请求经 `src/tauri/main/routes/vector-routes.js` 汇入一个 typed Tauri command，presentation 只转交 DTO，输入校验、provider 选择、secret 与 iOS policy 均由 `VectorService` 编排。
 

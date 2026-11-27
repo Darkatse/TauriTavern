@@ -1,15 +1,11 @@
 use std::sync::Arc;
 
-use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-use tt_application::dto::provider_metadata_dto::{
-    ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
-    WorkersAiModelsRequestDto,
-};
+use tt_application::dto::provider_metadata_dto::ProviderModelProvidersRequestDto;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
 };
@@ -72,55 +68,4 @@ pub async fn get_nanogpt_credits(
         .nanogpt_credits()
         .await
         .map_err(map_command_error("Failed to get NanoGPT credits"))
-}
-
-#[tauri::command]
-pub async fn get_siliconflow_embedding_models(
-    dto: SiliconFlowEmbeddingModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<Value>, CommandError> {
-    log_command("get_siliconflow_embedding_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .siliconflow_embedding_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get SiliconFlow embedding models",
-        ))
-}
-
-#[tauri::command]
-pub async fn get_workers_ai_embedding_models(
-    dto: WorkersAiModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<Value>, CommandError> {
-    log_command("get_workers_ai_embedding_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .workers_ai_embedding_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get Cloudflare Workers AI embedding models",
-        ))
-}
-
-#[tauri::command]
-pub async fn get_workers_ai_multimodal_models(
-    dto: WorkersAiModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
-    log_command("get_workers_ai_multimodal_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .workers_ai_multimodal_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get Cloudflare Workers AI multimodal models",
-        ))
 }

@@ -9,14 +9,20 @@ use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::vertex_ai::{VertexAiConnection, VertexAiCredential};
 use tt_ports::repositories::vector_repository::{
-    RemoteEmbeddingBatch, RemoteEmbeddingProtocol, RemoteEmbeddingRepository,
-    RemoteEmbeddingRequest,
+    RemoteEmbeddingBatch, RemoteEmbeddingCatalog, RemoteEmbeddingProtocol,
+    RemoteEmbeddingRepository, RemoteEmbeddingRequest,
 };
 
 use crate::http_chat_completion_repository::vertexai_auth;
+use crate::workers_ai_models::{fetch_workers_ai_models, with_workers_ai_model_id};
 
 const NOMIC_EMBEDDING_URL: &str = "https://api-atlas.nomic.ai/v1/embedding/text";
 const GOOGLE_AI_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
+const OPENROUTER_EMBEDDING_MODELS_URL: &str =
+    "https://openrouter.ai/api/v1/models?output_modalities=embeddings";
+const NANOGPT_EMBEDDING_MODELS_URL: &str = "https://nano-gpt.com/api/v1/embedding-models";
+const CHUTES_EMBEDDING_MODELS_URL: &str =
+    "https://api.chutes.ai/chutes/?template=embedding&include_public=true&limit=999";
 
 pub struct HttpEmbeddingRepository {
     http_clients: Arc<HttpClientPool>,
@@ -303,6 +309,66 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             reported_model,
         })
     }
+
+    async fn list_models(
+        &self,
+        catalog: RemoteEmbeddingCatalog,
+    ) -> Result<Vec<Value>, DomainError> {
+        let client = self
+            .http_clients
+            .client(HttpClientProfile::ProviderMetadata)?;
+        match catalog {
+            RemoteEmbeddingCatalog::OpenRouter => {
+                let request = client.get(OPENROUTER_EMBEDDING_MODELS_URL);
+                let body = self.send_json(request, "OpenRouter").await?;
+                let mut models = required_array(&body, "data", "OpenRouter")?
+                    .iter()
+                    .filter(|model| accepts_text(model))
+                    .map(|model| json!({ "id": &model["id"], "name": &model["name"] }))
+                    .collect::<Vec<_>>();
+                models.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+                Ok(models)
+            }
+            RemoteEmbeddingCatalog::NanoGpt { api_key } => {
+                let request = client
+                    .get(NANOGPT_EMBEDDING_MODELS_URL)
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "NanoGPT").await?;
+                into_array(body, "data", "NanoGPT")
+            }
+            RemoteEmbeddingCatalog::Chutes { api_key } => {
+                let request = client
+                    .get(CHUTES_EMBEDDING_MODELS_URL)
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "Chutes").await?;
+                into_array(body, "items", "Chutes")
+            }
+            RemoteEmbeddingCatalog::SiliconFlow { api_key, endpoint } => {
+                let request = client
+                    .get(format!(
+                        "{}/models?type=text&sub_type=embedding",
+                        endpoint.base_url()
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "SiliconFlow").await?;
+                into_array(body, "data", "SiliconFlow")
+            }
+            RemoteEmbeddingCatalog::WorkersAi { api_key, account } => {
+                fetch_workers_ai_models(&client, &api_key, &account, "Text Embeddings", 100)
+                    .await?
+                    .into_iter()
+                    .map(with_workers_ai_model_id)
+                    .collect()
+            }
+        }
+    }
+}
+
+fn accepts_text(model: &Value) -> bool {
+    model
+        .pointer("/architecture/input_modalities")
+        .and_then(Value::as_array)
+        .is_some_and(|modalities| modalities.iter().any(|modality| modality == "text"))
 }
 
 fn joined_url(base_url: &str, path: &str) -> Result<Url, DomainError> {
@@ -489,6 +555,16 @@ fn required_array<'a>(
     body.get(field)
         .and_then(Value::as_array)
         .ok_or_else(|| invalid_response(provider, &format!("missing {field} array")))
+}
+
+fn into_array(mut body: Value, field: &str, provider: &str) -> Result<Vec<Value>, DomainError> {
+    match body.get_mut(field).map(Value::take) {
+        Some(Value::Array(entries)) => Ok(entries),
+        _ => Err(invalid_response(
+            provider,
+            &format!("missing {field} array"),
+        )),
+    }
 }
 
 fn invalid_url(provider: &'static str) -> impl FnOnce(url::ParseError) -> DomainError {

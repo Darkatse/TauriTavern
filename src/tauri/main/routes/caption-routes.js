@@ -1,3 +1,4 @@
+import { modelAcceptsImages } from '../../../scripts/util/model-image-input.js';
 import { createAbortError } from '../kernel/abort-error.js';
 import { buildLegacyErrorPayload } from '../services/ai/ai-error-presenter.js';
 import { isRequestCancelled } from '../services/ai/generation-sessions.js';
@@ -17,11 +18,26 @@ const CAPTION_SOURCES = Object.freeze({
     vertexai: 'vertexai',
     cohere: 'cohere',
     groq: 'groq',
+    mistral: 'mistralai',
+    xai: 'xai',
     moonshot: 'moonshot',
     nanogpt: 'nanogpt',
     chutes: 'chutes',
+    electronhub: 'electronhub',
+    pollinations: 'pollinations',
     workers_ai: 'workers_ai',
     zai: 'zai',
+});
+const MULTIMODAL_MODEL_ROUTES = Object.freeze({
+    '/api/openrouter/models/multimodal': 'openrouter',
+    '/api/backends/chat-completions/multimodal-models/chutes': 'chutes',
+    '/api/backends/chat-completions/multimodal-models/electronhub': 'electronhub',
+    '/api/backends/chat-completions/multimodal-models/mistral': 'mistral',
+    '/api/backends/chat-completions/multimodal-models/moonshot': 'moonshot',
+    '/api/backends/chat-completions/multimodal-models/nanogpt': 'nanogpt',
+    '/api/backends/chat-completions/multimodal-models/pollinations': 'pollinations',
+    '/api/backends/chat-completions/multimodal-models/workers_ai': 'workers_ai',
+    '/api/backends/chat-completions/multimodal-models/xai': 'xai',
 });
 
 class CaptionRequestError extends Error {
@@ -133,6 +149,8 @@ function buildCaptionPayload(body, route) {
         dto.workers_ai_account_id = optionalString(payload, 'workers_ai_account_id');
     } else if (api === 'moonshot') {
         dto.moonshot_endpoint = optionalString(payload, 'moonshot_endpoint');
+    } else if (api === 'pollinations') {
+        dto.pollinations_endpoint = optionalString(payload, 'pollinations_endpoint');
     } else if (api === 'anthropic') {
         dto.max_tokens = 4096;
     }
@@ -148,7 +166,7 @@ function captionFromCompletion(completion) {
     return caption.trim();
 }
 
-export function registerCaptionRoutes(router, { jsonResponse, invokeChatCompletion }) {
+export function registerCaptionRoutes(router, { jsonResponse, invokeChatCompletion, listModels }) {
     for (const route of UNAVAILABLE_CAPTION_ROUTES) {
         router.post(route, async () => jsonResponse({
             error: true,
@@ -178,4 +196,17 @@ export function registerCaptionRoutes(router, { jsonResponse, invokeChatCompleti
     register('/api/openai/caption-image', 'openai');
     register('/api/google/caption-image', 'google');
     register('/api/anthropic/caption-image', 'anthropic');
+
+    for (const [path, api] of Object.entries(MULTIMODAL_MODEL_ROUTES)) {
+        const source = CAPTION_SOURCES[api];
+        router.post(path, async ({ body }) => {
+            const status = await listModels({ ...asObject(body), chat_completion_source: source });
+            if (!Array.isArray(status?.data)) {
+                throw new Error(`${api} model list is not an array.`);
+            }
+            return jsonResponse(status.data
+                .filter(model => modelAcceptsImages(source, model))
+                .map(model => model.id));
+        });
+    }
 }

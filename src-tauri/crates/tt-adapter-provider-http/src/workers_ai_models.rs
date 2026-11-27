@@ -38,7 +38,7 @@ pub(crate) async fn fetch_workers_ai_models(
         },
     )?;
 
-    parse_workers_ai_models(&body)
+    parse_workers_ai_models(body)
 }
 
 pub(crate) fn workers_ai_model_name(model: &Value) -> Result<&str, DomainError> {
@@ -54,23 +54,27 @@ pub(crate) fn workers_ai_model_name(model: &Value) -> Result<&str, DomainError> 
         })
 }
 
-fn parse_workers_ai_models(body: &Value) -> Result<Vec<Value>, DomainError> {
+pub(crate) fn parse_workers_ai_models(mut body: Value) -> Result<Vec<Value>, DomainError> {
     if body.get("success").and_then(Value::as_bool) != Some(true) {
         return Err(DomainError::InternalError(
             "Cloudflare Workers AI returned unsuccessful models response.".to_string(),
         ));
     }
 
-    let result = body
-        .get("result")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            DomainError::InternalError(
-                "Cloudflare Workers AI models result is not an array.".to_string(),
-            )
-        })?;
+    match body.get_mut("result").map(Value::take) {
+        Some(Value::Array(models)) => Ok(models),
+        _ => Err(DomainError::InternalError(
+            "Cloudflare Workers AI models result is not an array.".to_string(),
+        )),
+    }
+}
 
-    Ok(result.clone())
+/// SillyTavern expects the Workers AI model name in `id`.
+pub(crate) fn with_workers_ai_model_id(mut model: Value) -> Result<Value, DomainError> {
+    let name = workers_ai_model_name(&model)?.to_string();
+    // Only an object has a name, so indexing inserts instead of panicking.
+    model["id"] = Value::String(name);
+    Ok(model)
 }
 
 async fn map_workers_ai_models_error(response: reqwest::Response) -> DomainError {
@@ -108,7 +112,7 @@ mod tests {
 
     #[test]
     fn parses_models_result_without_mutating_shape() {
-        let models = parse_workers_ai_models(&json!({
+        let models = parse_workers_ai_models(json!({
             "success": true,
             "result": [{ "name": "@cf/meta/llama", "properties": [] }]
         }))
@@ -123,7 +127,7 @@ mod tests {
 
     #[test]
     fn rejects_unsuccessful_models_response() {
-        let error = parse_workers_ai_models(&json!({
+        let error = parse_workers_ai_models(json!({
             "success": false,
             "result": []
         }))
@@ -134,7 +138,7 @@ mod tests {
 
     #[test]
     fn rejects_models_response_without_success_flag() {
-        let error = parse_workers_ai_models(&json!({
+        let error = parse_workers_ai_models(json!({
             "result": []
         }))
         .unwrap_err();

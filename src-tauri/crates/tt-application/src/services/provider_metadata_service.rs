@@ -1,16 +1,9 @@
 use std::sync::Arc;
 
-use serde_json::Value;
-
-use crate::dto::provider_metadata_dto::{
-    ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
-    WorkersAiModelsRequestDto,
-};
+use crate::dto::provider_metadata_dto::ProviderModelProvidersRequestDto;
 use crate::errors::ApplicationError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::secret::SecretKeys;
-use tt_domain::models::siliconflow::SiliconFlowEndpoint;
-use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, OpenRouterCredits, ProviderMetadataRepository,
@@ -82,54 +75,6 @@ impl ProviderMetadataService {
 
         self.provider_metadata_repository
             .nanogpt_credits(&api_key)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub async fn siliconflow_embedding_models(
-        &self,
-        dto: SiliconFlowEmbeddingModelsRequestDto,
-    ) -> Result<Vec<Value>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::SiliconFlow)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::SILICONFLOW, "SiliconFlow")
-            .await?;
-        let endpoint = SiliconFlowEndpoint::parse(&dto.siliconflow_endpoint)?;
-
-        self.provider_metadata_repository
-            .siliconflow_embedding_models(&api_key, endpoint)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub async fn workers_ai_embedding_models(
-        &self,
-        dto: WorkersAiModelsRequestDto,
-    ) -> Result<Vec<Value>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::WorkersAi)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
-            .await?;
-        let account = WorkersAiAccount::parse(&dto.workers_ai_account_id)?;
-
-        self.provider_metadata_repository
-            .workers_ai_embedding_models(&api_key, &account)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub async fn workers_ai_multimodal_models(
-        &self,
-        dto: WorkersAiModelsRequestDto,
-    ) -> Result<Vec<String>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::WorkersAi)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
-            .await?;
-        let account = WorkersAiAccount::parse(&dto.workers_ai_account_id)?;
-
-        self.provider_metadata_repository
-            .workers_ai_multimodal_models(&api_key, &account)
             .await
             .map_err(ApplicationError::from)
     }

@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
 use tt_domain::models::vertex_ai::VertexAiConnection;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LocalEmbeddingModel {
@@ -150,12 +153,34 @@ pub enum RemoteEmbeddingProtocol {
     },
 }
 
+pub enum RemoteEmbeddingCatalog {
+    OpenRouter,
+    NanoGpt {
+        api_key: String,
+    },
+    Chutes {
+        api_key: String,
+    },
+    SiliconFlow {
+        api_key: String,
+        endpoint: SiliconFlowEndpoint,
+    },
+    WorkersAi {
+        api_key: String,
+        account: WorkersAiAccount,
+    },
+}
+
 #[async_trait]
 pub trait RemoteEmbeddingRepository: Send + Sync {
     async fn embed(
         &self,
         request: RemoteEmbeddingRequest,
     ) -> Result<RemoteEmbeddingBatch, DomainError>;
+
+    /// Entries keep the shape SillyTavern's embedding model routes return.
+    async fn list_models(&self, catalog: RemoteEmbeddingCatalog)
+    -> Result<Vec<Value>, DomainError>;
 }
 
 #[async_trait]

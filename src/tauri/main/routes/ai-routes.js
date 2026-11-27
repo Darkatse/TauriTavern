@@ -186,6 +186,10 @@ export function registerAiRoutes(router, context, { jsonResponse }, generation) 
             copyGenerationPayload(payload),
             signal,
         ),
+        listModels: (/** @type {Record<string, unknown>} */ dto) => context.safeInvoke('get_chat_completions_status', {
+            dto,
+            locale: getSillyTavernLocale(),
+        }),
     });
 
     router.post('/api/backends/chat-completions/status', async (/** @type {{ body: unknown }} */ { body }) => {
