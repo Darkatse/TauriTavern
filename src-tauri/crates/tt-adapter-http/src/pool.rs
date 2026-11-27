@@ -18,8 +18,8 @@ use crate::restricted_endpoint::{
 
 pub const GENERATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const GENERATION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
-pub const TOKENIZER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const PINNED_FILE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const PINNED_FILE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PROVIDER_METADATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PROVIDER_METADATA_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const WEB_SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -39,7 +39,7 @@ pub const CORS_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum HttpClientProfile {
     Default,
     Download,
-    Tokenizer,
+    PinnedFile,
     Generation,
     GenerationStream,
     ChatCompletionWebSocket,
@@ -331,9 +331,10 @@ fn build_profile_client(
 
     builder = match profile {
         HttpClientProfile::Default | HttpClientProfile::Download => builder,
-        HttpClientProfile::Tokenizer => builder
-            .connect_timeout(TOKENIZER_CONNECT_TIMEOUT)
-            .timeout(TOKENIZER_REQUEST_TIMEOUT),
+        // A pinned file may take minutes to arrive, so only a stalled read ends its download.
+        HttpClientProfile::PinnedFile => builder
+            .connect_timeout(PINNED_FILE_CONNECT_TIMEOUT)
+            .read_timeout(PINNED_FILE_READ_TIMEOUT),
         HttpClientProfile::Generation => builder
             .connect_timeout(GENERATION_CONNECT_TIMEOUT)
             .timeout(GENERATION_NON_STREAM_REQUEST_TIMEOUT),
