@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, RequestBuilder, StatusCode};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use url::Url;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
@@ -157,6 +157,26 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
 
         let body = Self::send_json(request, "OpenRouter", "credits").await?;
         parse_openrouter_credits(&body)
+    }
+
+    async fn exchange_openrouter_code(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<String, DomainError> {
+        let client = self.client()?;
+        let request = client
+            .post(format!("{OPENROUTER_API_BASE}/auth/keys"))
+            .header(ACCEPT, "application/json")
+            .json(&json!({
+                "code": code,
+                "code_verifier": code_verifier,
+                "code_challenge_method": "S256",
+            }));
+
+        let body = Self::send_json(request, "OpenRouter", "key exchange").await?;
+        advisory_string_field(&body, "key")
+            .ok_or_else(|| invalid_response("OpenRouter key exchange has no key"))
     }
 
     async fn nanogpt_model_providers(

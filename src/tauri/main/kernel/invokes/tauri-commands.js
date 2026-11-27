@@ -112,6 +112,7 @@ export {};
  *   | 'get_horde_user_info'
  *   | 'get_nanogpt_credits'
  *   | 'get_nanogpt_model_providers'
+ *   | 'exchange_openrouter_code'
  *   | 'get_openrouter_credits'
  *   | 'get_openrouter_model_providers'
  *   | 'get_settings_snapshots'

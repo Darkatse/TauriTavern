@@ -4,3 +4,9 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderModelProvidersRequestDto {
     pub model: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenRouterCodeExchangeRequestDto {
+    pub code: String,
+    pub code_verifier: String,
+}

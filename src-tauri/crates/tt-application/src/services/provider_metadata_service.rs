@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::dto::provider_metadata_dto::ProviderModelProvidersRequestDto;
+use crate::dto::provider_metadata_dto::{
+    OpenRouterCodeExchangeRequestDto, ProviderModelProvidersRequestDto,
+};
 use crate::errors::ApplicationError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::secret::SecretKeys;
@@ -50,6 +52,20 @@ impl ProviderMetadataService {
 
         self.provider_metadata_repository
             .openrouter_credits(&api_key)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn exchange_openrouter_code(
+        &self,
+        dto: OpenRouterCodeExchangeRequestDto,
+    ) -> Result<String, ApplicationError> {
+        self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
+        let code = required_string(&dto.code, "code")?;
+        let code_verifier = required_string(&dto.code_verifier, "code_verifier")?;
+
+        self.provider_metadata_repository
+            .exchange_openrouter_code(&code, &code_verifier)
             .await
             .map_err(ApplicationError::from)
     }

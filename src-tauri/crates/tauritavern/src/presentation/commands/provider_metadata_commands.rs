@@ -5,7 +5,9 @@ use tauri::State;
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-use tt_application::dto::provider_metadata_dto::ProviderModelProvidersRequestDto;
+use tt_application::dto::provider_metadata_dto::{
+    OpenRouterCodeExchangeRequestDto, ProviderModelProvidersRequestDto,
+};
 use tt_ports::repositories::provider_metadata_repository::{
     NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
 };
@@ -39,6 +41,21 @@ pub async fn get_openrouter_credits(
         .openrouter_credits()
         .await
         .map_err(map_command_error("Failed to get OpenRouter credits"))
+}
+
+#[tauri::command]
+pub async fn exchange_openrouter_code(
+    dto: OpenRouterCodeExchangeRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command("exchange_openrouter_code");
+
+    app_state
+        .services
+        .provider_metadata_service
+        .exchange_openrouter_code(dto)
+        .await
+        .map_err(map_command_error("Failed to authorize OpenRouter"))
 }
 
 #[tauri::command]

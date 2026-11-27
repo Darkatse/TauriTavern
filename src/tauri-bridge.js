@@ -133,6 +133,12 @@ export async function updateTauriTavernSettings(dto) {
     return invokeWithHostNormalization('update_tauritavern_settings', { dto });
 }
 
+export async function exchangeOpenRouterCode(code, codeVerifier) {
+    return invokeWithHostNormalization('exchange_openrouter_code', {
+        dto: { code, code_verifier: codeVerifier },
+    });
+}
+
 export async function getRuntimePaths() {
     return invoke('get_runtime_paths');
 }

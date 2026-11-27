@@ -170,6 +170,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Provider metadata commands
         super::provider_metadata_commands::get_openrouter_model_providers,
         super::provider_metadata_commands::get_openrouter_credits,
+        super::provider_metadata_commands::exchange_openrouter_code,
         super::provider_metadata_commands::get_nanogpt_model_providers,
         super::provider_metadata_commands::get_nanogpt_credits,
         // LLM connection commands

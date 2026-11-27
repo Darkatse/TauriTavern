@@ -319,7 +319,7 @@ import {
     tag_import_setting,
     applyCharacterTagsToMessageDivs,
 } from './scripts/tags.js';
-import { checkOpenRouterAuth, initSecrets, primeSecretStateSnapshot, readSecretState, resolveSecretKey, secret_state } from './scripts/secrets.js';
+import { initSecrets, primeSecretStateSnapshot, readSecretState, resolveSecretKey, secret_state } from './scripts/secrets.js';
 import { markdownExclusionExt } from './scripts/showdown-exclusion.js';
 import { markdownUnderscoreExt } from './scripts/showdown-underscore.js';
 import { NOTE_MODULE_NAME, initAuthorsNote, setFloatingPrompt, shouldWIAddPrompt } from './scripts/authors-note.js';
@@ -1254,7 +1254,6 @@ async function firstLoadInit() {
         await initSystemMessages();
         await applySettingsSnapshot(settingsSnapshot);
         void prefetchBackgrounds();
-        await checkOpenRouterAuth();
         syncMobileImmersiveFullscreenUi();
         initKeyboard();
         initDrawers();

@@ -1,5 +1,6 @@
-import { DOMPurify, moment } from '../lib.js';
+import { DOMPurify, moment, sha256 } from '../lib.js';
 import { event_types, eventSource, getRequestHeaders } from '../script.js';
+import { exchangeOpenRouterCode, openExternalUrl } from '../tauri-bridge.js';
 import { t } from './i18n.js';
 import { chat_completion_sources } from './openai.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
@@ -464,54 +465,35 @@ export async function renameSecret(key, id, label) {
 }
 
 /**
- * Redirects the user to authorize OpenRouter.
+ * PKCE uses unpadded base64url.
+ * @param {Iterable<number>} bytes
+ * @returns {string}
  */
-function authorizeOpenRouter() {
-    const redirectUrl = new URL('/callback/openrouter', window.location.origin);
-    const openRouterUrl = `https://openrouter.ai/auth?callback_url=${encodeURIComponent(redirectUrl.toString())}`;
-    location.href = openRouterUrl;
+function toBase64Url(bytes) {
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/**
- * Checks if the OpenRouter authorization code is present in the URL, and if so, exchanges it for an API key.
- * @returns {Promise<void>}
- */
-export async function checkOpenRouterAuth() {
-    const params = new URLSearchParams(location.search);
-    const source = params.get('source');
-    if (source === 'openrouter') {
-        const query = new URLSearchParams(params.get('query'));
-        const code = query.get('code');
-        try {
-            const response = await fetch('https://openrouter.ai/api/v1/auth/keys', {
-                method: 'POST',
-                body: JSON.stringify({ code }),
-            });
-
-            if (!response.ok) {
-                throw new Error('OpenRouter exchange error');
-            }
-
-            const data = await response.json();
-            if (!data || !data.key) {
-                throw new Error('OpenRouter invalid response');
-            }
-
-            await writeSecret(SECRET_KEYS.OPENROUTER, data.key);
-
-            if (secret_state[SECRET_KEYS.OPENROUTER]) {
-                toastr.success('OpenRouter token saved');
-                // Remove the code from the URL
-                const currentUrl = window.location.href;
-                const urlWithoutSearchParams = currentUrl.split('?')[0];
-                window.history.pushState({}, '', urlWithoutSearchParams);
-            } else {
-                throw new Error('OpenRouter token not saved');
-            }
-        } catch (err) {
-            toastr.error(toUserFacingErrorText(err));
+async function authorizeOpenRouter() {
+    if (secret_state[SECRET_KEYS.OPENROUTER]) {
+        const confirmed = await Popup.show.confirm(t`OpenRouter API key already exists`, t`Do you really wish to create a new OpenRouter key? Your existing key will not be deleted.`);
+        if (!confirmed) {
             return;
         }
+    }
+
+    const codeVerifier = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+    const codeChallenge = toBase64Url(sha256.array(codeVerifier));
+    try {
+        // Omitting callback_url tells OpenRouter to display the code for manual entry.
+        await openExternalUrl(`https://openrouter.ai/auth?code_challenge=${codeChallenge}&code_challenge_method=S256&key_label=TauriTavern`);
+        const code = (await Popup.show.input(t`Authorize OpenRouter`, t`Paste the code OpenRouter shows after you authorize.`))?.trim();
+        if (!code) {
+            return;
+        }
+        await writeSecret(SECRET_KEYS.OPENROUTER, await exchangeOpenRouterCode(code, codeVerifier));
+        toastr.success(t`OpenRouter token saved`);
+    } catch (error) {
+        toastr.error(toUserFacingErrorText(error));
     }
 }
 

@@ -12,6 +12,12 @@ pub trait ProviderMetadataRepository: Send + Sync {
 
     async fn openrouter_credits(&self, api_key: &str) -> Result<OpenRouterCredits, DomainError>;
 
+    async fn exchange_openrouter_code(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<String, DomainError>;
+
     async fn nanogpt_model_providers(
         &self,
         model: &str,
