@@ -339,11 +339,11 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
     };
     fixture
         .preset_repository
-        .save_preset(&Preset::new(
-            to.name.clone(),
-            PresetType::OpenAI,
-            json!({"openai_max_context":8192,"openai_max_tokens":512}),
-        ))
+        .save_preset(
+            &to.name,
+            &PresetType::OpenAI,
+            JsonDocument::parse(br#"{"openai_max_context":8192,"openai_max_tokens":512}"#).unwrap(),
+        )
         .await
         .unwrap();
 
@@ -876,11 +876,11 @@ pub(super) async fn configure_session_profile(
 ) -> AgentProfileDefinition {
     fixture
         .preset_repository
-        .save_preset(&Preset::new(
-            "session".into(),
-            PresetType::OpenAI,
-            json!({"openai_max_context":8192,"openai_max_tokens":512}),
-        ))
+        .save_preset(
+            "session",
+            &PresetType::OpenAI,
+            JsonDocument::parse(br#"{"openai_max_context":8192,"openai_max_tokens":512}"#).unwrap(),
+        )
         .await
         .unwrap();
     let connection: LlmConnectionDefinition = serde_json::from_value(json!({

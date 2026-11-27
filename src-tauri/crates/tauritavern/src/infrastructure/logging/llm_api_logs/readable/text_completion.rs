@@ -1,98 +1,127 @@
 use serde_json::Value;
+use tt_contracts::observability::{
+    MessageViewDto, ParameterViewDto, PartViewDto, RequestKindDto, RequestViewDto,
+};
 
-use super::super::recording::StreamReadable;
-use super::stream::readable_output;
+use super::projection::{pointer_index, pointer_push};
 
-pub(in crate::infrastructure::logging::llm_api_logs) fn format_prompt(payload: &Value) -> String {
-    match payload.get("prompt") {
-        Some(Value::String(prompt)) => prompt.clone(),
-        Some(prompt) => prompt.to_string(),
-        None => "<prompt unavailable>".to_string(),
-    }
-}
+pub(super) fn project_text_request(payload: &Value) -> RequestViewDto {
+    let prompt = payload.get("prompt").and_then(|value| match value {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        other => Some(other.to_string()),
+    });
 
-/// Every candidate: OpenAI-style `choices`, llama.cpp's array of outputs, or a single llama.cpp or
-/// Ollama output.
-pub(in crate::infrastructure::logging::llm_api_logs) fn format_completion(
-    response: &Value,
-) -> String {
-    let candidates = match response {
-        Value::Array(outputs) => outputs
-            .iter()
-            .map(|output| readable_output(output_reasoning(output), output_text(output)))
-            .collect::<Vec<_>>(),
-        _ => match response.get("choices").and_then(Value::as_array) {
-            Some(choices) => choices
-                .iter()
-                .map(|choice| readable_output(choice_reasoning(choice), str_field(choice, "text")))
-                .collect(),
-            None => vec![readable_output(
-                output_reasoning(response),
-                output_text(response),
-            )],
-        },
-    };
-    candidates.join("\n\n")
-}
-
-/// The first candidate of a text completion stream, in any backend's event shape.
-#[derive(Default)]
-pub(in crate::infrastructure::logging::llm_api_logs) struct CompletionStreamReadable {
-    text: String,
-    reasoning: String,
-}
-
-impl StreamReadable for CompletionStreamReadable {
-    fn push(&mut self, event: &str) {
-        let Ok(event) = serde_json::from_str::<Value>(event.trim()) else {
-            return;
-        };
-
-        match event.pointer("/choices/0") {
-            Some(choice) if candidate_index(choice) == 0 => {
-                self.text.push_str(str_field(choice, "text"));
-                self.reasoning.push_str(choice_reasoning(choice));
+    let mut parameters = Vec::new();
+    if let Some(root) = payload.as_object() {
+        for (key, value) in root {
+            if key == "prompt" {
+                continue;
             }
-            None if candidate_index(&event) == 0 => {
-                self.text.push_str(str_field(&event, "content"));
-                self.reasoning.push_str(output_reasoning(&event));
-            }
-            _ => {}
+            parameters.push(ParameterViewDto {
+                key: key.clone(),
+                path: pointer_push("", key),
+                value: value.clone(),
+            });
         }
     }
 
-    fn into_string(self) -> String {
-        readable_output(&self.reasoning, &self.text)
+    RequestViewDto {
+        kind: RequestKindDto::Text,
+        http: None,
+        system_field: None,
+        system_path: None,
+        system: Vec::new(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: None,
+        parameters,
+        prompt,
     }
 }
 
-fn candidate_index(value: &Value) -> u64 {
-    value.get("index").and_then(Value::as_u64).unwrap_or(0)
+/// The candidates of a text completion: OpenAI-style `choices`, llama.cpp's array of
+/// outputs, or a single llama.cpp or Ollama output.
+pub(super) fn project_text_candidates(
+    document: &Value,
+    base_path: Option<&str>,
+) -> (Vec<MessageViewDto>, Option<String>) {
+    let outputs: Vec<(&Value, Option<String>)> = match document {
+        Value::Array(outputs) => outputs
+            .iter()
+            .enumerate()
+            .map(|(index, output)| (output, base_path.map(|base| pointer_index(base, index))))
+            .collect(),
+        _ => match document.get("choices").and_then(Value::as_array) {
+            Some(choices) => {
+                let choices_path = base_path.map(|base| pointer_push(base, "choices"));
+                choices
+                    .iter()
+                    .enumerate()
+                    .map(|(index, choice)| {
+                        let path = choices_path
+                            .as_deref()
+                            .map(|base| pointer_index(base, index));
+                        (choice, path)
+                    })
+                    .collect()
+            }
+            None => vec![(document, base_path.map(str::to_string))],
+        },
+    };
+
+    let finish_reason = outputs
+        .iter()
+        .find_map(|(output, _)| output_finish_reason(output));
+    let candidates = outputs
+        .into_iter()
+        .map(|(output, path)| text_candidate(output, path))
+        .collect();
+    (candidates, finish_reason)
 }
 
-fn choice_reasoning(choice: &Value) -> &str {
-    let reasoning = str_field(choice, "reasoning");
-    if reasoning.is_empty() {
-        str_field(choice, "thinking")
-    } else {
-        reasoning
+fn text_candidate(output: &Value, path: Option<String>) -> MessageViewDto {
+    let mut parts = Vec::new();
+    if let Some((key, text)) = first_field(output, &["reasoning", "thinking"]) {
+        parts.push(PartViewDto::Reasoning {
+            text: text.to_string(),
+            path: path.as_deref().map(|base| pointer_push(base, key)),
+        });
+    }
+    if let Some((key, text)) = first_field(output, &["text", "content", "response"]) {
+        parts.push(PartViewDto::Text {
+            text: text.to_string(),
+            cache_breakpoint: false,
+            path: path.as_deref().map(|base| pointer_push(base, key)),
+        });
+    }
+    MessageViewDto {
+        role: "assistant".to_string(),
+        name: None,
+        path,
+        parts,
     }
 }
 
-/// llama.cpp writes `content`; Ollama writes `response`.
-fn output_text(value: &Value) -> &str {
-    let content = str_field(value, "content");
-    if content.is_empty() {
-        str_field(value, "response")
-    } else {
-        content
+fn first_field<'a>(output: &'a Value, keys: &[&'static str]) -> Option<(&'static str, &'a str)> {
+    keys.iter().find_map(|key| {
+        output
+            .get(*key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(|text| (*key, text))
+    })
+}
+
+fn output_finish_reason(output: &Value) -> Option<String> {
+    for key in ["stop_type", "done_reason", "finish_reason"] {
+        if let Some(reason) = output
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+        {
+            return Some(reason.to_string());
+        }
     }
-}
-
-fn output_reasoning(value: &Value) -> &str {
-    str_field(value, "thinking")
-}
-
-fn str_field<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or("")
+    None
 }

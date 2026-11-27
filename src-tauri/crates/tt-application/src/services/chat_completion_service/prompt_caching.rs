@@ -21,7 +21,7 @@ enum ClaudeDigestLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OpenRouterDigestLocation {
+enum OpenAiCompatibleDigestLocation {
     Tool {
         index: usize,
     },
@@ -178,12 +178,12 @@ fn insert_unique_claude_breakpoint(
     inserted.push(location);
 }
 
-pub(super) fn apply_openrouter_claude_prompt_caching(
+pub(super) fn apply_openai_compatible_claude_prompt_caching(
     payload: &mut Value,
     previous: Option<&PromptDigestSnapshot>,
     ttl: &str,
 ) -> PromptDigestSnapshot {
-    let (locations, snapshot) = collect_openrouter_digests(payload);
+    let (locations, snapshot) = collect_openai_compatible_digests(payload);
     if snapshot.digests.is_empty() {
         return snapshot;
     }
@@ -198,20 +198,20 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
         return snapshot;
     };
 
-    let system_location = find_openrouter_system_break_location(messages);
-    let last_location = last_openrouter_message_location(messages);
+    let system_location = find_openai_compatible_system_break_location(messages);
+    let last_location = last_openai_compatible_message_location(messages);
     if let Some(location) = system_location
         && Some(location) != last_location
     {
-        insert_cache_control_openrouter(messages, location, ttl);
+        insert_cache_control_openai_compatible(messages, location, ttl);
     }
 
     let pre_history_location =
-        find_openrouter_pre_history_break_location(messages, system_location);
+        find_openai_compatible_pre_history_break_location(messages, system_location);
     if let Some(location) = pre_history_location
         && Some(location) != last_location
     {
-        insert_cache_control_openrouter(messages, location, ttl);
+        insert_cache_control_openai_compatible(messages, location, ttl);
     }
 
     if let Some(previous) = previous.filter(|snapshot| snapshot.version == PROMPT_CACHE_VERSION) {
@@ -223,8 +223,10 @@ pub(super) fn apply_openrouter_claude_prompt_caching(
                     || Some(candidate) == pre_history_location
                     || Some(candidate) == last_location;
 
-                if !is_duplicate && matches!(candidate, OpenRouterDigestLocation::Message { .. }) {
-                    insert_cache_control_openrouter(messages, candidate, ttl);
+                if !is_duplicate
+                    && matches!(candidate, OpenAiCompatibleDigestLocation::Message { .. })
+                {
+                    insert_cache_control_openai_compatible(messages, candidate, ttl);
                 }
             }
         }
@@ -305,9 +307,9 @@ fn collect_claude_digests(payload: &Value) -> (Vec<ClaudeDigestLocation>, Vec<St
     (locations, digests)
 }
 
-fn collect_openrouter_digests(
+fn collect_openai_compatible_digests(
     payload: &mut Value,
-) -> (Vec<OpenRouterDigestLocation>, PromptDigestSnapshot) {
+) -> (Vec<OpenAiCompatibleDigestLocation>, PromptDigestSnapshot) {
     let mut locations = Vec::new();
     let mut digests = Vec::new();
 
@@ -327,7 +329,7 @@ fn collect_openrouter_digests(
                 continue;
             }
 
-            locations.push(OpenRouterDigestLocation::Tool { index });
+            locations.push(OpenAiCompatibleDigestLocation::Tool { index });
             digests.push(digest_value(&json!({
                 "segment": "tools",
                 "tool": strip_cache_control(tool),
@@ -350,7 +352,7 @@ fn collect_openrouter_digests(
             continue;
         };
 
-        ensure_openrouter_message_content_parts(message_object);
+        ensure_openai_compatible_message_content_parts(message_object);
 
         let role = message_object
             .get("role")
@@ -366,7 +368,7 @@ fn collect_openrouter_digests(
                 continue;
             }
 
-            locations.push(OpenRouterDigestLocation::Message {
+            locations.push(OpenAiCompatibleDigestLocation::Message {
                 message_index,
                 part_index,
             });
@@ -439,7 +441,9 @@ fn last_claude_message_location(
     })
 }
 
-fn find_openrouter_system_break_location(messages: &[Value]) -> Option<OpenRouterDigestLocation> {
+fn find_openai_compatible_system_break_location(
+    messages: &[Value],
+) -> Option<OpenAiCompatibleDigestLocation> {
     let mut last_system_message: Option<usize> = None;
 
     for (index, message) in messages.iter().enumerate() {
@@ -466,7 +470,7 @@ fn find_openrouter_system_break_location(messages: &[Value]) -> Option<OpenRoute
 
     for (part_index, part) in content.iter().enumerate().rev() {
         if is_cache_control_eligible_block(part) {
-            return Some(OpenRouterDigestLocation::Message {
+            return Some(OpenAiCompatibleDigestLocation::Message {
                 message_index,
                 part_index,
             });
@@ -476,12 +480,12 @@ fn find_openrouter_system_break_location(messages: &[Value]) -> Option<OpenRoute
     None
 }
 
-fn find_openrouter_pre_history_break_location(
+fn find_openai_compatible_pre_history_break_location(
     messages: &[Value],
-    system_location: Option<OpenRouterDigestLocation>,
-) -> Option<OpenRouterDigestLocation> {
+    system_location: Option<OpenAiCompatibleDigestLocation>,
+) -> Option<OpenAiCompatibleDigestLocation> {
     let system_message_index = system_location.and_then(|location| match location {
-        OpenRouterDigestLocation::Message { message_index, .. } => Some(message_index),
+        OpenAiCompatibleDigestLocation::Message { message_index, .. } => Some(message_index),
         _ => None,
     });
 
@@ -503,7 +507,7 @@ fn find_openrouter_pre_history_break_location(
         let content = message_object.get("content").and_then(Value::as_array)?;
         for (part_index, part) in content.iter().enumerate().rev() {
             if is_cache_control_eligible_block(part) {
-                return Some(OpenRouterDigestLocation::Message {
+                return Some(OpenAiCompatibleDigestLocation::Message {
                     message_index,
                     part_index,
                 });
@@ -516,7 +520,9 @@ fn find_openrouter_pre_history_break_location(
     None
 }
 
-fn last_openrouter_message_location(messages: &[Value]) -> Option<OpenRouterDigestLocation> {
+fn last_openai_compatible_message_location(
+    messages: &[Value],
+) -> Option<OpenAiCompatibleDigestLocation> {
     for (message_index, message) in messages.iter().enumerate().rev() {
         let Some(message_object) = message.as_object() else {
             continue;
@@ -528,7 +534,7 @@ fn last_openrouter_message_location(messages: &[Value]) -> Option<OpenRouterDige
 
         for (part_index, part) in content.iter().enumerate().rev() {
             if is_cache_control_eligible_block(part) {
-                return Some(OpenRouterDigestLocation::Message {
+                return Some(OpenAiCompatibleDigestLocation::Message {
                     message_index,
                     part_index,
                 });
@@ -592,12 +598,12 @@ fn insert_cache_control_claude(payload: &mut Value, location: ClaudeDigestLocati
     }
 }
 
-fn insert_cache_control_openrouter(
+fn insert_cache_control_openai_compatible(
     messages: &mut [Value],
-    location: OpenRouterDigestLocation,
+    location: OpenAiCompatibleDigestLocation,
     ttl: &str,
 ) {
-    let OpenRouterDigestLocation::Message {
+    let OpenAiCompatibleDigestLocation::Message {
         message_index,
         part_index,
     } = location
@@ -635,7 +641,7 @@ fn insert_cache_control_on_block(block: &mut Value, ttl: &str) {
     object.insert("cache_control".to_string(), cache_control(ttl));
 }
 
-fn ensure_openrouter_message_content_parts(message: &mut Map<String, Value>) {
+fn ensure_openai_compatible_message_content_parts(message: &mut Map<String, Value>) {
     let Some(content) = message.get_mut("content") else {
         return;
     };
@@ -727,7 +733,7 @@ mod tests {
 
     use super::{
         apply_claude_explicit_prompt_caching, apply_claude_prompt_caching,
-        apply_openrouter_claude_prompt_caching,
+        apply_openai_compatible_claude_prompt_caching,
     };
 
     fn has_cache_control(value: &Value) -> bool {
@@ -920,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_prompt_caching_inserts_expected_breakpoints() {
+    fn openai_compatible_prompt_caching_inserts_expected_breakpoints() {
         let mut payload = json!({
             "model": "anthropic/claude-3.5-sonnet",
             "messages": [
@@ -931,7 +937,7 @@ mod tests {
             ]
         });
 
-        let _snapshot = apply_openrouter_claude_prompt_caching(&mut payload, None, "5m");
+        let _snapshot = apply_openai_compatible_claude_prompt_caching(&mut payload, None, "5m");
 
         let root = payload.as_object().expect("payload must be object");
         assert!(

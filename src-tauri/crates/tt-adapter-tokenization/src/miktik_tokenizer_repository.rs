@@ -11,10 +11,9 @@ use miktik::{
     ARTIFACT_VERSION, Framing, Model, Source, Tokenizer, TokenizerError, TokenizerRegistry,
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OnceCell};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
+use tt_adapter_http::{HttpClientPool, PinnedFile, PinnedFileCache};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
@@ -30,9 +29,8 @@ const QWEN2_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/q
 const QWEN3_5_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/qwen3.5.json.br");
 
 const BROTLI_BUFFER_BYTES: usize = 64 * 1024;
+const SOURCES_DIR: &str = "sources";
 
-// Downloaded sources are checked against their SHA-256, and their URLs name a commit where the host
-// has one.
 macro_rules! sillytavern {
     ($file:literal) => {
         concat!(
@@ -76,12 +74,10 @@ enum SourceOrigin {
     Builtin,
     /// Brotli-compressed source bytes.
     Bundled(&'static [u8]),
-    /// A file downloaded on first use and kept in the cache directory under the source's name.
-    /// `sha256` is the hash of the file after decompression.
+    /// The digest covers the downloaded bytes before decompression.
     Remote {
-        url: &'static str,
+        file: PinnedFile,
         compression: ResourceCompression,
-        sha256: &'static str,
     },
 }
 
@@ -124,7 +120,7 @@ impl From<DomainError> for PrepareError {
 /// exact method first runs.
 pub struct MiktikTokenizerRepository {
     cache_dir: PathBuf,
-    http_clients: Arc<HttpClientPool>,
+    sources: PinnedFileCache,
     /// Each model's tokenizer by model id, once its preparation finished.
     states: RwLock<HashMap<&'static str, TokenizerState>>,
     /// One lock per model id, held while that model's tokenizer is prepared.
@@ -136,8 +132,8 @@ pub struct MiktikTokenizerRepository {
 impl MiktikTokenizerRepository {
     pub fn new(cache_dir: PathBuf, http_clients: Arc<HttpClientPool>) -> Self {
         Self {
+            sources: PinnedFileCache::new(cache_dir.join(SOURCES_DIR), http_clients),
             cache_dir,
-            http_clients,
             states: RwLock::new(HashMap::new()),
             preparing: Model::all()
                 .iter()
@@ -173,9 +169,8 @@ impl MiktikTokenizerRepository {
             (
                 name,
                 SourceOrigin::Remote {
-                    url,
+                    file: PinnedFile { url, sha256 },
                     compression,
-                    sha256,
                 },
             )
         };
@@ -241,19 +236,19 @@ impl MiktikTokenizerRepository {
                 "command-r.json",
                 sillytavern_tokenizers!("command-r.json.gz"),
                 ResourceCompression::Gzip,
-                "23cf885a64b0f790f8da6ee36a47eef6005c9231287ee1ad22463a34d7b092d2",
+                "132fc87df0e48b604b0888c2519f920f63757b9a85d74be698f3a1851d840007",
             ),
             "command-a" => remote(
                 "command-a.json",
                 sillytavern_tokenizers!("command-a.json.gz"),
                 ResourceCompression::Gzip,
-                "c6a9a15bf2175a05fcbe58f1242678bba7d2afcef1138a54983bcbd1745e5d12",
+                "cb15a5c52a21d51f342cc47360285715364a1cf60eedc078e1f97dd9f0c16e0c",
             ),
             "nemo" => remote(
                 "nemo.json",
                 sillytavern_tokenizers!("nemo.json.gz"),
                 ResourceCompression::Gzip,
-                "d27c2739d2d9ad785baa78f62ed23e79984246cb3e29c25d6cb5f43d9d00a6a9",
+                "97bb0b00f9c33bd9919283325eca46213c0aa991e984ea6799203d2872a63086",
             ),
             _ => return None,
         };
@@ -375,14 +370,9 @@ impl MiktikTokenizerRepository {
                 })
                 .await??,
             ),
-            SourceOrigin::Remote {
-                url,
-                compression,
-                sha256,
-            } => Some(
-                self.remote_source(source.name, url, compression, sha256)
-                    .await?,
-            ),
+            SourceOrigin::Remote { file, compression } => {
+                Some(self.remote_source(file, compression).await?)
+            }
         };
         let artifact = blocking("Tokenizer compile", move || {
             build_artifact(model, source_bytes)
@@ -395,74 +385,25 @@ impl MiktikTokenizerRepository {
         Ok(tokenizer)
     }
 
-    /// A downloaded source: the copy in the cache, or a new download when there is none or its
-    /// SHA-256 differs.
     async fn remote_source(
         &self,
-        name: &'static str,
-        url: &'static str,
+        file: PinnedFile,
         compression: ResourceCompression,
-        sha256: &'static str,
     ) -> Result<Vec<u8>, PrepareError> {
-        let path = self.cache_dir.join(name);
-        let cached_path = path.clone();
-        let cached = blocking("Tokenizer source", move || {
-            match std::fs::read(&cached_path) {
-                Ok(bytes) if sha256_hex(&bytes) == sha256 => Ok(Some(bytes)),
-                Ok(_) => {
-                    tracing::warn!(
-                        path = %cached_path.display(),
-                        "Downloading again a tokenizer source whose SHA-256 changed"
-                    );
-                    Ok(None)
-                }
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(DomainError::InternalError(format!(
-                    "Failed to read tokenizer source '{}': {error}",
-                    cached_path.display()
-                ))),
-            }
+        let path = self.sources.get(file).await.map_err(|error| match error {
+            error @ DomainError::FileIo { .. } => PrepareError::Other(error),
+            error => PrepareError::Download(error),
+        })?;
+        let payload = tokio::fs::read(&path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read tokenizer source '{}': {error}",
+                path.display()
+            ))
+        })?;
+        Ok(blocking("Tokenizer source", move || {
+            decompress(&payload, compression, file.url)
         })
-        .await??;
-        if let Some(bytes) = cached {
-            return Ok(bytes);
-        }
-
-        let payload = self.download(url).await.map_err(PrepareError::Download)?;
-        let bytes = blocking("Tokenizer source", move || {
-            let bytes = decompress(&payload, compression, url)?;
-            let actual = sha256_hex(&bytes);
-            if actual != sha256 {
-                return Err(DomainError::InternalError(format!(
-                    "Tokenizer source '{url}' has SHA-256 {actual}, expected {sha256}"
-                )));
-            }
-            Ok(bytes)
-        })
-        .await?
-        .map_err(PrepareError::Download)?;
-        self.write_bytes(&path, &bytes).await?;
-        Ok(bytes)
-    }
-
-    async fn download(&self, url: &str) -> Result<Vec<u8>, DomainError> {
-        let http_client = self.http_clients.client(HttpClientProfile::Tokenizer)?;
-        let response = http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(upstream::request_failure)?
-            .error_for_status()
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Tokenizer resource request failed for '{}': {}",
-                    url, error
-                ))
-            })?;
-
-        let payload = upstream::read_body(response).await?;
-
-        Ok(payload.to_vec())
+        .await??)
     }
 
     async fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
@@ -512,14 +453,15 @@ impl MiktikTokenizerRepository {
     /// Removes what this version does not use from the cache directory: artifacts of another
     /// artifact version or another source, sources no model downloads, and interrupted writes.
     async fn remove_stale_files(&self) -> Result<(), DomainError> {
-        let mut used = HashSet::new();
+        let mut used = HashSet::from([self.cache_dir.join(SOURCES_DIR)]);
+        let mut downloaded = Vec::new();
         for model in Model::all() {
             let Some(source) = Self::source(model) else {
                 continue;
             };
             used.insert(self.artifact_path(model, source));
-            if let SourceOrigin::Remote { .. } = source.origin {
-                used.insert(self.cache_dir.join(source.name));
+            if let SourceOrigin::Remote { file, .. } = source.origin {
+                downloaded.push(file);
             }
         }
         let cache_dir = self.cache_dir.clone();
@@ -531,7 +473,8 @@ impl MiktikTokenizerRepository {
             DomainError::InternalError(format!(
                 "Failed to remove stale tokenizer cache files: {error}"
             ))
-        })
+        })?;
+        self.sources.keep_only(&downloaded).await
     }
 
     /// Forgets `tokenizer`, whose artifact holds a definition MikTik cannot read, and removes the
@@ -844,13 +787,6 @@ fn remove_unused(dir: &Path, used: &HashSet<PathBuf>) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// Runs CPU-bound work off the async runtime.

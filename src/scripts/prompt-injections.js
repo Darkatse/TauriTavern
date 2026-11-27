@@ -151,6 +151,10 @@ export function applyAttachedPromptsToMessages(attachedPrompts, messages, { warn
             if (side === 'start') targetMessage.agentMessages.unshift(message);
             else targetMessage.agentMessages.push(message);
         } else {
+            const attached = { identifier: attachPrompt.identifier, text: attachContent };
+            targetMessage.attached ??= [];
+            if (side === 'start') targetMessage.attached.unshift(attached);
+            else targetMessage.attached.push(attached);
             targetMessage.content = side === 'start'
                 ? [attachContent, currentContent].filter(Boolean).join('\n\n')
                 : [currentContent, attachContent].filter(Boolean).join('\n\n');

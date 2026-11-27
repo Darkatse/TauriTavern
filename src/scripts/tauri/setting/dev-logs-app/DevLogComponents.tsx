@@ -53,38 +53,3 @@ export function LogRow({ entry }: { entry: LiveLogEntry }) {
         </div>
     );
 }
-
-export function TextPreviewSection({ title, text = '', placeholder = '', rows = 10, viewerTitle = '', wrap = 'soft', onExpand }: {
-    title: string;
-    text?: string;
-    placeholder?: string;
-    rows?: number;
-    viewerTitle?: string;
-    wrap?: 'soft' | 'off';
-    onExpand: () => void;
-}) {
-    return (
-        <section className="tt-dev-log-text-section">
-            <div className="tt-dev-log-text-header">
-                <span>{title}</span>
-                <DevLogButton
-                    label={title}
-                    icon="fa-expand"
-                    iconOnly
-                    title={viewerTitle || title}
-                    onClick={onExpand}
-                />
-            </div>
-            <textarea
-                className="text_pole tt-dev-log-textarea"
-                rows={rows}
-                readOnly
-                spellCheck={false}
-                placeholder={placeholder}
-                wrap={wrap}
-                value={text}
-                aria-label={title}
-            />
-        </section>
-    );
-}

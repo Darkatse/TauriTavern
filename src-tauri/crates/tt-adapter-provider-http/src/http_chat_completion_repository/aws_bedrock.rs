@@ -12,10 +12,10 @@
 //! provider, run the HTTP request, drain the EventStream, and forward
 //! normalized text frames upstream.
 
+use std::borrow::Cow;
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use reqwest::RequestBuilder;
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use tt_adapter_http::upstream;
@@ -26,9 +26,10 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
-use super::HttpChatCompletionRepository;
 use super::claude;
 use super::normalizers;
+use super::{GenerationRequest, HttpChatCompletionRepository};
+use crate::provider_request::{JSON, ProviderRequest};
 use crate::provider_response::{self, read_upstream_json_body};
 
 mod ai21_jamba;
@@ -76,17 +77,21 @@ pub(super) async fn list_models(
     // since TauriTavern wants to surface the entire catalog (with a
     // best-effort `(unsupported)` tag in the UI for providers we haven't
     // wired payload builders for yet), we drop the byProvider filter.
-    let foundation_url = format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
-    let profiles_url = format!("{control_plane_base}/inference-profiles");
+    let foundation_url = HttpChatCompletionRepository::build_url(
+        &control_plane_base,
+        "/foundation-models?byOutputModality=TEXT",
+    )?;
+    let profiles_url =
+        HttpChatCompletionRepository::build_url(&control_plane_base, "/inference-profiles")?;
 
     let client = repository.metadata_client(config)?;
     // Doing the two calls in sequence (rather than `tokio::try_join!`) keeps
     // the dependency graph small and matters very little here: each call is a
     // small JSON GET against the regional control plane.
     let foundation =
-        get_control_plane_json(&client, config, &foundation_url, "foundation-models").await?;
+        get_control_plane_json(&client, config, foundation_url, "foundation-models").await?;
     let profiles =
-        get_control_plane_json(&client, config, &profiles_url, "inference-profiles").await?;
+        get_control_plane_json(&client, config, profiles_url, "inference-profiles").await?;
 
     Ok(json!({ "data": merge_bedrock_models(&foundation, &profiles) }))
 }
@@ -109,16 +114,19 @@ fn derive_control_plane_base(runtime_base: &str) -> Result<String, DomainError> 
 async fn get_control_plane_json(
     client: &reqwest::Client,
     config: &ChatCompletionApiConfig,
-    url: &str,
+    url: reqwest::Url,
     op: &str,
 ) -> Result<Value, DomainError> {
-    let request = client.get(url).header(ACCEPT, "application/json");
-    let request = apply_bedrock_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
+    let mut request = ProviderRequest::get_json(url);
+    apply_headers(&mut request, config)?;
 
     let error_context = format!("Failed to list Bedrock {op}");
-    let response =
-        provider_response::send_checked(request, BEDROCK_PROVIDER_NAME, &error_context).await?;
+    let response = provider_response::send_checked(
+        request.with_client(client),
+        BEDROCK_PROVIDER_NAME,
+        &error_context,
+    )
+    .await?;
 
     read_upstream_json_body(BEDROCK_PROVIDER_NAME, op, response).await
 }
@@ -231,28 +239,14 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    validate_invoke_endpoint(endpoint_path)?;
+    let request = generation_request(config, endpoint_path, payload, false)?;
     let response_mode = response_mode_from_endpoint(
         endpoint_path,
         config.aws_bedrock_custom_response_path.as_deref(),
     )?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(payload);
-    let request = apply_bedrock_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response = provider_response::send_checked(
-        request,
-        BEDROCK_PROVIDER_NAME,
-        "Generation request failed",
-    )
-    .await?;
+    let response = repository
+        .send_generation(config, request, false, BEDROCK_PROVIDER_NAME)
+        .await?;
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
     normalize_provider_response(body, response_mode)
@@ -354,20 +348,34 @@ async fn send_eventstream_request(
     endpoint_path: &str,
     payload: &Value,
 ) -> Result<reqwest::Response, DomainError> {
-    let stream_endpoint = to_stream_endpoint(endpoint_path)?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint)?;
-
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, BEDROCK_EVENTSTREAM_CONTENT_TYPE)
-        .json(payload);
-    let request = apply_bedrock_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    provider_response::send_checked(request, BEDROCK_PROVIDER_NAME, "Generation request failed")
+    let request = generation_request(config, endpoint_path, payload, true)?;
+    repository
+        .send_generation(config, request, true, BEDROCK_PROVIDER_NAME)
         .await
+}
+
+pub(super) fn generation_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    let (url, accept) = if stream {
+        let stream_endpoint = to_stream_endpoint(endpoint_path)?;
+        (
+            HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint)?,
+            BEDROCK_EVENTSTREAM_CONTENT_TYPE,
+        )
+    } else {
+        validate_invoke_endpoint(endpoint_path)?;
+        (
+            HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?,
+            JSON,
+        )
+    };
+    let mut request = ProviderRequest::post_json(url, accept);
+    apply_headers(&mut request, config)?;
+    Ok(GenerationRequest::http(request, Cow::Borrowed(payload)))
 }
 
 #[derive(Debug, Clone)]
@@ -433,16 +441,12 @@ fn require_supported_family(spec: &BedrockModelSpec) -> Result<(), DomainError> 
     )))
 }
 
-fn apply_bedrock_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
-    if let Some(authorization_header) = config.authorization_header.as_deref() {
-        return HttpChatCompletionRepository::apply_header_if_present(
-            request,
-            "Authorization",
-            authorization_header,
-        );
-    }
-
-    HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key)
+fn apply_headers(
+    request: &mut ProviderRequest,
+    config: &ChatCompletionApiConfig,
+) -> Result<(), DomainError> {
+    HttpChatCompletionRepository::apply_authorization(request, config)?;
+    HttpChatCompletionRepository::apply_additional_headers(request, config)
 }
 
 fn validate_invoke_endpoint(endpoint_path: &str) -> Result<(), DomainError> {

@@ -28,6 +28,7 @@ fn prompt_cache_file_name(key: PromptCacheKey) -> String {
     match key {
         PromptCacheKey::Claude => "claude.json".to_string(),
         PromptCacheKey::OpenRouterClaude => "openrouter-claude.json".to_string(),
+        PromptCacheKey::ElectronHubClaude => "electronhub-claude.json".to_string(),
         PromptCacheKey::VertexAiClaude { scope } => {
             format!("vertexai-claude-{scope}.json")
         }

@@ -470,9 +470,9 @@ function createSettingsActions(backgroundOptions) {
             const { openBackendLogsPanel } = await import('../dev-logs.js');
             await openBackendLogsPanel();
         }),
-        openLlmApiLogs: () => runTaskOrPopup(async () => {
-            const { openLlmApiLogsPanel } = await import('../dev-logs.js');
-            await openLlmApiLogsPanel();
+        openRequestInspector: () => runTaskOrPopup(async () => {
+            const { openRequestInspector } = await import('../request-inspector.js');
+            await openRequestInspector({ select: 'latest' });
         }),
         openSync: () => runTaskOrPopup(async () => {
             const { openSyncPopup } = await import('./sync-popup.js');

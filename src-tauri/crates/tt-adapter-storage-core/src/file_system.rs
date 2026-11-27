@@ -605,6 +605,30 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
     data: &T,
     sync_to_disk: bool,
 ) -> Result<(), DomainError> {
+    let json = serde_json::to_vec_pretty(data).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Failed to serialize JSON for {}: {error}",
+            path.display()
+        ))
+    })?;
+    write_bytes_file_impl(path, &json, sync_to_disk).await
+}
+
+/// Write bytes with atomic replacement, without forcing a disk sync.
+pub async fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    write_bytes_file_impl(path, bytes, false).await
+}
+
+/// Write bytes and sync the completed file before publishing it.
+pub async fn persist_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    write_bytes_file_impl(path, bytes, true).await
+}
+
+async fn write_bytes_file_impl(
+    path: &Path,
+    bytes: &[u8],
+    sync_to_disk: bool,
+) -> Result<(), DomainError> {
     use tokio::io::AsyncWriteExt;
 
     if let Some(parent) = path.parent() {
@@ -612,12 +636,6 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
         })?;
     }
-    let json = serde_json::to_vec_pretty(data).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to serialize JSON for {}: {error}",
-            path.display()
-        ))
-    })?;
     let temp_path = unique_temp_path(path);
     let mut file = tokio_fs::OpenOptions::new()
         .write(true)
@@ -629,7 +647,7 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
         })?;
     let result = async {
         let written = async {
-            file.write_all(&json).await?;
+            file.write_all(bytes).await?;
             file.flush().await
         }
         .await;

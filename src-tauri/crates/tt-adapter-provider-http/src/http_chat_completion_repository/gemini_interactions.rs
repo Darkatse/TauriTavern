@@ -1,4 +1,5 @@
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use std::borrow::Cow;
+
 use serde_json::{Map, Value, json};
 
 use tt_domain::errors::DomainError;
@@ -8,8 +9,11 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::normalizers;
-use super::{HttpChatCompletionRepository, current_unix_timestamp};
+use super::{
+    GenerationRequest, HttpChatCompletionRepository, current_unix_timestamp, response_format,
+};
 use crate::endpoint_url::append_google_api_path;
+use crate::provider_request::ProviderRequest;
 use crate::provider_response::{self, read_upstream_json_body};
 
 const GEMINI_API_VERSION: &str = "v1beta";
@@ -442,22 +446,10 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let url = build_gemini_url(&config.base_url, endpoint_path);
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(payload);
-
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        provider_response::send_checked(request, provider_name, "Generation request failed")
-            .await?;
+    let request = generation_request(config, endpoint_path, payload, false)?;
+    let response = repository
+        .send_generation(config, request, false, provider_name)
+        .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -524,43 +516,28 @@ async fn send_stream_request(
     payload: &Value,
     provider_name: &str,
 ) -> Result<reqwest::Response, DomainError> {
-    let url = build_gemini_url(&config.base_url, endpoint_path);
-
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(payload);
-
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    provider_response::send_checked(request, provider_name, "Generation request failed").await
+    let request = generation_request(config, endpoint_path, payload, true)?;
+    repository
+        .send_generation(config, request, true, provider_name)
+        .await
 }
 
-fn apply_gemini_auth(
-    request: reqwest::RequestBuilder,
+pub(super) fn generation_request<'a>(
     config: &ChatCompletionApiConfig,
-) -> reqwest::RequestBuilder {
-    if let Some(authorization_header) = config.authorization_header.as_deref() {
-        return HttpChatCompletionRepository::apply_header_if_present(
-            request,
-            "Authorization",
-            authorization_header,
-        );
-    }
-
-    HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    )
-}
-
-fn build_gemini_url(base_url: &str, endpoint_path: &str) -> String {
-    append_google_api_path(base_url, GEMINI_API_VERSION, endpoint_path.trim())
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    let url = append_google_api_path(&config.base_url, GEMINI_API_VERSION, endpoint_path)?;
+    let mut request = ProviderRequest::post_json(url, response_format(stream));
+    let (name, value) = match config.authorization_header.as_deref() {
+        Some(authorization_header) => ("Authorization", authorization_header),
+        None => ("x-goog-api-key", config.api_key.as_str()),
+    };
+    HttpChatCompletionRepository::apply_header_if_present(&mut request, name, value)?;
+    HttpChatCompletionRepository::apply_extra_headers(&mut request, &config.extra_headers)?;
+    HttpChatCompletionRepository::apply_additional_headers(&mut request, config)?;
+    Ok(GenerationRequest::http(request, Cow::Borrowed(payload)))
 }
 
 fn required_object<'a>(

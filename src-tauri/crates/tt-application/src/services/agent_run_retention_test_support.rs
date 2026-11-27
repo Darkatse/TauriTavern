@@ -7,12 +7,11 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::agent::{
     AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, AgentRunSummaryProjection,
 };
-use tt_domain::models::settings::{
-    ChatBackupSettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
-};
+use tt_domain::models::settings::{ChatBackupSettings, SettingsSnapshot, TauriTavernSettings};
 use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
     AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
@@ -60,7 +59,10 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("reset_user_settings"))
     }
 
-    async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+    async fn save_user_settings(
+        &self,
+        _settings: JsonDocument,
+    ) -> Result<tt_domain::models::persona::Personas, DomainError> {
         Err(unused_settings_method("save_user_settings"))
     }
 
@@ -91,7 +93,7 @@ impl SettingsRepository for TestSettingsRepository {
         unreachable!()
     }
 
-    async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
+    async fn create_snapshot(&self, _settings: JsonDocument) -> Result<String, DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 
@@ -99,7 +101,7 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("get_snapshots"))
     }
 
-    async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+    async fn load_snapshot(&self, _name: &str) -> Result<JsonDocument, DomainError> {
         Err(unused_settings_method("load_snapshot"))
     }
 
@@ -109,31 +111,31 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("get_sillytavern_settings_signature"))
     }
 
-    async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_themes"))
     }
 
-    async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_moving_ui_presets"))
     }
 
-    async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_quick_reply_presets"))
     }
 
-    async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_instruct_presets"))
     }
 
-    async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_context_presets"))
     }
 
-    async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_sysprompt_presets"))
     }
 
-    async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+    async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
         Err(unused_settings_method("get_reasoning_presets"))
     }
 

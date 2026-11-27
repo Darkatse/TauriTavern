@@ -45,7 +45,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 - 工具定义的 `parameters` 是 JSON Schema。构造器把它写入本格式的 schema 字段，除个别来源已核实的约束外不做改写。function 的其余字段只有 OpenAI 兼容格式原样发送，其他格式只取自己支持的字段，例如 Responses 与 Claude 的 `strict`。
 - `native` 与 `signature` 是 TT 的扩展字段。`build_payload` 在 Prompt Post-Processing 与格式构造之前统一投影：`native` 只保留本次格式的键，不是对象时报错；`signature` 只保留给两种 Gemini 格式与 OpenRouter。
 - OpenRouter 只从 `reasoning.encrypted` 类型的 `reasoning_details` 项读取签名，构造器把 `signature` 改写为这类项。
-- 原生内容原样保存，不清洗未知字段。回放前由 `provider-replay.js` 核对正文、来源、模型与格式。Legacy 回放 Claude 与两种 Custom Gemini 格式的原生内容。
+- 原生内容原样保存，不清洗未知字段。回放前由 `provider-replay.js` 核对正文、来源、模型与格式。Legacy 按请求格式回放：两种 Gemini 格式回放每个回合的原生内容，Claude Messages 回放含 client `tool_use` 的回合，其他格式由消息重建。
 - SillyTavern 会把一次工具回合拆成相邻的可见消息与 invocation 消息。两份原生内容完全相同时只回放一次；Claude 在两者不一致时报错，编辑其中任一条会使两份同时失效。
 - `extra_content` 由服务商定义，流式时以最新的非 null 快照整体替换。Legacy 与 Agent 按原 tool call 位置保存，切换 provider 或模型后不携带旧值。
 - Legacy 工具续轮在开启“请求思维链”、模型与说话角色不变时，随 assistant tool call 消息回传该轮的 `reasoning_content`。使用这一字段的连接是 DeepSeek、Moonshot、Z.AI、MiniMax 原生渠道，以及兼容格式下的 DeepSeek V4。OpenRouter 与其余 Custom 连接按 `tool_reasoning_mode` 转发 interleaved `reasoning`。一个连接只使用其中一种。
@@ -83,6 +83,7 @@ Custom 连接不按模型名启用、校验或降级参数。显式值按格式�
 
 - Custom 复用 Google AI Studio 的翻译与传输。Base URL 与模型分开配置：保留显式的 `/v1` 或 `/v1beta`，否则补 `/v1beta`。Additional Parameters 在翻译之后应用。`n` 多候选尚未实现。
 - 工具定义的 schema 写入 `parametersJsonSchema`，`json_schema` 写入 `generationConfig.responseJsonSchema`。`parameters` 与 `responseSchema` 只接受 OpenAPI 子集，且 Gemini API 与 Vertex 接受的范围不同。payload 中直接写的 `responseSchema` 原样使用。
+- 函数工具、payload 中的其他 Gemini 工具与 `enable_web_search` 加入的 `google_search` 一起发送。函数工具与其他工具同时存在时设置 `toolConfig.includeServerSideToolInvocations`，服务端工具的 `toolCall` 与 `toolResponse` 只保留在原生内容中，随回合回放。模型是否支持这种组合由服务商判定。
 - 普通消息的 `native.gemini.content.parts` 原样进入 `contents`。无法核对的旧记录只保留正文与可见推理；流式请求完整结束后才提交原生内容。
 - Google AI Studio、Custom 与 Vertex AI 共用流式累加与响应归一化。响应须包含可见文本、工具调用或内联媒体；没有候选时报告 `promptFeedback.blockReason`。
 - 模型列表读取全部分页并保留 metadata，中途失败时不返回部分列表。服务器返回已经请求过的分页令牌时停止分页，丢弃重复的一页。

@@ -4,22 +4,19 @@ use async_trait::async_trait;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, RequestBuilder, StatusCode};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use url::Url;
 
-use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
-    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits, ProviderMetadataRepository,
-    SiliconFlowEndpoint,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits,
+    NanoGptSubscriptionLimits, NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits,
+    ProviderMetadataRepository,
 };
 
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api";
-const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
-const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
 
 pub struct HttpProviderMetadataRepository {
     http_clients: Arc<HttpClientPool>,
@@ -53,31 +50,6 @@ impl HttpProviderMetadataRepository {
         serde_json::from_slice::<Value>(&upstream::read_body(response).await?).map_err(|error| {
             DomainError::InternalError(format!("{action} JSON is invalid: {error}"))
         })
-    }
-
-    async fn send_advisory_json(
-        request: RequestBuilder,
-        provider_name: &str,
-        action: &str,
-    ) -> Result<Option<Value>, DomainError> {
-        let response = request.send().await.map_err(upstream::request_failure)?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let message = extract_error_message(&body, action);
-            tracing::warn!(
-                "{provider_name} {action} returned status {}: {message}",
-                status.as_u16()
-            );
-            return Ok(None);
-        }
-
-        serde_json::from_slice::<Value>(&upstream::read_body(response).await?)
-            .map(Some)
-            .map_err(|error| {
-                DomainError::InternalError(format!("{action} JSON is invalid: {error}"))
-            })
     }
 
     async fn map_error_response(
@@ -128,26 +100,24 @@ impl HttpProviderMetadataRepository {
 
         Self::send_json(request, "NanoGPT", "subscription usage").await
     }
-
-    async fn workers_ai_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-        task: &str,
-        per_page: u16,
-    ) -> Result<Vec<Value>, DomainError> {
-        let client = self.client()?;
-        fetch_workers_ai_models(&client, api_key, account_id, task, per_page)
-            .await?
-            .into_iter()
-            .map(add_workers_ai_model_id)
-            .collect()
-    }
 }
 
 #[async_trait]
 impl ProviderMetadataRepository for HttpProviderMetadataRepository {
-    async fn openrouter_model_providers(&self, model: &str) -> Result<Vec<String>, DomainError> {
+    async fn openrouter_providers(&self) -> Result<Vec<ModelProvider>, DomainError> {
+        let client = self.client()?;
+        let request = client
+            .get(format!("{OPENROUTER_API_BASE}/providers"))
+            .header(ACCEPT, "application/json");
+
+        let body = Self::send_json(request, "OpenRouter", "providers").await?;
+        parse_openrouter_providers(&body)
+    }
+
+    async fn openrouter_model_providers(
+        &self,
+        model: &str,
+    ) -> Result<Vec<ModelProvider>, DomainError> {
         let model_path = model.trim().trim_matches('/');
         let client = self.client()?;
         let url = Url::parse(&format!(
@@ -160,10 +130,7 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
         })?;
         let request = client.get(url).header(ACCEPT, "application/json");
 
-        let Some(body) = Self::send_advisory_json(request, "OpenRouter", "model providers").await?
-        else {
-            return Ok(Vec::new());
-        };
+        let body = Self::send_json(request, "OpenRouter", "model providers").await?;
         parse_openrouter_model_providers(&body)
     }
 
@@ -178,6 +145,26 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
         parse_openrouter_credits(&body)
     }
 
+    async fn exchange_openrouter_code(
+        &self,
+        code: &str,
+        code_verifier: &str,
+    ) -> Result<String, DomainError> {
+        let client = self.client()?;
+        let request = client
+            .post(format!("{OPENROUTER_API_BASE}/auth/keys"))
+            .header(ACCEPT, "application/json")
+            .json(&json!({
+                "code": code,
+                "code_verifier": code_verifier,
+                "code_challenge_method": "S256",
+            }));
+
+        let body = Self::send_json(request, "OpenRouter", "key exchange").await?;
+        string_field(&body, "key")
+            .ok_or_else(|| invalid_response("OpenRouter key exchange has no key"))
+    }
+
     async fn nanogpt_model_providers(
         &self,
         model: &str,
@@ -190,13 +177,7 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
             ))
             .header(ACCEPT, "application/json");
 
-        let Some(body) = Self::send_advisory_json(request, "NanoGPT", "model providers").await?
-        else {
-            return Ok(NanoGptModelProviders {
-                supports_provider_selection: false,
-                providers: Vec::new(),
-            });
-        };
+        let body = Self::send_json(request, "NanoGPT", "model providers").await?;
         parse_nanogpt_model_providers(&body)
     }
 
@@ -216,74 +197,41 @@ impl ProviderMetadataRepository for HttpProviderMetadataRepository {
 
         parse_nanogpt_credits(&balance, subscription.as_ref())
     }
-
-    async fn siliconflow_embedding_models(
-        &self,
-        api_key: &str,
-        endpoint: SiliconFlowEndpoint,
-    ) -> Result<Vec<Value>, DomainError> {
-        let base_url = match endpoint {
-            SiliconFlowEndpoint::Global => SILICONFLOW_API_BASE,
-            SiliconFlowEndpoint::China => SILICONFLOW_API_BASE_CN,
-        };
-        let client = self.client()?;
-        let request = client
-            .get(format!("{base_url}/models?type=text&sub_type=embedding"))
-            .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, format!("Bearer {api_key}"));
-
-        let body = Self::send_json(request, "SiliconFlow", "embedding models").await?;
-        parse_data_array(body, "SiliconFlow embedding models")
-    }
-
-    async fn workers_ai_embedding_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-    ) -> Result<Vec<Value>, DomainError> {
-        self.workers_ai_models(api_key, account_id, "Text Embeddings", 100)
-            .await
-    }
-
-    async fn workers_ai_text_generation_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-    ) -> Result<Vec<Value>, DomainError> {
-        self.workers_ai_models(api_key, account_id, "Text Generation", 1000)
-            .await
-    }
-
-    async fn workers_ai_multimodal_models(
-        &self,
-        api_key: &str,
-        account_id: &str,
-    ) -> Result<Vec<String>, DomainError> {
-        let models = self
-            .workers_ai_text_generation_models(api_key, account_id)
-            .await?;
-        models
-            .iter()
-            .filter(|model| model_has_vision_property(model))
-            .map(|model| required_string_field(model, "name"))
-            .collect()
-    }
 }
 
-fn parse_openrouter_model_providers(body: &Value) -> Result<Vec<String>, DomainError> {
-    let Some(endpoints) = body
-        .get("data")
-        .and_then(Value::as_object)
-        .and_then(|data| data.get("endpoints"))
+fn parse_openrouter_providers(body: &Value) -> Result<Vec<ModelProvider>, DomainError> {
+    body.get("data")
         .and_then(Value::as_array)
-    else {
-        return Ok(Vec::new());
-    };
-
-    Ok(endpoints
+        .ok_or_else(|| invalid_response("OpenRouter providers are not an array"))?
         .iter()
-        .filter_map(|endpoint| advisory_string_field(endpoint, "provider_name"))
-        .collect())
+        .map(|provider| {
+            let name = required_string_field(provider, "name")?;
+            Ok(ModelProvider {
+                label: name.clone(),
+                id: name,
+            })
+        })
+        .collect()
+}
+
+fn parse_openrouter_model_providers(body: &Value) -> Result<Vec<ModelProvider>, DomainError> {
+    let endpoints = body
+        .pointer("/data/endpoints")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_response("OpenRouter model endpoints are not an array"))?;
+
+    let mut providers = Vec::<ModelProvider>::new();
+    for endpoint in endpoints {
+        let name = required_string_field(endpoint, "provider_name")?;
+        // A provider can serve one model through several endpoints.
+        if providers.iter().all(|provider| provider.id != name) {
+            providers.push(ModelProvider {
+                label: name.clone(),
+                id: name,
+            });
+        }
+    }
+    Ok(providers)
 }
 
 fn parse_openrouter_credits(body: &Value) -> Result<OpenRouterCredits, DomainError> {
@@ -299,36 +247,30 @@ fn parse_openrouter_credits(body: &Value) -> Result<OpenRouterCredits, DomainErr
 }
 
 fn parse_nanogpt_model_providers(body: &Value) -> Result<NanoGptModelProviders, DomainError> {
-    let Some(object) = body.as_object() else {
+    if !required_bool_field(body, "supportsProviderSelection")? {
         return Ok(NanoGptModelProviders {
             supports_provider_selection: false,
             providers: Vec::new(),
         });
-    };
+    }
 
-    let supports_provider_selection = object
-        .get("supportsProviderSelection")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let providers = object
+    let entries = body
         .get("providers")
         .and_then(Value::as_array)
-        .map(|providers| {
-            providers
-                .iter()
-                .filter(|provider| {
-                    provider
-                        .get("available")
-                        .and_then(Value::as_bool)
-                        .is_none_or(|available| available)
-                })
-                .filter_map(|provider| advisory_string_field(provider, "provider"))
-                .collect()
-        })
-        .unwrap_or_default();
+        .ok_or_else(|| invalid_response("NanoGPT model providers are not an array"))?;
 
+    let mut providers = Vec::new();
+    for entry in entries {
+        if required_bool_field(entry, "available")? {
+            let id = required_string_field(entry, "provider")?;
+            providers.push(ModelProvider {
+                label: string_field(entry, "displayName").unwrap_or_else(|| id.clone()),
+                id,
+            });
+        }
+    }
     Ok(NanoGptModelProviders {
-        supports_provider_selection,
+        supports_provider_selection: true,
         providers,
     })
 }
@@ -397,39 +339,6 @@ fn optional_usage_bucket(
     })
 }
 
-fn add_workers_ai_model_id(model: Value) -> Result<Value, DomainError> {
-    let name = workers_ai_model_name(&model)?.to_string();
-    let mut object = require_object(&model, "Workers AI model")?.clone();
-    object.insert("id".to_string(), Value::String(name));
-    Ok(Value::Object(object))
-}
-
-fn parse_data_array(body: Value, label: &str) -> Result<Vec<Value>, DomainError> {
-    let data = body
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_response(format!("{label} data is not an array")))?;
-    Ok(data.clone())
-}
-
-fn model_has_vision_property(model: &Value) -> bool {
-    model
-        .get("properties")
-        .and_then(Value::as_array)
-        .is_some_and(|properties| {
-            properties.iter().any(|property| {
-                property
-                    .get("property_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| value == "vision")
-                    && property
-                        .get("value")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| value == "true")
-            })
-        })
-}
-
 fn require_object<'a>(
     value: &'a Value,
     label: &str,
@@ -450,7 +359,7 @@ fn object_field<'a>(
         .ok_or_else(|| invalid_response(format!("{label}.{field_name} is not an object")))
 }
 
-fn advisory_string_field(value: &Value, field_name: &str) -> Option<String> {
+fn string_field(value: &Value, field_name: &str) -> Option<String> {
     value
         .get(field_name)
         .and_then(Value::as_str)
@@ -460,21 +369,15 @@ fn advisory_string_field(value: &Value, field_name: &str) -> Option<String> {
 }
 
 fn required_string_field(value: &Value, field_name: &str) -> Result<String, DomainError> {
-    let object = require_object(value, field_name)?;
-    required_string_map_field(object, field_name)
+    string_field(value, field_name)
+        .ok_or_else(|| invalid_response(format!("{field_name} is not a non-empty string")))
 }
 
-fn required_string_map_field(
-    object: &Map<String, Value>,
-    field_name: &str,
-) -> Result<String, DomainError> {
-    object
+fn required_bool_field(value: &Value, field_name: &str) -> Result<bool, DomainError> {
+    value
         .get(field_name)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| invalid_response(format!("{field_name} is missing")))
+        .and_then(Value::as_bool)
+        .ok_or_else(|| invalid_response(format!("{field_name} is not a boolean")))
 }
 
 fn optional_scalar_string_field(object: &Map<String, Value>, field_name: &str) -> String {
@@ -552,7 +455,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        model_has_vision_property, parse_nanogpt_credits, parse_nanogpt_model_providers,
+        ModelProvider, NanoGptModelProviders, parse_nanogpt_credits, parse_nanogpt_model_providers,
         parse_openrouter_credits, parse_openrouter_model_providers,
     };
 
@@ -566,29 +469,55 @@ mod tests {
         assert_eq!(credits.remaining, 7.5);
     }
 
-    #[test]
-    fn openrouter_model_providers_defaults_missing_advisory_shape() {
-        let providers = parse_openrouter_model_providers(&json!({
-            "data": {}
-        }))
-        .unwrap();
-
-        assert!(providers.is_empty());
+    fn provider(id: &str, label: &str) -> ModelProvider {
+        ModelProvider {
+            id: id.to_string(),
+            label: label.to_string(),
+        }
     }
 
     #[test]
-    fn nanogpt_model_providers_filters_unavailable_entries() {
-        let providers = parse_nanogpt_model_providers(&json!({
+    fn openrouter_model_providers_merge_endpoints_of_one_provider() {
+        let providers = parse_openrouter_model_providers(&json!({
+            "data": { "endpoints": [
+                { "provider_name": "DeepInfra", "tag": "deepinfra/fp4/flex" },
+                { "provider_name": "Venice", "tag": "venice/fp4" },
+                { "provider_name": "DeepInfra", "tag": "deepinfra/fp4" }
+            ] }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            providers,
+            vec![
+                provider("DeepInfra", "DeepInfra"),
+                provider("Venice", "Venice")
+            ]
+        );
+    }
+
+    #[test]
+    fn nanogpt_model_providers_keep_available_entries() {
+        let selection = parse_nanogpt_model_providers(&json!({
             "supportsProviderSelection": true,
             "providers": [
-                { "provider": "a", "available": true },
-                { "provider": "b", "available": false },
-                { "provider": "c" }
+                { "provider": "sailresearch-asap", "displayName": "Sail Research (ASAP)", "available": true },
+                { "provider": "novita", "displayName": "Novita", "available": false },
+                { "provider": "moonshot", "available": true }
             ]
         }))
         .unwrap();
 
-        assert_eq!(providers.providers, vec!["a", "c"]);
+        assert_eq!(
+            selection,
+            NanoGptModelProviders {
+                supports_provider_selection: true,
+                providers: vec![
+                    provider("sailresearch-asap", "Sail Research (ASAP)"),
+                    provider("moonshot", "moonshot"),
+                ],
+            }
+        );
     }
 
     #[test]
@@ -646,15 +575,5 @@ mod tests {
         assert_eq!(subscription.limits.daily_input_tokens, 0.0);
         assert_eq!(subscription.limits.daily_images, 0.0);
         assert_eq!(subscription.weekly_tokens.unwrap().used, 7.0);
-    }
-
-    #[test]
-    fn workers_ai_vision_property_matches_upstream_shape() {
-        assert!(model_has_vision_property(&json!({
-            "properties": [{ "property_id": "vision", "value": "true" }]
-        })));
-        assert!(!model_has_vision_property(&json!({
-            "properties": [{ "property_id": "vision", "value": "false" }]
-        })));
     }
 }

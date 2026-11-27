@@ -1,6 +1,6 @@
 # TauriTavern 前端指南
 
-本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.19.0）在 Tauri 环境下的集成架构与开发方式。
+本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.19.1）在 Tauri 环境下的集成架构与开发方式。
 
 宿主层对外契约清单见：`docs/FrontendHostContract.md`（重构时优先保障其不回归）。
 
@@ -162,7 +162,7 @@ src/
 | `character-routes.js` | 角色列表、创建、编辑、导入导出、重命名 |
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
 | `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini / OpenCode） |
-| `text-completion-routes.js` | Text Completion（本地 / 自建文本补全后端） |
+| `text-completion-routes.js` | Text Completion（自建服务器与云服务） |
 | `horde-routes.js` | AI Horde（状态、worker 与文本模型列表、用户信息与文本生成流） |
 | `tokenizer-routes.js` | tokenizer count/encode/decode/bias 与上游本地 tokenizer 兼容路由；本地 tokenizer 的文本计数走 `count-text`，不经 `encode`；文本补全的远程分词 |
 
@@ -214,7 +214,7 @@ src/
 - 移除请求参数表示本次生成不启用该参数，保留原值；移除开关表示关闭；隐藏本地区块不改变其内容或行为。旧预设缺少 Fast Mode 字段时明确关闭。
 - 请求参数的移除状态保存在预设 `extensions.tauritavern.omit_params`，本地区块显隐仅保存在设备上。旧预设保持原行为，移除范围限于可选参数，不能删除 `messages`、`model` 等结构字段。
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
-- JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
+- JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则；最终发出的请求在[请求查看器](CurrentState/RequestInspector.md)里看。
 
 ## 6.5 CodeMirror 编辑器
 
@@ -237,15 +237,20 @@ src/
   - 参数里不检查 `style` 属性，需要按显示状态选择时，由改变状态的代码写类或属性；
   - `:has()` 之后的最右复合带类、ID 或属性；
   - 不要为了绕开 `:has()` 改用已知类名的白名单，扩展插入的控件会漏掉。
-- 兄弟组合子不要以 `*` 或纯伪类结尾、左侧又没有特征（如 `* + *`），否则 `body` 的子元素一有增删，整个 `body` 都要重算。`> * + *` 写成 `> :not(:first-child)`。
+- 兄弟组合子（`+`、`~`）之后的复合带类、ID 或属性；用 `:is()`、`:where()` 时，每个参数的最右复合都要带。Blink 只按这一段决定重算哪些兄弟，不看祖先；这一段是裸标签、`*` 或只有 `:not()` 时，页面上任何状态变化或节点增删都会重算后面的兄弟，规则不匹配任何元素也一样。兄弟之间的间距用父元素的 `gap` 或 `> :not(:first-child)`。
 - WebKit 中，`:has()` 后面接兄弟组合子、参数又检查状态伪类时（如 `#a:has(#b:checked) ~ #c`），页面上任何该状态的变化都会引起整页重查。改写成后代关系：`#共同父元素:has(#b:checked) #c`。
+- 上面两条由 `scripts/check-css-guardrails.mjs` 检查，范围是 `src/lib` 与 `*.min.css` 以外的全部 CSS。
 - 运行中的 CSS 动画让合成器每帧出图，`steps()` 只减少取值变化，不减少帧数。长时间显示的循环指示改由低频节拍切换属性，帧数随节拍；节拍只在元素可见且未要求减少动态时运行。
 - 成批出现的控件不要成为滚动容器，每个可见的滚动容器都会增加每一帧的合成成本。世界书标题因此按内容自适应高度，设为 `overflow: hidden`。
 - WebKit 有两种情况会重算整个文档的样式：内存占用较高时（macOS 上约 1.5 GB 以上）每 30 s 一次，以及每次打开、关闭模态 `<dialog>`。成本随渲染树里的元素数增长；原生下拉框还要重新测量选项文字，含 U+FE0F（emoji 表现选择符）的文字尤其慢。所以成批出现的下拉框，选项文字不带 U+FE0F；长列表里远离可见区域的行，不留在渲染树里。
+- 单行省略（`nowrap` 加 `text-overflow: ellipsis`）的文字先截短再放进 DOM。浏览器会排完整行，不管露出多少。
+- 中日韩文字多的地方，等宽字体在拉丁等宽字体之后直接接 `sans-serif`（如 `'Noto Sans Mono', sans-serif`），不经过 `--monoFontFamily` 的 `'Courier New', Consolas, monospace`：WebKit 沿这条链为缺字的文字逐个找回退字体，排版慢数倍。
 - 长列表的条目用 `content-visibility: auto`，并按实际高度给出 `contain-intrinsic-block-size`。WebKit 的 `content-visibility` 不省样式计算，所以世界书还会让远离可见区域的条目休眠：由 `IntersectionObserver` 判断远近，休眠条目设为 `content-visibility: hidden`，标题栏 `display: none`。休眠要守住两点：
   - 不改变条目尺寸。`hidden` 让条目保持上次渲染的高度；否则条目会在唤醒前塌缩，快速滚动停下后列表会反复伸缩、闪烁。
   - 不让内容变得无法测量。只隐藏标题栏，其余部分仍能读取布局，休眠时打开的条目也能正确挂载编辑器。依赖布局的初始化（如测量标题）放到唤醒时做；持有焦点的条目不休眠。
+- 一次显示的长文本按换行切成块，块用 `content-visibility: auto` 跳过可见区域外的排版。块之间的换行由块边界画出，不留在文字里，跨块复制时浏览器会补回。
 - 代码直接设置滚动位置时（如滚到末尾、删除末尾条目），浏览器还没判断条目离视口远近，带进视口的条目按记录或占位的高度排版，读者会停在别处。这类操作能到达的条目不跳过渲染：聊天由 ChatSurface 给末尾三楼写 `data-tt-chat-end`。
+- 模态 `<dialog>` 打开后，页面其余部分不可选。Chromium 仍保留原来的选区，并在每一帧为它在页面里搜索显示位置，页面越大越慢；WebKit 会丢掉这个选区。`scripts/tauri/perf/modal-selection.js` 在焦点从外部进入模态对话框时清除选区；焦点落在可编辑元素上时不清除，由它接管选区。
 - WebKit 每次按下鼠标、或删除持有选区的节点时，会在页面里搜索放置选区的位置，在由表单组成的长列表里要好几秒。世界书列表因此对字段以外的按下调用 `preventDefault()`，同时让当前焦点 `blur()`（`change` 时保存的字段靠失焦提交）；拆除列表前先清除其中的选区。不要用 `user-select: none` 代替，WKWebView 仍会搜索。
 
 ## 7. 插件系统前端适配
@@ -462,6 +467,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
   - 行数预算：默认单文件 `<= 500` 行；关键聚合文件受 `scripts/guardrails/frontend-lines-baseline.json` 的基线约束。
   - 依赖边界：`kernel/ports` 不得 import `services/routes/adapters`；`services` 不得 import `routes`。
   - 路由契约：`src/tauri/main/routes/*` 禁止直接引用 `window`（需要触碰浏览器/DOM/上游 ST 时，新增 `adapters/*`）。
+- CSS 守护（`scripts/check-css-guardrails.mjs`）：兄弟组合子与 WebKit `:has()` 两条样式规则，见 §6.6。
 - 类型检查（`tsc -p tsconfig.host.json`）：
   - `strict` + `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess` 等强约束。
   - JS 文件默认不强制检查；需要在文件头加 `// @ts-check` 并配合 JSDoc（Host Kernel 目录已按此标准化）。

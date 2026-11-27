@@ -4,16 +4,11 @@ import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 const PROVIDER_METADATA_SECRET_KEYS = new Set([
     'api_key_openrouter',
     'api_key_nanogpt',
-    'api_key_siliconflow',
-    'api_key_workers_ai',
 ]);
 
 const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
     'get_openrouter_credits',
     'get_nanogpt_credits',
-    'get_siliconflow_embedding_models',
-    'get_workers_ai_embedding_models',
-    'get_workers_ai_multimodal_models',
 ];
 
 function invalidateSecretBackedProviderMetadata(context, key) {
@@ -73,8 +68,8 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/settings/load-snapshot', async ({ body }) => {
         const name = body?.name || '';
-        const snapshot = await context.safeInvoke('load_settings_snapshot', { name });
-        return jsonResponse(snapshot?.data || snapshot || {});
+        const bytes = await context.safeInvoke('load_settings_snapshot', { name });
+        return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
     });
 
     router.post('/api/settings/restore-snapshot', async ({ body }) => {
@@ -152,7 +147,7 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
             dto: {
                 name: body?.name || '',
                 apiId: body?.apiId || '',
-                preset: body?.preset || {},
+                preset_json: JSON.stringify(body?.preset ?? null),
             },
         });
 

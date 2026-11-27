@@ -1,8 +1,8 @@
 use std::fmt;
 
-use serde_json::{Map, Value};
+use serde_json::value::{RawValue, to_raw_value};
 
-use crate::models::settings::UserSettings;
+use crate::json_document::JsonDocument;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct UserSettingsRepairReport {
@@ -30,58 +30,69 @@ impl fmt::Display for UserSettingsRepairReport {
 }
 
 /// The settings objects holding PromptManager lists: the settings root and this member of it.
-pub const PROMPT_MANAGER_SETTINGS: &str = "oai_settings";
-/// The only fields of a PromptManager settings object that the repair reads.
-pub const PROMPT_MANAGER_LISTS: [&str; 2] = [PROMPTS, PROMPT_ORDER];
+const PROMPT_MANAGER_SETTINGS: &str = "oai_settings";
 const PROMPTS: &str = "prompts";
 const PROMPT_ORDER: &str = "prompt_order";
+const ORDER: &str = "order";
 
-pub fn repair_sillytavern_prompt_manager_settings(
-    settings: &mut UserSettings,
-) -> UserSettingsRepairReport {
+/// Entries are compared and kept as text, so a prompt is never decoded;
+/// a member that is not a list stays as it is.
+pub fn repair_prompt_manager_settings(settings: &mut JsonDocument) -> UserSettingsRepairReport {
     let mut report = UserSettingsRepairReport::default();
-    let Some(root) = settings.data.as_object_mut() else {
-        return report;
-    };
-
-    repair_prompt_manager_object(root, &mut report);
-
-    if let Some(oai_settings) = root
-        .get_mut(PROMPT_MANAGER_SETTINGS)
-        .and_then(Value::as_object_mut)
-    {
-        repair_prompt_manager_object(oai_settings, &mut report);
+    repair_prompt_lists(settings, &mut report);
+    if let Ok(Some(prompt_manager)) = settings.object_mut(&[PROMPT_MANAGER_SETTINGS]) {
+        repair_prompt_lists(prompt_manager, &mut report);
     }
-
     report
 }
 
-/// Repairs one PromptManager settings object; only its [`PROMPT_MANAGER_LISTS`] are read.
-pub fn repair_prompt_manager_object(
-    settings: &mut Map<String, Value>,
-    report: &mut UserSettingsRepairReport,
-) {
-    if let Some(prompts) = settings.get_mut(PROMPTS).and_then(Value::as_array_mut) {
-        let before = prompts.len();
-        prompts.retain(|prompt| !prompt.is_null());
-        report.null_prompts += before - prompts.len();
+fn repair_prompt_lists(settings: &mut JsonDocument, report: &mut UserSettingsRepairReport) {
+    if let Some(mut prompts) = list(settings, PROMPTS) {
+        let removed = remove_nulls(&mut prompts);
+        if removed > 0 {
+            report.null_prompts += removed;
+            set_list(settings, PROMPTS, &prompts);
+        }
     }
 
-    let Some(prompt_order) = settings.get_mut(PROMPT_ORDER).and_then(Value::as_array_mut) else {
+    let Some(mut prompt_order) = list(settings, PROMPT_ORDER) else {
         return;
     };
-
-    let before = prompt_order.len();
-    prompt_order.retain(|order| !order.is_null());
-    report.null_prompt_order_lists += before - prompt_order.len();
-
-    for order in prompt_order {
-        let Some(order_entries) = order.get_mut("order").and_then(Value::as_array_mut) else {
-            continue;
-        };
-
-        let before = order_entries.len();
-        order_entries.retain(|entry| !entry.is_null());
-        report.null_prompt_order_references += before - order_entries.len();
+    let removed_lists = remove_nulls(&mut prompt_order);
+    let removed_references: usize = prompt_order.iter_mut().map(repair_order).sum();
+    if removed_lists + removed_references > 0 {
+        report.null_prompt_order_lists += removed_lists;
+        report.null_prompt_order_references += removed_references;
+        set_list(settings, PROMPT_ORDER, &prompt_order);
     }
+}
+
+/// Returns how many null references left the entry's `order` list.
+fn repair_order(entry: &mut Box<RawValue>) -> usize {
+    let Ok(mut fields) = JsonDocument::parse(entry.get().as_bytes()) else {
+        return 0;
+    };
+    let Some(mut order) = list(&fields, ORDER) else {
+        return 0;
+    };
+    let removed = remove_nulls(&mut order);
+    if removed > 0 {
+        set_list(&mut fields, ORDER, &order);
+        *entry = to_raw_value(&fields).expect("a document serializes");
+    }
+    removed
+}
+
+fn list(settings: &JsonDocument, field: &str) -> Option<Vec<Box<RawValue>>> {
+    settings.get(&[field]).ok().flatten()
+}
+
+fn remove_nulls(list: &mut Vec<Box<RawValue>>) -> usize {
+    let before = list.len();
+    list.retain(|entry| entry.get() != "null");
+    before - list.len()
+}
+
+fn set_list(settings: &mut JsonDocument, field: &str, list: &[Box<RawValue>]) {
+    settings.set(field, to_raw_value(list).expect("raw JSON serializes"));
 }

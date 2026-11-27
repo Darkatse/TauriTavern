@@ -3,11 +3,12 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::infrastructure::assets::{BundledResources, read_resource_json};
-use tt_adapter_storage_core::file_system::{delete_file, read_json_file, write_json_file};
+use crate::infrastructure::assets::{BundledResources, read_resource_document};
+use tt_adapter_storage_core::file_system::{delete_file, write_bytes_file};
 use tt_adapter_storage_core::preset_file_naming::{PresetFilePaths, load_named_preset_files};
 use tt_domain::errors::DomainError;
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::json_document::JsonDocument;
+use tt_domain::models::preset::PresetType;
 use tt_ports::repositories::content_repository::ContentRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 
@@ -78,7 +79,7 @@ impl FilePresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         tracing::debug!(
             "Looking for default preset: {} (type: {})",
             name,
@@ -129,19 +130,11 @@ impl FilePresetRepository {
                     .unwrap_or(&item.filename);
 
                 if item_name == name {
-                    // Found matching preset, load it
-                    let data: Value = read_resource_json(
+                    return read_resource_document(
                         self.resources.as_ref(),
                         &format!("default/content/{}", item.filename),
-                    )?;
-
-                    return Ok(Some(DefaultPreset {
-                        filename: item.filename,
-                        name: name.to_string(),
-                        preset_type: preset_type.clone(),
-                        is_default: true,
-                        data,
-                    }));
+                    )
+                    .map(Some);
                 }
             }
         }
@@ -153,26 +146,25 @@ impl FilePresetRepository {
 
 #[async_trait]
 impl PresetRepository for FilePresetRepository {
-    async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        tracing::debug!(
-            "Saving preset: {} (type: {})",
-            preset.name,
-            preset.preset_type
-        );
+    async fn save_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+        mut preset: JsonDocument,
+    ) -> Result<(), DomainError> {
+        tracing::debug!("Saving preset: {} (type: {})", name, preset_type);
 
         // Ensure directory exists
-        self.ensure_directory_exists(&preset.preset_type).await?;
+        self.ensure_directory_exists(preset_type).await?;
 
         let file_path = self
-            .get_preset_paths(&preset.name, &preset.preset_type)?
+            .get_preset_paths(name, preset_type)?
             .prepare_for_save()
             .await?;
 
-        // Prepare data with name included
-        let data_with_name = preset.data_with_name();
-
-        // Write file
-        write_json_file(&file_path, &data_with_name).await?;
+        // Listing reads the name back from the file, whose stem is sanitized.
+        preset.set("name", &Value::from(name));
+        write_bytes_file(&file_path, &preset.to_pretty_vec()).await?;
 
         tracing::info!("Preset saved to {:?}", file_path);
         Ok(())
@@ -207,7 +199,7 @@ impl PresetRepository for FilePresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         tracing::debug!("Getting preset: {} (type: {})", name, preset_type);
 
         let Some(file_path) = self
@@ -217,11 +209,20 @@ impl PresetRepository for FilePresetRepository {
             return Ok(None);
         };
 
-        let data: Value = read_json_file(&file_path).await?;
-
-        let preset = Preset::new(name.to_string(), preset_type.clone(), data);
-
-        Ok(Some(preset))
+        let bytes = tokio::fs::read(&file_path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read preset file '{}': {}",
+                file_path.display(),
+                error
+            ))
+        })?;
+        JsonDocument::parse(&bytes).map(Some).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid preset JSON in '{}': {}",
+                file_path.display(),
+                error
+            ))
+        })
     }
 
     async fn list_presets(&self, preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
@@ -253,7 +254,7 @@ impl PresetRepository for FilePresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         self.get_default_preset_from_content(name, preset_type)
             .await
     }

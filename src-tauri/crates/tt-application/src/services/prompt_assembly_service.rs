@@ -21,7 +21,7 @@ use tt_domain::models::agent::profile::{
     AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, ResolvedAgentProfile,
 };
 use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
-use tt_domain::models::preset::{Preset, PresetType};
+use tt_domain::models::preset::PresetType;
 use tt_domain::models::tool::ToolCatalog;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::preset_repository::PresetRepository;
@@ -229,29 +229,30 @@ impl PromptAssemblyService {
     }
 
     async fn load_openai_preset_settings(&self, name: &str) -> Result<Value, ApplicationError> {
-        let preset = self
+        let preset_type = PresetType::OpenAI;
+        let preset = match self
             .preset_repository
-            .get_preset(name, &PresetType::OpenAI)
+            .get_preset(name, &preset_type)
             .await?
-            .map(|preset| preset.data_with_name());
-        if let Some(settings) = preset {
-            return Ok(settings);
-        }
-
-        let default_preset = self
-            .preset_repository
-            .get_default_preset(name, &PresetType::OpenAI)
-            .await?
-            .map(|preset| {
-                Preset::new(preset.name, preset.preset_type, preset.data).data_with_name()
-            });
-        if let Some(settings) = default_preset {
-            return Ok(settings);
-        }
-
-        Err(ApplicationError::NotFound(format!(
-            "prompt_assembly.preset_not_found: preset `{name}` for apiId `openai` does not exist"
-        )))
+        {
+            Some(preset) => Some(preset),
+            None => {
+                self.preset_repository
+                    .get_default_preset(name, &preset_type)
+                    .await?
+            }
+        };
+        let Some(mut preset) = preset else {
+            return Err(ApplicationError::NotFound(format!(
+                "prompt_assembly.preset_not_found: preset `{name}` for apiId `openai` does not exist"
+            )));
+        };
+        preset.set("name", &Value::from(name));
+        serde_json::to_value(&preset).map_err(|error| {
+            ApplicationError::ValidationError(format!(
+                "prompt_assembly.preset_data_invalid: {error}"
+            ))
+        })
     }
 
     async fn resolve_prompt_assembly_settings(

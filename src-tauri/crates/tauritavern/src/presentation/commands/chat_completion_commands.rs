@@ -4,6 +4,7 @@ use serde_json::Value;
 use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
+use crate::app::dev_observability;
 use crate::presentation::commands::helpers::{
     log_command, map_command_error, normalize_request_id,
 };
@@ -12,6 +13,7 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
+use tt_application::dto::dev_observability_dto::ChatCompletionRequestPreviewDto;
 
 #[tauri::command]
 pub async fn get_chat_completions_status(
@@ -106,4 +108,20 @@ pub async fn start_chat_completion_stream(
         .start_stream(stream_id, dto)
         .await
         .map_err(map_command_error("Failed to start chat completion stream"))
+}
+
+#[tauri::command]
+pub async fn preview_chat_completion_request(
+    dto: ChatCompletionGenerateRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<ChatCompletionRequestPreviewDto, CommandError> {
+    log_command("preview_chat_completion_request");
+
+    let request = app_state
+        .services
+        .chat_completion_service
+        .preview_request(dto)
+        .await?;
+
+    Ok(dev_observability::preview_chat_completion_request(request))
 }

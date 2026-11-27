@@ -6,7 +6,7 @@ license: AGPL-3.0
 
 # TauriTavern app guide
 
-TauriTavern runs the SillyTavern 1.19.0 frontend on a Rust backend, as a native app for desktop, Android, iOS and HarmonyOS. Most of the interface is upstream SillyTavern; TauriTavern adds its own settings, data handling and platform behavior.
+TauriTavern runs the SillyTavern 1.19.1 frontend on a Rust backend, as a native app for desktop, Android, iOS and HarmonyOS. Most of the interface is upstream SillyTavern; TauriTavern adds its own settings, data handling and platform behavior.
 
 ## How it differs from SillyTavern
 

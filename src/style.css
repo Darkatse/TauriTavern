@@ -3114,33 +3114,33 @@ input[type="file"]:not(.sr-only) {
     text-align: start;
 }
 
-#rm_button_panel_pin:checked+label,
-#lm_button_panel_pin:checked+label,
-#WI_panel_pin:checked+label {
+#rm_button_panel_pin:checked+.panel_pin_label,
+#lm_button_panel_pin:checked+.panel_pin_label,
+#WI_panel_pin:checked+.panel_pin_label {
     display: inline;
 }
 
-#rm_button_panel_pin:checked+label .checked,
-#lm_button_panel_pin:checked+label .checked,
-#WI_panel_pin:checked+label .checked {
+#rm_button_panel_pin:checked+.panel_pin_label .checked,
+#lm_button_panel_pin:checked+.panel_pin_label .checked,
+#WI_panel_pin:checked+.panel_pin_label .checked {
     display: inline;
 }
 
-#rm_button_panel_pin:checked+label .unchecked,
-#lm_button_panel_pin:checked+label .unchecked,
-#WI_panel_pin:checked+label .unchecked {
+#rm_button_panel_pin:checked+.panel_pin_label .unchecked,
+#lm_button_panel_pin:checked+.panel_pin_label .unchecked,
+#WI_panel_pin:checked+.panel_pin_label .unchecked {
     display: none;
 }
 
-#rm_button_panel_pin:not(:checked)+label .checked,
-#lm_button_panel_pin:not(:checked)+label .checked,
-#WI_panel_pin:not(:checked)+label .checked {
+#rm_button_panel_pin:not(:checked)+.panel_pin_label .checked,
+#lm_button_panel_pin:not(:checked)+.panel_pin_label .checked,
+#WI_panel_pin:not(:checked)+.panel_pin_label .checked {
     display: none;
 }
 
-#rm_button_panel_pin:not(:checked)+label .unchecked,
-#lm_button_panel_pin:not(:checked)+label .unchecked,
-#WI_panel_pin:not(:checked)+label .unchecked {
+#rm_button_panel_pin:not(:checked)+.panel_pin_label .unchecked,
+#lm_button_panel_pin:not(:checked)+.panel_pin_label .unchecked,
+#WI_panel_pin:not(:checked)+.panel_pin_label .unchecked {
     display: inline;
 }
 
@@ -6245,10 +6245,6 @@ body:not(.movingUI) .drawer-content.maximized {
     flex-wrap: wrap;
 }
 
-
-#max_context_unlocked:not(:checked)+div {
-    display: none;
-}
 
 #rm_group_add_members a,
 .rm_group_members a {

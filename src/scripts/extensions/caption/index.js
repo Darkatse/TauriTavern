@@ -528,13 +528,13 @@ export async function init() {
 
         await processEndpoint('openrouter', '/api/openrouter/models/multimodal');
         await processEndpoint('aimlapi', '/api/backends/chat-completions/multimodal-models/aimlapi');
-        await processEndpoint('pollinations', '/api/backends/chat-completions/multimodal-models/pollinations');
+        await processEndpoint('pollinations', '/api/backends/chat-completions/multimodal-models/pollinations', { pollinations_endpoint: oai_settings.pollinations_endpoint });
         await processEndpoint('nanogpt', '/api/backends/chat-completions/multimodal-models/nanogpt');
         await processEndpoint('chutes', '/api/backends/chat-completions/multimodal-models/chutes');
         await processEndpoint('electronhub', '/api/backends/chat-completions/multimodal-models/electronhub');
         await processEndpoint('mistral', '/api/backends/chat-completions/multimodal-models/mistral');
         await processEndpoint('xai', '/api/backends/chat-completions/multimodal-models/xai');
-        await processEndpoint('moonshot', '/api/backends/chat-completions/multimodal-models/moonshot');
+        await processEndpoint('moonshot', '/api/backends/chat-completions/multimodal-models/moonshot', { moonshot_endpoint: oai_settings.moonshot_endpoint });
         await processEndpoint('workers_ai', '/api/backends/chat-completions/multimodal-models/workers_ai', { workers_ai_account_id: oai_settings.workers_ai_account_id });
     }
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::path::PathBuf;
 
-use crate::file_system::{delete_file, write_json_file};
+use crate::file_system::{delete_file, write_bytes_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 use tt_domain::models::theme::Theme;
@@ -57,23 +57,7 @@ impl ThemeRepository for FileThemeRepository {
         // Get the path to the theme file
         let path = self.get_theme_path(&theme.name)?;
 
-        // Create a new JSON object that includes the name
-        let mut theme_data = theme.data.clone();
-
-        // Ensure theme_data is an object
-        if !theme_data.is_object() {
-            theme_data = serde_json::json!({});
-        }
-
-        // Add the name to the theme data
-        if let Some(obj) = theme_data.as_object_mut() {
-            obj.insert("name".to_string(), serde_json::json!(theme.name));
-        }
-
-        // Write the theme data to the file
-        write_json_file(&path, &theme_data).await?;
-
-        Ok(())
+        write_bytes_file(&path, &theme.data.to_pretty_vec()).await
     }
 
     async fn delete_theme(&self, name: &str) -> Result<(), DomainError> {

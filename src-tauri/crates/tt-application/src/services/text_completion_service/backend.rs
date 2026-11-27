@@ -11,6 +11,7 @@ use tt_ports::repositories::text_completion_repository::{
 use super::ollama;
 use crate::dto::text_completion_dto::TextCompletionTokensDto;
 use crate::errors::ApplicationError;
+use crate::services::{client_attribution, openrouter};
 
 /// Request fields the page adds for TauriTavern; backends never receive them.
 const HOST_FIELDS: &[&str] = &["type", "api_type", "api_server", "secret_id"];
@@ -34,6 +35,7 @@ const OPENAI_KEYS: &[&str] = &[
 ];
 const OPENAI_MAX_STOP_SEQUENCES: usize = 4;
 
+/// Featherless uses the vLLM request format.
 const VLLM_KEYS: &[&str] = &[
     "model",
     "prompt",
@@ -74,17 +76,104 @@ const VLLM_KEYS: &[&str] = &[
     "guided_whitespace_pattern",
 ];
 
+const INFERMATICAI_KEYS: &[&str] = &[
+    "model",
+    "prompt",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "top_k",
+    "repetition_penalty",
+    "stream",
+    "stop",
+    "presence_penalty",
+    "frequency_penalty",
+    "min_p",
+    "seed",
+    "ignore_eos",
+    "n",
+    "best_of",
+    "min_tokens",
+    "spaces_between_special_tokens",
+    "skip_special_tokens",
+    "logprobs",
+];
+
+/// https://docs.together.ai/reference/completions
+const TOGETHERAI_KEYS: &[&str] = &[
+    "model",
+    "prompt",
+    "max_tokens",
+    "stop",
+    "temperature",
+    "top_p",
+    "top_k",
+    "repetition_penalty",
+    "min_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "logit_bias",
+    "seed",
+    "logprobs",
+    "n",
+    "stream",
+];
+
+const OPENROUTER_KEYS: &[&str] = &[
+    "model",
+    "prompt",
+    "stream",
+    "max_tokens",
+    "temperature",
+    "top_k",
+    "top_p",
+    "top_a",
+    "min_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "repetition_penalty",
+    "seed",
+    "logit_bias",
+    "stop",
+    "include_reasoning",
+];
+
+pub(super) fn built_in_base_url(api_type: TextCompletionType) -> Option<&'static str> {
+    match api_type {
+        TextCompletionType::Featherless => Some("https://api.featherless.ai"),
+        TextCompletionType::OpenRouter => Some("https://openrouter.ai/api"),
+        TextCompletionType::InfermaticAi => Some("https://api.totalgpt.ai"),
+        TextCompletionType::DreamGen => Some("https://dreamgen.com"),
+        TextCompletionType::TogetherAi => Some("https://api.together.ai"),
+        TextCompletionType::Ooba
+        | TextCompletionType::Vllm
+        | TextCompletionType::Aphrodite
+        | TextCompletionType::Tabby
+        | TextCompletionType::KoboldCpp
+        | TextCompletionType::LlamaCpp
+        | TextCompletionType::Ollama
+        | TextCompletionType::HuggingFace
+        | TextCompletionType::Generic => None,
+    }
+}
+
 pub(super) fn models_path(api_type: TextCompletionType) -> &'static str {
     match api_type {
         TextCompletionType::Tabby => "/v1/model/list",
         TextCompletionType::Ollama => "/api/tags",
         TextCompletionType::HuggingFace => "/info",
+        // Without `all`, Featherless lists only the trending or pinned models.
+        TextCompletionType::Featherless => "/v1/models?all=true",
+        TextCompletionType::OpenRouter => "/v1/models?endpoints=/api/v1/completions",
+        TextCompletionType::DreamGen => "/api/openai/v1/models",
         TextCompletionType::Ooba
         | TextCompletionType::Vllm
         | TextCompletionType::Aphrodite
         | TextCompletionType::KoboldCpp
         | TextCompletionType::LlamaCpp
-        | TextCompletionType::Generic => "/v1/models",
+        | TextCompletionType::Generic
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::TogetherAi => "/v1/models",
     }
 }
 
@@ -92,13 +181,18 @@ pub(super) fn generate_path(api_type: TextCompletionType) -> &'static str {
     match api_type {
         TextCompletionType::LlamaCpp => "/completion",
         TextCompletionType::Ollama => "/api/generate",
+        TextCompletionType::DreamGen => "/api/openai/v1/completions",
         TextCompletionType::Ooba
         | TextCompletionType::Vllm
         | TextCompletionType::Aphrodite
         | TextCompletionType::Tabby
         | TextCompletionType::KoboldCpp
         | TextCompletionType::HuggingFace
-        | TextCompletionType::Generic => "/v1/completions",
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::TogetherAi => "/v1/completions",
     }
 }
 
@@ -112,7 +206,12 @@ pub(super) fn stream_format(api_type: TextCompletionType) -> TextCompletionStrea
         | TextCompletionType::KoboldCpp
         | TextCompletionType::LlamaCpp
         | TextCompletionType::HuggingFace
-        | TextCompletionType::Generic => TextCompletionStreamFormat::Sse,
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen
+        | TextCompletionType::TogetherAi => TextCompletionStreamFormat::Sse,
     }
 }
 
@@ -127,7 +226,12 @@ pub(super) fn abort_path(api_type: TextCompletionType) -> Option<&'static str> {
         | TextCompletionType::LlamaCpp
         | TextCompletionType::Ollama
         | TextCompletionType::HuggingFace
-        | TextCompletionType::Generic => None,
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen
+        | TextCompletionType::TogetherAi => None,
     }
 }
 
@@ -141,25 +245,63 @@ pub(super) fn secret_key(api_type: TextCompletionType) -> Option<&'static str> {
         TextCompletionType::LlamaCpp => Some(SecretKeys::LLAMACPP),
         TextCompletionType::HuggingFace => Some(SecretKeys::HUGGINGFACE),
         TextCompletionType::Generic => Some(SecretKeys::GENERIC),
+        TextCompletionType::Featherless => Some(SecretKeys::FEATHERLESS),
+        TextCompletionType::OpenRouter => Some(SecretKeys::OPENROUTER),
+        TextCompletionType::InfermaticAi => Some(SecretKeys::INFERMATICAI),
+        TextCompletionType::DreamGen => Some(SecretKeys::DREAMGEN),
+        TextCompletionType::TogetherAi => Some(SecretKeys::TOGETHERAI),
         TextCompletionType::Ollama => None,
     }
 }
 
-pub(super) fn auth_headers(api_type: TextCompletionType, api_key: &str) -> Vec<(String, String)> {
+pub(super) fn headers(
+    api_type: TextCompletionType,
+    api_key: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut headers: Vec<(String, String)> = match api_type {
+        TextCompletionType::OpenRouter => openrouter::attribution_headers().into_iter().collect(),
+        TextCompletionType::Featherless => client_attribution::headers()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .into(),
+        TextCompletionType::Ooba
+        | TextCompletionType::Vllm
+        | TextCompletionType::Aphrodite
+        | TextCompletionType::Tabby
+        | TextCompletionType::KoboldCpp
+        | TextCompletionType::LlamaCpp
+        | TextCompletionType::Ollama
+        | TextCompletionType::HuggingFace
+        | TextCompletionType::Generic
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen
+        | TextCompletionType::TogetherAi => Vec::new(),
+    };
+    let Some(api_key) = api_key else {
+        return headers;
+    };
+
     let bearer = ("Authorization".to_string(), format!("Bearer {api_key}"));
     match api_type {
         TextCompletionType::Aphrodite => {
-            vec![("X-API-KEY".to_string(), api_key.to_string()), bearer]
+            headers.extend([("X-API-KEY".to_string(), api_key.to_string()), bearer]);
         }
-        TextCompletionType::Tabby => vec![("x-api-key".to_string(), api_key.to_string()), bearer],
-        TextCompletionType::Ollama => Vec::new(),
+        TextCompletionType::Tabby => {
+            headers.extend([("x-api-key".to_string(), api_key.to_string()), bearer]);
+        }
+        TextCompletionType::Ollama => {}
         TextCompletionType::Ooba
         | TextCompletionType::Vllm
         | TextCompletionType::KoboldCpp
         | TextCompletionType::LlamaCpp
         | TextCompletionType::HuggingFace
-        | TextCompletionType::Generic => vec![bearer],
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen
+        | TextCompletionType::TogetherAi => headers.push(bearer),
     }
+    headers
 }
 
 pub(super) fn without_host_fields(mut payload: Map<String, Value>) -> Map<String, Value> {
@@ -181,14 +323,30 @@ pub(super) fn generate_body(
                 stop.truncate(OPENAI_MAX_STOP_SEQUENCES);
             }
         }
-        TextCompletionType::Vllm => payload.retain(|key, _| VLLM_KEYS.contains(&key.as_str())),
+        TextCompletionType::Vllm | TextCompletionType::Featherless => {
+            payload.retain(|key, _| VLLM_KEYS.contains(&key.as_str()));
+        }
+        TextCompletionType::InfermaticAi => {
+            payload.retain(|key, _| INFERMATICAI_KEYS.contains(&key.as_str()));
+        }
+        TextCompletionType::TogetherAi => {
+            payload.retain(|key, _| TOGETHERAI_KEYS.contains(&key.as_str()));
+        }
+        TextCompletionType::OpenRouter => {
+            let provider = openrouter::provider_preferences(&payload);
+            payload.retain(|key, _| OPENROUTER_KEYS.contains(&key.as_str()));
+            if let Some(provider) = provider {
+                payload.insert("provider".to_string(), provider);
+            }
+        }
         TextCompletionType::Ollama => return ollama::generate_body(payload),
         TextCompletionType::Ooba
         | TextCompletionType::Aphrodite
         | TextCompletionType::Tabby
         | TextCompletionType::KoboldCpp
         | TextCompletionType::LlamaCpp
-        | TextCompletionType::HuggingFace => {}
+        | TextCompletionType::HuggingFace
+        | TextCompletionType::DreamGen => {}
     }
 
     Ok(Value::Object(payload))
@@ -202,13 +360,21 @@ pub(super) fn models(
     match api_type {
         TextCompletionType::HuggingFace => Ok(Vec::new()),
         TextCompletionType::Ollama => ollama::models(response),
+        TextCompletionType::TogetherAi => match response {
+            Value::Array(data) => Ok(data),
+            _ => Err(missing_model_list(api_type)),
+        },
         TextCompletionType::Ooba
         | TextCompletionType::Vllm
         | TextCompletionType::Aphrodite
         | TextCompletionType::Tabby
         | TextCompletionType::KoboldCpp
         | TextCompletionType::LlamaCpp
-        | TextCompletionType::Generic => match response {
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen => match response {
             Value::Object(mut response) => match response.remove("data") {
                 Some(Value::Array(data)) => Ok(data),
                 _ => Err(missing_model_list(api_type)),
@@ -246,7 +412,12 @@ pub(super) fn encode_request(
         TextCompletionType::Ooba => Some(("/v1/internal/encode", json!({ "text": text }))),
         TextCompletionType::Ollama
         | TextCompletionType::HuggingFace
-        | TextCompletionType::Generic => None,
+        | TextCompletionType::Generic
+        | TextCompletionType::Featherless
+        | TextCompletionType::OpenRouter
+        | TextCompletionType::InfermaticAi
+        | TextCompletionType::DreamGen
+        | TextCompletionType::TogetherAi => None,
     }
 }
 

@@ -5,7 +5,7 @@ import { pluginTestFrontend } from './tests/helpers/frontend-server.mjs';
 export default defineConfig({
   include: ['{packages,src}/**/*.test.{ts,tsx}', 'tests/webview/*.test.mjs'],
   plugins: [pluginTestFrontend()],
-  browser: { enabled: true, provider: 'playwright', headless: true },
+  browser: { enabled: true, provider: 'playwright', headless: true, viewport: { width: 1280, height: 800 } },
   setupFiles: ['./tests/helpers/rstest-setup.mjs'],
   restoreMocks: true,
   unstubGlobals: true,

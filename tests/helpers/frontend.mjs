@@ -23,7 +23,9 @@ export async function frontendText(path) {
 // would put a 200 ms debounce and a 1 s save on one deadline and stop the debounce from coalescing two saves.
 const TIMER_SCALE = 10;
 
-function scaleTimers(window) {
+// What the frame has in flight is its timers and its IndexedDB work. IndexedDB answers in tasks of its own, and
+// between them no timer need be pending.
+function trackPendingWork(window) {
     // The frame's own code, so errors thrown by timer callbacks reach the frame like any others.
     const pending = new window.Function('scale', `
         const pending = new Set();
@@ -39,6 +41,23 @@ function scaleTimers(window) {
         window.clearTimeout = id => {
             pending.delete(id);
             cancel(id);
+        };
+
+        const untilOneOf = (target, events) => {
+            pending.add(target);
+            for (const event of events) target.addEventListener(event, () => pending.delete(target));
+            return target;
+        };
+        const { open, deleteDatabase } = IDBFactory.prototype;
+        IDBFactory.prototype.open = function (...args) {
+            return untilOneOf(open.apply(this, args), ['success', 'error']);
+        };
+        IDBFactory.prototype.deleteDatabase = function (...args) {
+            return untilOneOf(deleteDatabase.apply(this, args), ['success', 'error']);
+        };
+        const { transaction } = IDBDatabase.prototype;
+        IDBDatabase.prototype.transaction = function (...args) {
+            return untilOneOf(transaction.apply(this, args), ['complete', 'abort']);
         };
         return pending;
     `)(TIMER_SCALE);
@@ -93,7 +112,7 @@ export async function createFrontend({ identity = HOSTS.windows, fixture } = {})
     const window = /** @type {Window} */ (frame.contentWindow);
     // index.html sets <base href="/">; jQuery UI Tabs loads hash tabs as remote documents unless the location matches.
     window.history.replaceState(null, '', '/');
-    const waitUntilComplete = scaleTimers(window);
+    const waitUntilComplete = trackPendingWork(window);
     const load = path => importFrontend(path, window);
 
     if (!fixture) {

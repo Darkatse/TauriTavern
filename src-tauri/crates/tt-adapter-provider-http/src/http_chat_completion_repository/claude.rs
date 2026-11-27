@@ -1,7 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-use reqwest::RequestBuilder;
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -12,8 +11,9 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionStreamDelta,
 };
 
-use super::HttpChatCompletionRepository;
 use super::normalizers;
+use super::{GenerationRequest, HttpChatCompletionRepository, response_format};
+use crate::provider_request::ProviderRequest;
 use crate::provider_response::{self, read_upstream_json_body};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -28,21 +28,49 @@ pub(super) async fn list_models(
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
     let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models")?;
+    let mut request = ProviderRequest::get_json(url);
+    request.header("anthropic-version", ANTHROPIC_VERSION)?;
+    apply_claude_auth(&mut request, config)?;
+    HttpChatCompletionRepository::apply_extra_headers(&mut request, &config.extra_headers)?;
+    HttpChatCompletionRepository::apply_additional_headers(&mut request, config)?;
 
     let client = repository.metadata_client(config)?;
-    let request = client
-        .get(url)
-        .header(ACCEPT, "application/json")
-        .header("anthropic-version", ANTHROPIC_VERSION);
-
-    let request = apply_claude_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        provider_response::send_checked(request, "Claude", "Failed to list models").await?;
+    let response = provider_response::send_checked(
+        request.with_client(&client),
+        "Claude",
+        "Failed to list models",
+    )
+    .await?;
 
     read_upstream_json_body("Claude", "list_models", response).await
+}
+
+pub(super) fn generation_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    let endpoint_path = if endpoint_path.trim().is_empty() {
+        "/messages"
+    } else {
+        endpoint_path
+    };
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
+    let mut request = ProviderRequest::post_json(url, response_format(stream));
+    request.header("anthropic-version", ANTHROPIC_VERSION)?;
+    apply_claude_auth(&mut request, config)?;
+    HttpChatCompletionRepository::apply_extra_headers(&mut request, &config.extra_headers)?;
+    let beta_values = build_anthropic_beta_values(
+        &config.extra_headers,
+        payload,
+        config.anthropic_beta_header_mode,
+    );
+    if !beta_values.is_empty() {
+        request.header("anthropic-beta", &beta_values.join(","))?;
+    }
+    HttpChatCompletionRepository::apply_additional_headers(&mut request, config)?;
+    Ok(GenerationRequest::http(request, Cow::Borrowed(payload)))
 }
 
 pub(super) async fn generate(
@@ -52,29 +80,10 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let endpoint_path = if endpoint_path.trim().is_empty() {
-        "/messages"
-    } else {
-        endpoint_path
-    };
-
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .json(payload);
-
-    let request = apply_claude_auth(request, config);
-    let request = apply_configured_anthropic_beta_headers(request, config, payload);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        provider_response::send_checked(request, provider_name, "Generation request failed")
-            .await?;
+    let request = generation_request(config, endpoint_path, payload, false)?;
+    let response = repository
+        .send_generation(config, request, false, provider_name)
+        .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -163,24 +172,10 @@ async fn send_stream_request(
     payload: &Value,
     provider_name: &str,
 ) -> Result<reqwest::Response, DomainError> {
-    let endpoint_path = if endpoint_path.trim().is_empty() {
-        "/messages"
-    } else {
-        endpoint_path
-    };
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .json(payload);
-    let request = apply_claude_auth(request, config);
-    let request = apply_configured_anthropic_beta_headers(request, config, payload);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    provider_response::send_checked(request, provider_name, "Generation request failed").await
+    let request = generation_request(config, endpoint_path, payload, true)?;
+    repository
+        .send_generation(config, request, true, provider_name)
+        .await
 }
 
 #[derive(Deserialize)]
@@ -455,7 +450,10 @@ fn invalid_claude_stream(message: impl std::fmt::Display) -> DomainError {
     ))
 }
 
-fn apply_claude_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) -> RequestBuilder {
+fn apply_claude_auth(
+    request: &mut ProviderRequest,
+    config: &ChatCompletionApiConfig,
+) -> Result<(), DomainError> {
     if let Some(authorization_header) = config.authorization_header.as_deref() {
         return HttpChatCompletionRepository::apply_header_if_present(
             request,
@@ -465,29 +463,6 @@ fn apply_claude_auth(request: RequestBuilder, config: &ChatCompletionApiConfig) 
     }
 
     HttpChatCompletionRepository::apply_header_if_present(request, "x-api-key", &config.api_key)
-}
-
-fn apply_configured_anthropic_beta_headers(
-    request: RequestBuilder,
-    config: &ChatCompletionApiConfig,
-    payload: &Value,
-) -> RequestBuilder {
-    let beta_values = build_anthropic_beta_values(
-        &config.extra_headers,
-        payload,
-        config.anthropic_beta_header_mode,
-    );
-
-    if beta_values.is_empty() {
-        return HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    }
-
-    let request = request.header("anthropic-beta", beta_values.join(","));
-    HttpChatCompletionRepository::apply_extra_headers_with_filter(
-        request,
-        &config.extra_headers,
-        |key, _| key.eq_ignore_ascii_case("anthropic-beta"),
-    )
 }
 
 fn build_anthropic_beta_values(

@@ -10,6 +10,7 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
 
 /// Repository interface for character management
+/// A write rejects a card that cannot be read back before it changes any file.
 #[async_trait]
 pub trait CharacterRepository: Send + Sync {
     /// Find a character by its file name (without extension)
@@ -64,10 +65,11 @@ pub trait CharacterRepository: Send + Sync {
         character_card_json: &str,
     ) -> Result<Vec<u8>, DomainError>;
 
-    /// Create a character with an avatar image
+    /// The stored file name is `file_name` sanitized and made unique.
     async fn create_with_avatar(
         &self,
-        character: &Character,
+        file_name: &str,
+        character_card_json: &str,
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
     ) -> Result<CharacterCreateResult, DomainError>;

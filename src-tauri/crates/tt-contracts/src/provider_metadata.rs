@@ -1,21 +1,5 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SiliconFlowEndpoint {
-    Global,
-    China,
-}
-
-impl SiliconFlowEndpoint {
-    pub fn parse_frontend(value: &str) -> Result<Self, String> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "" | "global" | "com" | "https://api.siliconflow.com/v1" => Ok(Self::Global),
-            "cn" | "china" | "https://api.siliconflow.cn/v1" => Ok(Self::China),
-            other => Err(format!("Unsupported SiliconFlow endpoint: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenRouterCredits {
     pub remaining: f64,
@@ -69,9 +53,17 @@ pub struct NanoGptCredits {
     pub subscription: Option<NanoGptSubscriptionCredits>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelProvider {
+    /// Routing ID sent to the provider API, independent of the display label.
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NanoGptModelProviders {
+    /// A selectable model can still have no available providers.
     pub supports_provider_selection: bool,
-    pub providers: Vec<String>,
+    pub providers: Vec<ModelProvider>,
 }

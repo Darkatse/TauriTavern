@@ -1,19 +1,25 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::errors::DomainError;
+use crate::json_document::JsonDocument;
 
-/// Represents a UI theme in the application
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A UI theme, stored under the name its document carries.
+#[derive(Debug, Clone)]
 pub struct Theme {
-    /// The name of the theme
     pub name: String,
-
-    /// The raw theme data as JSON
-    pub data: Value,
+    pub data: JsonDocument,
 }
 
 impl Theme {
-    /// Create a new theme
-    pub fn new(name: String, data: Value) -> Self {
-        Self { name, data }
+    pub fn parse(json: &str) -> Result<Self, DomainError> {
+        let data = JsonDocument::parse(json.as_bytes()).map_err(invalid_theme)?;
+        match data.get::<String>(&["name"]).map_err(invalid_theme)? {
+            Some(name) if !name.is_empty() => Ok(Self { name, data }),
+            _ => Err(DomainError::InvalidData(
+                "Theme name is required".to_string(),
+            )),
+        }
     }
+}
+
+fn invalid_theme(error: serde_json::Error) -> DomainError {
+    DomainError::InvalidData(format!("Invalid theme: {error}"))
 }

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::fs;
 
 use crate::chat_format_importers::{import_chat_jsonl_bytes, import_chat_payloads_from_json};
@@ -624,7 +625,7 @@ impl ChatRepository for FileChatRepository {
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
@@ -680,7 +681,7 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         self.get_character_chat_store_json_value(character_name, file_name, namespace, key)
             .await
     }
@@ -691,10 +692,16 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
-        self.set_character_chat_store_json_value(character_name, file_name, namespace, key, value)
-            .await
+        self.set_character_chat_store_json_value(
+            character_name,
+            file_name,
+            namespace,
+            key,
+            value_json,
+        )
+        .await
     }
 
     async fn update_character_chat_store_json(
@@ -703,14 +710,14 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         self.update_character_chat_store_json_value(
             character_name,
             file_name,
             namespace,
             key,
-            value,
+            value_json,
         )
         .await
     }

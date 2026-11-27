@@ -33,11 +33,12 @@ These are TauriTavern's own documents, from the same source revision as this app
 ## Features and platforms
 
 - `references/CurrentState/NativeApiFormats.md` — How chat completion payloads and responses translate to provider-native formats (Responses, Claude, Gemini).
-- `references/CurrentState/TextCompletion.md` — Text completion for local backends: supported backend types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.
+- `references/CurrentState/TextCompletion.md` — Text completion for self-hosted servers and cloud services: supported types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.
 - `references/CurrentState/Horde.md` — AI Horde, the crowdsourced network used as a main API: routes, host-side task polling, cancellation, error shapes and iOS policy.
 - `references/CurrentState/ThirdPartyExtensions.md` — Third-party extensions: install and update rules, local and global folders and which wins, supported compatibility, what is not supported (such as server plugins), and regression checks.
 - `references/CurrentState/EmbeddedRuntime.md` — The embedded runtime that manages message iframes for JS-Slash-Runner and LittleWhiteBox: its modes, how it runs, and how to debug it.
 - `references/CurrentState/LoggingObservability.md` — Where logs go, how errors reach the user as notifications, and the developer observability tools.
+- `references/CurrentState/RequestInspector.md` — The Request Inspector: how an LLM request is recorded, how the structured view and readable text are derived from the record, and the request preview before sending.
 - `references/CurrentState/UserEndpointAccess.md` — Native approval for custom API endpoints (custom URL, reverse proxy) and import download sources: when it asks, pre-approved sources, where approvals are stored, and what cancelling does.
 - `references/CurrentState/Sync.md` — LAN Sync and TT-Sync: what data syncs, which settings sections sync independently, discovery and pairing, and automatic sync.
 - `references/CurrentState/SafeMode.md` — Safe mode: how it is entered, what it resets and what it keeps, and how to restore the previous settings from a snapshot.

@@ -11,7 +11,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::get_character,
         super::character_commands::create_character,
         super::character_commands::create_character_with_avatar,
-        super::character_commands::update_character,
         super::character_commands::update_character_card_data,
         super::character_commands::adopt_character_lorebook,
         super::character_commands::resolve_character_lorebook_adoption,
@@ -143,6 +142,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::dev_logging_commands::devlog_set_llm_api_log_stream_enabled,
         super::dev_logging_commands::devlog_get_llm_api_log_index,
         super::dev_logging_commands::devlog_get_llm_api_log_preview,
+        super::dev_logging_commands::devlog_get_llm_api_log_view,
         super::dev_logging_commands::devlog_get_llm_api_log_raw,
         // World info commands
         super::world_info_commands::list_world_info,
@@ -168,13 +168,12 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::secret_commands::rotate_secret,
         super::secret_commands::rename_secret,
         // Provider metadata commands
+        super::provider_metadata_commands::get_openrouter_providers,
         super::provider_metadata_commands::get_openrouter_model_providers,
         super::provider_metadata_commands::get_openrouter_credits,
+        super::provider_metadata_commands::exchange_openrouter_code,
         super::provider_metadata_commands::get_nanogpt_model_providers,
         super::provider_metadata_commands::get_nanogpt_credits,
-        super::provider_metadata_commands::get_siliconflow_embedding_models,
-        super::provider_metadata_commands::get_workers_ai_embedding_models,
-        super::provider_metadata_commands::get_workers_ai_multimodal_models,
         // LLM connection commands
         super::llm_connection_commands::list_llm_connections,
         super::llm_connection_commands::load_llm_connection,
@@ -318,11 +317,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::preset_commands::save_preset,
         super::preset_commands::delete_preset,
         super::preset_commands::restore_preset,
-        super::preset_commands::save_openai_preset,
         super::preset_commands::delete_openai_preset,
         super::preset_commands::list_presets,
         super::preset_commands::preset_exists,
-        super::preset_commands::get_preset,
         // Quick reply commands
         super::quick_reply_commands::save_quick_reply_set,
         super::quick_reply_commands::delete_quick_reply_set,
@@ -394,6 +391,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
+        super::chat_completion_commands::preview_chat_completion_request,
         // Text completion commands
         super::text_completion_commands::get_text_completions_status,
         super::text_completion_commands::get_text_completions_props,

@@ -19,7 +19,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .unwrap_or(false);
     let reasoning_effort = payload.get("reasoning_effort").and_then(Value::as_str);
     let reasoning_effort = match version {
-        Some((5, 3)) => reasoning_effort
+        Some(version) if version >= (5, 3) => reasoning_effort
             .map(|value| map_low_high_max_reasoning_effort(value, "Z.AI"))
             .transpose()?
             .flatten(),
@@ -29,7 +29,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
             .flatten(),
         _ => None,
     };
-    let always_thinks = version == Some((5, 3));
+    let always_thinks = version.is_some_and(|version| version >= (5, 3));
 
     let (endpoint, mut upstream_payload) = openai::build(payload)?;
 
@@ -128,7 +128,7 @@ mod tests {
         for (model, effort, thinking, expected_effort) in [
             ("glm-5.3-flashx-legal", "medium", None, Some("high")),
             ("glm-5.3", "xhigh", None, Some("high")),
-            ("glm-5.3", "min", None, Some("low")),
+            ("glm-5.4", "min", None, Some("low")),
             ("glm-5.2", "xhigh", Some("disabled"), Some("max")),
             ("glm-5.2", "medium", Some("disabled"), Some("medium")),
             ("glm-4.6", "high", Some("disabled"), None),

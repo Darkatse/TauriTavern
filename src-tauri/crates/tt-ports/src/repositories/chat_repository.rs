@@ -1,6 +1,7 @@
 use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::path::Path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
@@ -167,12 +168,12 @@ pub trait ChatRepository: Send + Sync {
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError>;
 
-    /// Read the character chat metadata (header only).
+    /// Read the character chat metadata (header only), as stored.
     async fn get_character_chat_metadata(
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Read only the header identity. Missing identity is valid legacy data;
     /// missing files and unreadable or invalid headers are errors.
@@ -204,7 +205,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Write a JSON value to the character chat extension store.
     async fn set_character_chat_store_json(
@@ -213,7 +214,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Merge-update a JSON value in the character chat extension store.
@@ -223,7 +224,7 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Rename a JSON key in the character chat extension store.

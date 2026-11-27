@@ -1,7 +1,7 @@
 // @ts-check
 
 import { extractErrorText } from '../../../../scripts/util/command-error-utils.js';
-import { formDataToCreateCharacterDto, payloadToCreateCharacterDto } from './character-create-mapper.js';
+import { formDataToCharacterPayload, payloadToCreateCharacterDto } from './character-create-mapper.js';
 import { parseCropParam } from './character-request-utils.js';
 
 export const CHARACTER_CREATE_WARNINGS = Object.freeze({
@@ -38,7 +38,7 @@ function createOutcomeFromCommandResult(result) {
 export function createCharacterCreateService({ safeInvoke, materializeUploadFile }) {
     /** @param {FormData} formData @param {URL} requestUrl */
     async function createCharacterFromForm(formData, requestUrl) {
-        const dto = formDataToCreateCharacterDto(formData);
+        const dto = payloadToCreateCharacterDto(formDataToCharacterPayload(formData));
         const crop = parseCropParam(requestUrl);
         const file = formData.get('avatar');
 

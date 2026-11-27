@@ -580,11 +580,14 @@ async fn configure_distinct_root_binding(
 
     fixture
         .preset_repository
-        .save_preset(&Preset::new(
-            "Root B".into(),
-            PresetType::OpenAI,
-            json!({ "prompts": [{ "identifier": "main", "content": "Root preset B" }] }),
-        ))
+        .save_preset(
+            "Root B",
+            &PresetType::OpenAI,
+            JsonDocument::parse(
+                br#"{"prompts":[{"identifier":"main","content":"Root preset B"}]}"#,
+            )
+            .unwrap(),
+        )
         .await
         .unwrap();
     let connection: LlmConnectionDefinition = serde_json::from_value(json!({

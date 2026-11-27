@@ -252,7 +252,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
             const result = await context.safeInvoke('bulk_merge_character_card_data', {
                 dto: {
                     avatars,
-                    data: body.data,
+                    data_json: JSON.stringify(body.data),
                     filter: body.filter ?? null,
                 },
             });
@@ -286,7 +286,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, ownedJs
         await context.safeInvoke('merge_character_card_data', {
             name: characterId,
             dto: {
-                update,
+                update_json: JSON.stringify(update),
             },
         });
         context.invalidateCharacterCache();

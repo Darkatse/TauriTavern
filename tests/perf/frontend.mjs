@@ -288,23 +288,29 @@ function rememberIssued(issued, index, value, opensResource, at = []) {
         for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, opensResource, [...at, key]);
     }
 }
-// The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal and
-// push() sends a live projection update to every open stream. Until the run ends, a read past the journal's last
-// event waits for the next one, so the run's event pollers wait instead of polling while the page settles.
+// The foreground Agent run that agent.perf.mjs drives through __perfAgent: event() appends to its journal,
+// project() sets the timeline projection that journal reads return, and push() sends a live projection update to
+// every open stream. Until the run ends, a forward read from the journal's last event waits for the next one, so the
+// run's event pollers wait instead of polling while the page settles; a read from past the end, as the timeline reads
+// its projection, returns at once.
 // \`runId\` satisfies \`issuedToken\` so backend replay skips every call referencing this un-replayed mock run.
 // Live projection resource ids stay clear of the Web Host's own resource ids.
-const agentRun = { runId: 'run_perf_4c1e9a7b2d6f3058', events: [], waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false };
+const agentRun = {
+    runId: 'run_perf_4c1e9a7b2d6f3058', events: [], projection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
+    waiting: [], resources: new Map(), lastRid: 1_000_000, ended: false,
+};
 const agentRunEnded = new Promise(resolve => { agentRun.end = resolve; });
 globalThis.__perfAgent = {
-    event(type) {
+    event(type, payload = {}) {
         const seq = agentRun.events.length + 1;
-        agentRun.events.push({ seq, id: \`agent-event-\${seq}\`, runId: agentRun.runId, timestamp: '2026-01-01T00:00:00Z', level: 'info', type, payload: {} });
+        agentRun.events.push({ seq, id: \`agent-event-\${seq}\`, runId: agentRun.runId, timestamp: '2026-01-01T00:00:00Z', level: 'info', type, payload });
         if (['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed'].includes(type)) {
             agentRun.ended = true;
             agentRun.end();
         }
         for (const wake of agentRun.waiting.splice(0)) wake();
     },
+    project(projection) { agentRun.projection = projection; },
     push: update => agentRun.resources.forEach(resource => resource.channel?.onmessage(update)),
     subscribers: () => [...agentRun.resources.values()].filter(resource => resource.channel).length,
 };
@@ -314,10 +320,10 @@ function readAgentRunEvents(dto) {
         const events = agentRun.events.filter(event => event.seq > after && event.seq < before);
         return {
             events: dto.beforeSeq == null ? events.slice(0, dto.limit) : events.slice(-dto.limit),
-            ...(dto.includeTimelineProjection ? { timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] } } : {}),
+            ...(dto.includeTimelineProjection ? { timelineProjection: agentRun.projection } : {}),
         };
     };
-    if (agentRun.ended || dto.beforeSeq != null || agentRun.events.length > after) return page();
+    if (agentRun.ended || dto.beforeSeq != null || agentRun.events.length !== after) return page();
     return new Promise(resolve => agentRun.waiting.push(() => resolve(page())));
 }
 // Native commands the Web Host lacks, answered as the native host would.
@@ -564,14 +570,16 @@ async function openFrontend({ allocations = false } = {}) {
 
     // Waits until the main thread has idled for three frame intervals with no frame or idle callback pending; a
     // pending callback waits for a frame, which the harness issues when it issues frames. Idleness is read from
-    // outside the page, so waiting adds no page work.
+    // outside the page, so waiting adds no page work. Resolves whether the page worked while it waited.
     async function quiet() {
         const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'TaskDuration').value;
         const deadline = Date.now() + quietWithinMs;
+        let worked = false;
         for (let idle = 0, last = await busy(); idle < 50;) {
             if (Date.now() > deadline) throw new Error(`The page did not go quiet within ${quietWithinMs / 1000} s`);
             await new Promise(resolve => setTimeout(resolve, 10));
             const now = await busy();
+            if (now - last >= 0.001) worked = true;
             idle = now - last < 0.001 ? idle + 10 : 0;
             last = now;
             if (idle >= 50 && await page.evaluate(() => globalThis.__perfPage.hasPendingCallbacks())) {
@@ -579,14 +587,16 @@ async function openFrontend({ allocations = false } = {}) {
                 if (harnessFrames) await issueFrame();
             }
         }
+        return worked;
     }
 
     // Once the page is quiet, runs the held timeouts, ticks the step's intervals once, lets one held response
-    // through, or issues a frame, and repeats until nothing is held and a frame draws nothing. Holding them means
-    // no work arrives after the page looks quiet.
+    // through, or issues a frame, and repeats until nothing is held and nothing has run since a frame that drew
+    // nothing. Holding them means no work arrives after the page looks quiet; timers outside steps keep real time,
+    // so their work can land while the page goes quiet and needs a frame of its own.
     async function settle() {
         for (let ticks = 0, frames = 0, drawn = true; ;) {
-            await quiet();
+            const worked = await quiet();
             if (await page.evaluate(() => globalThis.__perfPage.runPendingTimeouts()) > 0) {
                 drawn = true;
                 continue;
@@ -603,7 +613,7 @@ async function openFrontend({ allocations = false } = {}) {
                 drawn = true;
                 continue;
             }
-            if (!harnessFrames || !drawn) return;
+            if (!harnessFrames || !(drawn || worked)) return;
             if (++frames > 1000) throw new Error('Frames keep drawing');
             drawn = await issueFrame();
         }

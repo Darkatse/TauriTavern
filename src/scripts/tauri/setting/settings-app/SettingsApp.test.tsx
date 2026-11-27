@@ -83,7 +83,7 @@ function createActions(overrides: Partial<SettingsActions> = {}): SettingsAction
         reloadFrontend: () => Promise.resolve(),
         openFrontendLogs: () => Promise.resolve(),
         openBackendLogs: () => Promise.resolve(),
-        openLlmApiLogs: () => Promise.resolve(),
+        openRequestInspector: () => Promise.resolve(),
         openSync: () => Promise.resolve(),
         ...overrides,
     };

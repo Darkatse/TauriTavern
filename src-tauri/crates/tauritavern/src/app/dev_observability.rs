@@ -7,14 +7,14 @@ use tauri::AppHandle;
 
 use crate::infrastructure::logging::dev_bundle::{DevLogBundleInput, export_dev_log_bundle};
 use crate::infrastructure::logging::devtools::{BackendLogEntry, BackendLogStore};
-use crate::infrastructure::logging::llm_api_logs::{
-    LlmApiLogEntryPreview, LlmApiLogEntryRaw, LlmApiLogIndexEntry, LlmApiLogStore, LlmApiRawKind,
-};
+use crate::infrastructure::logging::llm_api_logs::{self, LlmApiLogStore};
 use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::staging;
+use tt_application::dto::chat_completion_dto::ChatCompletionWireRequestDto;
 use tt_application::dto::dev_observability_dto::{
-    BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto,
-    LlmApiLogPreviewDto, LlmApiLogRawDto, LlmApiRawKindDto,
+    BackendLogEntryDto, ChatCompletionRequestPreviewDto, DevBundleVersionDto,
+    FrontendLogEntrySnapshotDto, LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
+    LlmApiLogViewDto,
 };
 use tt_domain::errors::DomainError;
 
@@ -61,27 +61,25 @@ impl DevObservabilityHub {
     }
 
     pub fn tail_llm_api_index(&self, limit: usize) -> Vec<LlmApiLogIndexEntryDto> {
-        self.llm_api_logs
-            .tail_index(limit)
-            .into_iter()
-            .map(llm_api_log_index_entry_dto)
-            .collect()
+        self.llm_api_logs.tail_index(limit)
     }
 
     pub async fn get_llm_api_preview(&self, id: u64) -> Result<LlmApiLogPreviewDto, DomainError> {
-        let entry = self.llm_api_logs.get_preview(id).await.map_err(|error| {
+        self.llm_api_logs.get_preview(id).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to read LLM API log preview: {error}"))
-        })?;
+        })
+    }
 
-        Ok(llm_api_log_preview_dto(entry))
+    pub async fn get_llm_api_view(&self, id: u64) -> Result<LlmApiLogViewDto, DomainError> {
+        self.llm_api_logs.get_view(id).await.map_err(|error| {
+            DomainError::InternalError(format!("Failed to read LLM API log view: {error}"))
+        })
     }
 
     pub async fn get_llm_api_raw(&self, id: u64) -> Result<LlmApiLogRawDto, DomainError> {
-        let entry = self.llm_api_logs.get_raw(id).await.map_err(|error| {
+        self.llm_api_logs.get_raw(id).await.map_err(|error| {
             DomainError::InternalError(format!("Failed to read LLM API log raw: {error}"))
-        })?;
-
-        Ok(llm_api_log_raw_dto(entry))
+        })
     }
 
     pub async fn export_bundle(
@@ -141,6 +139,19 @@ impl DevObservabilityHub {
     }
 }
 
+pub fn preview_chat_completion_request(
+    request: ChatCompletionWireRequestDto,
+) -> ChatCompletionRequestPreviewDto {
+    llm_api_logs::preview_chat_completion_request(
+        request.source,
+        &request.base_url,
+        &request.endpoint_path,
+        &request.payload,
+        &request.body,
+        request.http,
+    )
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DevLogBundleMeta {
@@ -165,54 +176,6 @@ fn backend_log_entry_dto(entry: BackendLogEntry) -> BackendLogEntryDto {
         level: entry.level,
         target: entry.target,
         message: entry.message,
-    }
-}
-
-fn llm_api_raw_kind_dto(kind: LlmApiRawKind) -> LlmApiRawKindDto {
-    match kind {
-        LlmApiRawKind::Json => LlmApiRawKindDto::Json,
-        LlmApiRawKind::Sse => LlmApiRawKindDto::Sse,
-    }
-}
-
-fn llm_api_log_index_entry_dto(entry: LlmApiLogIndexEntry) -> LlmApiLogIndexEntryDto {
-    LlmApiLogIndexEntryDto {
-        id: entry.id,
-        timestamp_ms: entry.timestamp_ms,
-        level: entry.level,
-        ok: entry.ok,
-        source: entry.source,
-        model: entry.model,
-        endpoint: entry.endpoint,
-        duration_ms: entry.duration_ms,
-        stream: entry.stream,
-    }
-}
-
-fn llm_api_log_preview_dto(entry: LlmApiLogEntryPreview) -> LlmApiLogPreviewDto {
-    LlmApiLogPreviewDto {
-        id: entry.id,
-        timestamp_ms: entry.timestamp_ms,
-        level: entry.level,
-        ok: entry.ok,
-        source: entry.source,
-        model: entry.model,
-        endpoint: entry.endpoint,
-        duration_ms: entry.duration_ms,
-        stream: entry.stream,
-        error_message: entry.error_message,
-        request_readable: entry.request_readable,
-        response_readable: entry.response_readable,
-        response_raw_kind: entry.response_raw_kind.map(llm_api_raw_kind_dto),
-    }
-}
-
-fn llm_api_log_raw_dto(entry: LlmApiLogEntryRaw) -> LlmApiLogRawDto {
-    LlmApiLogRawDto {
-        id: entry.id,
-        request_raw: entry.request_raw,
-        response_raw: entry.response_raw,
-        response_raw_kind: entry.response_raw_kind.map(llm_api_raw_kind_dto),
     }
 }
 
@@ -259,7 +222,7 @@ fn bundle_readme() -> String {
         "",
         "- frontend/logs.jsonl: preview only (truncated/summarized).",
         "- backend/*.log: full backend file logs (may include forwarded frontend logs).",
-        "- llm-api/*: LLM API request/response raw logs (may contain prompts/responses).",
+        "- llm-api/*: LLM API request/response raw logs (may contain prompts/responses); recorded request headers are removed.",
         "- settings/*: app settings snapshot; secrets, credential-like values and URL user info are removed.",
         "",
         "Review files before sharing.",

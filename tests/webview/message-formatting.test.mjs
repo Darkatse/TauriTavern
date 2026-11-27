@@ -45,7 +45,7 @@ test('sync and batch formatting produce the same sanitized HTML, including empty
     formatter.addHook(text => text.replace('RAW', 'BEFORE'), { stage: formatter.stage.BEFORE_REGEX });
     formatter.addHook(text => text.replace('REGEX', 'DISPLAY') || '**restored**', { stage: formatter.stage.AFTER_REGEX });
     formatter.addHook(html => html + '<span onclick="bad()">formatted</span><script>bad()</script>');
-    script.chat.push(message('RAW'), message('ERASE'));
+    script.chat.push(message('RAW\n\n<style>\n.a { content: "</style ><b onclick=\\"bad()\\">x</b>"; }\n</style>'), message('ERASE'));
     const expected = script.chat.map((item, id) => formatter.format(item.mes, item.name, false, false, id));
     await script.printMessages();
     const bodies = [...window.document.querySelectorAll('#chat > .mes .mes_text')];

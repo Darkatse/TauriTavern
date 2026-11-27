@@ -1,52 +1,9 @@
 use serde::{Deserialize, Serialize};
+use tt_contracts::observability::{
+    LlmApiLogIndexEntryDto, LlmApiRawKindDto, RequestDescriptionDto, RequestKindDto,
+};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmApiRawKind {
-    Json,
-    Sse,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogIndexEntry {
-    pub id: u64,
-    pub timestamp_ms: i64,
-    pub level: String,
-    pub ok: bool,
-    pub source: String,
-    pub model: Option<String>,
-    pub endpoint: String,
-    pub duration_ms: u32,
-    pub stream: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogEntryPreview {
-    pub id: u64,
-    pub timestamp_ms: i64,
-    pub level: String,
-    pub ok: bool,
-    pub source: String,
-    pub model: Option<String>,
-    pub endpoint: String,
-    pub duration_ms: u32,
-    pub stream: bool,
-    pub error_message: Option<String>,
-    pub request_readable: String,
-    pub response_readable: String,
-    pub response_raw_kind: Option<LlmApiRawKind>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogEntryRaw {
-    pub id: u64,
-    pub request_raw: String,
-    pub response_raw: String,
-    pub response_raw_kind: Option<LlmApiRawKind>,
-}
+pub(super) const TEXT_COMPLETION_SOURCE_PREFIX: &str = "text_completion:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,13 +18,22 @@ pub(super) struct LlmApiLogMeta {
     pub duration_ms: u32,
     pub stream: bool,
     pub error_message: Option<String>,
-    pub request_readable: String,
-    pub response_readable: String,
-    pub request_raw_kind: LlmApiRawKind,
-    pub response_raw_kind: Option<LlmApiRawKind>,
+    pub response_raw_kind: Option<LlmApiRawKindDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<RequestDescriptionDto>,
 }
 
-impl From<&LlmApiLogMeta> for LlmApiLogIndexEntry {
+impl LlmApiLogMeta {
+    pub(super) fn request_kind(&self) -> RequestKindDto {
+        if self.source.starts_with(TEXT_COMPLETION_SOURCE_PREFIX) {
+            RequestKindDto::Text
+        } else {
+            RequestKindDto::Chat
+        }
+    }
+}
+
+impl From<&LlmApiLogMeta> for LlmApiLogIndexEntryDto {
     fn from(meta: &LlmApiLogMeta) -> Self {
         Self {
             id: meta.id,
@@ -79,26 +45,6 @@ impl From<&LlmApiLogMeta> for LlmApiLogIndexEntry {
             endpoint: meta.endpoint.clone(),
             duration_ms: meta.duration_ms,
             stream: meta.stream,
-        }
-    }
-}
-
-impl From<LlmApiLogMeta> for LlmApiLogEntryPreview {
-    fn from(meta: LlmApiLogMeta) -> Self {
-        Self {
-            id: meta.id,
-            timestamp_ms: meta.timestamp_ms,
-            level: meta.level,
-            ok: meta.ok,
-            source: meta.source,
-            model: meta.model,
-            endpoint: meta.endpoint,
-            duration_ms: meta.duration_ms,
-            stream: meta.stream,
-            error_message: meta.error_message,
-            request_readable: meta.request_readable,
-            response_readable: meta.response_readable,
-            response_raw_kind: meta.response_raw_kind,
         }
     }
 }

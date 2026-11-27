@@ -32,15 +32,16 @@ pub struct VectorRouteRequestDto {
     #[serde(default)]
     pub embeddings: HashMap<String, Vec<f32>>,
     pub texts: Option<Vec<String>>,
-    #[serde(default)]
+    // Copied from the chat completion settings, so these keep upstream's snake_case keys.
+    #[serde(default, rename = "siliconflow_endpoint")]
     pub siliconflow_endpoint: String,
-    #[serde(default)]
+    #[serde(default, rename = "workers_ai_account_id")]
     pub workers_ai_account_id: String,
-    #[serde(default)]
+    #[serde(default, rename = "vertexai_auth_mode")]
     pub vertexai_auth_mode: String,
-    #[serde(default)]
+    #[serde(default, rename = "vertexai_region")]
     pub vertexai_region: String,
-    #[serde(default)]
+    #[serde(default, rename = "vertexai_express_project_id")]
     pub vertexai_express_project_id: String,
 }
 

@@ -2,10 +2,7 @@ import { act, fireEvent, within } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
 
 import { mountTauriTavernDevLogsApp } from './DevLogsApp';
-import type {
-    DevLogsActions, DevLogsHandle, DevLogsMountOptions, LlmApiLogIndexEntry, LlmApiLogPreview,
-    LlmApiLogRaw, LlmApiLogsPanelOptions, LiveLogEntry, LiveLogPanelOptions,
-} from './DevLogsContract';
+import type { DevLogsActions, DevLogsHandle, DevLogsMountOptions, LiveLogEntry } from './DevLogsContract';
 
 declare global {
     // The mount creates its React root directly, so act() needs the opt-in.
@@ -22,18 +19,16 @@ afterEach(() => {
 
 function createActions(overrides: Partial<DevLogsActions> = {}) {
     const copied: string[] = [];
-    const viewed: Array<{ title: string; text: string; wrap: 'soft' | 'off' }> = [];
     const errors: Error[] = [];
     const actions: DevLogsActions = {
         copyText: (text) => { copied.push(text); return Promise.resolve(); },
-        openTextViewer: (options) => { viewed.push(options); return Promise.resolve(); },
         reportError: (error) => {
             if (!(error instanceof Error)) throw new TypeError('expected an Error');
             errors.push(error);
         },
         ...overrides,
     };
-    return { actions, copied, viewed, errors };
+    return { actions, copied, errors };
 }
 
 function liveEntry(id: number, overrides: Partial<LiveLogEntry> = {}): LiveLogEntry {
@@ -48,7 +43,7 @@ function createLiveHarness(options: { failSetConsoleCapture?: boolean; failTeard
     let failure: Error | null = null;
     let resolveDelayed: (() => void) | null = null;
 
-    const client: LiveLogPanelOptions['client'] = {
+    const client: DevLogsMountOptions['client'] = {
         subscribe: (next) => {
             calls += 1;
             if (failure) return Promise.reject(failure);
@@ -87,9 +82,9 @@ function createLiveHarness(options: { failSetConsoleCapture?: boolean; failTeard
 
 type LiveHarness = ReturnType<typeof createLiveHarness>;
 
-function createLiveOptions(harness: LiveHarness, overrides: Partial<LiveLogPanelOptions> = {}): LiveLogPanelOptions {
-    const base: LiveLogPanelOptions = {
-        kind: 'live', title: 'Frontend Logs', initialEntries: [], consoleCaptureEnabled: false,
+function createLiveOptions(harness: LiveHarness, overrides: Partial<DevLogsMountOptions> = {}): DevLogsMountOptions {
+    const base: DevLogsMountOptions = {
+        title: 'Frontend Logs', initialEntries: [], consoleCaptureEnabled: false,
         showConsoleCapture: false, trimEntriesInPlace: null, client: harness.client, actions: createActions().actions, tr,
     };
     return { ...base, ...overrides };
@@ -118,86 +113,8 @@ async function flushAct(action?: () => void): Promise<void> {
     });
 }
 
-function indexEntry(id: number, overrides: Partial<LlmApiLogIndexEntry> = {}): LlmApiLogIndexEntry {
-    const base: LlmApiLogIndexEntry = {
-        id, timestampMs: 1750000000000 + id * 1000, level: 'INFO', ok: true,
-        source: `source-${id}`, model: `model-${id}`, endpoint: 'https://api.example.com/v1/chat',
-        durationMs: 100 + id, stream: true,
-    };
-    return { ...base, ...overrides };
-}
-
-function previewOf(id: number): LlmApiLogPreview {
-    return {
-        ...indexEntry(id), errorMessage: null, responseRawKind: 'json',
-        requestReadable: `request-${id}`, responseReadable: `response-${id}`,
-    };
-}
-
-function createLlmHarness() {
-    let handler: ((entry: LlmApiLogIndexEntry) => void) | null = null;
-    let keepError: Error | null = null;
-    const gatedPreviews = new Map<number, () => void>();
-    let indexResolver: ((entries: LlmApiLogIndexEntry[]) => void) | null = null;
-    let indexRejecter: ((error: Error) => void) | null = null;
-
-    const client: LlmApiLogsPanelOptions['client'] = {
-        index: () => new Promise((resolve, reject) => {
-            indexResolver = resolve;
-            indexRejecter = reject;
-        }),
-        getPreview: (id) => new Promise((resolve) => {
-            if (gatedPreviews.has(id)) {
-                gatedPreviews.set(id, () => resolve(previewOf(id)));
-                return;
-            }
-            resolve(previewOf(id));
-        }),
-        getRaw: (id) => Promise.resolve<LlmApiLogRaw>({
-            id,
-            requestRaw: `raw-request-${id}`,
-            responseRaw: `raw-response-${id}`,
-            responseRawKind: 'json',
-        }),
-        subscribeIndex: (next) => {
-            handler = next;
-            return Promise.resolve(() => {
-                if (handler === next) handler = null;
-            });
-        },
-        setKeep: () => keepError ? Promise.reject(keepError) : Promise.resolve(),
-    };
-
-    return {
-        client,
-        emit: (entry: LlmApiLogIndexEntry) => handler?.(entry),
-        gatePreview: (id: number) => void gatedPreviews.set(id, () => {}),
-        releasePreview: (id: number) => {
-            gatedPreviews.get(id)?.();
-            gatedPreviews.delete(id);
-        },
-        setKeepError: (error: Error | null) => { keepError = error; },
-        resolveIndex: (entries: LlmApiLogIndexEntry[]) => indexResolver?.(entries),
-        rejectIndex: (error: Error) => indexRejecter?.(error),
-    };
-}
-
-type LlmHarness = ReturnType<typeof createLlmHarness>;
-
-function createLlmOptions(harness: LlmHarness, overrides: Partial<LlmApiLogsPanelOptions> = {}): LlmApiLogsPanelOptions {
-    const base: LlmApiLogsPanelOptions = {
-        kind: 'llm-api', initialKeep: 5, initialIndexEntries: [], initialPreview: null,
-        client: harness.client, actions: createActions().actions, tr,
-    };
-    return { ...base, ...overrides };
-}
-
 function rows(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>('.tt-dev-log-row'));
-}
-
-function entrySelect(container: HTMLElement): HTMLSelectElement {
-    return within(container).getByRole<HTMLSelectElement>('combobox', { name: 'Log entry' });
 }
 
 test('mount enforces the public boundary and unmounts the root', () => {
@@ -207,7 +124,6 @@ test('mount enforces the public boundary and unmounts the root', () => {
     const badOptions = (patch: object): unknown => ({ ...createLiveOptions(harness), ...patch });
     const mountAt = (options: unknown) => () => mountTauriTavernDevLogsApp(document.createElement('div'), options);
     expect(mountAt(badOptions({ tr: undefined }))).toThrow('TauriTavern dev logs translator is required');
-    expect(mountAt(badOptions({ kind: 'unknown' }))).toThrow('Unsupported TauriTavern dev logs panel: unknown');
     expect(mountAt(badOptions({ client: {} }))).toThrow('TauriTavern dev logs client method is unavailable: subscribe');
 
     const { container, handle } = mountApp(createLiveOptions(harness));
@@ -256,7 +172,7 @@ test('subscription lifecycle: StrictMode keeps one active subscription, late res
     } finally {
         console.error = originalConsoleError;
     }
-    expect(messages.some(args => args[0] === 'TauriTavern dev log subscription teardown failed')).toBe(true);
+    expect(messages.some(args => args[0] === 'TauriTavern host subscription teardown failed')).toBe(true);
 });
 
 test('live panel windows the tail, filters levels, pauses, clears and copies', async () => {
@@ -333,152 +249,4 @@ test('console capture toggle rolls back and reports when persistence fails', asy
     await flushAct();
     expect(toggle.checked).toBe(true);
     expect(spies.errors[0]?.message).toContain('persist failed');
-});
-
-test('llm panel navigates by stable id: follow latest, historical pin and trim fallback', async () => {
-    const harness = createLlmHarness();
-    const { container } = mountApp(createLlmOptions(harness, {
-        initialIndexEntries: [1, 2, 3, 4, 5].map(id => indexEntry(id)),
-        initialPreview: previewOf(5),
-    }));
-    const view = within(container);
-    await flushAct();
-    const meta = () => container.querySelector('.tt-dev-log-meta')?.textContent;
-
-    await flushAct(() => harness.emit(indexEntry(6)));
-    expect(entrySelect(container).value).toBe('6');
-    expect(entrySelect(container).options).toHaveLength(5);
-    expect(meta()).toContain('source-6');
-
-    fireEvent.click(view.getByRole('button', { name: 'Prev' }));
-    await flushAct();
-    expect(entrySelect(container).value).toBe('5');
-    await flushAct(() => harness.emit(indexEntry(7)));
-    expect(entrySelect(container).value).toBe('5');
-    expect(meta()).toContain('source-5');
-
-    await flushAct(() => {
-        harness.emit(indexEntry(8));
-        harness.emit(indexEntry(9));
-        harness.emit(indexEntry(10));
-    });
-    expect(entrySelect(container).value).toBe('6');
-    expect(entrySelect(container).options).toHaveLength(5);
-    expect(meta()).toContain('source-6');
-});
-
-test('llm preview resolves stale loads against the current selection', async () => {
-    const harness = createLlmHarness();
-    harness.gatePreview(4);
-    harness.gatePreview(5);
-    const { container } = mountApp(createLlmOptions(harness, {
-        initialIndexEntries: [4, 5].map(id => indexEntry(id)),
-    }));
-    const view = within(container);
-    await flushAct();
-
-    // Selection starts at tail id 5; navigate to 4 while 5 is still loading.
-    fireEvent.click(view.getByRole('button', { name: 'Prev' }));
-    expect(entrySelect(container).value).toBe('4');
-
-    // The tail load resolves late and must not overwrite the pinned selection.
-    await flushAct(() => harness.releasePreview(5));
-    const sections = container.querySelectorAll<HTMLTextAreaElement>('.tt-dev-log-text-section textarea');
-    expect(sections[0]?.value).toBe('Loading...');
-
-    await flushAct(() => harness.releasePreview(4));
-    expect(sections[0]?.value).toBe('request-4');
-    expect(sections[1]?.value).toBe('response-4');
-    expect(container.querySelector('.tt-dev-log-meta')?.textContent).toContain('source-4');
-});
-
-test('llm keep applies in two phases: failure commits nothing, reload failure keeps the new keep', async () => {
-    const harness = createLlmHarness();
-    const spies = createActions();
-    const { container } = mountApp(createLlmOptions(harness, {
-        initialIndexEntries: [1, 2, 3, 4, 5].map(id => indexEntry(id)),
-        initialPreview: previewOf(5),
-        actions: spies.actions,
-    }));
-    const view = within(container);
-    await flushAct();
-    const keepInput = view.getByRole<HTMLInputElement>('spinbutton', { name: 'LLM API keep' });
-
-    fireEvent.change(keepInput, { target: { value: '3.5' } });
-    fireEvent.click(view.getByRole('button', { name: 'Apply' }));
-    expect(spies.errors[0]?.message).toContain('positive number');
-    expect(entrySelect(container).options).toHaveLength(5);
-
-    harness.setKeepError(new Error('persist keep failed'));
-    fireEvent.change(keepInput, { target: { value: '3' } });
-    fireEvent.click(view.getByRole('button', { name: 'Apply' }));
-    await flushAct();
-    expect(spies.errors).toHaveLength(2);
-    expect(entrySelect(container).options).toHaveLength(5);
-    expect(keepInput.value).toBe('3');
-
-    // Successful setKeep trims locally at once; a failing index reload reports
-    // but never reverts the persisted keep.
-    harness.setKeepError(null);
-    fireEvent.click(view.getByRole('button', { name: 'Apply' }));
-    await flushAct();
-    expect(entrySelect(container).options).toHaveLength(3);
-    expect(container.querySelector('.tt-dev-log-meta')?.textContent).toContain('source-5');
-    await flushAct(() => harness.rejectIndex(new Error('index reload failed')));
-    expect(spies.errors).toHaveLength(3);
-    expect(entrySelect(container).options).toHaveLength(3);
-});
-
-test('llm keep reload trusts the host snapshot, merges raced events and dedupes late delivery', async () => {
-    const harness = createLlmHarness();
-    const { container } = mountApp(createLlmOptions(harness, {
-        initialIndexEntries: [1, 2, 3, 4, 5].map(id => indexEntry(id)),
-        initialPreview: previewOf(5),
-    }));
-    const view = within(container);
-    await flushAct();
-    const optionIds = () => Array.from(entrySelect(container).options, option => Number(option.value));
-
-    fireEvent.click(view.getByRole('button', { name: 'Apply' }));
-    await flushAct();
-    await flushAct(() => harness.resolveIndex([2, 3, 4, 5, 6].map(id => indexEntry(id))));
-    expect(optionIds()).toEqual([6, 5, 4, 3, 2]);
-    expect(entrySelect(container).value).toBe('6');
-
-    // The matching event may arrive after the snapshot response.
-    await flushAct(() => harness.emit(indexEntry(6)));
-    expect(optionIds()).toEqual([6, 5, 4, 3, 2]);
-
-    // An event arriving while the next snapshot is pending is appended once.
-    fireEvent.click(view.getByRole('button', { name: 'Apply' }));
-    await flushAct();
-    await flushAct(() => harness.emit(indexEntry(7)));
-    await flushAct(() => harness.resolveIndex([2, 3, 4, 5, 6].map(id => indexEntry(id))));
-    expect(optionIds()).toEqual([7, 6, 5, 4, 3]);
-    expect(entrySelect(container).value).toBe('7');
-});
-
-test('llm text viewer carries readable and raw title, text and wrap contracts', async () => {
-    const harness = createLlmHarness();
-    const spies = createActions();
-    const { container } = mountApp(createLlmOptions(harness, {
-        initialIndexEntries: [7].map(id => indexEntry(id)),
-        initialPreview: previewOf(7),
-        actions: spies.actions,
-    }));
-    await flushAct();
-
-    const sections = container.querySelectorAll<HTMLElement>('.tt-dev-log-text-section');
-    fireEvent.click(within(sections.item(0)).getByRole('button', { name: 'Request body' }));
-    await flushAct();
-    expect(spies.viewed).toEqual([{ title: 'Request body', text: 'request-7', wrap: 'soft' }]);
-
-    const details = container.querySelector<HTMLDetailsElement>('details.tt-dev-log-raw');
-    if (!details) throw new Error('raw disclosure not found');
-    await flushAct(() => { details.open = true; });
-
-    const rawSections = details.querySelectorAll<HTMLElement>('.tt-dev-log-text-section');
-    fireEvent.click(within(rawSections.item(0)).getByRole('button', { name: 'Raw JSON/SSE - Request body' }));
-    await flushAct();
-    expect(spies.viewed[1]).toEqual({ title: 'Raw JSON/SSE - Request body', text: 'raw-request-7', wrap: 'off' });
 });

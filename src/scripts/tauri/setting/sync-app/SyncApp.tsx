@@ -346,7 +346,7 @@ function SyncMainView({ controller, canScanPairUri, tr }: SyncMainViewProps) {
                                             disabled={isBusy || !status}
                                             onChange={() => void controller.setOverwritePolicy(option.value)}
                                         />
-                                        <span>{option.label}</span>
+                                        <span className="tt-sync-overwrite-pill">{option.label}</span>
                                     </label>
                                 ))}
                             </div>

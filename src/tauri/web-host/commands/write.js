@@ -6,8 +6,8 @@ import { readCharacter } from './read.js';
 export function createWriteCommands(backend) {
     const { request } = backend;
     return {
-        save_theme: ({ dto }) => { request('/api/themes/save', JSON.stringify(dto)); },
-        save_quick_reply_set: ({ payload }) => { request('/api/quick-replies/save', JSON.stringify(payload)); },
+        save_theme: ({ json }) => { request('/api/themes/save', json); },
+        save_quick_reply_set: ({ json }) => { request('/api/quick-replies/save', json); },
         update_character_card_data: ({ name, dto }) => {
             if (dto.avatar_path != null || dto.crop != null) throw { Unsupported: 'Web Host does not edit character avatars' };
             const card = JSON.parse(dto.card_json);
@@ -34,7 +34,7 @@ export function createWriteCommands(backend) {
             return readCharacter(backend, name);
         },
         merge_character_card_data: ({ name, dto }) => {
-            request('/api/characters/merge-attributes', JSON.stringify({ ...dto.update, avatar: characterAvatarFileNameFromStem(name) }));
+            request('/api/characters/merge-attributes', JSON.stringify({ ...JSON.parse(dto.update_json), avatar: characterAvatarFileNameFromStem(name) }));
             return readCharacter(backend, name);
         },
     };

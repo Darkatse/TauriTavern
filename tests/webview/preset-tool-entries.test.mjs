@@ -295,15 +295,15 @@ test('Agent snapshots carry the preset tool entries from the live prompt and fro
     const { buildPromptAssemblySnapshot } = (await load('tauri/main/api/agent-prompt-assembly.js'));
     Object.assign(openai.oai_settings, openai.normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'custom', custom_model: 'capture-model',
-        openai_max_context: 4096, openai_max_tokens: 32, new_chat_prompt: '',
+        openai_max_context: 4096, openai_max_tokens: 32, new_chat_prompt: '', squash_system_messages: true,
     }));
     openai.oai_settings.prompts.push(...structuredClone([readStateTool, readStateCall, readStateResult]));
     openai.oai_settings.prompt_order = [{ character_id: 100001, order:
-        ['main', 'agentSystemPrompt', 'readStateTool', 'chatHistory', 'readStateCall', 'readStateResult']
+        ['charDescription', 'main', 'agentSystemPrompt', 'readStateTool', 'chatHistory', 'readStateCall', 'readStateResult']
             .map(identifier => ({ identifier, enabled: true })) }];
     script.characters.push({
         name: 'Capture', avatar: 'Capture.png', chat: 'capture-chat', shallow: false,
-        description: '', personality: '', scenario: '', mes_example: '', first_mes: '', data: { extensions: {} },
+        description: 'A lighthouse keeper.', personality: '', scenario: '', mes_example: '', first_mes: '', data: { extensions: {} },
     });
     script.setCharacterId(script.characters.length - 1);
     script.setCharacterName('Capture');
@@ -324,4 +324,6 @@ test('Agent snapshots carry the preset tool entries from the live prompt and fro
         expect(snapshot.generationParameters).not.toHaveProperty('tool_choice');
         expect(snapshot.messages.slice(-2)).toEqual([expectedCall, expectedResult]);
     }
+    expect(live.messages[0].content.startsWith('A lighthouse keeper.\n')).toBe(true);
+    expect(independent.messages).toEqual(live.messages);
 });

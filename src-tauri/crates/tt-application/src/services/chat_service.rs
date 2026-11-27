@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tt_ports::byte_reader::ByteReader;
 
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use crate::dto::chat_dto::{
     AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ImportCharacterChatsDto,
@@ -455,7 +456,7 @@ impl ChatService {
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .chat_repository
             .get_character_chat_metadata(character_name, file_name)
@@ -468,7 +469,7 @@ impl ChatService {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .chat_repository
             .get_character_chat_store_json(character_name, file_name, namespace, key)
@@ -481,10 +482,10 @@ impl ChatService {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), ApplicationError> {
         self.chat_repository
-            .set_character_chat_store_json(character_name, file_name, namespace, key, value)
+            .set_character_chat_store_json(character_name, file_name, namespace, key, value_json)
             .await?;
         Ok(())
     }
@@ -495,10 +496,10 @@ impl ChatService {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), ApplicationError> {
         self.chat_repository
-            .update_character_chat_store_json(character_name, file_name, namespace, key, value)
+            .update_character_chat_store_json(character_name, file_name, namespace, key, value_json)
             .await?;
         Ok(())
     }

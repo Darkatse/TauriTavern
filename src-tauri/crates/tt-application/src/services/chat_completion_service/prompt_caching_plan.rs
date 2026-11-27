@@ -44,7 +44,7 @@ pub(super) enum PromptCachingPlan {
         key: PromptCacheKey,
         anthropic_beta_header_mode: AnthropicBetaHeaderMode,
     },
-    OpenRouterClaude {
+    OpenAiCompatibleClaude {
         key: PromptCacheKey,
     },
     VertexClaude {
@@ -67,8 +67,12 @@ pub(super) fn resolve_prompt_caching_plan(
             anthropic_beta_header_mode: AnthropicBetaHeaderMode::ClaudeDefaults,
         })),
         ChatCompletionSource::OpenRouter => Ok(is_openrouter_claude_model(upstream_payload)
-            .then_some(PromptCachingPlan::OpenRouterClaude {
+            .then_some(PromptCachingPlan::OpenAiCompatibleClaude {
                 key: PromptCacheKey::OpenRouterClaude,
+            })),
+        ChatCompletionSource::ElectronHub => Ok(is_electronhub_claude_model(upstream_payload)
+            .then_some(PromptCachingPlan::OpenAiCompatibleClaude {
+                key: PromptCacheKey::ElectronHubClaude,
             })),
         ChatCompletionSource::VertexAi => {
             Ok(vertexai_claude_model_id(endpoint_path).map(|model| {
@@ -149,6 +153,14 @@ fn is_openrouter_claude_model(payload: &Value) -> bool {
         .and_then(|object| object.get("model"))
         .and_then(Value::as_str)
         .is_some_and(is_openrouter_claude_model_name)
+}
+
+fn is_electronhub_claude_model(payload: &Value) -> bool {
+    payload
+        .as_object()
+        .and_then(|object| object.get("model"))
+        .and_then(Value::as_str)
+        .is_some_and(|model| model.starts_with("claude-"))
 }
 
 fn is_nanogpt_claude_payload(payload: &Value) -> bool {
@@ -294,25 +306,32 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_claude_models_use_openrouter_strategy() {
-        let config = custom_config("https://openrouter.ai/api/v1");
+    fn openai_compatible_claude_models_keep_a_cache_per_provider() {
+        for (source, model, key) in [
+            (
+                ChatCompletionSource::OpenRouter,
+                "anthropic/claude-sonnet-4-5",
+                PromptCacheKey::OpenRouterClaude,
+            ),
+            (
+                ChatCompletionSource::ElectronHub,
+                "claude-sonnet-4-5",
+                PromptCacheKey::ElectronHubClaude,
+            ),
+        ] {
+            let plan = resolve_prompt_caching_plan(
+                source,
+                "/chat/completions",
+                &custom_config("https://example.test/v1"),
+                &json!({ "model": model }),
+                PromptCachingRequestHints::default(),
+            )
+            .expect("resolution should succeed");
 
-        let plan = resolve_prompt_caching_plan(
-            ChatCompletionSource::OpenRouter,
-            "/chat/completions",
-            &config,
-            &json!({
-                "model": "anthropic/claude-sonnet-4-5"
-            }),
-            PromptCachingRequestHints::default(),
-        )
-        .expect("resolution should succeed");
-
-        assert_eq!(
-            plan,
-            Some(PromptCachingPlan::OpenRouterClaude {
-                key: PromptCacheKey::OpenRouterClaude,
-            })
-        );
+            assert_eq!(
+                plan,
+                Some(PromptCachingPlan::OpenAiCompatibleClaude { key })
+            );
+        }
     }
 }

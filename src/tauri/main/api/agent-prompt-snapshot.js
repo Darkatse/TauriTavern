@@ -36,12 +36,16 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
         throw new Error('agent.chat_completion_required: Agent runtime requires the OpenAI/chat-completion frontend path');
     }
 
-    const { generateData } = await captureAgentDryRun(script, generationType, {
+    const dryRun = await script.Generate(generationType, {
         ...generateOptions,
         agentMode: true,
         agentContextPolicy,
         agentSystemPrompt,
-    });
+    }, true);
+    if (!dryRun?.generateData) {
+        throw new Error('agent.prompt_snapshot_missing: the dry run assembled no prompt');
+    }
+    const { generateData } = dryRun;
     const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(generateData.frozenRunInputSnapshot);
 
     return {
@@ -60,7 +64,7 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
 }
 
 /**
- * @param {any} generateData After GENERATE_AFTER_DATA.
+ * @param {any} generateData
  * @param {{ generationType: string; contextPolicy: any; jsonSchema?: any; frozenRunInputSnapshot: any }} input
  */
 export function createCurrentPromptSnapshotSeed(generateData, { generationType, contextPolicy, jsonSchema, frozenRunInputSnapshot }) {
@@ -152,31 +156,6 @@ function normalizeGenerateOptions(value) {
         throw new Error('agent.generate_options_invalid: generateOptions must be an object');
     }
     return value;
-}
-
-/** @param {any} script @param {string} generationType @param {Record<string, any>} generateOptions */
-async function captureAgentDryRun(script, generationType, generateOptions) {
-    /** @type {any} */
-    let generateData = null;
-    /** @param {any} capturedGenerateData @param {boolean} dryRun */
-    const generateListener = (capturedGenerateData, dryRun) => {
-        if (dryRun === true) {
-            generateData = capturedGenerateData;
-        }
-    };
-
-    script.eventSource.on(script.event_types.GENERATE_AFTER_DATA, generateListener);
-    try {
-        await script.Generate(generationType, generateOptions, true);
-    } finally {
-        script.eventSource.removeListener(script.event_types.GENERATE_AFTER_DATA, generateListener);
-    }
-
-    if (!generateData || typeof generateData !== 'object' || Array.isArray(generateData)) {
-        throw new Error('agent.prompt_snapshot_missing: dryRun did not emit generate_after_data');
-    }
-
-    return { generateData };
 }
 
 /** @param {any} messages */

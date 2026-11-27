@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::value::RawValue;
 use tauri::State;
 
 use crate::app::AppState;
@@ -65,7 +65,7 @@ pub async fn get_character_chat_metadata(
     character_name: String,
     file_name: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Value, CommandError> {
+) -> Result<Box<RawValue>, CommandError> {
     log_command(format!(
         "get_character_chat_metadata {}/{}",
         character_name, file_name
@@ -89,7 +89,7 @@ pub async fn get_character_chat_store_json(
     namespace: String,
     key: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Value, CommandError> {
+) -> Result<Box<RawValue>, CommandError> {
     log_command(format!(
         "get_character_chat_store_json {}/{}:{}/{}",
         character_name, file_name, namespace, key
@@ -112,7 +112,7 @@ pub async fn set_character_chat_store_json(
     file_name: String,
     namespace: String,
     key: String,
-    value: Value,
+    value_json: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command(format!(
@@ -123,7 +123,7 @@ pub async fn set_character_chat_store_json(
     app_state
         .services
         .chat_service
-        .set_character_chat_store_json(&character_name, &file_name, &namespace, &key, value)
+        .set_character_chat_store_json(&character_name, &file_name, &namespace, &key, &value_json)
         .await
         .map_err(map_command_error(format!(
             "Failed to set chat store json {}/{}:{}/{}",
@@ -137,7 +137,7 @@ pub async fn update_character_chat_store_json(
     file_name: String,
     namespace: String,
     key: String,
-    value: Value,
+    value_json: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command(format!(
@@ -148,7 +148,13 @@ pub async fn update_character_chat_store_json(
     app_state
         .services
         .chat_service
-        .update_character_chat_store_json(&character_name, &file_name, &namespace, &key, value)
+        .update_character_chat_store_json(
+            &character_name,
+            &file_name,
+            &namespace,
+            &key,
+            &value_json,
+        )
         .await
         .map_err(map_command_error(format!(
             "Failed to update chat store json {}/{}:{}/{}",

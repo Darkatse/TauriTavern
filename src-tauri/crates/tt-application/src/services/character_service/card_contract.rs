@@ -1,131 +1,100 @@
-use crate::errors::ApplicationError;
 use serde_json::Value;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 
 const EMBEDDED_AGENT_PROFILES_VERSION: u64 = 1;
 
-pub(super) fn parse_character_card_json(card_json: &str) -> Result<Value, ApplicationError> {
-    let value: Value = serde_json::from_str(card_json).map_err(|error| {
-        ApplicationError::ValidationError(format!("Invalid character card JSON: {}", error))
-    })?;
-
-    if !value.is_object() {
-        return Err(ApplicationError::ValidationError(
-            "Character card payload must be a JSON object".to_string(),
-        ));
-    }
-
-    Ok(value)
+pub(super) fn parse_character_card_json(card_json: &str) -> Result<JsonDocument, DomainError> {
+    JsonDocument::parse(card_json.as_bytes()).map_err(invalid_character_card_json)
 }
 
-pub(super) fn strip_character_card_json_data(card_value: &mut Value) {
-    if let Some(card_object) = card_value.as_object_mut() {
-        card_object.remove("json_data");
-    }
+pub(super) fn invalid_character_card_json(error: serde_json::Error) -> DomainError {
+    DomainError::InvalidData(format!("Invalid character card JSON: {error}"))
 }
 
-pub(super) fn validate_character_card_schema(card_value: &Value) -> Result<(), DomainError> {
-    if validate_v1_character_card(card_value).is_ok()
-        || validate_v2_character_card(card_value).is_ok()
+/// `json_data` carries the request's copy of the card and is never stored.
+pub(super) fn into_character_card_json(mut card: JsonDocument) -> String {
+    card.remove("json_data");
+    card.to_string()
+}
+
+pub(super) fn validate_character_card_schema(card_json: &str) -> Result<(), DomainError> {
+    let card_value: Value = serde_json::from_str(card_json).map_err(invalid_character_card_json)?;
+    if validate_v1_character_card(&card_value).is_ok()
+        || validate_v2_character_card(&card_value).is_ok()
     {
         return Ok(());
     }
 
-    validate_v3_character_card(card_value)
+    validate_v3_character_card(&card_value)
 }
 
-pub(super) fn character_card_name(card_value: &Value) -> Result<&str, DomainError> {
-    card_value
-        .get("name")
+pub(super) fn character_world(card: &JsonDocument) -> Result<Option<String>, DomainError> {
+    let world = card
+        .get::<Value>(&["data", "extensions", "world"])
+        .map_err(invalid_character_card_json)?;
+    Ok(world
+        .as_ref()
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            card_value
-                .pointer("/data/name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .ok_or_else(|| missing_character_card_field("name"))
+        .filter(|world| !world.is_empty())
+        .map(str::to_owned))
 }
 
-pub(super) fn set_character_world(
-    card_value: &mut Value,
-    world: impl Into<String>,
-) -> Result<(), DomainError> {
-    let root = card_value.as_object_mut().ok_or_else(|| {
-        DomainError::InvalidData("Character payload must be a JSON object".to_string())
-    })?;
-    let data = root
-        .entry("data")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()))
-        .as_object_mut()
-        .ok_or_else(|| invalid_character_card_field("data"))?;
-    let extensions = data
-        .entry("extensions")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()))
-        .as_object_mut()
-        .ok_or_else(|| invalid_character_card_field("data.extensions"))?;
-    extensions.insert("world".to_string(), Value::String(world.into()));
+pub(super) fn set_character_world(card: &mut JsonDocument, world: &str) -> Result<(), DomainError> {
+    card.object_entry(&["data", "extensions"])
+        .map_err(invalid_character_card_json)?
+        .set("world", &Value::from(world));
     Ok(())
 }
 
-pub(super) fn unset_private_fields(export_value: &mut Value) -> Result<(), DomainError> {
-    let Some(root_object) = export_value.as_object_mut() else {
-        return Err(DomainError::InvalidData(
-            "Character payload must be a JSON object".to_string(),
-        ));
-    };
-
-    root_object.insert("fav".to_string(), Value::Bool(false));
-    root_object.remove("chat");
-
-    if let Some(extensions) = root_object
-        .get_mut("data")
-        .and_then(Value::as_object_mut)
-        .and_then(|data| data.get_mut("extensions"))
-        .and_then(Value::as_object_mut)
+pub(super) fn unset_private_fields(card: &mut JsonDocument) -> Result<(), DomainError> {
+    card.set("fav", &Value::Bool(false));
+    card.remove("chat");
+    if let Some(extensions) = card
+        .object_mut(&["data", "extensions"])
+        .map_err(invalid_character_card_json)?
     {
-        extensions.insert("fav".to_string(), Value::Bool(false));
+        extensions.set("fav", &Value::Bool(false));
     }
-
     Ok(())
 }
 
-pub(super) fn sanitize_agent_profiles_for_export(export_value: &mut Value) {
-    sanitize_agent_profile_package_at_path(export_value, "/data/extensions");
-    sanitize_agent_profile_package_at_path(export_value, "/extensions");
+pub(super) fn sanitize_agent_profiles_for_export(
+    card: &mut JsonDocument,
+) -> Result<(), DomainError> {
+    for extensions in [&["data", "extensions"][..], &["extensions"]] {
+        sanitize_agent_profile_package_in(card, extensions).map_err(invalid_character_card_json)?;
+    }
+    Ok(())
 }
 
-fn sanitize_agent_profile_package_at_path(value: &mut Value, extension_path: &str) {
-    let Some(extensions) = value
-        .pointer_mut(extension_path)
-        .and_then(Value::as_object_mut)
-    else {
-        return;
+fn sanitize_agent_profile_package_in(
+    card: &mut JsonDocument,
+    extensions: &[&str],
+) -> serde_json::Result<()> {
+    let Some(tauritavern) = card.object_mut(&[extensions, &["tauritavern"]].concat())? else {
+        return Ok(());
     };
-    let Some(tauritavern) = extensions.get_mut("tauritavern") else {
-        return;
+    let Some(mut package) = tauritavern.get::<Value>(&["agentProfiles"])? else {
+        return Ok(());
     };
-    let Some(tauritavern) = tauritavern.as_object_mut() else {
-        return;
-    };
-    let Some(error) = tauritavern
-        .get_mut("agentProfiles")
-        .and_then(|package| sanitize_agent_profile_package(package).err())
-    else {
-        return;
-    };
-    tracing::error!(
-        target: tt_contracts::observability::USER_VISIBLE_ERROR,
-        "Exporting character without malformed embedded Agent Profiles: {}",
-        error
-    );
-    tauritavern.remove("agentProfiles");
+    match sanitize_agent_profile_package(&mut package) {
+        Ok(true) => tauritavern.set("agentProfiles", &package),
+        Ok(false) => {}
+        Err(error) => {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Exporting character without malformed embedded Agent Profiles: {}",
+                error
+            );
+            tauritavern.remove("agentProfiles");
+        }
+    }
+    Ok(())
 }
 
-fn sanitize_agent_profile_package(package: &mut Value) -> Result<(), DomainError> {
+/// Returns whether any profile changed.
+fn sanitize_agent_profile_package(package: &mut Value) -> Result<bool, DomainError> {
     let Some(package) = package.as_object_mut() else {
         return Err(DomainError::InvalidData(
             "Character payload tauritavern.agentProfiles must be an object".to_string(),
@@ -146,13 +115,14 @@ fn sanitize_agent_profile_package(package: &mut Value) -> Result<(), DomainError
             "Character payload tauritavern.agentProfiles.items must be an array".to_string(),
         ));
     };
+    let mut changed = false;
     for item in items {
-        sanitize_agent_profile_item(item)?;
+        changed |= sanitize_agent_profile_item(item)?;
     }
-    Ok(())
+    Ok(changed)
 }
 
-fn sanitize_agent_profile_item(item: &mut Value) -> Result<(), DomainError> {
+fn sanitize_agent_profile_item(item: &mut Value) -> Result<bool, DomainError> {
     let Some(item) = item.as_object_mut() else {
         return Err(DomainError::InvalidData(
             "Character payload embedded Agent Profile item must be an object".to_string(),
@@ -168,19 +138,19 @@ fn sanitize_agent_profile_item(item: &mut Value) -> Result<(), DomainError> {
             "Character payload embedded Agent Profile must be an object".to_string(),
         ));
     };
-    if profile
+    let uses_connection = profile
         .get("model")
         .and_then(Value::as_object)
         .and_then(|model| model.get("mode"))
         .and_then(Value::as_str)
-        == Some("connectionRef")
-    {
+        == Some("connectionRef");
+    if uses_connection {
         profile.insert(
             "model".to_string(),
             serde_json::json!({ "mode": "requiresConfiguration" }),
         );
     }
-    Ok(())
+    Ok(uses_connection)
 }
 
 fn validate_v1_character_card(card_value: &Value) -> Result<(), DomainError> {

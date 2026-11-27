@@ -354,18 +354,17 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use serde_json::json;
 
     use super::*;
     use crate::services::agent_tools::BuiltinAgentToolRegistry;
     use tt_domain::errors::DomainError;
+    use tt_domain::json_document::JsonDocument;
     use tt_domain::models::agent::profile::{
         AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
     };
     use tt_domain::models::llm_connection::{
         LlmConnectionDefinition, LlmConnectionId, LlmConnectionSummary,
     };
-    use tt_domain::models::preset::{DefaultPreset, Preset};
     use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
     use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
     use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
@@ -548,7 +547,12 @@ mod tests {
 
     #[async_trait]
     impl PresetRepository for TestPresetRepository {
-        async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+        async fn save_preset(
+            &self,
+            _name: &str,
+            _preset_type: &PresetType,
+            _preset: JsonDocument,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -572,13 +576,9 @@ mod tests {
             &self,
             name: &str,
             preset_type: &PresetType,
-        ) -> Result<Option<Preset>, DomainError> {
+        ) -> Result<Option<JsonDocument>, DomainError> {
             if *preset_type == PresetType::OpenAI && self.user_openai.contains(name) {
-                return Ok(Some(Preset::new(
-                    name.to_string(),
-                    preset_type.clone(),
-                    json!({}),
-                )));
+                return Ok(Some(JsonDocument::default()));
             }
             Ok(None)
         }
@@ -594,15 +594,9 @@ mod tests {
             &self,
             name: &str,
             preset_type: &PresetType,
-        ) -> Result<Option<DefaultPreset>, DomainError> {
+        ) -> Result<Option<JsonDocument>, DomainError> {
             if *preset_type == PresetType::OpenAI && self.default_openai.contains(name) {
-                return Ok(Some(DefaultPreset {
-                    filename: format!("{name}.json"),
-                    name: name.to_string(),
-                    preset_type: preset_type.clone(),
-                    is_default: true,
-                    data: json!({}),
-                }));
+                return Ok(Some(JsonDocument::default()));
             }
             Ok(None)
         }

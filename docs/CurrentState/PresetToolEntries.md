@@ -57,4 +57,4 @@ Legacy 把工具数据放在 `generate_data.toolData` 交给发送，`GENERATE_A
 - 条目求值与报错：[`prompt-entry-fields.js`](../../src/scripts/prompt-entry-fields.js)，由 [`PromptManager.js`](../../src/scripts/PromptManager.js) 的 `preparePrompt` 调用；角色卡覆盖在 `openai.js` 的 `preparePromptsForChatCompletion`
 - 编辑表单：`PromptManager.js` 的 `loadPromptIntoEditForm` 与 `updatePromptWithPromptEditForm`，表单在 [`index.html`](../../src/index.html) 的 `completion_prompt_manager_popup_edit`
 - 消息、注入与预算：[`openai.js`](../../src/scripts/openai.js) 的 `Message`、`populationInjectionPrompts`、`populateChatHistory`
-- 工具数据：`openai.js` 的 `createToolData`；交接在 [`script.js`](../../src/script.js) 的 `generate_data` 与 [`agent-prompt-snapshot.js`](../../src/tauri/main/api/agent-prompt-snapshot.js) 的 `createCurrentPromptSnapshotSeed`
+- 工具数据：`openai.js` 的 `createToolData`，工具来自哪个条目由 `getToolSources` 说明，见[请求查看器](RequestInspector.md#2-组装)；交接在 [`script.js`](../../src/script.js) 的 `generate_data` 与 [`agent-prompt-snapshot.js`](../../src/tauri/main/api/agent-prompt-snapshot.js) 的 `createCurrentPromptSnapshotSeed`

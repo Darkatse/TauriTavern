@@ -31,7 +31,7 @@ import {
 } from '../script.js';
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
-import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { chatCompletionSources } from '../tauri/main/adapters/st/host-availability.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -82,6 +82,7 @@ import {
 } from './utils.js';
 import { countOpenAIMessageTokensBatchAsync, getTokenizerModel } from './tokenizers.js';
 import { getOpenAIConversationTokenCount } from './util/openai-token-count.js';
+import { modelAcceptsImages } from './util/model-image-input.js';
 import { isMobile } from './RossAscends-mods.js';
 import { saveLogprobsForActiveMessage } from './logprobs.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -96,7 +97,7 @@ import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { macros } from './macros/macro-system.js';
-import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
+import { applySavedModelProviders, syncModelProviders, updateModelProvidersWarning } from './textgen-models.js';
 
 export {
     openai_messages_count,
@@ -435,6 +436,31 @@ function usesClaudeMessagesSemantics(settings, model = getChatCompletionModel(se
         default:
             return false;
     }
+}
+
+function usesGeminiGenerateContent(settings, model = getChatCompletionModel(settings)) {
+    switch (settings.chat_completion_source) {
+        case chat_completion_sources.MAKERSUITE:
+            return true;
+        case chat_completion_sources.OPENCODE:
+            return settings.opencode_api_format === OPENCODE_API_FORMAT.GEMINI;
+        case chat_completion_sources.CUSTOM:
+            return settings.custom_api_format === custom_api_formats.GEMINI_GENERATE_CONTENT;
+        case chat_completion_sources.VERTEXAI:
+            return !isVertexAiClaudeModelId(model);
+        default:
+            return false;
+    }
+}
+
+function replaysNativeContent(settings, native) {
+    const model = getChatCompletionModel(settings);
+    if (usesClaudeMessagesSemantics(settings, model)) {
+        return hasClaudeToolUse(native);
+    }
+    return usesGeminiGenerateContent(settings, model)
+        || (settings.chat_completion_source === chat_completion_sources.CUSTOM
+            && settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS);
 }
 
 /**
@@ -1009,6 +1035,29 @@ async function validateReverseProxy() {
     accountStorage.setItem(rememberKey, String(true));
 }
 
+export const CHAT_MESSAGE_ID = Symbol('chatMessageId');
+
+/**
+ * @typedef {object} PromptPiece
+ * @property {'prompt'|'extensionPrompt'|'chat'} type
+ * @property {string} [identifier]
+ * @property {number} [messageId]
+ * @property {number} [depth]
+ * @property {string} [text]
+ * @property {number} [tokens]
+ * @property {{ identifier: string, text: string }[]} [attached]
+ */
+
+/**
+ * @param {{ identifier?: string, extension_key?: string }} prompt
+ * @returns {PromptPiece}
+ */
+function promptPiece(prompt) {
+    return prompt.extension_key
+        ? { type: 'extensionPrompt', identifier: prompt.extension_key }
+        : { type: 'prompt', identifier: prompt.identifier };
+}
+
 /**
  * Formats chat messages into chat completion messages.
  * @param {ChatMessage[]} chat - Array containing all messages.
@@ -1026,10 +1075,6 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
     const requestContext = getChatCompletionRequestContext(oai_settings, currentModel);
     const includeReasoningContent = oai_settings.show_thoughts
         && replaysToolReasoningContent(oai_settings, currentModel);
-    const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
-    const includeNative = includeClaudeNative
-        || (currentApi === chat_completion_sources.CUSTOM
-            && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(oai_settings.custom_api_format));
 
     for (let i = projectedChat.length - 1; i >= 0; i--) {
         const entry = projectedChat[j];
@@ -1091,11 +1136,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             && canReplayProviderMetadata(metadataMessage, contentMessage?.mes ?? '', requestContext);
         const signature = canReplayProviderTurnMetadata ? contentMessage?.extra?.reasoning_signature : null;
         const reasoning = isSameModel && !isOtherGroupMember ? String(contentMessage?.extra?.reasoning ?? '') : '';
-        const native = includeNative
-            && canReplayProviderTurnMetadata
-            && (!includeClaudeNative || hasClaudeToolUse(metadataMessage?.extra?.native))
-            ? metadataMessage?.extra?.native
-            : null;
+        const native = canReplayProviderTurnMetadata ? metadataMessage?.extra?.native : null;
         const reasoningContent = includeReasoningContent && isSameModel && !isOtherGroupMember
             ? metadataMessage?.extra?.tool_reasoning_content : null;
         // Remove provider metadata from invocations if the API/model/speaker don't match.
@@ -1113,7 +1154,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
         }
 
         const sourceCount = entry.type === 'tool-turn' ? entry.sourceIndices.length : 1;
-        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'reasoning': reasoning, 'native': native, 'reasoningContent': reasoningContent, sourceCount };
+        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature, 'reasoning': reasoning, 'native': native, 'reasoningContent': reasoningContent, sourceCount, messageId: sourceMessage[CHAT_MESSAGE_ID] };
         j++;
     }
 
@@ -1444,19 +1485,20 @@ async function populationInjectionPrompts(prompts, messages, extensionPrompts = 
             // Order of priority for roles (most important go lower)
             const roles = ['system', 'user', 'assistant'];
             for (const role of roles) {
-                const rolePrompts = orderPrompts
+                const promptPieces = orderPrompts
                     .filter(prompt => prompt.role === role && !prompt.fields)
-                    .map(x => x.content)
-                    .join(separator);
+                    .map(prompt => ({ ...promptPiece(prompt), depth: i, text: prompt.content }));
+                const rolePrompts = promptPieces.map(piece => piece.text).join(separator);
 
                 // Get extension prompt
                 const extensionPrompt = order === extensionPromptsOrder
                     ? await getPromptAssemblyExtensionPrompt(extensionPrompts, extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap, assemblyRuntime)
-                    : '';
-                const jointPrompt = [rolePrompts, extensionPrompt].filter(x => x).map(x => x.trim()).join(separator);
+                    : { text: '', pieces: [] };
+                const jointPrompt = [rolePrompts, extensionPrompt.text].filter(x => x).map(x => x.trim()).join(separator);
 
                 if (jointPrompt && jointPrompt.length) {
-                    roleMessages.push({ 'role': role, 'content': jointPrompt, injected: true });
+                    const pieces = [...promptPieces, ...(extensionPrompt.text.trim() ? extensionPrompt.pieces : [])].filter(piece => piece.text.trim());
+                    roleMessages.push({ 'role': role, 'content': jointPrompt, injected: true, pieces });
                 }
             }
 
@@ -1464,7 +1506,7 @@ async function populationInjectionPrompts(prompts, messages, extensionPrompts = 
             const entries = orderPrompts.filter(prompt => prompt.fields);
             if (entries.length) {
                 for (const { identifier, role, content, fields } of entries.reverse()) {
-                    roleMessages.push({ identifier, role, content, fields, injected: true, injectionGroup });
+                    roleMessages.push({ identifier, role, content, fields, injected: true, injectionGroup, pieces: [{ type: 'prompt', identifier, depth: i }] });
                 }
                 injectionGroup += 1;
             }
@@ -1481,27 +1523,29 @@ async function populationInjectionPrompts(prompts, messages, extensionPrompts = 
     return messages;
 }
 
+/** @returns {Promise<{ text: string, pieces: PromptPiece[] }>} */
 async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, depth, separator, role, wrap, runtime = null) {
     const source = normalizePromptAssemblyExtensionPrompts(extensionPrompts);
     if (!source) {
-        return '';
+        return { text: '', pieces: [] };
     }
 
     const promptPromises = Object.keys(source)
         .sort()
-        .map(key => source[key])
-        .filter(prompt => prompt.position == position && prompt.value)
-        .filter(prompt => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
-        .filter(prompt => role === undefined || prompt.role === undefined || prompt.role === role)
-        .map(async prompt => {
-            if (typeof prompt.filter === 'function' && !await prompt.filter()) {
+        .map(key => ({ key, prompt: source[key] }))
+        .filter(({ prompt }) => prompt.position == position && prompt.value)
+        .filter(({ prompt }) => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
+        .filter(({ prompt }) => role === undefined || prompt.role === undefined || prompt.role === role)
+        .map(async entry => {
+            if (typeof entry.prompt.filter === 'function' && !await entry.prompt.filter()) {
                 return null;
             }
-            return prompt;
+            return entry;
         });
-    const prompts = (await Promise.all(promptPromises)).filter(Boolean);
+    const pieces = (await Promise.all(promptPromises)).filter(Boolean)
+        .map(({ key, prompt }) => ({ type: 'extensionPrompt', identifier: key, depth, text: String(prompt.value).trim() }));
 
-    let values = prompts.map(prompt => String(prompt.value).trim()).join(separator);
+    let values = pieces.map(piece => piece.text).join(separator);
     if (wrap && values.length && !values.startsWith(separator)) {
         values = separator + values;
     }
@@ -1511,7 +1555,7 @@ async function getPromptAssemblyExtensionPrompt(extensionPrompts, position, dept
     if (values.length) {
         values = substitutePromptParams(values, {}, runtime);
     }
-    return values;
+    return { text: values, pieces };
 }
 
 /**
@@ -1601,12 +1645,6 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const videoInlining = isVideoInliningSupported(settings);
     const audioInlining = isAudioInliningSupported(settings);
     const includeSignature = isReasoningSignatureSupported(settings);
-    const includeClaudeNative = usesClaudeMessagesSemantics(settings);
-    const includeNative = includeClaudeNative
-        || (settings.chat_completion_source === chat_completion_sources.CUSTOM
-            && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(settings.custom_api_format));
-    const canIncludeNative = native => includeNative
-        && (!includeClaudeNative || hasClaudeToolUse(native));
     // A connection replays tool reasoning through reasoning_content or interleaved reasoning, never both.
     const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source)
         && !replaysToolReasoningContent(settings);
@@ -1618,15 +1656,28 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const namesInCompletion = activePromptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION;
 
     /**
-     * Builds a chat history message without counting it, named when names go in the completion.
-     * @param {Prompt} prompt Chat history prompt
-     * @returns {Message} The message
+     * @param {object} record
+     * @returns {PromptPiece}
      */
-    const buildHistoryMessage = (prompt) => {
+    const chatPiece = record => ({
+        type: 'chat',
+        ...(record.messageId !== undefined && { messageId: record.messageId }),
+        ...(record.attached && { attached: record.attached }),
+    });
+
+    /**
+     * @param {object} record
+     * @param {number} index
+     * @returns {Message}
+     */
+    const buildHistoryMessage = (record, index) => {
+        const prompt = new Prompt(record);
+        prompt.identifier = `chatHistory-${messages.length - index}`;
         const chatMessage = Message.fromPrompt(activePromptManager.preparePrompt(prompt));
         if (namesInCompletion && prompt.name) {
             chatMessage.name = activePromptManager.isValidName(prompt.name) ? prompt.name : activePromptManager.sanitizeName(prompt.name);
         }
+        chatMessage.pieces = record.pieces ?? [chatPiece(record)];
         return chatMessage;
     };
 
@@ -1652,7 +1703,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             for (; chatPool[index]?.injectionGroup === chatPrompt.injectionGroup; index += 1) {
                 entries.push(chatPool[index]);
             }
-            const group = entries.map(entry => Message.fromPrompt(entry));
+            const group = entries.map(entry => {
+                const message = Message.fromPrompt(entry);
+                message.pieces = entry.pieces;
+                return message;
+            });
             await Message.countAllAsync(group, assemblyTokenHandler);
             if (!chatCompletion.canAffordAll(group)) {
                 break;
@@ -1662,10 +1717,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         }
 
         if (Array.isArray(chatPrompt.invocations)) {
-            // We do not want to mutate the prompt
-            const prompt = new Prompt(chatPrompt);
-            prompt.identifier = `chatHistory-${messages.length - index}`;
-            const chatMessage = buildHistoryMessage(prompt);
+            const chatMessage = buildHistoryMessage(chatPrompt, index);
 
             /**
              * Inline a media attachment into the chat message.
@@ -1740,7 +1792,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 }
                 return clone;
             });
-            const toolResultMessages = invocations.slice().reverse().map((invocation) => new Message('tool', invocation.result, invocation.id));
+            const toolResultMessages = invocations.slice().reverse().map((invocation) => {
+                const resultMessage = new Message('tool', invocation.result, invocation.id);
+                resultMessage.pieces = [{ type: 'chat' }];
+                return resultMessage;
+            });
             chatMessage.reasoningContent = chatPrompt.reasoningContent ?? null;
             await Promise.all([
                 chatMessage.setToolCalls(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler),
@@ -1749,7 +1805,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (includeSignature && chatPrompt.signature) {
                 chatMessage.signature = chatPrompt.signature;
             }
-            if (canIncludeNative(chatPrompt.native)) {
+            if (replaysNativeContent(settings, chatPrompt.native)) {
                 chatMessage.native = chatPrompt.native;
             }
             if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
@@ -1784,9 +1840,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 break;
             }
 
-            const prompt = new Prompt(candidate);
-            prompt.identifier = `chatHistory-${messages.length - index}`;
-            batch.push({ chatPrompt: candidate, chatMessage: buildHistoryMessage(prompt) });
+            batch.push({ chatPrompt: candidate, chatMessage: buildHistoryMessage(candidate, index) });
         }
         chunkSize *= 2;
         await Message.countAllAsync(batch.map(item => item.chatMessage), assemblyTokenHandler);
@@ -1830,7 +1884,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             if (includeSignature && promptSource.signature) {
                 chatMessage.signature = promptSource.signature;
             }
-            if (canIncludeNative(promptSource.native)) {
+            if (replaysNativeContent(settings, promptSource.native)) {
                 chatMessage.native = promptSource.native;
             }
 
@@ -1919,10 +1973,37 @@ function removeAgentOnlyPrompts(prompts) {
  * @param {import('./PromptManager.js').PromptCollection} prompts
  * @returns {object[]}
  */
-function takeToolDefinitions(prompts) {
-    const definitions = prompts.collection.filter(prompt => prompt.role === TOOL_DEFINITION_ROLE);
+function takeToolDefinitionEntries(prompts) {
+    const entries = prompts.collection.filter(prompt => prompt.role === TOOL_DEFINITION_ROLE);
     prompts.collection = prompts.collection.filter(prompt => prompt.role !== TOOL_DEFINITION_ROLE);
-    return definitions.map(toolDefinitionFromEntry);
+    return entries;
+}
+
+/**
+ * @typedef {object} ToolSource
+ * @property {string} name
+ * @property {'prompt'|'mcp'|'function'} type
+ * @property {string} [identifier]
+ * @property {string} [server]
+ */
+
+/**
+ * Preset definitions take precedence over registered tools with the same name.
+ * @param {object|null} toolData
+ * @param {object[]} toolEntries
+ * @param {object|null} legacyMcpToolRound
+ * @returns {ToolSource[]}
+ */
+function getToolSources(toolData, toolEntries, legacyMcpToolRound) {
+    return (toolData?.tools ?? []).map(tool => {
+        const name = tool.function?.name;
+        const entry = toolEntries.find(entry => entry.fields.name === name);
+        if (entry) {
+            return { name, type: 'prompt', identifier: entry.identifier };
+        }
+        const server = legacyMcpToolRound?.serverDisplayName(name);
+        return server ? { name, type: 'mcp', server } : { name, type: 'function' };
+    });
 }
 
 /**
@@ -2046,7 +2127,7 @@ export function getPromptRole(role) {
  * @param {boolean} [options.allowToolCalls] Whether this request can register legacy frontend tools.
  * @param {object|null} [options.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
  * @param {import('../script.js').QuietToolRequest|null} [options.quietToolRequest] One-shot tools and a literal control message.
- * @returns {Promise<[number, object|null]>} Raw chat record count and evaluated legacy tool data.
+ * @returns {Promise<[number, object|null, ToolSource[]]>} [chat record count, tool data, tool sources]
  */
 async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null, quietToolRequest = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
@@ -2057,7 +2138,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
     }
-    const toolDefinitions = takeToolDefinitions(prompts);
+    const toolEntries = takeToolDefinitionEntries(prompts);
 
     /**
      * Adds prompts that already exist within the prompt collection to the completion, in order, counted together.
@@ -2173,7 +2254,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
 
     // Pre-allocation of tokens for tool data
-    const toolData = await createToolData({ type, settings, agentMode, allowToolCalls, quietToolRequest, legacyMcpToolRound, toolDefinitions });
+    const toolData = await createToolData({ type, settings, agentMode, allowToolCalls, quietToolRequest, legacyMcpToolRound, toolDefinitions: toolEntries.map(toolDefinitionFromEntry) });
     if (toolData) {
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await assemblyTokenHandler.countAsync(toolMessage);
@@ -2222,7 +2303,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     chatCompletion.freeBudget(controlPrompts);
     if (controlPrompts.collection.length) chatCompletion.add(controlPrompts);
-    return [chatSourceCount, toolData];
+    return [chatSourceCount, toolData, getToolSources(toolData, toolEntries, legacyMcpToolRound)];
 }
 
 /**
@@ -2274,6 +2355,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         role: getPromptRole(summary.role),
         content: summary.value,
         identifier: 'summary',
+        extension_key: '1_memory',
         position: getPromptPosition(summary.position),
     });
 
@@ -2283,6 +2365,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         role: getPromptRole(authorsNote.role),
         content: authorsNote.value,
         identifier: 'authorsNote',
+        extension_key: '2_floating_prompt',
         position: getPromptPosition(authorsNote.position),
     });
 
@@ -2292,6 +2375,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         role: 'system',
         content: vectorsMemory.value,
         identifier: 'vectorsMemory',
+        extension_key: '3_vectors',
         position: getPromptPosition(vectorsMemory.position),
     });
 
@@ -2300,6 +2384,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         role: getPromptRole(vectorsDataBank.role),
         content: vectorsDataBank.value,
         identifier: 'vectorsDataBank',
+        extension_key: '4_vectors_data_bank',
         position: getPromptPosition(vectorsDataBank.position),
     });
 
@@ -2309,6 +2394,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
         role: 'system',
         content: smartContext.value,
         identifier: 'smartContext',
+        extension_key: 'chromadb',
         position: getPromptPosition(smartContext.position),
     });
 
@@ -2347,6 +2433,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
 
             systemPrompts.push({
                 identifier: key.replace(/\W/g, '_'),
+                extension_key: key,
                 position: getPromptPosition(prompt.position),
                 role: getPromptRole(prompt.role),
                 content: prompt.value,
@@ -2413,7 +2500,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {object|null} [content.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
  * @param {import('../script.js').QuietToolRequest|null} [content.quietToolRequest] One-shot tools and a literal control message.
  * @param dryRun - Whether this is a live call or not.
- * @returns {Promise<[ChatCompletionMessage[]|null, object|boolean, object|null|undefined]>} Prepared chat, token counts, and evaluated legacy tool data.
+ * @returns {Promise<[ChatCompletionMessage[]|null, object|boolean, object|null|undefined, PromptAssembly|undefined]>} [chat, token counts, tool data, assembly]
  */
 export async function prepareOpenAIMessages({
     name2,
@@ -2468,6 +2555,9 @@ export async function prepareOpenAIMessages({
     );
     let chatSourceCount = 0;
     let toolData = null;
+    let toolSources = [];
+    let chatCandidateCount = 0;
+    let assemblyError = null;
 
     try {
         // Merge markers and ordered user prompts with system prompts
@@ -2493,8 +2583,9 @@ export async function prepareOpenAIMessages({
             }
         };
 
+        chatCandidateCount = messages.reduce((count, message) => count + (message.sourceCount ?? 0), 0);
         // Fill the chat completion with as much context as the budget allows
-        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound, quietToolRequest }, assemblyRuntime);
+        [chatSourceCount, toolData, toolSources] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound, quietToolRequest }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2517,22 +2608,27 @@ export async function prepareOpenAIMessages({
         if (agentMode || quietToolRequest || error instanceof PromptEntryError) {
             throw error;
         }
+        assemblyError = activePromptManager.error ?? (error instanceof Error ? error.message : String(error));
     } finally {
-        // Pass chat completion to prompt manager for inspection
         if (assemblyRuntime.updatePromptManager) {
             activePromptManager.setChatCompletion(chatCompletion);
         }
 
-        if (settings.squash_system_messages && dryRun == false) {
-            await chatCompletion.squashSystemMessages(assemblyRuntime.tokenHandler);
-        }
-
-        // All information is up-to-date, render.
         if (assemblyRuntime.renderPromptManager && false === dryRun) activePromptManager.render(false);
     }
 
     if (settings.chat_completion_source === chat_completion_sources.MOONSHOT) {
         moveHiddenPrefillReasoning(chatCompletion);
+    }
+
+    // Merging system messages discards individual prompt identifiers.
+    const promptSources = getPromptSources(chatCompletion.getMessages());
+    if (settings.squash_system_messages) {
+        await chatCompletion.squashSystemMessages(assemblyRuntime.tokenHandler);
+        // Prompt Manager keeps unmerged messages after a dry run.
+        if (dryRun === false && assemblyRuntime.updatePromptManager) {
+            activePromptManager.setMessages(chatCompletion.getMessages());
+        }
     }
 
     const chat = chatCompletion.getChat();
@@ -2546,7 +2642,71 @@ export async function prepareOpenAIMessages({
         openai_messages_count = chatSourceCount;
     }
 
-    return [chat, activePromptManager.tokenHandler.counts, toolData];
+    return [chat, activePromptManager.tokenHandler.counts, toolData, {
+        sources: promptSources,
+        tools: toolSources,
+        chatHistory: { included: chatSourceCount, candidates: chatCandidateCount },
+        error: assemblyError,
+    }];
+}
+
+/**
+ * @typedef {object} PromptSource
+ * @property {string} role
+ * @property {number} tokens
+ * @property {string[]} [toolCallIds]
+ * @property {string} [toolCallId]
+ * @property {(PromptPiece & { text: string, tokens: number })[]} pieces
+ */
+
+/**
+ * @typedef {object} PromptAssembly
+ * @property {PromptSource[]} sources
+ * @property {ToolSource[]} tools
+ * @property {{ included: number, candidates: number }} chatHistory
+ * @property {string|null} error
+ */
+
+/**
+ * @param {MessageCollection} messages
+ * @returns {PromptSource[]}
+ */
+function getPromptSources(messages) {
+    return messages.flatten().filter(message => message.isSendable()).map(message => {
+        const sent = message.toChatMessage();
+        const text = Array.isArray(sent.content)
+            ? sent.content.map(part => part.text ?? '').join('')
+            : String(sent.content ?? '');
+        const pieces = message.pieces ?? [{ type: 'prompt', identifier: message.identifier }];
+        return {
+            role: sent.role,
+            tokens: message.tokens,
+            ...(Array.isArray(sent.tool_calls) && { toolCallIds: sent.tool_calls.map(call => call.id) }),
+            ...(sent.tool_call_id && { toolCallId: sent.tool_call_id }),
+            pieces: pieces.length > 1
+                ? sharePieceTokens(pieces, message.tokens)
+                : [{ ...pieces[0], text, tokens: message.tokens }],
+        };
+    });
+}
+
+/**
+ * Rounded shares must sum to the message's token count.
+ * @param {PromptPiece[]} pieces
+ * @param {number} tokens
+ * @returns {PromptPiece[]}
+ */
+function sharePieceTokens(pieces, tokens) {
+    const total = pieces.reduce((sum, piece) => sum + piece.tokens, 0);
+    let counted = 0;
+    let shared = 0;
+    return pieces.map((piece, index) => {
+        counted += piece.tokens;
+        const upTo = index === pieces.length - 1 ? tokens : Math.round(tokens * counted / (total || 1));
+        const share = upTo - shared;
+        shared = upTo;
+        return { ...piece, tokens: share };
+    });
 }
 
 export function createAgentPromptSnapshot(payload, { settings, contextPolicy, worldInfoActivation }) {
@@ -2892,7 +3052,7 @@ function getElectronHubModelTemplate(option) {
     const outputPrice = model.pricing?.output;
     const price = inputPrice && outputPrice ? `$${inputPrice}/$${outputPrice} in/out Mtoken` : 'Unknown';
 
-    const visionIcon = model.metadata?.vision ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
+    const visionIcon = modelAcceptsImages(chat_completion_sources.ELECTRONHUB, model) ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
     const reasoningIcon = model.metadata?.reasoning ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning"></i>' : '';
     const toolCallsIcon = model.metadata?.function_call ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools"></i>' : '';
     const premiumIcon = model?.premium_model ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a subscription"></i>' : '';
@@ -2955,7 +3115,7 @@ function getChutesModelTemplate(option) {
     }
 
     const contextLength = model.context_length || model.max_model_len || 'Unknown';
-    const visionIcon = model.input_modalities?.includes('image') ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
+    const visionIcon = modelAcceptsImages(chat_completion_sources.CHUTES, model) ? '<i class="fa-solid fa-eye fa-sm" title="This model supports vision"></i>' : '';
     const reasoningIcon = model.supported_features?.includes('reasoning') ? '<i class="fa-solid fa-brain fa-sm" title="This model supports reasoning"></i>' : '';
     const toolCallsIcon = model.supported_features?.includes('structured_outputs') ? '<i class="fa-solid fa-wrench fa-sm" title="This model supports function tools"></i>' : '';
 
@@ -3744,23 +3904,20 @@ function saveModelList(data) {
 
     if (oai_settings.chat_completion_source === chat_completion_sources.FIREWORKS) {
         $('#model_fireworks_select').empty();
+        model_list.sort((a, b) => (a?.name || a?.id || '').localeCompare(b?.name || b?.id || ''));
         model_list.forEach((model) => {
-            if (!model?.supports_chat) {
-                return;
-            }
             $('#model_fireworks_select').append(
                 $('<option>', {
                     value: model.id,
-                    text: model.id,
+                    text: model.name || model.id,
                 }));
         });
 
-        const chatModels = model_list.filter(model => model?.supports_chat);
         oai_settings.fireworks_model = chooseModelOrCurrentCustom(
             chat_completion_sources.FIREWORKS,
-            chatModels.map(model => model.id),
+            model_list.map(model => model.id),
             oai_settings.fireworks_model,
-            chatModels[0]?.id || '',
+            model_list[0]?.id || '',
         );
 
         setModelSelectValue(chat_completion_sources.FIREWORKS, oai_settings.fireworks_model);
@@ -4145,6 +4302,7 @@ function getReasoningEffort(settings = null, model = null) {
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.CHUTES,
         chat_completion_sources.AWS_BEDROCK,
+        chat_completion_sources.FIREWORKS,
     ];
 
     if (!reasoningEffortSources.includes(settings.chat_completion_source)) {
@@ -4163,7 +4321,7 @@ function getReasoningEffort(settings = null, model = null) {
         }
 
         function resolveMaximumReasoningEffort() {
-            if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
+            if ([chat_completion_sources.AWS_BEDROCK, chat_completion_sources.FIREWORKS].includes(settings.chat_completion_source)) {
                 return reasoning_effort_types.max;
             }
             return reasoning_effort_types.high;
@@ -4424,7 +4582,6 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if (settings.reverse_proxy && proxySupportedSources.includes(settings.chat_completion_source)) {
-        await validateReverseProxy();
         generate_data.reverse_proxy = settings.reverse_proxy;
         generate_data.proxy_password = settings.proxy_password;
     }
@@ -4698,6 +4855,16 @@ export async function createGenerationParameters(settings, model, type, messages
 }
 
 /**
+ * @param {string} type
+ * @param {ChatCompletionMessage[]} messages
+ * @param {import('../script.js').AdditionalRequestOptions & { toolData?: object|null }} options
+ * @returns {Promise<object>}
+ */
+export function createCurrentGenerationParameters(type, messages, { jsonSchema = null, allowToolCalls = true, toolData = undefined } = {}) {
+    return createGenerationParameters(oai_settings, getChatCompletionModel(oai_settings), type, messages, { jsonSchema, allowToolCalls, toolData });
+}
+
+/**
  * Send a chat completion request to backend
  * @param {string} type Request type (impersonate, quiet, continue, etc)
  * @param {ChatCompletionMessage[]} messages Array of chat completion messages
@@ -4712,8 +4879,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
         signal = new AbortController().signal;
     }
 
-    const model = getChatCompletionModel(oai_settings);
-    const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, allowToolCalls, toolData });
+    const { generate_data, stream, canMultiSwipe } = await createCurrentGenerationParameters(type, messages, { jsonSchema, allowToolCalls, toolData });
+    if (generate_data.reverse_proxy) {
+        await validateReverseProxy();
+    }
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
     legacyMcpToolRound?.finalizeAdvertisedTools(generate_data);
     const requestContext = getChatCompletionRequestContext(generate_data);
@@ -4932,7 +5101,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.MINIMAX, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.MINIMAX, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI, chat_completion_sources.FIREWORKS].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -5194,6 +5363,8 @@ class Message {
     agentMessage = null;
     /** @type {Record<string, unknown>|null} */
     fields = null;
+    /** @type {PromptPiece[]|null} */
+    pieces = null;
 
     /**
      * @constructor
@@ -5229,17 +5400,25 @@ class Message {
     }
 
     /**
-     * Counts the tokens of messages built without counting, all in one request. Messages with nothing to count keep
-     * their tokens.
-     * @param {Message[]} messages Messages to count
-     * @param {TokenHandler} messageTokenHandler Token handler for the active prompt assembly runtime.
+     * Count pieces in the message batch; attribution must not add tokenizer round trips.
+     * @param {Message[]} messages
+     * @param {TokenHandler} messageTokenHandler
      * @returns {Promise<void>}
      */
     static async countAllAsync(messages, messageTokenHandler = tokenHandler) {
         const counted = messages.filter(message => message.#hasTokens());
-        const tokens = await messageTokenHandler.countEachAsync(counted.map(message => message.#countedMessage()));
+        const pieces = counted.flatMap(message => message.pieces?.length > 1
+            ? message.pieces.map(piece => ({ piece, role: message.role }))
+            : []);
+        const tokens = await messageTokenHandler.countEachAsync([
+            ...counted.map(message => message.#countedMessage()),
+            ...pieces.map(({ piece, role }) => ({ role, content: piece.text })),
+        ]);
         counted.forEach((message, index) => {
             message.tokens = tokens[index];
+        });
+        pieces.forEach(({ piece }, index) => {
+            piece.tokens = tokens[counted.length + index];
         });
     }
 
@@ -5276,6 +5455,7 @@ class Message {
     static fromAgentMessage(agentMessage, identifier) {
         const message = new Message(agentMessage.role, '', identifier);
         message.agentMessage = agentMessage;
+        message.pieces = [{ type: 'chat' }];
         return message;
     }
 
@@ -5544,6 +5724,7 @@ class Message {
         if (prompt.fields) {
             message.fields = prompt.fields;
         }
+        message.pieces = [promptPiece(prompt)];
         return message;
     }
 
@@ -5664,13 +5845,12 @@ export class ChatCompletion {
      */
     async squashSystemMessages(messageTokenHandler = tokenHandler) {
         const excludeList = ['newMainChat', 'newChat', 'groupNudge', AGENT_SYSTEM_PROMPT_IDENTIFIER];
-        this.messages.collection = this.messages.flatten();
 
         let lastMessage = null;
         let squashedMessages = [];
         const merged = new Set();
 
-        for (let message of this.messages.collection) {
+        for (let message of this.messages.flatten()) {
             // Force exclude empty messages
             if (message.role === 'system' && !message.isSendable()) {
                 continue;
@@ -5682,8 +5862,13 @@ export class ChatCompletion {
 
             if (shouldSquash(message)) {
                 if (lastMessage && shouldSquash(lastMessage)) {
+                    // Prompt Manager still holds the originals.
+                    if (!merged.has(lastMessage)) {
+                        lastMessage = Object.assign(new Message(lastMessage.role, lastMessage.content, lastMessage.identifier), lastMessage, { pieces: null });
+                        squashedMessages[squashedMessages.length - 1] = lastMessage;
+                        merged.add(lastMessage);
+                    }
                     lastMessage.content += '\n' + message.content;
-                    merged.add(lastMessage);
                 }
                 else {
                     squashedMessages.push(message);
@@ -5697,7 +5882,7 @@ export class ChatCompletion {
         }
 
         await Message.countAllAsync([...merged], messageTokenHandler);
-        this.messages.collection = squashedMessages;
+        this.messages = new MessageCollection('root', ...squashedMessages);
     }
 
     /**
@@ -6137,63 +6322,13 @@ function resolveChatCompletionSourceSelectValue(settings) {
 }
 
 function syncChatCompletionSourceSelector() {
-    const value = resolveChatCompletionSourceSelectValue(oai_settings);
+    const requested = resolveChatCompletionSourceSelectValue(oai_settings);
+    const value = chatCompletionSources.resolve(requested);
+    if (value !== requested) {
+        applyChatCompletionSourceSelection(value);
+    }
     $('#chat_completion_source').val(value);
     $('#chat_completion_source').find(`option[value="${CSS.escape(value)}"]`).prop('selected', true);
-}
-
-function normalizeIosPolicyChatCompletionSourceKey(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized.startsWith('custom_')) {
-        return chat_completion_sources.CUSTOM;
-    }
-    return normalized;
-}
-
-function enforceIosPolicyChatCompletionSourceSelector() {
-    const caps = getActiveIosPolicyCapabilities();
-    if (!caps) {
-        return;
-    }
-
-    const select = document.getElementById('chat_completion_source');
-    if (!(select instanceof HTMLSelectElement)) {
-        throw new Error('[TauriTavern][iOSPolicy] Chat completion source selector not found');
-    }
-
-    const allowlist = caps.llm?.chat_completion_sources?.allowlist;
-    const endpointOverridesAllowed = caps.llm?.endpoint_overrides !== false;
-
-    const isAllowed = (value) => {
-        const key = normalizeIosPolicyChatCompletionSourceKey(value);
-        if (!key) {
-            return false;
-        }
-
-        if (!endpointOverridesAllowed && key === chat_completion_sources.CUSTOM) {
-            return false;
-        }
-
-        return allowlistSettingAllows(allowlist, key);
-    };
-
-    const currentValue = String(select.value || '').trim();
-    if (currentValue && isAllowed(currentValue)) {
-        return;
-    }
-
-    const fallback = Array.from(select.options)
-        .map((option) => option.value)
-        .find(isAllowed);
-
-    if (!fallback) {
-        throw new Error('[TauriTavern][iOSPolicy] No allowed chat completion source remains after applying policy');
-    }
-
-    if (fallback !== currentValue) {
-        select.value = fallback;
-        globalThis.toastr?.warning?.('Chat Completion Source was reset due to your iOS policy.');
-    }
 }
 
 function updateCustomEndpointPreview() {
@@ -6325,11 +6460,10 @@ function loadOpenAISettings(data, settings) {
     setToolReasoningControls();
     ToolManager.RECURSE_LIMIT = oai_settings.tool_call_recurse_limit;
 
-    $('#openrouter_providers_chat').trigger('change');
+    applySavedModelProviders('#openrouter_providers_chat', oai_settings.openrouter_providers);
     $('#openrouter_quantizations_chat').trigger('change');
-    $('#nanogpt_provider').trigger('change');
+    applySavedModelProviders('#nanogpt_provider', [oai_settings.nanogpt_provider]);
     syncChatCompletionSourceSelector();
-    enforceIosPolicyChatCompletionSourceSelector();
     applyCustomModelOptionsToAllSources();
     $('#chat_completion_source').trigger('change');
     updateCustomEndpointPreview();
@@ -7048,12 +7182,12 @@ function onSettingsPresetChange() {
 
         // These cannot be changed via preset if unbound to connection
         if (oai_settings.bind_preset_to_connection) {
+            applySavedModelProviders('#openrouter_providers_chat', oai_settings.openrouter_providers);
+            applySavedModelProviders('#nanogpt_provider', [oai_settings.nanogpt_provider]);
             syncChatCompletionSourceSelector();
             applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');
-            $('#openrouter_providers_chat').trigger('change');
             $('#openrouter_quantizations_chat').trigger('change');
-            $('#nanogpt_provider').trigger('change');
         }
 
         $('#openai_logit_bias_preset').trigger('change');
@@ -7241,6 +7375,7 @@ function getZaiMaxContext(model, isUnlocked) {
     }
 
     const contextMap = {
+        'glm-5.4': max_1mil,
         'glm-5.3-flash': max_1mil,
         'glm-5.3': max_1mil,
         'glm-5.2': max_1mil,
@@ -7515,7 +7650,7 @@ async function onModelChange() {
 
         console.log('OpenRouter model changed to', value);
         oai_settings.openrouter_model = value;
-        syncOpenRouterProvidersForModel(value, '#openrouter_providers_chat');
+        syncModelProviders('#openrouter_providers_chat', value);
     }
 
     if ($(this).is('#model_ai21_select')) {
@@ -7625,7 +7760,7 @@ async function onModelChange() {
 
         console.log('NanoGPT model changed to', value);
         oai_settings.nanogpt_model = value;
-        syncNanoGptProvidersForModel(value, '#nanogpt_provider');
+        syncModelProviders('#nanogpt_provider', value);
     }
 
     if ($(this).is('#model_deepseek_select')) {
@@ -8449,6 +8584,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'kimi-k2.5',
         'kimi-latest',
         // Z.AI (GLM)
+        'glm-5.4',
         'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
@@ -8482,30 +8618,12 @@ export function isImageInliningSupported(settings = oai_settings) {
             return visionSupportedModels.some(model => settings.claude_model.includes(model));
         case chat_completion_sources.DEEPSEEK:
             return ['deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(settings.deepseek_model);
-        case chat_completion_sources.OPENROUTER:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:
             return true;
-        case chat_completion_sources.MISTRALAI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.mistralai_model)?.capabilities?.vision);
         case chat_completion_sources.COHERE:
             return visionSupportedModels.some(model => settings.cohere_model.includes(model));
-        case chat_completion_sources.XAI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.xai_model)?.input_modalities?.includes('image'));
-        case chat_completion_sources.AIMLAPI:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.aimlapi_model)?.features?.includes('openai/chat-completion.vision'));
-        case chat_completion_sources.CHUTES:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.chutes_model)?.input_modalities?.includes('image'));
-        case chat_completion_sources.ELECTRONHUB:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.electronhub_model)?.metadata?.vision);
-        case chat_completion_sources.POLLINATIONS:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.pollinations_model)?.input_modalities?.includes('image'));
         case chat_completion_sources.COMETAPI:
             return true;
-        case chat_completion_sources.MOONSHOT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.moonshot_model)?.supports_image_in);
-        case chat_completion_sources.NANOGPT:
-            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.nanogpt_model)?.capabilities?.vision);
         case chat_completion_sources.AWS_BEDROCK:
             return Boolean(getAwsBedrockModelCapabilities(settings.aws_bedrock_model)?.images);
         case chat_completion_sources.ZAI:
@@ -8514,12 +8632,10 @@ export function isImageInliningSupported(settings = oai_settings) {
             return visionSupportedModels.some(model => settings.minimax_model.includes(model));
         case chat_completion_sources.SILICONFLOW:
             return visionSupportedModels.some(model => settings.siliconflow_model.includes(model));
-        case chat_completion_sources.WORKERS_AI: {
-            const model = Array.isArray(model_list) && model_list.find(m => m.id === settings.workers_ai_model);
-            return Boolean(model && Array.isArray(model.properties) && model.properties.some(p => p.property_id === 'vision' && p.value === 'true'));
+        default: {
+            const modelId = getChatCompletionModel(settings);
+            return modelAcceptsImages(settings.chat_completion_source, model_list.find(model => model.id === modelId));
         }
-        default:
-            return false;
     }
 }
 
@@ -8545,6 +8661,7 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'gemini-4',
         'gemma-4',
         // Z.AI (GLM)
+        'glm-5.4',
         'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
@@ -8688,25 +8805,12 @@ function moveHiddenPrefillReasoning(chatCompletion) {
 }
 
 /**
- * Check whether the selected source uses Gemini's native GenerateContent protocol.
- * @param {ChatCompletionSettings} settings Settings object to use
- * @returns {boolean} True for direct Gemini providers
- */
-function isDirectGeminiSource(settings = oai_settings) {
-    return isCustomGeminiGenerateContent(settings)
-        || settings.chat_completion_source === chat_completion_sources.MAKERSUITE
-        || (settings.chat_completion_source === chat_completion_sources.VERTEXAI
-            && !isVertexAiClaudeModelId(getChatCompletionModel(settings) ?? ''));
-}
-
-/**
  * Check if the model supports encrypted reasoning signatures.
  * @param {ChatCompletionSettings} settings Settings object to use
  * @returns {boolean} True if reasoning signatures should be included in the request
  */
 export function isReasoningSignatureSupported(settings = oai_settings) {
-    // If it's Vertex AI Gemini or Makersuite, that's OK - convertGooglePrompt() will handle it later
-    const isGoogle = isDirectGeminiSource(settings);
+    const isGoogle = usesGeminiGenerateContent(settings);
     // Need a more crunchy check for OpenRouter: look for Gemini models
     const isOpenRouterGemini = settings.chat_completion_source === chat_completion_sources.OPENROUTER && /google\/gemini/i.test(settings.openrouter_model);
     return isGoogle || isOpenRouterGemini;
@@ -9215,7 +9319,6 @@ export function initOpenAI() {
     });
 
     $('#chat_completion_source').on('change', function () {
-        enforceIosPolicyChatCompletionSourceSelector();
         cancelStatusCheck('Chat Completion source changed');
         model_list = [];
         applyChatCompletionSourceSelection(String($(this).find(':selected').val()));
@@ -9280,7 +9383,7 @@ export function initOpenAI() {
 
     $('#openrouter_allow_fallbacks').on('input', function () {
         oai_settings.openrouter_allow_fallbacks = !!$(this).prop('checked');
-        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
+        updateModelProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -9566,7 +9669,7 @@ export function initOpenAI() {
 
         oai_settings.openrouter_providers = selectedProviders;
 
-        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
+        updateModelProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -9585,7 +9688,7 @@ export function initOpenAI() {
 
     $('#nanogpt_provider').on('change', function () {
         oai_settings.nanogpt_provider = String($(this).val() || '');
-        updateNanoGptProvidersWarning('#nanogpt_provider');
+        updateModelProvidersWarning('#nanogpt_provider');
         saveSettingsDebounced();
     });
 

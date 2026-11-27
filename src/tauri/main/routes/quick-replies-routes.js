@@ -22,7 +22,7 @@ export function registerQuickReplyRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: 'Quick Reply set name is required' }, 400);
         }
 
-        await context.safeInvoke('save_quick_reply_set', { payload });
+        await context.safeInvoke('save_quick_reply_set', { json: JSON.stringify(payload) });
         return jsonResponse({ ok: true });
     };
 
@@ -33,7 +33,7 @@ export function registerQuickReplyRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: 'Quick Reply set name is required' }, 400);
         }
 
-        await context.safeInvoke('delete_quick_reply_set', { payload });
+        await context.safeInvoke('delete_quick_reply_set', { name });
         return jsonResponse({ ok: true });
     };
 

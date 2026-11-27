@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::endpoint_url::HostLabel;
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::vertex_ai::VertexAiConnection;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LocalEmbeddingModel {
@@ -23,7 +26,7 @@ impl LocalEmbeddingModel {
 
     pub const fn profile(self) -> &'static str {
         match self {
-            Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B|f32-v1|max=8192|query-prompt-v1",
+            Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B|f16-v1|max=8192|query-prompt-v1",
         }
     }
 
@@ -128,8 +131,7 @@ pub enum RemoteEmbeddingProtocol {
     },
     VertexAi {
         model: String,
-        region: HostLabel,
-        auth: VertexEmbeddingAuth,
+        connection: VertexAiConnection,
     },
     Ollama {
         base_url: String,
@@ -151,14 +153,21 @@ pub enum RemoteEmbeddingProtocol {
     },
 }
 
-#[derive(Clone)]
-pub enum VertexEmbeddingAuth {
-    Express {
+pub enum RemoteEmbeddingCatalog {
+    OpenRouter,
+    NanoGpt {
         api_key: String,
-        project_id: Option<String>,
     },
-    ServiceAccount {
-        json: String,
+    Chutes {
+        api_key: String,
+    },
+    SiliconFlow {
+        api_key: String,
+        endpoint: SiliconFlowEndpoint,
+    },
+    WorkersAi {
+        api_key: String,
+        account: WorkersAiAccount,
     },
 }
 
@@ -168,6 +177,10 @@ pub trait RemoteEmbeddingRepository: Send + Sync {
         &self,
         request: RemoteEmbeddingRequest,
     ) -> Result<RemoteEmbeddingBatch, DomainError>;
+
+    /// Entries keep the shape SillyTavern's embedding model routes return.
+    async fn list_models(&self, catalog: RemoteEmbeddingCatalog)
+    -> Result<Vec<Value>, DomainError>;
 }
 
 #[async_trait]

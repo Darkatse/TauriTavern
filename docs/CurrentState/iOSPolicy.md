@@ -55,6 +55,7 @@
 - allowlist（如下两类）支持：
   - `"all"`
   - `["item-a", "item-b"]`
+- `llm.chat_completion_sources.allowlist` 至少要留下一个可用来源（`custom` 还要求 `llm.endpoint_overrides`）
 
 实现位置：
 
@@ -183,10 +184,11 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 - `updates.manual_check`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`
+  - 来源是否可用：`src-tauri/crates/tt-domain/src/ios_policy.rs:IosPolicyLlmCapabilities::allows_chat_completion_source`（`custom` 还要求 `llm.endpoint_overrides`）
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
 - `llm.endpoint_overrides`
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
-  - 行为：禁用时禁止 `custom` source；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
+  - 行为：禁用时 `custom` source 不可用；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
 - `llm.chat_completion_features.web_search` / `llm.chat_completion_features.request_images`
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
@@ -212,6 +214,9 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
 - `llm.text_completions.enabled` / `ai.horde`
   - 主 API 选择器去掉文本补全或 Horde；settings 里保存的主 API 被去掉时，加载 settings 时切回 chat completion 并提示
   - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`
+- `llm.chat_completion_sources.allowlist` / `llm.endpoint_overrides`
+  - bootstrap 的 `available_chat_completion_sources` 列出宿主已实现且策略允许的来源；前端删去其余 `#chat_completion_source` 选项，设置或预设指向不可用来源时切到列表中的第一个来源并提示；`/api`、`/custom-api-format` 与 Connection Manager 的请求服务按同一判断拒绝不可用的来源
+  - 实现：`src/tauri/main/adapters/st/host-availability.js` 的 `chatCompletionSources`
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）
 
@@ -227,7 +232,6 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - `content.external_import=false`：隐藏 external import 按钮 + onboarding 文案块
   - `prompts.nsfw_prompt=false`：隐藏 NSFW quick edit textarea 区块（仅 UI 投影）
   - `prompts.jailbreak_prompt=false`：隐藏 Jailbreak quick edit textarea + “prefer character jailbreak”开关（仅 UI 投影）
-  - `llm.chat_completion_sources.allowlist`：过滤 `#chat_completion_source` 选项并修正当前值
   - `llm.endpoint_overrides=false`：隐藏 reverse proxy / custom endpoint 相关 UI
   - `llm.chat_completion_features.web_search=false`：隐藏 web search 开关
   - `llm.chat_completion_features.request_images=false`：隐藏 request images block
@@ -237,8 +241,6 @@ Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestF
   - `sync.lan=false`：隐藏 Sync panel（避免触发相机/局域网相关入口）
 - 外部导入点击门禁：`src/script.js`
   - `content.external_import=false` 时直接 toast 并 return（避免“隐藏失效/脚本触发”）
-- LLM source selector 兜底：`src/scripts/openai.js`
-  - `llm.chat_completion_sources.allowlist` + `llm.endpoint_overrides`：当当前选择不允许时自动回落到允许项（并 toast）
 - Slash Commands 注册收口：
   - `scripting.prompt_injections=false`：不注册 `/inject` `/listinjects` `/flushinject(s)` 等命令
     - `src/scripts/slash-commands.js`

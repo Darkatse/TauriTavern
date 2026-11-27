@@ -121,19 +121,32 @@ pub(crate) fn parse_header(bytes: &[u8]) -> Result<Map<String, Value>, DomainErr
     Ok(header)
 }
 
-/// Read identity without materializing the header's unknown metadata or extension values.
-pub(crate) fn parse_header_integrity(bytes: &[u8]) -> Result<Option<String>, DomainError> {
+/// Locate `chat_metadata` without materializing the header's other values.
+fn header_metadata(bytes: &[u8]) -> Result<Option<&RawValue>, DomainError> {
     let text = std::str::from_utf8(bytes).map_err(|error| {
         DomainError::InvalidData(format!("Chat header is not valid UTF-8: {error}"))
     })?;
-    let fields: HashMap<String, &RawValue> = serde_json::from_str(text).map_err(|error| {
+    let mut fields: HashMap<String, &RawValue> = serde_json::from_str(text).map_err(|error| {
         DomainError::InvalidData(format!("Invalid chat header object: {error}"))
     })?;
-    if let Some(metadata) = fields.get("chat_metadata") {
-        return parse_metadata_integrity(metadata);
-    }
+    Ok(fields.remove("chat_metadata"))
+}
 
-    Ok(None)
+/// Read identity without materializing the header's unknown metadata or extension values.
+pub(crate) fn parse_header_integrity(bytes: &[u8]) -> Result<Option<String>, DomainError> {
+    match header_metadata(bytes)? {
+        Some(metadata) => parse_metadata_integrity(metadata),
+        None => Ok(None),
+    }
+}
+
+/// The stored `chat_metadata` text, from a header whose identity is valid.
+pub(crate) fn parse_header_metadata(bytes: &[u8]) -> Result<Option<&RawValue>, DomainError> {
+    let metadata = header_metadata(bytes)?;
+    if let Some(metadata) = metadata {
+        parse_metadata_integrity(metadata)?;
+    }
+    Ok(metadata)
 }
 
 pub(crate) fn parse_metadata_integrity(metadata: &RawValue) -> Result<Option<String>, DomainError> {

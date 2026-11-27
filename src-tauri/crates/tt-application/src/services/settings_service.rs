@@ -1,23 +1,21 @@
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tt_domain::models::persona::{Personas, insert_personas, take_personas};
+use tt_domain::models::persona::{Personas, insert_personas};
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 use crate::dto::settings_dto::{
     SettingsJsonDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateAgentSettingsDto, UpdateAppUpdateSettingsDto, UpdateChatBackupSettingsDto,
-    UpdateTauriTavernSettingsDto, UserSettingsDto, UserSettingsRevisionDto,
-    UserSettingsSaveResultDto,
+    UpdateTauriTavernSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
-    DevLoggingSettings, RequestProxySettings, UserSettings,
+    DevLoggingSettings, RequestProxySettings,
 };
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
@@ -488,15 +486,12 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         let settings_json = async {
             let StoredUserSettings {
-                settings: mut user_settings,
+                mut settings,
                 revision,
             } = self.settings_repository.load_user_settings().await?;
-            insert_personas(&mut user_settings.data, &self.avatars.get_personas().await?);
-            let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
-                ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
-            })?;
+            insert_personas(&mut settings, &self.avatars.get_personas().await?)?;
 
-            Ok::<_, ApplicationError>((settings_json, revision))
+            Ok::<_, ApplicationError>((settings.to_string(), revision))
         };
 
         let ai_settings = async {
@@ -563,14 +558,6 @@ impl SettingsService {
             ),
         ) = tokio::try_join!(settings_json, ai_settings, world_names, presets)?;
 
-        let themes_json = Self::settings_values(themes);
-        let moving_ui_presets_json = Self::settings_values(moving_ui_presets);
-        let quick_reply_presets_json = Self::settings_values(quick_reply_presets);
-        let instruct_presets_json = Self::settings_values(instruct_presets);
-        let context_presets_json = Self::settings_values(context_presets);
-        let sysprompt_presets_json = Self::settings_values(sysprompt_presets);
-        let reasoning_presets_json = Self::settings_values(reasoning_presets);
-
         let response = SillyTavernSettingsResponseDto {
             settings: settings_json,
             tauritavern_settings_revision,
@@ -583,23 +570,19 @@ impl SettingsService {
             openai_setting_names,
             textgenerationwebui_presets: textgen_settings,
             textgenerationwebui_preset_names: textgen_setting_names,
-            themes: themes_json,
-            moving_ui_presets: moving_ui_presets_json,
-            quick_reply_presets: quick_reply_presets_json,
-            instruct: instruct_presets_json,
-            context: context_presets_json,
-            sysprompt: sysprompt_presets_json,
-            reasoning: reasoning_presets_json,
+            themes,
+            moving_ui_presets,
+            quick_reply_presets,
+            instruct: instruct_presets,
+            context: context_presets,
+            sysprompt: sysprompt_presets,
+            reasoning: reasoning_presets,
             enable_extensions: true,
             enable_extensions_auto_update: true,
             enable_accounts: false,
         };
 
         Ok(response)
-    }
-
-    fn settings_values(settings: Vec<UserSettings>) -> Vec<Value> {
-        settings.into_iter().map(|settings| settings.data).collect()
     }
 
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
@@ -620,25 +603,25 @@ impl SettingsService {
         Ok(snapshot_dtos)
     }
 
-    pub async fn load_snapshot(&self, name: &str) -> Result<UserSettingsDto, ApplicationError> {
+    /// The snapshot's settings as indented JSON text.
+    pub async fn load_snapshot(&self, name: &str) -> Result<Vec<u8>, ApplicationError> {
         tracing::info!("Loading settings snapshot: {}", name);
 
         let settings = self.settings_repository.load_snapshot(name).await?;
 
-        Ok(UserSettingsDto::from(settings))
+        Ok(settings.to_pretty_vec())
     }
 
     pub async fn restore_snapshot(&self, name: &str) -> Result<(), ApplicationError> {
         tracing::info!("Restoring settings snapshot: {}", name);
 
         let _guard = self.user_settings_save_lock.lock().await;
-        let mut settings = self.settings_repository.load_snapshot(name).await?;
-        if let Some(personas) = take_personas(&mut settings.data)? {
-            self.avatars.import_personas(&personas).await?;
-        }
-        self.settings_repository
+        let settings = self.settings_repository.load_snapshot(name).await?;
+        let personas = self
+            .settings_repository
             .save_user_settings(settings)
             .await?;
+        self.avatars.import_personas(&personas).await?;
         self.clear_sillytavern_settings_cache().await;
 
         Ok(())
@@ -651,7 +634,7 @@ pub(crate) async fn snapshot_user_settings(
     avatars: &dyn AvatarRepository,
 ) -> Result<String, ApplicationError> {
     let mut settings = settings_repository.load_user_settings().await?.settings;
-    insert_personas(&mut settings.data, &avatars.get_personas().await?);
+    insert_personas(&mut settings, &avatars.get_personas().await?)?;
     Ok(settings_repository.create_snapshot(settings).await?)
 }
 
@@ -672,7 +655,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
-    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+    use tt_domain::json_document::JsonDocument;
+    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings};
 
     #[test]
     fn agent_retention_update_applies_partial_settings() {
@@ -1000,15 +984,16 @@ mod tests {
             unreachable!()
         }
 
-        async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn save_user_settings(
+            &self,
+            _settings: JsonDocument,
+        ) -> Result<Personas, DomainError> {
             unreachable!()
         }
 
         async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError> {
             Ok(StoredUserSettings {
-                settings: UserSettings {
-                    data: serde_json::json!({}),
-                },
+                settings: JsonDocument::default(),
                 revision: tt_domain::models::settings::revision::UserSettingsRevision {
                     hash_algorithm: String::new(),
                     settings_hash: String::new(),
@@ -1037,7 +1022,7 @@ mod tests {
             unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: UserSettings) -> Result<String, DomainError> {
+        async fn create_snapshot(&self, _settings: JsonDocument) -> Result<String, DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -1045,7 +1030,7 @@ mod tests {
             unimplemented!("not used by these tests")
         }
 
-        async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+        async fn load_snapshot(&self, _name: &str) -> Result<JsonDocument, DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -1055,31 +1040,31 @@ mod tests {
             unreachable!()
         }
 
-        async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 

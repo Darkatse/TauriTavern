@@ -332,7 +332,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
     });
 
     router.post('/api/themes/save', async ({ body }) => {
-        await context.safeInvoke('save_theme', { dto: body || {} });
+        await context.safeInvoke('save_theme', { json: JSON.stringify(body ?? null) });
         return jsonResponse({ ok: true });
     });
 

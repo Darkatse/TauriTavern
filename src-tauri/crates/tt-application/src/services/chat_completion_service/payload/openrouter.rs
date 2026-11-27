@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use crate::services::openrouter;
 
 use super::super::model_capabilities::map_openrouter_reasoning_effort;
 use super::content_parts::{
@@ -128,7 +129,7 @@ fn apply_openrouter_overrides(
         body.insert("plugins".to_string(), json!([{ "id": "web" }]));
     }
 
-    if let Some(provider) = map_provider_preferences(source_payload) {
+    if let Some(provider) = openrouter::provider_preferences(source_payload) {
         body.insert("provider".to_string(), provider);
     }
 
@@ -171,38 +172,6 @@ fn map_middleout_transforms(value: Option<&Value>) -> Option<Value> {
         "off" => Some(Value::Array(Vec::new())),
         _ => None,
     }
-}
-
-fn map_provider_preferences(source_payload: &Map<String, Value>) -> Option<Value> {
-    let order = source_payload
-        .get("provider")
-        .and_then(Value::as_array)
-        .filter(|providers| !providers.is_empty())
-        .cloned();
-    let quantizations = source_payload
-        .get("quantizations")
-        .and_then(Value::as_array)
-        .filter(|items| !items.is_empty())
-        .cloned();
-
-    if order.is_none() && quantizations.is_none() {
-        return None;
-    }
-
-    let mut provider = Map::new();
-    if let Some(order) = order {
-        let allow_fallbacks = source_payload
-            .get("allow_fallbacks")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-        provider.insert("allow_fallbacks".to_string(), Value::Bool(allow_fallbacks));
-        provider.insert("order".to_string(), Value::Array(order));
-    }
-    if let Some(quantizations) = quantizations {
-        provider.insert("quantizations".to_string(), Value::Array(quantizations));
-    }
-
-    Some(Value::Object(provider))
 }
 
 #[cfg(test)]

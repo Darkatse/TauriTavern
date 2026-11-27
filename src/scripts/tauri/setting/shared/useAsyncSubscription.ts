@@ -6,7 +6,7 @@ async function disposeSubscription(teardown: SubscriptionTeardown): Promise<void
     try {
         await teardown();
     } catch (error) {
-        console.error('TauriTavern dev log subscription teardown failed', error);
+        console.error('TauriTavern host subscription teardown failed', error);
     }
 }
 

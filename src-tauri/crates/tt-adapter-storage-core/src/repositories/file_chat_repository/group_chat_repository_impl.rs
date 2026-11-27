@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::fs;
 
 use crate::file_system::move_file_no_replace_with_fallback;
@@ -214,7 +214,7 @@ impl GroupChatRepository for FileChatRepository {
             .await
     }
 
-    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError> {
+    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Box<RawValue>, DomainError> {
         let path = self.get_group_chat_path(chat_id)?;
         self.read_chat_metadata_from_path(&path).await
     }
@@ -224,7 +224,7 @@ impl GroupChatRepository for FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         self.get_group_chat_store_json_value(chat_id, namespace, key)
             .await
     }
@@ -234,9 +234,9 @@ impl GroupChatRepository for FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
-        self.set_group_chat_store_json_value(chat_id, namespace, key, value)
+        self.set_group_chat_store_json_value(chat_id, namespace, key, value_json)
             .await
     }
 
@@ -245,9 +245,9 @@ impl GroupChatRepository for FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
-        self.update_group_chat_store_json_value(chat_id, namespace, key, value)
+        self.update_group_chat_store_json_value(chat_id, namespace, key, value_json)
             .await
     }
 

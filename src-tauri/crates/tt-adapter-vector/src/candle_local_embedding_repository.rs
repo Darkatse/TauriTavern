@@ -1,14 +1,15 @@
 use std::error::Error;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::qwen3::{Config, Model};
-use hf_hub::api::sync::ApiBuilder;
-use tokenizers::{PaddingParams, PaddingStrategy, TruncationParams};
+use tokenizers::{Tokenizer, TruncationParams};
+use tokio::sync::OnceCell;
 
+use tt_adapter_http::{HttpClientPool, PinnedFile, PinnedFileCache};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::vector_repository::{
     LocalEmbeddingModel, LocalEmbeddingRepository, LocalEmbeddingRequest,
@@ -18,126 +19,156 @@ const QWEN_MAX_LENGTH: usize = 8_192;
 const QWEN_RETRIEVAL_INSTRUCTION: &str =
     "Given a conversation context, retrieve relevant passages and memories";
 
+macro_rules! qwen3_embedding_0_6b {
+    ($file:literal) => {
+        concat!(
+            "https://modelscope.cn/models/Qwen/Qwen3-Embedding-0.6B/resolve/dd3e37eb506b3addbd930037796e25d349ae9010/",
+            $file
+        )
+    };
+}
+
+const QWEN3_EMBEDDING_0_6B: QwenFiles = QwenFiles {
+    config: PinnedFile {
+        url: qwen3_embedding_0_6b!("config.json"),
+        sha256: "b5bf1f51fc45be473a54718cef92448d90a1be001bf9b9a44b8c7f10a19feaa9",
+    },
+    tokenizer: PinnedFile {
+        url: qwen3_embedding_0_6b!("tokenizer.json"),
+        sha256: "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+    },
+    weights: PinnedFile {
+        url: qwen3_embedding_0_6b!("model.safetensors"),
+        sha256: "0437e45c94563b09e13cb7a64478fc406947a93cb34a7e05870fc8dcd48e23fd",
+    },
+};
+
 type EmbeddingResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 pub struct CandleLocalEmbeddingRepository {
-    cache_dir: PathBuf,
-    runtime: Arc<Mutex<Option<QwenEmbedding>>>,
+    files: PinnedFileCache,
+    qwen3_embedding_0_6b: OnceCell<Arc<QwenEmbedding>>,
+}
+
+#[derive(Clone, Copy)]
+struct QwenFiles {
+    config: PinnedFile,
+    tokenizer: PinnedFile,
+    weights: PinnedFile,
+}
+
+impl QwenFiles {
+    const fn of(model: LocalEmbeddingModel) -> Self {
+        match model {
+            LocalEmbeddingModel::Qwen3Embedding06B => QWEN3_EMBEDDING_0_6B,
+        }
+    }
+
+    const fn all(self) -> [PinnedFile; 3] {
+        [self.config, self.tokenizer, self.weights]
+    }
 }
 
 struct QwenEmbedding {
-    config: Config,
-    weights: VarBuilder<'static>,
-    tokenizer: tokenizers::Tokenizer,
+    /// Only run clones: they share weights but each text needs an empty KV cache.
+    model: Model,
+    tokenizer: Tokenizer,
 }
 
 impl QwenEmbedding {
-    fn load(cache_dir: PathBuf) -> EmbeddingResult<Self> {
-        let repo = ApiBuilder::from_env()
-            .with_cache_dir(cache_dir)
-            .with_progress(false)
-            .build()?
-            .model(LocalEmbeddingModel::Qwen3Embedding06B.id().to_string());
-
-        let config = serde_json::from_slice(&std::fs::read(repo.get("config.json")?)?)?;
-        let weight_files = [repo.get("model.safetensors")?];
-        let device = Device::Cpu;
-        // SAFETY: hf-hub owns the immutable, content-addressed files for the mmap lifetime.
+    fn load(config: &Path, tokenizer: &Path, weights: &Path) -> EmbeddingResult<Self> {
+        let config: Config = serde_json::from_slice(&std::fs::read(config)?)?;
+        // SAFETY: the cache never modifies the published weights while they are mapped.
         let weights =
-            unsafe { VarBuilder::from_mmaped_safetensors(&weight_files, DType::F32, &device)? }
+            unsafe { VarBuilder::from_mmaped_safetensors(&[weights], DType::F16, &Device::Cpu)? }
                 .rename_f(|name| name.strip_prefix("model.").unwrap_or(name).to_string());
-        let mut tokenizer = tokenizers::Tokenizer::from_file(repo.get("tokenizer.json")?)?;
-        tokenizer.with_padding(Some(PaddingParams {
-            strategy: PaddingStrategy::BatchLongest,
-            direction: tokenizers::PaddingDirection::Left,
-            ..Default::default()
-        }));
+        let model = Model::new(&config, weights)?;
+        let mut tokenizer = Tokenizer::from_file(tokenizer)?;
         tokenizer.with_truncation(Some(TruncationParams {
             max_length: QWEN_MAX_LENGTH,
             ..Default::default()
         }))?;
-
-        Ok(Self {
-            config,
-            weights,
-            tokenizer,
-        })
+        Ok(Self { model, tokenizer })
     }
 
-    fn embed(&self, texts: &[String]) -> EmbeddingResult<Vec<Vec<f32>>> {
-        if texts.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let encodings = self.tokenizer.encode_batch(texts.to_vec(), true)?;
-        let batch_size = encodings.len();
-        let sequence_length = encodings[0].len();
-        let input_ids = encodings
-            .iter()
-            .flat_map(|encoding| encoding.get_ids().iter().copied())
-            .collect::<Vec<_>>();
-        let input = Tensor::from_vec(
-            input_ids,
-            (batch_size, sequence_length),
-            self.weights.device(),
-        )?;
-
-        // Model keeps a generation KV cache, so recreate its lightweight tensor views per batch.
-        let mut model = Model::new(&self.config, self.weights.clone())?;
-        let hidden = model.forward(&input, 0)?;
-        let pooled = hidden.i((.., sequence_length - 1))?;
-        let norm = pooled.sqr()?.sum_keepdim(1)?.sqrt()?;
-        Ok(pooled
-            .broadcast_div(&norm)?
+    fn embed(&self, text: &str) -> EmbeddingResult<Vec<f32>> {
+        let encoding = self.tokenizer.encode(text, true)?;
+        let ids = encoding.get_ids();
+        let input = Tensor::new(ids, &Device::Cpu)?.unsqueeze(0)?;
+        let hidden = self.model.clone().forward(&input, 0)?;
+        // The tokenizer ends every text with <|endoftext|>, so there is a last token.
+        Ok(hidden
+            .i((0, ids.len() - 1))?
             .to_dtype(DType::F32)?
-            .to_vec2()?)
+            .to_vec1()?)
     }
 }
 
 impl CandleLocalEmbeddingRepository {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(cache_dir: PathBuf, http_clients: Arc<HttpClientPool>) -> Self {
         Self {
-            cache_dir,
-            runtime: Arc::new(Mutex::new(None)),
+            files: PinnedFileCache::new(cache_dir, http_clients),
+            qwen3_embedding_0_6b: OnceCell::new(),
         }
+    }
+
+    async fn runtime(&self, model: LocalEmbeddingModel) -> Result<Arc<QwenEmbedding>, DomainError> {
+        let runtime = match model {
+            LocalEmbeddingModel::Qwen3Embedding06B => &self.qwen3_embedding_0_6b,
+        };
+        runtime.get_or_try_init(|| self.load(model)).await.cloned()
+    }
+
+    async fn load(&self, model: LocalEmbeddingModel) -> Result<Arc<QwenEmbedding>, DomainError> {
+        let supported = LocalEmbeddingModel::SUPPORTED.map(|model| QwenFiles::of(model).all());
+        if let Err(error) = self.files.keep_only(supported.as_flattened()).await {
+            tracing::warn!(%error, "Local embedding model cache keeps stale files");
+        }
+
+        let files = QwenFiles::of(model);
+        let config = self.files.get(files.config).await?;
+        let tokenizer = self.files.get(files.tokenizer).await?;
+        let weights = self.files.get(files.weights).await?;
+        tokio::task::spawn_blocking(move || QwenEmbedding::load(&config, &tokenizer, &weights))
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!("Local embedding load task failed: {error}"))
+            })?
+            .map(Arc::new)
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to load local embedding model {}: {error}",
+                    model.id()
+                ))
+            })
     }
 }
 
 #[async_trait]
 impl LocalEmbeddingRepository for CandleLocalEmbeddingRepository {
     async fn embed(&self, request: LocalEmbeddingRequest) -> Result<Vec<Vec<f32>>, DomainError> {
-        let cache_dir = self.cache_dir.clone();
-        let runtime = self.runtime.clone();
+        let LocalEmbeddingRequest {
+            model,
+            texts,
+            is_query,
+        } = request;
+        let runtime = self.runtime(model).await?;
         tokio::task::spawn_blocking(move || {
-            let texts = prepare_texts(request.texts, request.is_query);
-            let mut runtime = runtime.lock().map_err(|_| {
-                DomainError::InternalError("Local embedding runtime lock was poisoned".to_string())
-            })?;
-
-            if runtime.is_none() {
-                *runtime = Some(QwenEmbedding::load(cache_dir).map_err(|error| {
-                    DomainError::transient(format!(
-                        "Failed to initialize local embedding model {}: {error}",
-                        request.model.id()
-                    ))
-                })?);
-            }
-
-            runtime
-                .as_ref()
-                .expect("local embedding runtime was initialized")
-                .embed(&texts)
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Local embedding inference failed for {}: {error}",
-                        request.model.id()
-                    ))
-                })
+            prepare_texts(texts, is_query)
+                .iter()
+                .map(|text| runtime.embed(text))
+                .collect::<EmbeddingResult<Vec<_>>>()
         })
         .await
         .map_err(|error| {
             DomainError::InternalError(format!("Local embedding task failed: {error}"))
         })?
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Local embedding inference failed for {}: {error}",
+                model.id()
+            ))
+        })
     }
 }
 

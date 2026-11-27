@@ -12,12 +12,12 @@ use tokio::sync::watch;
 use tokio::time::{Duration, sleep};
 use url::Url;
 
-use crate::workers_ai_endpoint::workers_ai_run_url;
 use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_domain::models::filename::sanitize_filename;
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::stable_diffusion_repository::{
     SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
     StableDiffusionRepository,
@@ -1346,6 +1346,16 @@ fn workers_ai_api_key(request: &SdRouteRequest) -> Result<&str, SdRouteResponse>
     }
 }
 
+fn workers_ai_account(request: &SdRouteRequest) -> Result<WorkersAiAccount, SdRouteResponse> {
+    let account_id = request
+        .body
+        .get("account_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    WorkersAiAccount::parse(account_id)
+        .map_err(|_| text(400, "Cloudflare Workers AI account ID is required"))
+}
+
 fn required_body_string_response(
     body: &Value,
     key: &str,
@@ -1451,17 +1461,13 @@ async fn workers_ai_models(
         Ok(api_key) => api_key,
         Err(response) => return Ok(response),
     };
-    let account_id = match required_body_string_response(
-        &request.body,
-        "account_id",
-        "Cloudflare Workers AI account ID is required",
-    ) {
-        Ok(account_id) => account_id,
+    let account = match workers_ai_account(request) {
+        Ok(account) => account,
         Err(response) => return Ok(response),
     };
 
     let client = http_clients.client(HttpClientProfile::ProviderMetadata)?;
-    let models = fetch_workers_ai_models(&client, api_key, &account_id, "Text-to-Image", 1000)
+    let models = fetch_workers_ai_models(&client, api_key, &account, "Text-to-Image", 1000)
         .await?
         .into_iter()
         .map(|model| {
@@ -1482,12 +1488,8 @@ async fn workers_ai_generate(
         Ok(api_key) => api_key,
         Err(response) => return Ok(response),
     };
-    let account_id = match required_body_string_response(
-        &request.body,
-        "account_id",
-        "Cloudflare Workers AI account ID is required",
-    ) {
-        Ok(account_id) => account_id,
+    let account = match workers_ai_account(request) {
+        Ok(account) => account,
         Err(response) => return Ok(response),
     };
     let model = match required_body_string_response(
@@ -1527,7 +1529,7 @@ async fn workers_ai_generate(
     maybe_insert_number(&mut payload, "guidance", &request.body, "scale")?;
     maybe_insert_nonnegative_number(&mut payload, "seed", &request.body, "seed")?;
 
-    let target = workers_ai_run_url(&account_id, &model)?;
+    let target = account.ai_url(&format!("run/{}", model.trim_start_matches('/')))?;
     let client = http_clients.client(HttpClientProfile::ImageGeneration)?;
     let mut builder = client
         .post(target)

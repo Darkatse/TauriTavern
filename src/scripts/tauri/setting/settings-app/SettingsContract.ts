@@ -203,7 +203,7 @@ export type SettingsActions = {
     reloadFrontend: () => Promise<unknown>;
     openFrontendLogs: () => Promise<unknown>;
     openBackendLogs: () => Promise<unknown>;
-    openLlmApiLogs: () => Promise<unknown>;
+    openRequestInspector: () => Promise<unknown>;
     openSync: () => Promise<unknown>;
 };
 
@@ -233,7 +233,7 @@ const REQUIRED_ACTIONS = [
     'reloadFrontend',
     'openFrontendLogs',
     'openBackendLogs',
-    'openLlmApiLogs',
+    'openRequestInspector',
     'openSync',
 ] as const;
 

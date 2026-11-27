@@ -15,7 +15,6 @@ use tt_application::dto::character_dto::{
     DuplicateCharacterDto, ExportCharacterContentDto, GetCharacterChatsDto, ImportCharacterDto,
     ImportCharacterResultDto, MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
     ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
 };
 use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
@@ -59,7 +58,7 @@ pub async fn create_character(
     dto: CreateCharacterDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CharacterDto, CommandError> {
-    log_command(format!("create_character {}", dto.name));
+    log_command("create_character");
 
     app_state
         .services
@@ -75,10 +74,7 @@ pub async fn create_character_with_avatar(
     dto: CreateWithAvatarDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CreateCharacterWithAvatarResultDto, CommandError> {
-    log_command(format!(
-        "create_character_with_avatar {}",
-        dto.character.name
-    ));
+    log_command("create_character_with_avatar");
     if let Some(path) = &dto.avatar_path {
         validate_staged_path(&app, path).await?;
     }
@@ -89,22 +85,6 @@ pub async fn create_character_with_avatar(
         .create_with_avatar(dto)
         .await
         .map_err(map_command_error("Failed to create character with avatar"))
-}
-
-#[tauri::command]
-pub async fn update_character(
-    name: String,
-    dto: UpdateCharacterDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
-    log_command(format!("update_character {}", name));
-
-    app_state
-        .services
-        .character_service
-        .update_character(&name, dto)
-        .await
-        .map_err(map_command_error("Failed to update character"))
 }
 
 #[tauri::command]

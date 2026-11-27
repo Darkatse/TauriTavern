@@ -47,9 +47,8 @@ async fn character_service_create_keeps_character_when_lorebook_materialization_
     fs::write(worlds_dir.join("Broken Lore.json"), b"not json")
         .await
         .expect("write broken world info");
-    let mut dto = create_character("Alice", None);
+    let mut dto = create_character("Alice", json!({ "world": "Broken Lore" }));
     dto.primary_lorebook = Some("Broken Lore".to_string());
-    dto.extensions = Some(json!({ "world": "Broken Lore" }));
 
     service
         .create_character(dto)
@@ -64,81 +63,12 @@ async fn character_service_create_keeps_character_when_lorebook_materialization_
 }
 
 #[tokio::test]
-async fn character_service_update_preserves_v3_spec_and_unknown_fields() {
-    let temp = tempfile::tempdir().expect("create temp dir");
-    let root = temp.path();
-    let service = character_service(root).await;
-    let mut card = character_card("Alice", json!({ "custom": "kept" }));
-    card["spec"] = json!("chara_card_v3");
-    card["spec_version"] = json!("3.0");
-    card["data"]["creator_notes"] = json!(9);
-    card["data"]["system_prompt"] = json!(["system"]);
-    card["data"]["alternate_greetings"] = json!("");
-    card["data"]["extensions"]["world"] = json!(42);
-    card["data"]["extensions"]["depth_prompt"] = json!({
-        "prompt": "",
-        "depth": "",
-        "role": "system"
-    });
-    card["data"]["character_book"] = json!("opaque");
-    fs::write(
-        root.join("default-user/characters/Alice.png"),
-        character_png(&card),
-    )
-    .await
-    .expect("write v3 character");
-
-    service
-        .update_character(
-            "Alice",
-            UpdateCharacterDto {
-                description: Some("updated description".to_string()),
-                extensions: Some(json!({ "extra": "new" })),
-                ..empty_update_character()
-            },
-        )
-        .await
-        .expect("update character");
-
-    let stored_card = read_stored_card(root, "Alice").await;
-    assert_eq!(stored_card.get("spec"), Some(&json!("chara_card_v3")));
-    assert_eq!(stored_card.get("spec_version"), Some(&json!("3.0")));
-    assert_eq!(
-        stored_card.pointer("/description"),
-        Some(&json!("updated description"))
-    );
-    assert_eq!(
-        stored_card.pointer("/data/description"),
-        Some(&json!("updated description"))
-    );
-    assert_eq!(stored_card.pointer("/unknownTop/kept"), Some(&json!(true)));
-    assert_eq!(
-        stored_card.pointer("/data/extensions/custom"),
-        Some(&json!("kept"))
-    );
-    assert_eq!(
-        stored_card.pointer("/data/extensions/extra"),
-        Some(&json!("new"))
-    );
-    for (path, expected) in [
-        ("/data/creator_notes", json!(9)),
-        ("/data/system_prompt", json!(["system"])),
-        ("/data/alternate_greetings", json!("")),
-        ("/data/extensions/world", json!(42)),
-        ("/data/extensions/depth_prompt/depth", json!("")),
-        ("/data/character_book", json!("opaque")),
-    ] {
-        assert_eq!(stored_card.pointer(path), Some(&expected), "{path}");
-    }
-}
-
-#[tokio::test]
 async fn character_service_raw_card_update_preserves_embedded_lorebook_without_resolving_binding() {
     let temp = tempfile::tempdir().expect("create temp dir");
     let root = temp.path();
     let service = character_service(root).await;
     service
-        .create_character(create_character("Alice", None))
+        .create_character(create_character("Alice", json!({})))
         .await
         .expect("create character");
 
@@ -186,7 +116,7 @@ async fn character_form_update_refreshes_available_lorebook_without_blocking_raw
         .await
         .expect("save world info");
     service
-        .create_character(create_character("Alice", None))
+        .create_character(create_character("Alice", json!({})))
         .await
         .expect("create character");
 
@@ -842,10 +772,7 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
     let root = temp.path();
     let service = character_service(root).await;
     service
-        .create_character(create_character(
-            "Alice",
-            Some(character_card("Alice", json!({ "custom": "kept" }))),
-        ))
+        .create_character(create_character("Alice", json!({ "custom": "kept" })))
         .await
         .expect("create character");
 
@@ -853,7 +780,7 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         .merge_character_card_data(
             "Alice",
             MergeCharacterCardDataDto {
-                update: json!({
+                update_json: json!({
                     "description": "merged description",
                     "data": {
                         "description": "merged description",
@@ -861,7 +788,8 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
                             "newFlag": true
                         }
                     }
-                }),
+                })
+                .to_string(),
             },
         )
         .await
@@ -881,11 +809,12 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         .merge_character_card_data(
             "Alice",
             MergeCharacterCardDataDto {
-                update: json!({
+                update_json: json!({
                     "data": {
                         "extensions": "not an object"
                     }
-                }),
+                })
+                .to_string(),
             },
         )
         .await
@@ -901,13 +830,124 @@ async fn character_service_single_merge_preserves_open_fields_and_uses_upstream_
         .merge_character_card_data(
             "Alice",
             MergeCharacterCardDataDto {
-                update: json!({
+                update_json: json!({
                     "description": "__@@UNSET@@__",
                     "data": "not an object"
-                }),
+                })
+                .to_string(),
             },
         )
         .await
         .expect_err("V3 still requires an object data container");
     assert!(matches!(error, ApplicationError::ValidationError(_)));
+}
+
+fn stored_extensions(png: &[u8]) -> [String; 2] {
+    let chunks = read_text_chunks_from_png(png).expect("read card chunks");
+    ["chara", "ccv3"].map(|keyword| {
+        let chunk = chunks
+            .iter()
+            .find(|chunk| chunk.keyword == keyword)
+            .expect("card chunk");
+        let card = BASE64.decode(&chunk.text).expect("decode card chunk");
+        JsonDocument::parse(&card)
+            .expect("parse card")
+            .object_mut(&["data", "extensions"])
+            .expect("open extensions")
+            .expect("extensions object")
+            .to_string()
+    })
+}
+
+#[tokio::test]
+async fn character_card_writes_keep_the_order_of_keys_rust_does_not_own() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let service = character_service(root).await;
+    let stored = |name: &'static str| async move {
+        let path = root.join(format!("default-user/characters/{name}.png"));
+        stored_extensions(&fs::read(path).await.expect("read stored character png"))
+    };
+    let both = |extensions: &str| [extensions.to_string(), extensions.to_string()];
+
+    let extensions = r#"{"zeta":1,"alpha":{"b":1,"a":2},"mid":[{"y":1,"x":2}]}"#;
+    let card_json = format!(
+        r#"{{"spec":"chara_card_v2","spec_version":"2.0","name":"Alice","description":"","personality":"","scenario":"","first_mes":"","mes_example":"","data":{{"name":"Alice","extensions":{extensions}}}}}"#
+    );
+    service
+        .create_character(CreateCharacterDto {
+            card_json,
+            file_name: None,
+            primary_lorebook: None,
+        })
+        .await
+        .expect("create character");
+    assert_eq!(stored("Alice").await, both(extensions));
+
+    let read_card = service
+        .get_character("Alice")
+        .await
+        .expect("get character")
+        .json_data
+        .expect("stored card json");
+    service
+        .update_character_card_data(
+            "Alice",
+            UpdateCharacterCardDataDto {
+                card_json: read_card,
+                avatar_path: None,
+                crop: None,
+                materialize_primary_lorebook: true,
+            },
+        )
+        .await
+        .expect("save edited card");
+    assert_eq!(stored("Alice").await, both(extensions));
+
+    service
+        .merge_character_card_data(
+            "Alice",
+            MergeCharacterCardDataDto {
+                update_json: r#"{"data":{"extensions":{"added":true,"alpha":{"c":3}}}}"#
+                    .to_string(),
+            },
+        )
+        .await
+        .expect("merge attributes");
+    let merged = r#"{"zeta":1,"alpha":{"b":1,"a":2,"c":3},"mid":[{"y":1,"x":2}],"added":true}"#;
+    assert_eq!(stored("Alice").await, both(merged));
+
+    service
+        .rename_character(RenameCharacterDto {
+            old_name: "Alice".to_string(),
+            new_name: "Bob".to_string(),
+        })
+        .await
+        .expect("rename character");
+    assert_eq!(stored("Bob").await, both(merged));
+
+    let exported = service
+        .export_character_content(ExportCharacterContentDto {
+            name: "Bob".to_string(),
+            format: "png".to_string(),
+        })
+        .await
+        .expect("export png")
+        .data;
+    let exported_extensions =
+        r#"{"zeta":1,"alpha":{"b":1,"a":2,"c":3},"mid":[{"y":1,"x":2}],"added":true,"fav":false}"#;
+    assert_eq!(stored_extensions(&exported), both(exported_extensions));
+
+    let import_path = root.join("import.png");
+    fs::write(&import_path, exported)
+        .await
+        .expect("write import png");
+    service
+        .import_character(ImportCharacterDto {
+            file_path: import_path.to_string_lossy().to_string(),
+            preserve_file_name: Some("Carol.png".to_string()),
+        })
+        .await
+        .expect("import character");
+    assert_eq!(stored("Carol").await, both(exported_extensions));
 }

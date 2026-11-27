@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
-use super::OPENCODE_STABLE_CHAT_ID_FIELD;
+use super::STABLE_CHAT_ID_FIELD;
 use super::exchange::ChatCompletionProviderFormat;
 use super::opencode::{self, OpenCodeApiFormat};
 
@@ -14,16 +14,19 @@ mod cohere;
 mod content_parts;
 mod custom;
 mod deepseek;
+mod electronhub;
 mod extension_fields;
 mod gemini_interactions;
 mod makersuite;
 mod minimax;
+mod mistralai;
 mod moonshot;
 mod nanogpt;
 mod openai;
 mod openai_reasoning;
 mod openai_responses;
 mod openrouter;
+mod perplexity;
 mod prompt_post_processing;
 mod shared;
 mod tool_calls;
@@ -44,7 +47,7 @@ pub(super) fn build_payload(
     let opencode_format = (source == ChatCompletionSource::OpenCode)
         .then(|| opencode::format_from_payload(&payload))
         .transpose()?;
-    payload.remove(OPENCODE_STABLE_CHAT_ID_FIELD);
+    payload.remove(STABLE_CHAT_ID_FIELD);
     if opencode_format.is_some() {
         payload.remove("opencode_endpoint");
         payload.remove("opencode_api_format");
@@ -67,7 +70,8 @@ pub(super) fn build_payload(
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow
-        | ChatCompletionSource::Pollinations => openai::build(payload),
+        | ChatCompletionSource::Pollinations
+        | ChatCompletionSource::Fireworks => openai::build(payload),
         ChatCompletionSource::OpenCode => {
             match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
@@ -82,6 +86,9 @@ pub(super) fn build_payload(
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::Xai => xai::build(payload),
+        ChatCompletionSource::ElectronHub => electronhub::build(payload),
+        ChatCompletionSource::Perplexity => perplexity::build(payload),
+        ChatCompletionSource::MistralAi => Ok(mistralai::build(payload)),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => zai::build(payload),

@@ -1,3 +1,5 @@
+use crate::models::secret::SecretKeys;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatCompletionSource {
     OpenAi,
@@ -20,6 +22,10 @@ pub enum ChatCompletionSource {
     AwsBedrock,
     Xai,
     Pollinations,
+    ElectronHub,
+    Fireworks,
+    Perplexity,
+    MistralAi,
 }
 
 impl ChatCompletionSource {
@@ -44,6 +50,10 @@ impl ChatCompletionSource {
         Self::AwsBedrock,
         Self::Xai,
         Self::Pollinations,
+        Self::ElectronHub,
+        Self::Fireworks,
+        Self::Perplexity,
+        Self::MistralAi,
     ];
 
     pub fn parse(raw: &str) -> Option<Self> {
@@ -70,6 +80,10 @@ impl ChatCompletionSource {
             "aws_bedrock" | "aws-bedrock" | "aws bedrock" | "bedrock" => Some(Self::AwsBedrock),
             "xai" | "x.ai" | "grok" => Some(Self::Xai),
             "pollinations" => Some(Self::Pollinations),
+            "electronhub" => Some(Self::ElectronHub),
+            "fireworks" => Some(Self::Fireworks),
+            "perplexity" => Some(Self::Perplexity),
+            "mistralai" => Some(Self::MistralAi),
             _ => None,
         }
     }
@@ -96,6 +110,10 @@ impl ChatCompletionSource {
             Self::AwsBedrock => "aws_bedrock",
             Self::Xai => "xai",
             Self::Pollinations => "pollinations",
+            Self::ElectronHub => "electronhub",
+            Self::Fireworks => "fireworks",
+            Self::Perplexity => "perplexity",
+            Self::MistralAi => "mistralai",
         }
     }
 
@@ -121,6 +139,10 @@ impl ChatCompletionSource {
             Self::AwsBedrock => "aws_bedrock_model",
             Self::Xai => "xai_model",
             Self::Pollinations => "pollinations_model",
+            Self::ElectronHub => "electronhub_model",
+            Self::Fireworks => "fireworks_model",
+            Self::Perplexity => "perplexity_model",
+            Self::MistralAi => "mistralai_model",
         }
     }
 
@@ -146,6 +168,39 @@ impl ChatCompletionSource {
             Self::AwsBedrock => "AWS Bedrock",
             Self::Xai => "xAI",
             Self::Pollinations => "Pollinations",
+            Self::ElectronHub => "Electron Hub",
+            Self::Fireworks => "Fireworks AI",
+            Self::Perplexity => "Perplexity",
+            Self::MistralAi => "Mistral AI",
+        }
+    }
+
+    pub const fn secret_key(self) -> &'static str {
+        match self {
+            Self::OpenAi => SecretKeys::OPENAI,
+            Self::OpenCode => SecretKeys::OPENCODE,
+            Self::OpenRouter => SecretKeys::OPENROUTER,
+            Self::Custom => SecretKeys::CUSTOM,
+            Self::Claude => SecretKeys::CLAUDE,
+            Self::Makersuite => SecretKeys::MAKERSUITE,
+            Self::VertexAi => SecretKeys::VERTEXAI,
+            Self::DeepSeek => SecretKeys::DEEPSEEK,
+            Self::Cohere => SecretKeys::COHERE,
+            Self::Groq => SecretKeys::GROQ,
+            Self::Moonshot => SecretKeys::MOONSHOT,
+            Self::NanoGpt => SecretKeys::NANOGPT,
+            Self::Chutes => SecretKeys::CHUTES,
+            Self::SiliconFlow => SecretKeys::SILICONFLOW,
+            Self::WorkersAi => SecretKeys::WORKERS_AI,
+            Self::Zai => SecretKeys::ZAI,
+            Self::MiniMax => SecretKeys::MINIMAX,
+            Self::AwsBedrock => SecretKeys::AWS_BEDROCK,
+            Self::Xai => SecretKeys::XAI,
+            Self::Pollinations => SecretKeys::POLLINATIONS,
+            Self::ElectronHub => SecretKeys::ELECTRONHUB,
+            Self::Fireworks => SecretKeys::FIREWORKS,
+            Self::Perplexity => SecretKeys::PERPLEXITY,
+            Self::MistralAi => SecretKeys::MISTRALAI,
         }
     }
 
@@ -161,6 +216,7 @@ impl ChatCompletionSource {
                 | Self::Moonshot
                 | Self::Zai
                 | Self::Xai
+                | Self::MistralAi
         )
     }
 }

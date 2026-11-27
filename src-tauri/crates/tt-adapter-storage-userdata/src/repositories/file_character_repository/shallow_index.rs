@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::fs;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -479,23 +478,12 @@ impl FileCharacterRepository {
         entry: CharacterShallowIndexScanEntry,
     ) -> Result<Character, DomainError> {
         let json_data = read_character_data_from_png_file(&entry.path).await?;
-        let raw_value: Value = serde_json::from_str(&json_data).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to parse character data: {}", error))
-        })?;
-        let mut character = Character::from_card_value(&raw_value).ok_or_else(|| {
-            DomainError::InvalidData("Character payload must be a JSON object".to_string())
-        })?;
-
-        Self::sync_canonical_data_fields(&mut character, &raw_value);
-        Self::normalize_imported_character(&mut character)?;
-        let data_size = Self::calculate_character_data_size(&raw_value, &character);
-        character.shallow = false;
+        let mut character = Self::decode_character(json_data)?;
         let signature = entry.signature;
         character.file_name = Some(entry.file_stem);
         character.avatar = signature.avatar;
         character.date_added = signature.created_millis;
         character.chat_size = signature.chat_size;
-        character.data_size = data_size;
         character.date_last_chat = signature.date_last_chat;
 
         Ok(character.into_shallow())

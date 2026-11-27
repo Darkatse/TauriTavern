@@ -8,6 +8,7 @@ use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::bootstrap_dto::BootstrapMetadataDto;
 use tt_application::dto::group_dto::GroupDto;
+use tt_domain::models::text_completion_type::TextCompletionType;
 
 #[tauri::command]
 pub async fn get_bootstrap_metadata(
@@ -70,8 +71,22 @@ pub async fn get_bootstrap_metadata(
     let avatars = avatars.unwrap_or_default();
     let secret_state = secret_state.unwrap_or_default();
 
+    let available_chat_completion_sources = app_state
+        .ios_policy
+        .capabilities
+        .llm
+        .available_chat_completion_sources()
+        .map(|source| source.key().to_string())
+        .collect();
+    let available_text_completion_types = TextCompletionType::ALL
+        .iter()
+        .map(|api_type| api_type.key().to_string())
+        .collect();
+
     Ok(BootstrapMetadataDto {
         ios_policy: app_state.ios_policy.clone(),
+        available_chat_completion_sources,
+        available_text_completion_types,
         characters,
         groups,
         avatars,

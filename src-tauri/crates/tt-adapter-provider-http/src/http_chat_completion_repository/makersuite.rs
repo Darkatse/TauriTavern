@@ -1,6 +1,7 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use reqwest::Url;
 use serde_json::{Value, json};
 
 use tt_domain::errors::DomainError;
@@ -9,10 +10,11 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
-use super::HttpChatCompletionRepository;
 use super::gemini;
 use super::normalizers;
+use super::{GenerationRequest, HttpChatCompletionRepository, response_format};
 use crate::endpoint_url::append_google_api_path;
+use crate::provider_request::ProviderRequest;
 use crate::provider_response::{self, read_upstream_json_body};
 
 const GEMINI_API_VERSION: &str = "v1beta";
@@ -30,27 +32,25 @@ pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
-    let url = build_gemini_url(&config.base_url, "models");
+    let url = build_gemini_url(&config.base_url, "models")?;
     let client = repository.metadata_client(config)?;
-    let mut page_token = None;
+    let mut page_token: Option<String> = None;
     let mut requested_tokens = HashSet::new();
     let mut models = Vec::new();
 
     loop {
-        let mut request = client
-            .get(&url)
-            .header(ACCEPT, "application/json")
-            .query(&[("pageSize", 1000)]);
+        let mut request = ProviderRequest::get_json(url.clone());
+        request.query("pageSize", "1000");
         if let Some(token) = &page_token {
-            request = request.query(&[("pageToken", token)]);
+            request.query("pageToken", token);
         }
-        let request = apply_gemini_auth(request, config);
-        let request =
-            HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-        let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-        let response =
-            provider_response::send_checked(request, "Google Gemini", "Failed to list models")
-                .await?;
+        apply_headers(&mut request, config)?;
+        let response = provider_response::send_checked(
+            request.with_client(&client),
+            "Google Gemini",
+            "Failed to list models",
+        )
+        .await?;
         let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
         let page: ModelsPage = serde_json::from_value(body).map_err(|error| {
             DomainError::InvalidData(format!("Invalid Google Gemini models page: {error}"))
@@ -94,45 +94,45 @@ pub(super) async fn list_models(
     Ok(json!({ "data": models }))
 }
 
+pub(super) fn generation_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    let (model, body) = gemini::model_and_body(payload, "Gemini")?;
+    let method = gemini::generation_method(endpoint_path, stream);
+    let model_path = format!("{}:{method}", normalize_gemini_model(model));
+    let url = build_gemini_url(&config.base_url, &model_path)?;
+
+    let mut request = ProviderRequest::post_json(url, response_format(stream));
+    apply_headers(&mut request, config)?;
+    if stream {
+        request.query("alt", "sse");
+    }
+    Ok(GenerationRequest::http(request, Cow::Owned(body)))
+}
+
+async fn send(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    stream: bool,
+) -> Result<reqwest::Response, DomainError> {
+    let request = generation_request(config, endpoint_path, payload, stream)?;
+    repository
+        .send_generation(config, request, stream, "Google Gemini")
+        .await
+}
+
 pub(super) async fn generate(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let payload_object = payload.as_object().ok_or_else(|| {
-        DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
-    })?;
-
-    let model = payload_object
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| DomainError::InvalidData("Gemini payload missing model".to_string()))?;
-
-    let mut body = payload_object.clone();
-    body.remove("model");
-
-    let method = resolve_generation_method(endpoint_path, false);
-    let model_path = format!("{}:{method}", normalize_gemini_model(model));
-    let url = build_gemini_url(&config.base_url, &model_path);
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&Value::Object(body));
-
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        provider_response::send_checked(request, "Google Gemini", "Generation request failed")
-            .await?;
-
+    let response = send(repository, config, endpoint_path, payload, false).await?;
     let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
     normalizers::normalize_gemini_response("Google Gemini", body)
@@ -146,7 +146,7 @@ pub(super) async fn generate_stream(
     sender: GenerationStreamSender,
     cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
-    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+    let response = send(repository, config, endpoint_path, payload, true).await?;
 
     gemini::stream_generate_content_with_native("Google Gemini", response, sender, cancel).await
 }
@@ -158,49 +158,10 @@ pub(super) async fn generate_with_deltas(
     payload: &Value,
     on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+    let response = send(repository, config, endpoint_path, payload, true).await?;
     let body = gemini::consume_generate_content_stream("Google Gemini", response, on_delta).await?;
 
     normalizers::normalize_gemini_response("Google Gemini", body)
-}
-
-async fn send_stream_request(
-    repository: &HttpChatCompletionRepository,
-    config: &ChatCompletionApiConfig,
-    endpoint_path: &str,
-    payload: &Value,
-) -> Result<reqwest::Response, DomainError> {
-    let payload_object = payload.as_object().ok_or_else(|| {
-        DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
-    })?;
-
-    let model = payload_object
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| DomainError::InvalidData("Gemini payload missing model".to_string()))?;
-
-    let mut body = payload_object.clone();
-    body.remove("model");
-
-    let method = resolve_generation_method(endpoint_path, true);
-    let model_path = format!("{}:{method}", normalize_gemini_model(model));
-    let url = build_gemini_url(&config.base_url, &model_path);
-
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(&Value::Object(body));
-
-    let request = apply_gemini_stream_auth(request, config);
-
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    provider_response::send_checked(request, "Google Gemini", "Generation request failed").await
 }
 
 fn normalize_gemini_model(model: &str) -> String {
@@ -212,10 +173,20 @@ fn normalize_gemini_model(model: &str) -> String {
     }
 }
 
-fn apply_gemini_auth(
-    request: reqwest::RequestBuilder,
+fn apply_headers(
+    request: &mut ProviderRequest,
     config: &ChatCompletionApiConfig,
-) -> reqwest::RequestBuilder {
+) -> Result<(), DomainError> {
+    apply_gemini_auth(request, config)?;
+    HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)?;
+    HttpChatCompletionRepository::apply_additional_headers(request, config)
+}
+
+/// An API key goes out both as a header and as the `key` query parameter.
+fn apply_gemini_auth(
+    request: &mut ProviderRequest,
+    config: &ChatCompletionApiConfig,
+) -> Result<(), DomainError> {
     if let Some(authorization_header) = config.authorization_header.as_deref() {
         return HttpChatCompletionRepository::apply_header_if_present(
             request,
@@ -224,75 +195,25 @@ fn apply_gemini_auth(
         );
     }
 
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-
-    if config.api_key.trim().is_empty() {
-        request
-    } else {
-        request.query(&[("key", config.api_key.as_str())])
+    if !config.api_key.trim().is_empty() {
+        request.header("x-goog-api-key", &config.api_key)?;
+        request.query("key", &config.api_key);
     }
+    Ok(())
 }
 
-fn apply_gemini_stream_auth(
-    request: reqwest::RequestBuilder,
-    config: &ChatCompletionApiConfig,
-) -> reqwest::RequestBuilder {
-    if let Some(authorization_header) = config.authorization_header.as_deref() {
-        let request = HttpChatCompletionRepository::apply_header_if_present(
-            request,
-            "Authorization",
-            authorization_header,
-        );
-        return request.query(&[("alt", "sse")]);
-    }
-
-    let request = HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    );
-
-    if config.api_key.trim().is_empty() {
-        request.query(&[("alt", "sse")])
-    } else {
-        request.query(&[("key", config.api_key.as_str()), ("alt", "sse")])
-    }
-}
-
-fn build_gemini_url(base_url: &str, suffix: &str) -> String {
+fn build_gemini_url(base_url: &str, suffix: &str) -> Result<Url, DomainError> {
     append_google_api_path(base_url, GEMINI_API_VERSION, suffix)
-}
-
-fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str {
-    let endpoint = endpoint_path.trim().trim_matches('/');
-
-    if endpoint.eq_ignore_ascii_case("streamGenerateContent") {
-        return "streamGenerateContent";
-    }
-
-    if endpoint.eq_ignore_ascii_case("generateContent") {
-        return "generateContent";
-    }
-
-    if stream {
-        "streamGenerateContent"
-    } else {
-        "generateContent"
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use reqwest::Client;
-    use reqwest::header::{AUTHORIZATION, HeaderName};
+    use reqwest::Url;
 
     use super::apply_gemini_auth;
+    use crate::provider_request::ProviderRequest;
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionApiConfig,
     };
@@ -312,24 +233,14 @@ mod tests {
             aws_bedrock_custom_stream_path: None,
         };
 
-        let request = Client::new().get("https://example.com");
-        let request = apply_gemini_auth(request, &config)
-            .build()
-            .expect("request should build");
+        let mut request = ProviderRequest::get(Url::parse("https://example.com").unwrap());
+        apply_gemini_auth(&mut request, &config).unwrap();
 
         assert_eq!(
-            request
-                .headers()
-                .get(AUTHORIZATION)
-                .and_then(|value| value.to_str().ok()),
+            request.header_value("authorization"),
             Some("Bearer override")
         );
-        assert!(
-            request
-                .headers()
-                .get(HeaderName::from_static("x-goog-api-key"))
-                .is_none()
-        );
+        assert_eq!(request.header_value("x-goog-api-key"), None);
         assert_eq!(request.url().query(), None);
     }
 }

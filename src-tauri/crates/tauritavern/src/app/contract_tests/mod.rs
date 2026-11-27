@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::Utc;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde_json::{Value, json};
@@ -23,7 +24,7 @@ use tt_adapter_storage_userdata::FileCharacterRepository;
 use tt_adapter_storage_userdata::FileSkillRepository;
 use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::png_card_metadata::{
-    read_character_data_from_png, write_character_data_to_png,
+    read_character_data_from_png, read_text_chunks_from_png, write_character_data_to_png,
 };
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_adapter_workspace_shell::WorkspaceShellEngine;
@@ -33,9 +34,9 @@ use tt_application::dto::agent_dto::{
 };
 use tt_application::dto::character_dto::{
     CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto, CreateCharacterDto,
-    ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto, ReplaceCharacterDto,
-    ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
+    ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto,
+    ReplaceCharacterDto, ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto,
+    UpdateCharacterCardDataDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;
@@ -58,6 +59,7 @@ use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 use tt_application::services::tokenization_service::TokenizationService;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::agent::profile::{
     AgentDelegationPolicy, AgentProfileId, DEFAULT_AGENT_PROFILE_ID,
 };
@@ -69,8 +71,7 @@ use tt_domain::models::chat::Chat;
 use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
 };
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
-use tt_domain::models::settings::UserSettings;
+use tt_domain::models::preset::PresetType;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -90,9 +91,11 @@ const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
 mod character;
+mod data_archive;
 mod host_resources;
 mod profile_migration;
 mod safe_mode;
+mod settings;
 mod world_info;
 
 struct AgentRuntimeFixture {
@@ -231,7 +234,7 @@ fn agent_runtime_fixture_with_shell(
         )),
         Arc::new(FileSettingsRepository::new(
             default_user.clone(),
-            UserSettings::default(),
+            JsonDocument::default(),
             Default::default(),
             Arc::default(),
             4 * 1024 * 1024,
@@ -466,27 +469,11 @@ fn contract_run(
     }
 }
 
-fn create_character(name: &str, json_data: Option<Value>) -> CreateCharacterDto {
+fn create_character(name: &str, extensions: Value) -> CreateCharacterDto {
     CreateCharacterDto {
+        card_json: character_card(name, extensions).to_string(),
         file_name: Some(name.to_string()),
-        json_data: json_data.map(|value| serde_json::to_string(&value).unwrap()),
         primary_lorebook: None,
-        name: name.to_string(),
-        description: "description".to_string(),
-        personality: "personality".to_string(),
-        scenario: "scenario".to_string(),
-        first_mes: "hello".to_string(),
-        mes_example: String::new(),
-        creator: None,
-        creator_notes: None,
-        character_version: None,
-        tags: None,
-        talkativeness: None,
-        fav: None,
-        alternate_greetings: None,
-        system_prompt: None,
-        post_history_instructions: None,
-        extensions: None,
     }
 }
 
@@ -520,26 +507,8 @@ fn character_card(name: &str, extensions: Value) -> Value {
     })
 }
 
-fn empty_update_character() -> UpdateCharacterDto {
-    UpdateCharacterDto {
-        name: None,
-        chat: None,
-        description: None,
-        personality: None,
-        scenario: None,
-        first_mes: None,
-        mes_example: None,
-        creator: None,
-        creator_notes: None,
-        character_version: None,
-        tags: None,
-        talkativeness: None,
-        fav: None,
-        alternate_greetings: None,
-        system_prompt: None,
-        post_history_instructions: None,
-        extensions: None,
-    }
+fn user_settings(settings: Value) -> JsonDocument {
+    JsonDocument::from_serialize(&settings).unwrap()
 }
 
 fn world_info(content: &str) -> Value {
@@ -788,16 +757,21 @@ impl AgentRunActivity for NoActiveAgentRuns {
 
 #[derive(Default)]
 struct TestPresetRepository {
-    presets: Mutex<HashMap<(String, PresetType), Preset>>,
+    presets: Mutex<HashMap<(String, PresetType), JsonDocument>>,
 }
 
 #[async_trait]
 impl PresetRepository for TestPresetRepository {
-    async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
-        self.presets.lock().await.insert(
-            (preset.name.clone(), preset.preset_type.clone()),
-            preset.clone(),
-        );
+    async fn save_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+        preset: JsonDocument,
+    ) -> Result<(), DomainError> {
+        self.presets
+            .lock()
+            .await
+            .insert((name.to_string(), preset_type.clone()), preset);
         Ok(())
     }
 
@@ -825,7 +799,7 @@ impl PresetRepository for TestPresetRepository {
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         Ok(self
             .presets
             .lock()
@@ -842,7 +816,7 @@ impl PresetRepository for TestPresetRepository {
         &self,
         _name: &str,
         _preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError> {
+    ) -> Result<Option<JsonDocument>, DomainError> {
         Ok(None)
     }
 }

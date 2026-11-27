@@ -3,42 +3,34 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::fields::{
     DYNAMIC_THEME_FILE, NATIVE_FILE, PERSONA_STATE_FILE, SECTION_FILES, UserSettingsSections,
 };
-use super::lazy_object::{LazyObject, Member};
 use crate::file_system::{
     KeptOriginal, persist_bytes_file_blocking, persist_changed_blocking,
     persist_json_file_blocking, replace_keeping_original_blocking,
 };
 use tt_domain::errors::DomainError;
-use tt_domain::models::persona::{Personas, take_personas_with};
-use tt_domain::models::settings::repair::{
-    PROMPT_MANAGER_LISTS, PROMPT_MANAGER_SETTINGS, UserSettingsRepairReport,
-    repair_prompt_manager_object,
-};
+use tt_domain::json_document::JsonDocument;
+use tt_domain::models::persona::take_personas;
+use tt_domain::models::settings::repair::repair_prompt_manager_settings;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{DynamicThemeSettings, TauriTavernSettings, UserSettings};
-use tt_ports::repositories::settings_repository::StoredUserSettings;
+use tt_domain::models::settings::{DynamicThemeSettings, TauriTavernSettings};
+use tt_ports::repositories::settings_repository::{SettingsCommitResult, StoredUserSettings};
 
 const REVISION_ALGORITHM: &str = "tt-user-settings-sections-sha256-v2";
 const CORE: usize = SECTION_FILES.len() - 1;
 
-/// The bundled defaults as section texts, split once.
 pub(super) struct DefaultSections([Vec<u8>; 5]);
 
 impl DefaultSections {
-    pub(super) fn new(defaults: &UserSettings) -> Self {
-        let settings = LazyObject::from_value(&defaults.data)
-            .expect("bundled default settings are a JSON object");
-        Self(
-            UserSettingsSections::split(settings)
-                .into_files()
-                .map(|section| section.to_bytes()),
-        )
+    pub(super) fn new(defaults: JsonDocument) -> Self {
+        let sections = UserSettingsSections::split(defaults)
+            .expect("bundled default settings split into sections");
+        Self(sections.into_files().map(|section| section.to_vec()))
     }
 }
 
@@ -85,8 +77,7 @@ impl StoredSections {
     }
 }
 
-/// Reads the sections, normalizing without writing; a core that still holds fields of other sections,
-/// from an older version or an import, has them moved into their files first.
+/// Legacy fields in the core file take precedence over their section files during migration.
 pub(super) fn load_user(
     root: &Path,
     defaults: &DefaultSections,
@@ -94,56 +85,72 @@ pub(super) fn load_user(
     let mut texts = <[Vec<u8>; 5]>::default();
     let core;
     (texts[CORE], core) = read_section(root, CORE, defaults)?;
-    let mut sections = UserSettingsSections::split(core).into_files();
+    let mut sections = UserSettingsSections::split(core)
+        .map_err(json_error)?
+        .into_files();
     let mut migrated = false;
     for index in 0..CORE {
         if sections[index].is_empty() {
             (texts[index], sections[index]) = read_section(root, index, defaults)?;
         } else {
-            texts[index] = sections[index].to_bytes();
+            texts[index] = sections[index].to_vec();
             persist_changed_blocking(&root.join(SECTION_FILES[index]), &texts[index])?;
             migrated = true;
         }
     }
     if migrated {
-        texts[CORE] = sections[CORE].to_bytes();
+        texts[CORE] = sections[CORE].to_vec();
         persist_bytes_file_blocking(&root.join(SECTION_FILES[CORE]), &texts[CORE])?;
     }
-    let mut settings = UserSettingsSections::from_files(sections).into_settings();
+    let mut settings = UserSettingsSections::from_files(sections)
+        .into_settings()
+        .map_err(json_error)?;
     repair(&mut settings);
     Ok(StoredUserSettings {
-        settings: UserSettings {
-            data: settings.into_value(),
-        },
+        settings,
         revision: StoredSections::new(texts).revision(),
     })
 }
 
-/// Normalizes the settings once, then writes only the sections whose text changed.
-pub(super) fn write_user(
+/// Everything that can reject the replacement runs before the first file changes.
+pub(super) fn replace_user(
     root: &Path,
-    mut settings: LazyObject,
+    mut settings: JsonDocument,
     mut stored: StoredSections,
-) -> Result<UserSettingsRevision, DomainError> {
+) -> Result<SettingsCommitResult, DomainError> {
+    let personas = take_personas(&mut settings)?.unwrap_or_default();
     repair(&mut settings);
-    let sections = UserSettingsSections::split(settings).into_files();
+    let sections = UserSettingsSections::split(settings)
+        .map_err(json_error)?
+        .into_files();
     for (index, section) in sections.iter().enumerate() {
-        let text = section.to_bytes();
+        let text = section.to_vec();
         if text != stored.texts[index] {
             persist_bytes_file_blocking(&root.join(SECTION_FILES[index]), &text)?;
             stored.digests[index] = Sha256::digest(&text).into();
             stored.texts[index] = text;
         }
     }
-    Ok(stored.revision())
+    Ok(SettingsCommitResult {
+        revision: stored.revision(),
+        personas,
+    })
 }
 
-pub(super) fn save_user(
-    root: &Path,
-    settings: UserSettings,
-) -> Result<UserSettingsRevision, DomainError> {
-    let settings = LazyObject::from_value(&settings.data).map_err(json_error)?;
-    write_user(root, settings, StoredSections::read(root)?)
+/// Rejects a core settings file that a load could not split, without changing it.
+pub(super) fn validate_core(root: &Path) -> Result<(), DomainError> {
+    let path = root.join(SECTION_FILES[CORE]);
+    let text = match fs::read(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(read_error(&path, error)),
+    };
+    JsonDocument::parse(&text)
+        .and_then(UserSettingsSections::split)
+        .map(drop)
+        .map_err(|error| {
+            DomainError::InvalidData(format!("Invalid settings {}: {error}", path.display()))
+        })
 }
 
 pub(super) fn reset_user(
@@ -155,10 +162,16 @@ pub(super) fn reset_user(
         defaults
             .0
             .each_ref()
-            .map(|text| LazyObject::parse(text).expect("default sections are JSON objects")),
+            .map(|text| JsonDocument::parse(text).expect("default sections are JSON objects")),
     );
-    let extension_settings = sections.core.object_entry(&["extension_settings"]);
-    let mut disabled = match extension_settings.value("disabledExtensions") {
+    let extension_settings = sections
+        .core
+        .object_entry(&["extension_settings"])
+        .map_err(json_error)?;
+    let mut disabled = match extension_settings
+        .get(&["disabledExtensions"])
+        .map_err(json_error)?
+    {
         Some(Value::Array(names)) => names,
         _ => Vec::new(),
     };
@@ -168,62 +181,34 @@ pub(super) fn reset_user(
             disabled.push(name);
         }
     }
-    extension_settings.set_value("disabledExtensions", &Value::Array(disabled));
-    sections.layout.set_value("firstRun", &Value::Bool(false));
+    extension_settings.set("disabledExtensions", &Value::Array(disabled));
+    sections.layout.set("firstRun", &Value::Bool(false));
 
     for (name, section) in SECTION_FILES.into_iter().zip(sections.into_files()) {
         if name != PERSONA_STATE_FILE {
-            persist_changed_blocking(&root.join(name), &section.to_bytes())?;
+            persist_changed_blocking(&root.join(name), &section.to_vec())?;
         }
     }
     Ok(())
 }
 
-/// Takes the Persona registry projection out of `power_user`.
-pub(super) fn take_personas(settings: &mut LazyObject) -> Result<Option<Personas>, DomainError> {
-    let Some(power_user) = settings.object_mut(&["power_user"]) else {
-        return Ok(None);
-    };
-    take_personas_with(|field| power_user.remove(field).map(Member::into_value))
-}
-
-fn repair(settings: &mut LazyObject) {
-    let mut report = UserSettingsRepairReport::default();
-    repair_prompt_lists(settings, &mut report);
-    if let Some(prompt_manager) = settings.object_mut(&[PROMPT_MANAGER_SETTINGS]) {
-        repair_prompt_lists(prompt_manager, &mut report);
-    }
+fn repair(settings: &mut JsonDocument) {
+    let report = repair_prompt_manager_settings(settings);
     if report.changed() {
         tracing::warn!("Repaired SillyTavern PromptManager settings: {report}");
     }
 }
 
-/// Opens only the PromptManager lists, and replaces them only when the repair changed them.
-fn repair_prompt_lists(object: &mut LazyObject, report: &mut UserSettingsRepairReport) {
-    let mut lists: Map<String, Value> = PROMPT_MANAGER_LISTS
-        .iter()
-        .filter_map(|field| Some(((*field).to_owned(), object.value(field)?)))
-        .collect();
-    let before = *report;
-    repair_prompt_manager_object(&mut lists, report);
-    if *report != before {
-        for (field, value) in &lists {
-            object.set_value(field, value);
-        }
-    }
-}
-
-/// A section file as stored. A missing one gets the default; one that is not a JSON object is kept
-/// beside it as corrupt, and its section restarts from the default.
+/// Preserve corrupt section files before restoring their defaults.
 fn read_section(
     root: &Path,
     index: usize,
     defaults: &DefaultSections,
-) -> Result<(Vec<u8>, LazyObject), DomainError> {
+) -> Result<(Vec<u8>, JsonDocument), DomainError> {
     let path = root.join(SECTION_FILES[index]);
     let default_text = &defaults.0[index];
     match fs::read(&path) {
-        Ok(stored) => match LazyObject::parse(&stored) {
+        Ok(stored) => match JsonDocument::parse(&stored) {
             Ok(section) => return Ok((stored, section)),
             Err(error) => replace_corrupt(
                 &path,
@@ -237,7 +222,7 @@ fn read_section(
         Err(error) => return Err(read_error(&path, error)),
     }
     let text = default_text.clone();
-    let section = LazyObject::parse(&text).expect("default sections are JSON objects");
+    let section = JsonDocument::parse(&text).expect("default sections are JSON objects");
     Ok((text, section))
 }
 

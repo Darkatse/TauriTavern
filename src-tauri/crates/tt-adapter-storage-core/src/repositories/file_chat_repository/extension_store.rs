@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::fs;
 
-use crate::file_system::{move_file_no_replace_with_fallback, persist_json_file};
+use crate::extension_store_json;
+use crate::file_system::{move_file_no_replace_with_fallback, persist_bytes_file};
 use tt_domain::errors::DomainError;
-use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::filename::sanitize_filename;
 
 use super::FileChatRepository;
@@ -32,25 +32,56 @@ fn validate_store_component(raw: &str, label: &str) -> Result<String, DomainErro
     Ok(value.to_string())
 }
 
-async fn update_store_json_entry(dir: &Path, key: &str, value: Value) -> Result<(), DomainError> {
-    fs::create_dir_all(dir).await.map_err(|error| {
+fn entry_path(dir: &Path, key: &str) -> PathBuf {
+    dir.join(format!("{key}.json"))
+}
+
+fn invalid_entry(path: &Path, error: serde_json::Error) -> DomainError {
+    DomainError::InvalidData(format!(
+        "Chat store entry contains invalid JSON {}: {}",
+        path.display(),
+        error
+    ))
+}
+
+fn validate_value(value_json: &str) -> Result<(), DomainError> {
+    extension_store_json::validate(value_json.as_bytes())
+        .map_err(|error| DomainError::InvalidData(format!("Invalid chat store JSON: {error}")))
+}
+
+async fn read_store_json_entry(dir: &Path, key: &str) -> Result<Box<RawValue>, DomainError> {
+    let path = entry_path(dir, key);
+    let bytes = fs::read(&path).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return DomainError::NotFound(format!(
+                "Chat store entry not found: {}",
+                path.display()
+            ));
+        }
         DomainError::InternalError(format!(
-            "Failed to create chat store directory {}: {}",
-            dir.display(),
+            "Failed to read chat store entry {}: {}",
+            path.display(),
             error
         ))
     })?;
+    serde_json::from_slice(&bytes).map_err(|error| invalid_entry(&path, error))
+}
 
-    let target = dir.join(format!("{}.json", key));
-    let mut current = match fs::read(&target).await {
-        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Chat store entry contains invalid JSON {}: {}",
-                target.display(),
-                error
-            ))
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+async fn set_store_json_entry(dir: &Path, key: &str, value_json: &str) -> Result<(), DomainError> {
+    validate_value(value_json)?;
+    persist_bytes_file(&entry_path(dir, key), value_json.as_bytes()).await
+}
+
+async fn update_store_json_entry(
+    dir: &Path,
+    key: &str,
+    value_json: &str,
+) -> Result<(), DomainError> {
+    validate_value(value_json)?;
+    let target = entry_path(dir, key);
+    let entry = match fs::read(&target).await {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
             return Err(DomainError::InternalError(format!(
                 "Failed to read chat store entry {}: {}",
@@ -59,15 +90,13 @@ async fn update_store_json_entry(dir: &Path, key: &str, value: Value) -> Result<
             )));
         }
     };
-
-    merge_json_value(&mut current, value);
-
-    persist_json_file(&target, &current).await?;
-    Ok(())
+    let merged = extension_store_json::merge(entry.as_deref(), value_json.as_bytes())
+        .map_err(|error| invalid_entry(&target, error))?;
+    persist_bytes_file(&target, &merged).await
 }
 
 async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result<(), DomainError> {
-    let from = dir.join(format!("{}.json", key));
+    let from = entry_path(dir, key);
     if !from.exists() {
         return Err(DomainError::NotFound(format!(
             "Chat store entry not found: {}",
@@ -75,7 +104,7 @@ async fn rename_store_json_entry(dir: &Path, key: &str, new_key: &str) -> Result
         )));
     }
 
-    let to = dir.join(format!("{}.json", new_key));
+    let to = entry_path(dir, new_key);
     if to.exists() {
         return Err(DomainError::InvalidData(format!(
             "Chat store entry already exists: {}",
@@ -143,33 +172,12 @@ impl FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_character_chat_store_dir(character_name, file_name, namespace)
             .await?;
-        let path = dir.join(format!("{}.json", key));
-        let bytes = fs::read(&path).await.map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Chat store entry not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to read chat store entry {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-        serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Chat store entry contains invalid JSON {}: {}",
-                path.display(),
-                error
-            ))
-        })
+        read_store_json_entry(&dir, &key).await
     }
 
     pub(super) async fn get_group_chat_store_json_value(
@@ -177,33 +185,12 @@ impl FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_group_chat_store_dir(chat_id, namespace)
             .await?;
-        let path = dir.join(format!("{}.json", key));
-        let bytes = fs::read(&path).await.map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Chat store entry not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to read chat store entry {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-        serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Chat store entry contains invalid JSON {}: {}",
-                path.display(),
-                error
-            ))
-        })
+        read_store_json_entry(&dir, &key).await
     }
 
     pub(super) async fn set_character_chat_store_json_value(
@@ -212,23 +199,13 @@ impl FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_character_chat_store_dir(character_name, file_name, namespace)
             .await?;
-        fs::create_dir_all(&dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create chat store directory {}: {}",
-                dir.display(),
-                error
-            ))
-        })?;
-
-        let target = dir.join(format!("{}.json", key));
-        persist_json_file(&target, &value).await?;
-        Ok(())
+        set_store_json_entry(&dir, &key, value_json).await
     }
 
     pub(super) async fn update_character_chat_store_json_value(
@@ -237,13 +214,13 @@ impl FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_character_chat_store_dir(character_name, file_name, namespace)
             .await?;
-        update_store_json_entry(&dir, &key, value).await
+        update_store_json_entry(&dir, &key, value_json).await
     }
 
     pub(super) async fn set_group_chat_store_json_value(
@@ -251,23 +228,13 @@ impl FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_group_chat_store_dir(chat_id, namespace)
             .await?;
-        fs::create_dir_all(&dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to create chat store directory {}: {}",
-                dir.display(),
-                error
-            ))
-        })?;
-
-        let target = dir.join(format!("{}.json", key));
-        persist_json_file(&target, &value).await?;
-        Ok(())
+        set_store_json_entry(&dir, &key, value_json).await
     }
 
     pub(super) async fn update_group_chat_store_json_value(
@@ -275,13 +242,13 @@ impl FileChatRepository {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         let key = validate_store_component(key, "key")?;
         let dir = self
             .resolve_group_chat_store_dir(chat_id, namespace)
             .await?;
-        update_store_json_entry(&dir, &key, value).await
+        update_store_json_entry(&dir, &key, value_json).await
     }
 
     pub(super) async fn delete_character_chat_store_json_value(
@@ -295,7 +262,7 @@ impl FileChatRepository {
         let dir = self
             .resolve_character_chat_store_dir(character_name, file_name, namespace)
             .await?;
-        let path = dir.join(format!("{}.json", key));
+        let path = entry_path(&dir, &key);
         fs::remove_file(&path).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 return DomainError::NotFound(format!(
@@ -342,7 +309,7 @@ impl FileChatRepository {
         let dir = self
             .resolve_group_chat_store_dir(chat_id, namespace)
             .await?;
-        let path = dir.join(format!("{}.json", key));
+        let path = entry_path(&dir, &key);
         fs::remove_file(&path).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 return DomainError::NotFound(format!(

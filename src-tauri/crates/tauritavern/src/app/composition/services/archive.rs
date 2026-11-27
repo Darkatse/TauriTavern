@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::infrastructure::persistence::data_archive_adapters::DataDirectoryDataRootInitializer;
+use crate::infrastructure::persistence::data_archive_adapters::{
+    DataDirectoryDataRootInitializer, prepare_imported_user_data,
+};
 use tt_adapter_archive::FileDataArchiveExecutor;
 use tt_application::services::data_archive_service::{DataArchiveJobRegistry, DataArchiveService};
 use tt_application::services::database_service::DatabaseService;
@@ -18,7 +20,7 @@ pub(super) fn build(
         Arc::new(DataArchiveJobRegistry::new()),
         tokio::runtime::Handle::current(),
         Arc::new(FileDataArchiveExecutor {
-            prepare_personas: tt_adapter_media::persona_cards::migrate_personas,
+            prepare_user_data: prepare_imported_user_data,
             read_personas: tt_adapter_media::persona_cards::read_personas,
         }),
         environment.data_archive_file_gateway.clone(),

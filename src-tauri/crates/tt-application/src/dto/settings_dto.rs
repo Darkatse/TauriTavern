@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
     ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
-    RequestProxySettings, SettingsSnapshot, TauriTavernSettings, UserSettings,
+    RequestProxySettings, SettingsSnapshot, TauriTavernSettings,
 };
 use tt_domain::models::update::UpdateChannel;
 
@@ -163,12 +163,6 @@ pub struct UpdateModelSettingsDto {
     pub claude: Option<UpdateClaudeModelSettingsDto>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserSettingsDto {
-    #[serde(flatten)]
-    pub data: Value,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettingsSaveResultDto {
     pub result: String,
@@ -192,7 +186,7 @@ pub struct SettingsSnapshotDto {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SillyTavernSettingsResponseDto {
     pub settings: String,
     pub tauritavern_settings_revision: UserSettingsRevisionDto,
@@ -205,32 +199,18 @@ pub struct SillyTavernSettingsResponseDto {
     pub openai_setting_names: Vec<String>,
     pub textgenerationwebui_presets: Vec<String>,
     pub textgenerationwebui_preset_names: Vec<String>,
-    pub themes: Vec<Value>,
+    pub themes: Vec<JsonDocument>,
     #[serde(rename = "movingUIPresets")]
-    pub moving_ui_presets: Vec<Value>,
+    pub moving_ui_presets: Vec<JsonDocument>,
     #[serde(rename = "quickReplyPresets")]
-    pub quick_reply_presets: Vec<Value>,
-    pub instruct: Vec<Value>,
-    pub context: Vec<Value>,
-    pub sysprompt: Vec<Value>,
-    pub reasoning: Vec<Value>,
+    pub quick_reply_presets: Vec<JsonDocument>,
+    pub instruct: Vec<JsonDocument>,
+    pub context: Vec<JsonDocument>,
+    pub sysprompt: Vec<JsonDocument>,
+    pub reasoning: Vec<JsonDocument>,
     pub enable_extensions: bool,
     pub enable_extensions_auto_update: bool,
     pub enable_accounts: bool,
-}
-
-impl From<UserSettings> for UserSettingsDto {
-    fn from(settings: UserSettings) -> Self {
-        Self {
-            data: settings.data,
-        }
-    }
-}
-
-impl From<UserSettingsDto> for UserSettings {
-    fn from(dto: UserSettingsDto) -> Self {
-        Self { data: dto.data }
-    }
 }
 
 impl From<SettingsSnapshot> for SettingsSnapshotDto {

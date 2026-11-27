@@ -1,5 +1,4 @@
-//! Text completion: the page applies the prompt template and TauriTavern relays requests to the
-//! user's server, following the SillyTavern text completion server routes.
+//! The page sends an already-templated prompt.
 
 use std::sync::Arc;
 
@@ -29,6 +28,8 @@ use crate::services::selected_secret::{read_selected_secret, requested_secret_id
 
 mod backend;
 mod ollama;
+#[cfg(test)]
+mod tests;
 
 const RFC3986_UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
@@ -40,11 +41,13 @@ const RFC3986_UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
 pub struct TextCompletionServer {
     api_type: TextCompletionType,
     base_url: Url,
+    user_configured_endpoint: bool,
 }
 
 impl TextCompletionServer {
-    pub fn endpoint(&self) -> &Url {
-        &self.base_url
+    /// Built-in endpoints do not require user-endpoint consent.
+    pub fn user_endpoint(&self) -> Option<&Url> {
+        self.user_configured_endpoint.then_some(&self.base_url)
     }
 }
 
@@ -54,8 +57,8 @@ pub struct PreparedTextCompletionProps {
 }
 
 impl PreparedTextCompletionProps {
-    pub fn endpoint(&self) -> &Url {
-        self.server.endpoint()
+    pub fn user_endpoint(&self) -> Option<&Url> {
+        self.server.user_endpoint()
     }
 }
 
@@ -67,8 +70,8 @@ pub struct PreparedTextCompletionGeneration {
 }
 
 impl PreparedTextCompletionGeneration {
-    pub fn endpoint(&self) -> &Url {
-        self.server.endpoint()
+    pub fn user_endpoint(&self) -> Option<&Url> {
+        self.server.user_endpoint()
     }
 }
 
@@ -79,8 +82,8 @@ pub struct PreparedTextCompletionEncode {
 }
 
 impl PreparedTextCompletionEncode {
-    pub fn endpoint(&self) -> &Url {
-        self.server.endpoint()
+    pub fn user_endpoint(&self) -> Option<&Url> {
+        self.server.user_endpoint()
     }
 }
 
@@ -91,8 +94,8 @@ pub struct PreparedTextCompletionDownload {
 }
 
 impl PreparedTextCompletionDownload {
-    pub fn endpoint(&self) -> &Url {
-        self.server.endpoint()
+    pub fn user_endpoint(&self) -> Option<&Url> {
+        self.server.user_endpoint()
     }
 }
 
@@ -243,7 +246,12 @@ impl TextCompletionService {
             | TextCompletionType::LlamaCpp
             | TextCompletionType::Ollama
             | TextCompletionType::HuggingFace
-            | TextCompletionType::Generic => {}
+            | TextCompletionType::Generic
+            | TextCompletionType::Featherless
+            | TextCompletionType::OpenRouter
+            | TextCompletionType::InfermaticAi
+            | TextCompletionType::DreamGen
+            | TextCompletionType::TogetherAi => {}
         }
 
         Ok(TextCompletionStatusDto {
@@ -404,32 +412,40 @@ impl TextCompletionService {
         server: TextCompletionServer,
         secret_id: Option<&str>,
     ) -> Result<TextCompletionEndpoint, ApplicationError> {
-        let TextCompletionServer { api_type, base_url } = server;
-        let headers = match backend::secret_key(api_type) {
+        let TextCompletionServer {
+            api_type,
+            base_url,
+            user_configured_endpoint,
+        } = server;
+        let api_key = match backend::secret_key(api_type) {
             Some(secret_key) => {
-                read_selected_secret(self.secret_repository.as_ref(), secret_key, secret_id)
-                    .await?
-                    .map(|api_key| backend::auth_headers(api_type, &api_key))
-                    .unwrap_or_default()
+                read_selected_secret(self.secret_repository.as_ref(), secret_key, secret_id).await?
             }
-            None => Vec::new(),
+            None => None,
         };
 
         Ok(TextCompletionEndpoint {
             api_type,
             base_url: base_url.to_string(),
-            headers,
+            user_configured_endpoint,
+            headers: backend::headers(api_type, api_key.as_deref()),
         })
     }
 
-    /// Every request resolves its server here before consent and any network request, so the iOS
-    /// policy is checked here. The URL may end in `/v1`.
+    /// Resolve policy and endpoint before requesting consent or performing I/O.
     fn resolve_server(
         &self,
         api_type: TextCompletionType,
         api_server: &str,
     ) -> Result<TextCompletionServer, ApplicationError> {
         self.ensure_text_completions_allowed()?;
+        if let Some(base_url) = backend::built_in_base_url(api_type) {
+            return Ok(TextCompletionServer {
+                api_type,
+                base_url: Url::parse(base_url).expect("built-in base URLs are valid"),
+                user_configured_endpoint: false,
+            });
+        }
         if api_server.trim().is_empty() {
             return Err(ApplicationError::ValidationError(format!(
                 "{} server URL is missing",
@@ -444,6 +460,7 @@ impl TextCompletionService {
         Ok(TextCompletionServer {
             api_type,
             base_url: url,
+            user_configured_endpoint: true,
         })
     }
 

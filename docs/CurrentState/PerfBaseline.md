@@ -29,7 +29,7 @@ CI 只比较 Linux。
 - 前端卡：按生态卡的常见结构合成，回复含思考、正文、变量更新与状态栏。最近两层的状态栏约 80 KB，由 Code Render 渲染成 iframe；iframe 与页面同在一个渲染线程，其工作一并计入。
 - 应用内助手：一个会话，440 条消息、约 2 MB 历史。
 - Prompt Manager：预设里有一对关闭的工具调用与工具响应条目，组装不带它们。
-- Agent：一个前台流式 Run，先把正文写进聊天，再在展开的 Timeline 里显示推理。场景经 `__perfAgent` 的 `push()` 送入实时投影、`event()` 追加日志事件，每次推送是一个输入。
+- Agent：一个前台流式 Run，先把正文写进聊天；之后经过 24 轮读取、修改与一次 SubAgent 委派，再在展开的 Timeline 里显示推理。场景经 `__perfAgent` 的 `push()` 送入实时投影、`event()` 追加日志事件、`project()` 设定 Timeline 读到的投影，每次推送是一个输入。
 
 启动（`app/startup`）是同一用户的第二次启动：页面先加载一次，第二次启动看到第一次留下的宿主状态与浏览器存储；后端同样先重放第一次启动，再计量第二次。
 
@@ -39,7 +39,7 @@ CI 只比较 Linux。
 
 ## 前端层
 
-在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目；Web Host 没有的原生命令（分词、助手会话、更新检查、Agent Run）按原生的结果应答。Agent Run 的日志读到末尾时，等下一条事件再返回，事件轮询因此不会让页面一直忙碌。首次运行前安装浏览器：`pnpm exec playwright install --only-shell chromium`。
+在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端，宿主身份为 Windows 桌面。测量页的假后端遵守宿主契约，例如角色列表只给浅条目；Web Host 没有的原生命令（分词、助手会话、更新检查、Agent Run）按原生的结果应答。从 Agent Run 日志的最后一条事件往后读时，等下一条事件再返回，事件轮询因此不会让页面一直忙碌。首次运行前安装浏览器：`pnpm exec playwright install --only-shell chromium`。
 
 每个步骤计：
 
