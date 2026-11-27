@@ -23,7 +23,7 @@ impl LocalEmbeddingModel {
 
     pub const fn profile(self) -> &'static str {
         match self {
-            Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B|f32-v1|max=8192|query-prompt-v1",
+            Self::Qwen3Embedding06B => "Qwen/Qwen3-Embedding-0.6B|f16-v1|max=8192|query-prompt-v1",
         }
     }
 

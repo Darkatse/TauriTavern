@@ -405,10 +405,12 @@ pub(super) async fn build(
         vector_root.join("tauritavern-v1.redb"),
     ));
     let remote_embedding_repository: Arc<dyn RemoteEmbeddingRepository> =
-        Arc::new(HttpEmbeddingRepository::new(http_client_pool));
-    let local_embedding_repository: Arc<dyn LocalEmbeddingRepository> = Arc::new(
-        CandleLocalEmbeddingRepository::new(data_root.join("_cache").join("embedding-models")),
-    );
+        Arc::new(HttpEmbeddingRepository::new(http_client_pool.clone()));
+    let local_embedding_repository: Arc<dyn LocalEmbeddingRepository> =
+        Arc::new(CandleLocalEmbeddingRepository::new(
+            data_root.join("_cache").join("embedding-models"),
+            http_client_pool,
+        ));
 
     Ok(AppRepositories {
         character_repository,

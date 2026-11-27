@@ -27,7 +27,7 @@ same-origin route
      -> RemoteEmbeddingRepository    -> tt-adapter-provider-http
 ```
 
-索引位于 `default-user/vectors/tauritavern-v1.redb`。模型缓存位于 `_cache/embedding-models/`，purge 只删除索引记录，不重复下载模型。数据库与模型均懒加载；初始化失败只令当前 Vector 请求失败，不影响应用启动。
+索引位于 `default-user/vectors/tauritavern-v1.redb`。模型缓存位于 `_cache/embedding-models/`，purge 只删除索引记录，不重复下载模型。数据库与模型均懒加载；初始化失败只令当前 Vector 请求失败，下一次请求重新初始化，不影响应用启动。
 
 每个 scope 由 collection、source、model 与自建服务的 endpoint 共同确定；托管服务商的站点、区域与账号不改变 embedding 空间，不进入 scope。插入先完成整个 batch 的 embedding、数量/维度/有限值/非零校验与 L2 归一化，再以单个 redb write transaction 提交 metadata 和 `f32` bytes。相同 hash/index/text 的重试是幂等 upsert；delete 仍按上游 hash 语义删除所有分块。
 
@@ -45,7 +45,7 @@ same-origin route
 
 ## 4. Embedding source
 
-- `transformers`：本地使用 `Qwen/Qwen3-Embedding-0.6B`，首次使用时下载到 `_cache/embedding-models/` 并缓存；query 使用检索 instruction，document 保持原文，未携带 `model` 时默认使用该模型。
+- `transformers`：本地使用 `Qwen/Qwen3-Embedding-0.6B`，首次使用时从 ModelScope 按固定 commit 下载到 `_cache/embedding-models/`；query 使用检索 instruction，document 保持原文，未携带 `model` 时默认使用该模型。
 - `webllm`：沿用前端预计算映射。
 - `koboldcpp`：兼容 `/api/backends/kobold/embed`，并把服务端报告的实际 embedding model 带入 Vector scope，避免同一 endpoint 换模型后混合向量空间。
 - OpenAI-compatible、Cohere、Nomic、Google AI Studio、Vertex AI、Extras、Ollama、llama.cpp、vLLM：由 provider HTTP adapter 按各自协议发送。
@@ -54,4 +54,4 @@ same-origin route
 
 与上游一致，Vector 兼容层不区分交互式与批量请求，也不额外施加生成期或 embedding 专属超时；调用会等待本地推理或远端请求完成并正常传播错误。
 
-本地模型 id、量化/runtime 版本、最大 token 长度和 prompt 版本共同组成 Vector profile。repository 懒加载并复用 Qwen tokenizer 与 mmap 权重。
+本地模型 id、量化/runtime 版本、最大 token 长度和 prompt 版本共同组成 Vector profile。repository 懒加载 Qwen tokenizer 与权重并在进程内复用；每段文本单独推理、不做填充，向量与同一请求中的其它文本无关。
