@@ -17,12 +17,12 @@ use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
-    DevLoggingSettings, Http2KeepAliveSettings, RequestProxySettings, UserSettings,
+    DevLoggingSettings, RequestProxySettings, UserSettings,
 };
 use tt_ports::repositories::settings_repository::{
     SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
 };
-pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, OutboundHttpRuntime};
+pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
 #[derive(Clone)]
 struct SettingsAggregateCacheEntry {
@@ -33,7 +33,7 @@ struct SettingsAggregateCacheEntry {
 pub struct SettingsService {
     avatars: Arc<dyn AvatarRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
-    outbound_http_runtime: Arc<dyn OutboundHttpRuntime>,
+    request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     generation_runtime: Arc<GenerationRuntime>,
     sillytavern_settings_cache: Mutex<Option<SettingsAggregateCacheEntry>>,
@@ -46,14 +46,14 @@ impl SettingsService {
     pub fn new(
         avatars: Arc<dyn AvatarRepository>,
         settings_repository: Arc<dyn SettingsRepository>,
-        outbound_http_runtime: Arc<dyn OutboundHttpRuntime>,
+        request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
         chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
         generation_runtime: Arc<GenerationRuntime>,
     ) -> Self {
         Self {
             avatars,
             settings_repository,
-            outbound_http_runtime,
+            request_proxy_runtime,
             chat_backup_runtime,
             generation_runtime,
             sillytavern_settings_cache: Mutex::new(None),
@@ -70,13 +70,9 @@ impl SettingsService {
         let _guard = self.user_settings_save_lock.lock().await;
         self.clear_sillytavern_settings_cache().await;
         self.settings_repository.load_user_settings().await?;
-        let write_guard = self.tauritavern_settings_write_lock.lock().await;
         let settings = self.settings_repository.load_tauritavern_settings().await?;
-        self.outbound_http_runtime
-            .apply_http2_keep_alive_settings(settings.http2_keep_alive);
         self.generation_runtime
             .set_notifications_enabled(settings.generation_notifications_enabled);
-        drop(write_guard);
         self.chat_backup_runtime
             .apply_chat_backup_settings(settings.chat_backups)
             .await?;
@@ -140,18 +136,6 @@ impl SettingsService {
 
         let write_guard = self.tauritavern_settings_write_lock.lock().await;
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
-        let previous_http2_keep_alive = settings.http2_keep_alive;
-
-        if let Some(keep_alive) = dto.http2_keep_alive {
-            settings.http2_keep_alive = Http2KeepAliveSettings {
-                enabled: keep_alive
-                    .enabled
-                    .unwrap_or(previous_http2_keep_alive.enabled),
-                interval_seconds: keep_alive
-                    .interval_seconds
-                    .unwrap_or(previous_http2_keep_alive.interval_seconds),
-            };
-        }
 
         if let Some(updates) = dto.updates {
             Self::apply_update_settings_update(&mut settings.updates, updates);
@@ -291,10 +275,6 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
-        if settings.http2_keep_alive != previous_http2_keep_alive {
-            self.outbound_http_runtime
-                .apply_http2_keep_alive_settings(settings.http2_keep_alive);
-        }
         self.generation_runtime
             .set_notifications_enabled(settings.generation_notifications_enabled);
         drop(write_guard);
@@ -315,7 +295,7 @@ impl SettingsService {
         &self,
         proxy: RequestProxySettings,
     ) -> Result<(), ApplicationError> {
-        self.outbound_http_runtime
+        self.request_proxy_runtime
             .validate_request_proxy_settings(&proxy)?;
 
         let _write = self.tauritavern_settings_write_lock.lock().await;
@@ -324,7 +304,7 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
-        self.outbound_http_runtime
+        self.request_proxy_runtime
             .apply_request_proxy_settings(&settings.request_proxy)?;
         Ok(())
     }
@@ -776,13 +756,11 @@ mod tests {
     async fn tauritavern_settings_update_and_reload_apply_runtime_policies() {
         let repository = Arc::new(TestSettingsRepository::default());
         let backup_runtime = Arc::new(TestChatBackupRuntime::default());
-        let outbound_http_runtime = Arc::new(TestOutboundHttpRuntime::default());
         let generation_runtime = Arc::new(GenerationRuntime::new(None, true));
-        let interval_seconds = std::num::NonZeroU32::new(27).unwrap();
         let service = SettingsService::new(
             Arc::new(TestAvatars),
             repository.clone(),
-            outbound_http_runtime.clone(),
+            Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
             generation_runtime.clone(),
         );
@@ -805,10 +783,6 @@ mod tests {
                 }),
                 close_to_tray_on_close: None,
                 generation_notifications_enabled: Some(false),
-                http2_keep_alive: Some(crate::dto::settings_dto::UpdateHttp2KeepAliveSettingsDto {
-                    enabled: Some(true),
-                    interval_seconds: Some(interval_seconds),
-                }),
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -825,23 +799,6 @@ mod tests {
         assert_eq!(updated.chat_backups.max_total_bytes, 0);
         assert!(!updated.generation_notifications_enabled);
         assert!(!generation_runtime.notifications_enabled());
-        let stored_keep_alive = service
-            .get_tauritavern_settings()
-            .await
-            .expect("read persisted settings")
-            .http2_keep_alive
-            .expect("native HTTP keep-alive settings");
-        assert_eq!(
-            stored_keep_alive,
-            Http2KeepAliveSettings {
-                enabled: true,
-                interval_seconds,
-            }
-        );
-        assert_eq!(
-            *outbound_http_runtime.keep_alive.lock().unwrap(),
-            stored_keep_alive
-        );
         assert_eq!(
             backup_runtime.applied.lock().unwrap().as_slice(),
             &[ChatBackupSettings {
@@ -862,7 +819,6 @@ mod tests {
             .expect("external sync writes settings");
         service.reload().await.expect("reload synchronizes runtime");
         assert!(generation_runtime.notifications_enabled());
-        assert!(!outbound_http_runtime.keep_alive.lock().unwrap().enabled);
     }
 
     #[tokio::test]
@@ -872,7 +828,7 @@ mod tests {
         let service = SettingsService::new(
             Arc::new(TestAvatars),
             repository,
-            Arc::new(TestOutboundHttpRuntime::default()),
+            Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
             Arc::new(GenerationRuntime::new(None, true)),
         );
@@ -894,7 +850,6 @@ mod tests {
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
             generation_notifications_enabled: None,
-            http2_keep_alive: None,
             avatar_persona_original_images_enabled: None,
             dev: None,
             dynamic_theme: None,
@@ -941,7 +896,7 @@ mod tests {
         let service = SettingsService::new(
             Arc::new(TestAvatars),
             repository,
-            Arc::new(TestOutboundHttpRuntime::default()),
+            Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
             Arc::new(GenerationRuntime::new(None, true)),
         );
@@ -964,7 +919,6 @@ mod tests {
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
                 generation_notifications_enabled: None,
-                http2_keep_alive: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -1151,12 +1105,11 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestOutboundHttpRuntime {
+    struct TestRequestProxyRuntime {
         applied: StdMutex<Vec<String>>,
-        keep_alive: StdMutex<Http2KeepAliveSettings>,
     }
 
-    impl OutboundHttpRuntime for TestOutboundHttpRuntime {
+    impl RequestProxyRuntime for TestRequestProxyRuntime {
         fn validate_request_proxy_settings(
             &self,
             _settings: &RequestProxySettings,
@@ -1170,10 +1123,6 @@ mod tests {
         ) -> Result<(), DomainError> {
             self.applied.lock().unwrap().push(settings.url.clone());
             Ok(())
-        }
-
-        fn apply_http2_keep_alive_settings(&self, settings: Http2KeepAliveSettings) {
-            *self.keep_alive.lock().unwrap() = settings;
         }
     }
 

@@ -6,11 +6,7 @@ use tt_domain::models::settings::TauriTavernSettings;
 
 pub fn native_defaults() -> Result<serde_json::Value, ApplicationError> {
     Ok(serde_json::json!({
-        "settings": TauriTavernSettingsDto {
-            // The embedding backend owns outbound HTTP in Web Host.
-            http2_keep_alive: None,
-            ..TauriTavernSettingsDto::from(TauriTavernSettings::default())
-        },
+        "settings": TauriTavernSettingsDto::from(TauriTavernSettings::default()),
         "agentProfiles": AgentListProfilesResultDto {
             profiles: vec![default_writer_profile()?.summary()],
             issues: Vec::new(),

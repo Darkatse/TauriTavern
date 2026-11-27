@@ -41,7 +41,7 @@ use tt_application::services::provider_metadata_service::ProviderMetadataService
 use tt_application::services::quick_reply_service::QuickReplyService;
 use tt_application::services::searxng_search_service::SearxngSearchService;
 use tt_application::services::secret_service::SecretService;
-use tt_application::services::settings_service::{OutboundHttpRuntime, SettingsService};
+use tt_application::services::settings_service::{RequestProxyRuntime, SettingsService};
 use tt_application::services::skill_service::SkillService;
 use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
@@ -78,10 +78,9 @@ pub(super) async fn build(
     let ios_policy = startup_profile.ios_policy.clone();
 
     let http_client_pool = environment.http_client_pool.clone();
-    http_client_pool.apply_http2_keep_alive_settings(tauritavern_settings.http2_keep_alive);
     let external_import_downloader: Arc<dyn ExternalImportDownloader> =
         Arc::new(HttpExternalImportDownloader::new(http_client_pool.clone()));
-    let outbound_http_runtime: Arc<dyn OutboundHttpRuntime> = http_client_pool.clone();
+    let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool.clone();
 
     let content_service = Arc::new(ContentService::new(
         repositories.content_repository.clone(),
@@ -263,7 +262,7 @@ pub(super) async fn build(
     let settings_service = Arc::new(SettingsService::new(
         repositories.avatar_repository.clone(),
         repositories.settings_repository.clone(),
-        outbound_http_runtime,
+        request_proxy_runtime,
         repositories.chat_backup_runtime.clone(),
         generation_runtime.clone(),
     ));

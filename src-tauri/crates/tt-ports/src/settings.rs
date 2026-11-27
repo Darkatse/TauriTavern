@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 pub use tt_contracts::chat::ChatBackupStorageStats;
 use tt_domain::errors::DomainError;
-use tt_domain::models::settings::{
-    ChatBackupSettings, Http2KeepAliveSettings, RequestProxySettings,
-};
+use tt_domain::models::settings::{ChatBackupSettings, RequestProxySettings};
 
-pub trait OutboundHttpRuntime: Send + Sync {
+pub trait RequestProxyRuntime: Send + Sync {
     fn validate_request_proxy_settings(
         &self,
         settings: &RequestProxySettings,
@@ -15,8 +13,6 @@ pub trait OutboundHttpRuntime: Send + Sync {
         &self,
         settings: &RequestProxySettings,
     ) -> Result<(), DomainError>;
-
-    fn apply_http2_keep_alive_settings(&self, settings: Http2KeepAliveSettings);
 }
 
 #[async_trait]

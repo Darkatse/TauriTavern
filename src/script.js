@@ -12,7 +12,6 @@ import {
     lodash,
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion, getTauriTavernSettings, invoke, updateTauriTavernSettings } from './tauri-bridge.js';
-import { initializeHttp2KeepAliveSettings } from './scripts/tauritavern/http2-keep-alive.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
 import { getPromptCacheUsage } from './scripts/util/prompt-cache-usage.js';
 import { formatGenerationTimer, updateMessageGenerationInfo } from './scripts/message-generation-info.js';
@@ -1192,7 +1191,6 @@ async function firstLoadInit() {
         await settleSafeModePrompt();
         await loadUserStylesheet();
         const tauriTavernSettings = await getTauriTavernSettings();
-        initializeHttp2KeepAliveSettings(tauriTavernSettings.http2_keep_alive);
         initializeChatVirtualization(tauriTavernSettings);
         initializeColdSwipes(tauriTavernSettings);
         initializeCodeMirrorEditor(tauriTavernSettings);

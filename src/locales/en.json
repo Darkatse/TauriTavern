@@ -1,8 +1,4 @@
 {
-    "HTTP/2 keepalive": "HTTP/2 keepalive",
-    "Send HTTP/2 PING frames during active generation requests.": "Send HTTP/2 PING frames during active generation requests.",
-    "Keepalive interval (seconds)": "Keepalive interval (seconds)",
-    "Could not save HTTP/2 keepalive settings.": "Could not save HTTP/2 keepalive settings.",
     "Time to First Token (TTFT)": "Time to First Token (TTFT)",
     "Generation Speed": "Generation Speed",
     "Prompt Cache Hit Rate": "Prompt Cache Hit Rate",

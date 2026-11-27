@@ -119,8 +119,6 @@ const host = installWebHost({
 
 **TT 设置**。读取时合并默认值与 `store` 文档里的设置，新增字段由默认值补上。更新遵循 Rust 更新 DTO 的 `Option` 语义：未提供或为 `null` 的普通字段保留；嵌套段落按字段更新，数组替换。`allow_keys_exposure` 与 `request_proxy` 只经各自的命令修改，不在更新 DTO 里，更新时忽略。更新在同一任务里读取、合并并保存。
 
-Web Host 由嵌入方的后端管理模型请求的 HTTP 连接，设置 DTO 省略由原生网络客户端消费的 `http2_keep_alive`。
-
 **系统扩展**。启动时写下的状态（MCP 注册、扩展存储条目）保存在 `store` 文档里，之后的启动读到的与原生相同；技能列表是全新安装的结果。工具声明确认接收；真正使用这些能力时才拒绝。
 
 **生成流**。后端同步返回响应头，`body` 是 `ReadableStream<Uint8Array>`，内容为标准 SSE。该流是可转移对象；同源调用可直接返回它，经结构化克隆转交时必须把流加入 transfer list。取消和关闭通过 reader 的 `cancel()` 传回后端。
