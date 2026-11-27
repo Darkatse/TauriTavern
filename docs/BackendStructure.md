@@ -256,7 +256,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
 - `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、Skill 绑定、冻结宏投影与发布策略由 application 拥有。
 - `tt-adapter-provider-http`、`tt-adapter-external-import`、`tt-adapter-mcp`、`tt-adapter-tokenization` 和 `tt-adapter-vector` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
-- `tt-adapter-http` 构建出站 client 时统一设置传输规则：产品 UA、平台 TLS、每个请求新建连接、解析结果 IPv4 优先、对端约 5 分钟没有回应才判定连接断开。profile 只增加超时、重定向等差异。传输失败也只在这里（`upstream`）分类。
+- `tt-adapter-http` 构建出站 client 时统一设置传输规则：产品 UA、平台 TLS、每个请求新建连接、解析结果 IPv4 优先、h2 连接 30 秒收不到数据就发 PING、对端约 5 分钟没有回应才判定连接断开。profile 只增加超时、重定向等差异。传输失败也只在这里（`upstream`）分类。
 - 应用按 SHA-256 固定的远程文件只经 `tt-adapter-http` 的 `PinnedFileCache` 获取：文件以 SHA-256 命名，完整下载并校验后才出现，中断的下载由下一次续传。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 

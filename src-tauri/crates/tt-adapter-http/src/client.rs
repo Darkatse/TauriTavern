@@ -1,5 +1,6 @@
 //! Transport rules every outbound client follows:
 //! - no request reuses an idle connection;
+//! - an HTTP/2 connection that receives nothing for 30 seconds sends a PING;
 //! - a connection whose peer has been silent for about five minutes is dead.
 
 use std::sync::Arc;
@@ -37,7 +38,11 @@ macro_rules! with_transport_rules {
             .dns_resolver(Arc::new(Ipv4First))
             .tcp_keepalive(KEEPALIVE_IDLE)
             .tcp_keepalive_interval(KEEPALIVE_INTERVAL)
-            .tcp_keepalive_retries(KEEPALIVE_PROBES);
+            .tcp_keepalive_retries(KEEPALIVE_PROBES)
+            .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+            .http2_keep_alive_timeout(KEEPALIVE_INTERVAL * KEEPALIVE_PROBES)
+            // hyper counts an unpooled connection as idle once its response headers arrive.
+            .http2_keep_alive_while_idle(true);
         #[cfg(any(target_os = "android", target_os = "linux"))]
         let builder = builder.tcp_user_timeout(KEEPALIVE_INTERVAL * KEEPALIVE_PROBES);
         #[cfg(target_os = "android")]
