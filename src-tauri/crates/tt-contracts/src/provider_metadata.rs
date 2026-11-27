@@ -53,9 +53,17 @@ pub struct NanoGptCredits {
     pub subscription: Option<NanoGptSubscriptionCredits>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModelProvider {
+    /// Routing ID sent to the provider API, independent of the display label.
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NanoGptModelProviders {
+    /// A selectable model can still have no available providers.
     pub supports_provider_selection: bool,
-    pub providers: Vec<String>,
+    pub providers: Vec<ModelProvider>,
 }

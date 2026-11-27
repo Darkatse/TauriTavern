@@ -8,7 +8,8 @@ use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits, ProviderMetadataRepository,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
+    ProviderMetadataRepository,
 };
 use tt_ports::repositories::secret_repository::SecretRepository;
 
@@ -31,10 +32,19 @@ impl ProviderMetadataService {
         }
     }
 
+    pub async fn openrouter_providers(&self) -> Result<Vec<ModelProvider>, ApplicationError> {
+        self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
+
+        self.provider_metadata_repository
+            .openrouter_providers()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub async fn openrouter_model_providers(
         &self,
         dto: ProviderModelProvidersRequestDto,
-    ) -> Result<Vec<String>, ApplicationError> {
+    ) -> Result<Vec<ModelProvider>, ApplicationError> {
         self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
         let model = required_string(&dto.model, "model")?;
 

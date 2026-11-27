@@ -3959,6 +3959,7 @@
     "Search providers...": "搜索提供商...",
     "Previous page": "上一页",
     "Select providers. No selection = all providers.": "选择供应商。未选择 = 所有供应商。",
+    "${0} (not offered for this model)": "${0}（此模型不提供）",
     "Next page": "下一页",
     "If you're connected to an API, try asking me something!": "如果你已连接到 API，试着问我一些问题吧！",
     "Valid World Info file name is required": "需要有效的世界信息文件名",

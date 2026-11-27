@@ -1,14 +1,19 @@
 use async_trait::async_trait;
 pub use tt_contracts::provider_metadata::{
-    NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits, NanoGptSubscriptionLimits,
-    NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, NanoGptSubscriptionCredits,
+    NanoGptSubscriptionLimits, NanoGptSubscriptionPeriod, NanoGptUsageBucket, OpenRouterCredits,
 };
 
 use tt_domain::errors::DomainError;
 
 #[async_trait]
 pub trait ProviderMetadataRepository: Send + Sync {
-    async fn openrouter_model_providers(&self, model: &str) -> Result<Vec<String>, DomainError>;
+    async fn openrouter_providers(&self) -> Result<Vec<ModelProvider>, DomainError>;
+
+    async fn openrouter_model_providers(
+        &self,
+        model: &str,
+    ) -> Result<Vec<ModelProvider>, DomainError>;
 
     async fn openrouter_credits(&self, api_key: &str) -> Result<OpenRouterCredits, DomainError>;
 

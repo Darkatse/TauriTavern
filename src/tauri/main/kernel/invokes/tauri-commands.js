@@ -115,6 +115,7 @@ export {};
  *   | 'exchange_openrouter_code'
  *   | 'get_openrouter_credits'
  *   | 'get_openrouter_model_providers'
+ *   | 'get_openrouter_providers'
  *   | 'get_settings_snapshots'
  *   | 'get_sillytavern_settings'
  *   | 'get_tauritavern_settings'

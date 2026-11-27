@@ -9,14 +9,28 @@ use tt_application::dto::provider_metadata_dto::{
     OpenRouterCodeExchangeRequestDto, ProviderModelProvidersRequestDto,
 };
 use tt_ports::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
 };
+
+#[tauri::command]
+pub async fn get_openrouter_providers(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ModelProvider>, CommandError> {
+    log_command("get_openrouter_providers");
+
+    app_state
+        .services
+        .provider_metadata_service
+        .openrouter_providers()
+        .await
+        .map_err(map_command_error("Failed to get OpenRouter providers"))
+}
 
 #[tauri::command]
 pub async fn get_openrouter_model_providers(
     dto: ProviderModelProvidersRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
+) -> Result<Vec<ModelProvider>, CommandError> {
     log_command(format!("get_openrouter_model_providers {}", dto.model));
 
     app_state

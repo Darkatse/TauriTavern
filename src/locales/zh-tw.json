@@ -2508,6 +2508,7 @@
     "help_macros_firstDisplayedMessageId": "載入到可見聊天中的第一則訊息的 ID。",
     "Couldn't import tags:": "無法匯入標籤：",
     "Select providers. No selection = all providers.": "選擇供應商。未選擇＝所有供應商。",
+    "${0} (not offered for this model)": "${0}（此模型不提供）",
     "Select a model": "選擇模型",
     "Search models...": "搜尋模型⋯",
     "[Currently loaded]": "[目前載入]",

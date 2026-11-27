@@ -139,6 +139,18 @@ export async function exchangeOpenRouterCode(code, codeVerifier) {
     });
 }
 
+export async function getOpenRouterProviders() {
+    return invokeWithHostNormalization('get_openrouter_providers');
+}
+
+export async function getOpenRouterModelProviders(model) {
+    return invokeWithHostNormalization('get_openrouter_model_providers', { dto: { model } });
+}
+
+export async function getNanoGptModelProviders(model) {
+    return invokeWithHostNormalization('get_nanogpt_model_providers', { dto: { model } });
+}
+
 export async function getRuntimePaths() {
     return invoke('get_runtime_paths');
 }

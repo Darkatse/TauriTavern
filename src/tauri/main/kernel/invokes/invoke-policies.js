@@ -78,6 +78,13 @@ export function createHostInvokePolicies() {
             maxConcurrent: 1,
             key: exactTokenizerRequestKey,
         },
+        get_openrouter_providers: {
+            kind: 'dedupe',
+            key: () => 'singleton',
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 1,
+        },
         get_openrouter_model_providers: {
             kind: 'dedupe',
             maxConcurrent: 2,

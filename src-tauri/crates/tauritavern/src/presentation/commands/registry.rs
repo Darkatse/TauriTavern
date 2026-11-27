@@ -168,6 +168,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::secret_commands::rotate_secret,
         super::secret_commands::rename_secret,
         // Provider metadata commands
+        super::provider_metadata_commands::get_openrouter_providers,
         super::provider_metadata_commands::get_openrouter_model_providers,
         super::provider_metadata_commands::get_openrouter_credits,
         super::provider_metadata_commands::exchange_openrouter_code,

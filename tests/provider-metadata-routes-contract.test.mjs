@@ -49,26 +49,35 @@ test('provider credential mutations invalidate only secret-backed metadata', asy
     assert.deepEqual(invalidations, []);
 });
 
-test('provider metadata routes preserve request identity and visible failures', async () => {
+test('model provider routes answer in the upstream shapes and keep failures visible', async () => {
     const calls = [];
     const router = createRouteRegistry();
     registerProviderRoutes(router, {
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            return [];
+            return command === 'get_nanogpt_model_providers'
+                ? { supportsProviderSelection: true, providers: [] }
+                : [{ id: 'DeepInfra', label: 'DeepInfra' }];
         },
     }, { jsonResponse });
 
-    const response = await router.handle({
+    const nanoGpt = await router.handle({
         method: 'POST',
         path: '/api/nanogpt/models/providers',
         body: { model: 'model-id' },
     });
-    assert.equal(response.status, 200);
+    assert.deepEqual(await nanoGpt.json(), { supportsProviderSelection: true, providers: [] });
     assert.deepEqual(calls, [{
         command: 'get_nanogpt_model_providers',
         args: { dto: { model: 'model-id' } },
     }]);
+
+    const openRouter = await router.handle({
+        method: 'POST',
+        path: '/api/openrouter/models/providers',
+        body: { model: 'author/model' },
+    });
+    assert.deepEqual(await openRouter.json(), ['DeepInfra']);
 
     const failingRouter = createRouteRegistry();
     registerProviderRoutes(failingRouter, {

@@ -97,7 +97,7 @@ import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { macros } from './macros/macro-system.js';
-import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
+import { applySavedModelProviders, syncModelProviders, updateModelProvidersWarning } from './textgen-models.js';
 
 export {
     openai_messages_count,
@@ -6460,9 +6460,9 @@ function loadOpenAISettings(data, settings) {
     setToolReasoningControls();
     ToolManager.RECURSE_LIMIT = oai_settings.tool_call_recurse_limit;
 
-    $('#openrouter_providers_chat').trigger('change');
+    applySavedModelProviders('#openrouter_providers_chat', oai_settings.openrouter_providers);
     $('#openrouter_quantizations_chat').trigger('change');
-    $('#nanogpt_provider').trigger('change');
+    applySavedModelProviders('#nanogpt_provider', [oai_settings.nanogpt_provider]);
     syncChatCompletionSourceSelector();
     applyCustomModelOptionsToAllSources();
     $('#chat_completion_source').trigger('change');
@@ -7182,12 +7182,12 @@ function onSettingsPresetChange() {
 
         // These cannot be changed via preset if unbound to connection
         if (oai_settings.bind_preset_to_connection) {
+            applySavedModelProviders('#openrouter_providers_chat', oai_settings.openrouter_providers);
+            applySavedModelProviders('#nanogpt_provider', [oai_settings.nanogpt_provider]);
             syncChatCompletionSourceSelector();
             applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');
-            $('#openrouter_providers_chat').trigger('change');
             $('#openrouter_quantizations_chat').trigger('change');
-            $('#nanogpt_provider').trigger('change');
         }
 
         $('#openai_logit_bias_preset').trigger('change');
@@ -7650,7 +7650,7 @@ async function onModelChange() {
 
         console.log('OpenRouter model changed to', value);
         oai_settings.openrouter_model = value;
-        syncOpenRouterProvidersForModel(value, '#openrouter_providers_chat');
+        syncModelProviders('#openrouter_providers_chat', value);
     }
 
     if ($(this).is('#model_ai21_select')) {
@@ -7760,7 +7760,7 @@ async function onModelChange() {
 
         console.log('NanoGPT model changed to', value);
         oai_settings.nanogpt_model = value;
-        syncNanoGptProvidersForModel(value, '#nanogpt_provider');
+        syncModelProviders('#nanogpt_provider', value);
     }
 
     if ($(this).is('#model_deepseek_select')) {
@@ -9383,7 +9383,7 @@ export function initOpenAI() {
 
     $('#openrouter_allow_fallbacks').on('input', function () {
         oai_settings.openrouter_allow_fallbacks = !!$(this).prop('checked');
-        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
+        updateModelProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -9669,7 +9669,7 @@ export function initOpenAI() {
 
         oai_settings.openrouter_providers = selectedProviders;
 
-        updateOpenRouterProvidersWarning('#openrouter_providers_chat');
+        updateModelProvidersWarning('#openrouter_providers_chat');
         saveSettingsDebounced();
     });
 
@@ -9688,7 +9688,7 @@ export function initOpenAI() {
 
     $('#nanogpt_provider').on('change', function () {
         oai_settings.nanogpt_provider = String($(this).val() || '');
-        updateNanoGptProvidersWarning('#nanogpt_provider');
+        updateModelProvidersWarning('#nanogpt_provider');
         saveSettingsDebounced();
     });
 
