@@ -1,20 +1,27 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value};
+use url::Url;
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::openrouter;
+use crate::services::selected_secret::{read_selected_secret, requested_secret_id};
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
-use tt_domain::models::endpoint_url::{append_endpoint_segments, parse_user_http_endpoint};
-use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::endpoint_url::{
+    HostLabel, append_endpoint_segments, parse_user_http_endpoint,
+};
+use tt_domain::models::siliconflow::SiliconFlowEndpoint;
+use tt_domain::models::vertex_ai::{
+    VERTEX_AI_GLOBAL_HOST, VertexAiAuthMode, VertexAiCredential, VertexAiSettings,
+};
+use tt_domain::models::workers_ai::WorkersAiAccount;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
 };
-use tt_ports::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use tt_ports::repositories::secret_repository::SecretRepository;
 
 use super::additional_parameters::AdditionalParameters;
@@ -24,7 +31,6 @@ const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 const CLAUDE_API_BASE: &str = "https://api.anthropic.com/v1";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com";
-const VERTEXAI_GLOBAL_BASE: &str = "https://aiplatform.googleapis.com";
 const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/beta";
 const DEEPSEEK_STATUS_API_BASE: &str = "https://api.deepseek.com";
 const COHERE_STATUS_API_BASE: &str = "https://api.cohere.ai/v1";
@@ -34,9 +40,6 @@ const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 const MOONSHOT_API_BASE_CN: &str = "https://api.moonshot.cn/v1";
 const NANOGPT_API_BASE: &str = "https://nano-gpt.com/api/v1";
 const CHUTES_API_BASE: &str = "https://llm.chutes.ai/v1";
-const SILICONFLOW_API_BASE: &str = "https://api.siliconflow.com/v1";
-const SILICONFLOW_API_BASE_CN: &str = "https://api.siliconflow.cn/v1";
-const WORKERS_AI_API_BASE: &str = "https://api.cloudflare.com/client/v4/accounts";
 const ZAI_API_BASE_COMMON: &str = "https://api.z.ai/api/paas/v4";
 const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
@@ -46,9 +49,11 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 const POLLINATIONS_API_BASE: &str = "https://gen.pollinations.ai/v1";
 const POLLINATIONS_API_BASE_ANONYMOUS: &str = "https://text.pollinations.ai/v1";
 const POLLINATIONS_STATUS_API_BASE: &str = "https://gen.pollinations.ai/text";
-const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
-const OPENROUTER_TITLE: &str = "TauriTavern";
-const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
+const ELECTRONHUB_API_BASE: &str = "https://api.electronhub.ai/v1";
+const FIREWORKS_API_BASE: &str = "https://api.fireworks.ai/inference/v1";
+const FIREWORKS_STATUS_API_BASE: &str = "https://api.fireworks.ai/v1";
+const PERPLEXITY_API_BASE: &str = "https://api.perplexity.ai";
+const MISTRALAI_API_BASE: &str = "https://api.mistral.ai/v1";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
@@ -112,7 +117,7 @@ pub(super) async fn resolve_status_api_config(
             pollinations_endpoint: dto.pollinations_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
             aws_bedrock_region: dto.aws_bedrock_region.trim(),
-            secret_id: normalize_secret_id(dto.secret_id.as_deref()),
+            secret_id: requested_secret_id(dto.secret_id.as_deref()),
             ..Default::default()
         },
         ApiConfigPurpose::Status,
@@ -212,7 +217,8 @@ async fn resolve_api_config(
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
-    let user_endpoint = resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?;
+    let user_endpoint =
+        resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?.map(String::from);
 
     match source {
         ChatCompletionSource::Custom => {
@@ -223,9 +229,13 @@ async fn resolve_api_config(
             let api_key = if uses_reverse_proxy {
                 proxy_password.to_string()
             } else {
-                read_optional_secret(secret_repository, SecretKeys::CUSTOM, hints.secret_id)
-                    .await?
-                    .unwrap_or_default()
+                read_selected_secret(
+                    secret_repository.as_ref(),
+                    source.secret_key(),
+                    hints.secret_id,
+                )
+                .await?
+                .unwrap_or_default()
             };
 
             Ok(ChatCompletionApiConfig {
@@ -250,16 +260,18 @@ async fn resolve_api_config(
 
             let mut api_key = if user_configured_endpoint {
                 proxy_password.to_string()
-            } else if let Some(secret_key) = source_secret_key(source, &hints) {
+            } else if source == ChatCompletionSource::Pollinations
+                && is_pollinations_anonymous(hints.pollinations_endpoint)
+            {
+                String::new()
+            } else {
                 read_required_secret(
                     secret_repository,
-                    secret_key,
+                    source.secret_key(),
                     hints.secret_id,
                     source.display_name(),
                 )
                 .await?
-            } else {
-                String::new()
             };
 
             let mut extra_headers = source_extra_headers(source);
@@ -336,7 +348,7 @@ pub(super) fn resolve_user_configured_endpoint(
     source: ChatCompletionSource,
     reverse_proxy: &str,
     custom_url: &str,
-) -> Result<Option<String>, ApplicationError> {
+) -> Result<Option<Url>, ApplicationError> {
     let reverse_proxy = reverse_proxy.trim();
     let custom_url = custom_url.trim();
     let endpoint = match source {
@@ -347,18 +359,16 @@ pub(super) fn resolve_user_configured_endpoint(
                 "Custom endpoint is missing. Please configure custom_url.".to_string(),
             ));
         }
-        _ if supports_reverse_proxy(source) && !reverse_proxy.is_empty() => reverse_proxy,
+        _ if source.supports_reverse_proxy() && !reverse_proxy.is_empty() => reverse_proxy,
         _ => return Ok(None),
     };
 
     let endpoint = parse_user_http_endpoint(endpoint)?;
     if source == ChatCompletionSource::VertexAi {
-        return Ok(Some(
-            append_endpoint_segments(endpoint.as_str(), &["v1"])?.to_string(),
-        ));
+        return Ok(Some(append_endpoint_segments(endpoint.as_str(), &["v1"])?));
     }
 
-    Ok(Some(endpoint.to_string()))
+    Ok(Some(endpoint))
 }
 
 pub(super) fn get_payload_string(
@@ -381,7 +391,7 @@ fn get_payload_optional_string(
 ) -> Result<Option<String>, ApplicationError> {
     match payload.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(normalize_secret_id(Some(value)).map(str::to_string)),
+        Some(Value::String(value)) => Ok(requested_secret_id(Some(value)).map(str::to_string)),
         Some(_) => Err(ApplicationError::ValidationError(format!(
             "Chat completion request field must be a string: {}",
             key
@@ -404,19 +414,14 @@ fn get_payload_bool(
     }
 }
 
-fn normalize_secret_id(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
 async fn read_required_secret(
     secret_repository: &Arc<dyn SecretRepository>,
     secret_key: &str,
     secret_id: Option<&str>,
     source_name: &str,
 ) -> Result<String, ApplicationError> {
-    read_selected_secret(secret_repository, secret_key, secret_id)
+    read_selected_secret(secret_repository.as_ref(), secret_key, secret_id)
         .await?
-        .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
             let selector = secret_id
                 .map(|id| format!(" for secret_id {id}"))
@@ -426,34 +431,6 @@ async fn read_required_secret(
                 source_name, selector, secret_key
             ))
         })
-}
-
-async fn read_optional_secret(
-    secret_repository: &Arc<dyn SecretRepository>,
-    secret_key: &str,
-    secret_id: Option<&str>,
-) -> Result<Option<String>, ApplicationError> {
-    Ok(
-        read_selected_secret(secret_repository, secret_key, secret_id)
-            .await?
-            .filter(|value| !value.trim().is_empty()),
-    )
-}
-
-async fn read_selected_secret(
-    secret_repository: &Arc<dyn SecretRepository>,
-    secret_key: &str,
-    secret_id: Option<&str>,
-) -> Result<Option<String>, ApplicationError> {
-    let secret = secret_repository.read_secret(secret_key, secret_id).await?;
-    if let (Some(id), None) = (secret_id, secret.as_ref()) {
-        return Err(ApplicationError::ValidationError(format!(
-            "Secret id not found for {}: {}",
-            secret_key, id
-        )));
-    }
-
-    Ok(secret)
 }
 
 fn default_base_url(
@@ -467,7 +444,7 @@ fn default_base_url(
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
-        ChatCompletionSource::VertexAi => VERTEXAI_GLOBAL_BASE.to_string(),
+        ChatCompletionSource::VertexAi => VERTEX_AI_GLOBAL_HOST.to_string(),
         ChatCompletionSource::DeepSeek => match purpose {
             ApiConfigPurpose::Status => DEEPSEEK_STATUS_API_BASE.to_string(),
             ApiConfigPurpose::Generate => DEEPSEEK_API_BASE.to_string(),
@@ -481,7 +458,9 @@ fn default_base_url(
         ChatCompletionSource::NanoGpt => NANOGPT_API_BASE.to_string(),
         ChatCompletionSource::Chutes => CHUTES_API_BASE.to_string(),
         ChatCompletionSource::SiliconFlow => {
-            siliconflow_base_url(hints.siliconflow_endpoint)?.to_string()
+            SiliconFlowEndpoint::parse(hints.siliconflow_endpoint)?
+                .base_url()
+                .to_string()
         }
         ChatCompletionSource::WorkersAi => {
             workers_ai_base_url(hints.workers_ai_account_id, purpose)?
@@ -494,7 +473,7 @@ fn default_base_url(
             }
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
-        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
+        ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region)?,
         ChatCompletionSource::Xai => XAI_API_BASE.to_string(),
         ChatCompletionSource::Pollinations => match purpose {
             ApiConfigPurpose::Status => POLLINATIONS_STATUS_API_BASE.to_string(),
@@ -505,83 +484,29 @@ fn default_base_url(
             }
             ApiConfigPurpose::Generate => POLLINATIONS_API_BASE.to_string(),
         },
+        ChatCompletionSource::ElectronHub => ELECTRONHUB_API_BASE.to_string(),
+        ChatCompletionSource::Fireworks => match purpose {
+            ApiConfigPurpose::Status => FIREWORKS_STATUS_API_BASE.to_string(),
+            ApiConfigPurpose::Generate => FIREWORKS_API_BASE.to_string(),
+        },
+        ChatCompletionSource::Perplexity => PERPLEXITY_API_BASE.to_string(),
+        ChatCompletionSource::MistralAi => MISTRALAI_API_BASE.to_string(),
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
     Ok(base_url)
 }
 
-fn source_secret_key(
-    source: ChatCompletionSource,
-    hints: &ApiConfigHints<'_>,
-) -> Option<&'static str> {
-    match source {
-        ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
-        ChatCompletionSource::OpenCode => Some(SecretKeys::OPENCODE),
-        ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
-        ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
-        ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
-        ChatCompletionSource::VertexAi => Some(SecretKeys::VERTEXAI),
-        ChatCompletionSource::DeepSeek => Some(SecretKeys::DEEPSEEK),
-        ChatCompletionSource::Cohere => Some(SecretKeys::COHERE),
-        ChatCompletionSource::Groq => Some(SecretKeys::GROQ),
-        ChatCompletionSource::Moonshot => Some(SecretKeys::MOONSHOT),
-        ChatCompletionSource::NanoGpt => Some(SecretKeys::NANOGPT),
-        ChatCompletionSource::Chutes => Some(SecretKeys::CHUTES),
-        ChatCompletionSource::SiliconFlow => Some(SecretKeys::SILICONFLOW),
-        ChatCompletionSource::WorkersAi => Some(SecretKeys::WORKERS_AI),
-        ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
-        ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
-        ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
-        ChatCompletionSource::Xai => Some(SecretKeys::XAI),
-        ChatCompletionSource::Pollinations => {
-            (!is_pollinations_anonymous(hints.pollinations_endpoint))
-                .then_some(SecretKeys::POLLINATIONS)
-        }
-        ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
-    }
-}
-
-fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
-    matches!(
-        source,
-        ChatCompletionSource::OpenAi
-            | ChatCompletionSource::Claude
-            | ChatCompletionSource::Makersuite
-            | ChatCompletionSource::VertexAi
-            | ChatCompletionSource::DeepSeek
-            | ChatCompletionSource::Moonshot
-            | ChatCompletionSource::Zai
-            | ChatCompletionSource::Xai
-    )
-}
-
-fn siliconflow_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
-    match SiliconFlowEndpoint::parse_frontend(endpoint)
-        .map_err(ApplicationError::ValidationError)?
-    {
-        SiliconFlowEndpoint::Global => Ok(SILICONFLOW_API_BASE),
-        SiliconFlowEndpoint::China => Ok(SILICONFLOW_API_BASE_CN),
-    }
-}
-
 fn workers_ai_base_url(
     account_id: &str,
     purpose: ApiConfigPurpose,
 ) -> Result<String, ApplicationError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Err(ApplicationError::ValidationError(
-            "workers_ai_account_id is required".to_string(),
-        ));
-    }
-
-    let account_id = utf8_percent_encode(account_id, NON_ALPHANUMERIC).to_string();
-    let suffix = match purpose {
-        ApiConfigPurpose::Status => "ai",
-        ApiConfigPurpose::Generate => "ai/v1",
+    let account = WorkersAiAccount::parse(account_id)?;
+    let url = match purpose {
+        ApiConfigPurpose::Status => account.ai_url("")?,
+        ApiConfigPurpose::Generate => account.openai_base_url()?,
     };
-    Ok(format!("{WORKERS_AI_API_BASE}/{account_id}/{suffix}"))
+    Ok(url.into())
 }
 
 fn minimax_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
@@ -604,14 +529,14 @@ fn moonshot_base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
     }
 }
 
-fn aws_bedrock_base_url(region: &str) -> String {
-    let region = region.trim();
-    let region = if region.is_empty() {
+fn aws_bedrock_base_url(region: &str) -> Result<String, ApplicationError> {
+    let region = if region.trim().is_empty() {
         AWS_BEDROCK_DEFAULT_REGION
     } else {
         region
     };
-    format!("https://bedrock-runtime.{region}.amazonaws.com")
+    let region = HostLabel::parse("AWS Bedrock region", region)?;
+    Ok(format!("https://bedrock-runtime.{region}.amazonaws.com"))
 }
 
 async fn resolve_vertexai_generate_api_config(
@@ -627,7 +552,8 @@ async fn resolve_vertexai_generate_api_config(
     if !reverse_proxy.is_empty() {
         let base_url =
             resolve_user_configured_endpoint(ChatCompletionSource::VertexAi, reverse_proxy, "")?
-                .expect("non-empty Vertex AI reverse proxy must resolve");
+                .expect("non-empty Vertex AI reverse proxy must resolve")
+                .into();
         return Ok(ChatCompletionApiConfig {
             base_url,
             user_configured_endpoint: true,
@@ -642,124 +568,47 @@ async fn resolve_vertexai_generate_api_config(
         });
     }
 
-    let mode = payload
-        .get("vertexai_auth_mode")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("express")
-        .to_ascii_lowercase();
-
-    let region = payload
-        .get("vertexai_region")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("us-central1")
-        .to_ascii_lowercase();
-
+    let settings = VertexAiSettings::parse(
+        &get_payload_string(payload, "vertexai_auth_mode")?,
+        &get_payload_string(payload, "vertexai_region")?,
+        &get_payload_string(payload, "vertexai_express_project_id")?,
+    )?;
     let is_claude_model = payload
         .get("model")
         .and_then(Value::as_str)
         .is_some_and(is_vertex_ai_claude_model_id);
-
-    match mode.as_str() {
-        "express" => {
-            if is_claude_model {
-                return Err(ApplicationError::ValidationError(
-                    "Google Vertex AI Claude requires Full mode service account authentication or a reverse proxy with bearer authentication."
-                        .to_string(),
-                ));
-            }
-
-            let api_key = read_required_secret(
-                secret_repository,
-                SecretKeys::VERTEXAI,
-                secret_id,
-                "Google Vertex AI",
-            )
-            .await?;
-            let project_id = payload
-                .get("vertexai_express_project_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-
-            Ok(ChatCompletionApiConfig {
-                base_url: vertexai_base_url(&region, project_id),
-                user_configured_endpoint: false,
-                api_key,
-                authorization_header: None,
-                vertexai_service_account_json: None,
-                extra_headers,
-                additional_headers,
-                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-                aws_bedrock_custom_response_path: None,
-                aws_bedrock_custom_stream_path: None,
-            })
-        }
-        "full" => {
-            let service_account_json = read_required_secret(
-                secret_repository,
-                SecretKeys::VERTEXAI_SERVICE_ACCOUNT,
-                secret_id,
-                "Google Vertex AI",
-            )
-            .await?;
-            let project_id = vertexai_service_account_project_id(&service_account_json)?;
-
-            Ok(ChatCompletionApiConfig {
-                base_url: vertexai_base_url(&region, Some(&project_id)),
-                user_configured_endpoint: false,
-                api_key: String::new(),
-                authorization_header: None,
-                vertexai_service_account_json: Some(service_account_json),
-                extra_headers,
-                additional_headers,
-                anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
-                aws_bedrock_custom_response_path: None,
-                aws_bedrock_custom_stream_path: None,
-            })
-        }
-        other => Err(ApplicationError::ValidationError(format!(
-            "Unsupported Vertex AI authentication mode: {other}",
-        ))),
+    if is_claude_model && settings.auth_mode() == VertexAiAuthMode::Express {
+        return Err(ApplicationError::ValidationError(
+            "Google Vertex AI Claude requires Full mode service account authentication or a reverse proxy with bearer authentication."
+                .to_string(),
+        ));
     }
-}
 
-/// Without a project, Vertex AI Express serves the location chosen at signup.
-fn vertexai_base_url(region: &str, project_id: Option<&str>) -> String {
-    let Some(project_id) = project_id else {
-        return format!("{VERTEXAI_GLOBAL_BASE}/v1");
+    let credential = read_required_secret(
+        secret_repository,
+        settings.auth_mode().secret_key(),
+        secret_id,
+        "Google Vertex AI",
+    )
+    .await?;
+    let connection = settings.connect(credential)?;
+    let (api_key, vertexai_service_account_json) = match connection.credential {
+        VertexAiCredential::ApiKey(api_key) => (api_key, None),
+        VertexAiCredential::ServiceAccount(json) => (String::new(), Some(json)),
     };
-    let host = match region {
-        "global" => VERTEXAI_GLOBAL_BASE.to_string(),
-        "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
-        _ => format!("https://{region}-aiplatform.googleapis.com"),
-    };
-    format!("{host}/v1/projects/{project_id}/locations/{region}")
-}
 
-fn vertexai_service_account_project_id(
-    service_account_json: &str,
-) -> Result<String, ApplicationError> {
-    let value = serde_json::from_str::<Value>(service_account_json).map_err(|error| {
-        ApplicationError::ValidationError(format!(
-            "Vertex AI service account JSON parse failed: {error}"
-        ))
-    })?;
-
-    value
-        .get("project_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "Vertex AI service account JSON is missing project_id".to_string(),
-            )
-        })
+    Ok(ChatCompletionApiConfig {
+        base_url: connection.base_url,
+        user_configured_endpoint: false,
+        api_key,
+        authorization_header: None,
+        vertexai_service_account_json,
+        extra_headers,
+        additional_headers,
+        anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+        aws_bedrock_custom_response_path: None,
+        aws_bedrock_custom_stream_path: None,
+    })
 }
 
 fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String> {
@@ -769,16 +618,7 @@ fn source_extra_headers(source: ChatCompletionSource) -> HashMap<String, String>
         headers.insert("Accept-Language".to_string(), "en-US,en".to_string());
     }
     if source == ChatCompletionSource::OpenRouter {
-        headers.insert("HTTP-Referer".to_string(), OPENROUTER_REFERER.to_string());
-        headers.insert(
-            "X-OpenRouter-Title".to_string(),
-            OPENROUTER_TITLE.to_string(),
-        );
-        headers.insert("X-Title".to_string(), OPENROUTER_TITLE.to_string());
-        headers.insert(
-            "X-OpenRouter-Categories".to_string(),
-            OPENROUTER_CATEGORIES.to_string(),
-        );
+        headers.extend(openrouter::attribution_headers());
     }
 
     headers
@@ -834,7 +674,8 @@ mod tests {
 
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
-        resolve_generate_api_config, resolve_status_api_config, resolve_user_configured_endpoint,
+        Url, resolve_generate_api_config, resolve_status_api_config,
+        resolve_user_configured_endpoint,
     };
 
     struct TestSecretRepository {
@@ -931,7 +772,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(endpoint.as_deref(), Some("http://192.168.1.2:11434/v1"));
+        assert_eq!(
+            endpoint.as_ref().map(Url::as_str),
+            Some("http://192.168.1.2:11434/v1")
+        );
         assert_eq!(
             resolve_user_configured_endpoint(ChatCompletionSource::OpenAi, "   ", "").unwrap(),
             None
@@ -943,7 +787,8 @@ mod tests {
                 "",
             )
             .unwrap()
-            .as_deref(),
+            .as_ref()
+            .map(Url::as_str),
             Some("https://proxy.example.com/base/v1")
         );
     }

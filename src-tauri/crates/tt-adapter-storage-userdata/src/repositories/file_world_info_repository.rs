@@ -9,8 +9,11 @@ use tokio::fs;
 use crate::png_card_metadata::read_text_chunks_from_png;
 use tt_adapter_storage_core::commit_stage::{CommitSessions, PageGeneration};
 use tt_adapter_storage_core::file_system::{delete_file, list_files_with_extension};
-use tt_adapter_storage_core::sillytavern_sorting::sort_strings_sillytavern_name;
+use tt_adapter_storage_core::sillytavern_sorting::{
+    sort_paths_by_file_name_sillytavern_name, sort_strings_sillytavern_name,
+};
 use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::world_info::WorldInfoListItem;
 use tt_domain::errors::DomainError;
 use tt_domain::models::world_info::{
     WORLD_INFO_EXTENSION, sanitize_world_info_file_name, sanitize_world_info_import_name,
@@ -253,6 +256,37 @@ impl WorldInfoRepository for FileWorldInfoRepository {
 
         Ok(names)
     }
+
+    async fn list_world_info(&self) -> Result<Vec<WorldInfoListItem>, DomainError> {
+        let mut paths = list_files_with_extension(&self.worlds_dir, WORLD_INFO_EXTENSION).await?;
+        sort_paths_by_file_name_sillytavern_name(&mut paths)?;
+        tokio::task::spawn_blocking(move || {
+            paths
+                .iter()
+                .filter_map(|path| {
+                    let file_id = path
+                        .file_stem()
+                        .and_then(OsStr::to_str)
+                        .expect("sorting rejects file names that are not UTF-8");
+                    match std::fs::read(path) {
+                        Ok(bytes) => Some(document::list_item(file_id, &bytes)),
+                        Err(error) => {
+                            tracing::error!(
+                                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                                "Skipped world info {}: {error}",
+                                path.display()
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect()
+        })
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("World info list task failed: {error}"))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -263,37 +297,42 @@ mod tests {
     use std::sync::Arc;
     use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
-    struct TestDir {
-        path: PathBuf,
+    fn repository(root: &Path) -> (PathBuf, FileWorldInfoRepository) {
+        let worlds_dir = root.join("worlds");
+        std::fs::create_dir_all(&worlds_dir).expect("create worlds dir");
+        let repository =
+            FileWorldInfoRepository::new(worlds_dir.clone(), Arc::default(), 4 * 1024 * 1024);
+        (worlds_dir, repository)
     }
 
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-world-info-repo-test-{}",
-                uuid::Uuid::new_v4()
-            ));
-            let path = path.join("worlds");
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
+    #[tokio::test]
+    async fn list_passes_book_metadata_through_in_file_name_order() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let (worlds_dir, repository) = repository(temp.path());
+        let books: [(&str, &[u8]); 3] = [
+            (
+                "Lore",
+                br#"{"entries":{"0":{"content":"\ud800","order":9007199254740993}},"name":"Display","extensions": {"z": 1, "a": 2}}"#,
+            ),
+            ("Lore - 2", br#"{"entries":{},"name":"","extensions":42}"#),
+            ("Broken", b"not json"),
+        ];
+        for (name, bytes) in books {
+            std::fs::write(worlds_dir.join(format!("{name}.json")), bytes).expect("write world");
         }
 
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
+        let items = repository.list_world_info().await.expect("list world info");
 
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(self.path.parent().expect("test root"));
-        }
+        assert_eq!(
+            serde_json::to_string(&items).expect("encode list"),
+            r#"[{"file_id":"Broken","name":"Broken","extensions":{}},{"file_id":"Lore - 2","name":"Lore - 2","extensions":{}},{"file_id":"Lore","name":"Display","extensions":{"z": 1, "a": 2}}]"#
+        );
     }
 
     #[tokio::test]
     async fn save_get_delete_keeps_spaced_world_names_distinct() {
-        let dir = TestDir::new();
-        let repository =
-            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let (worlds_dir, repository) = repository(temp.path());
         let plain = json!({ "entries": { "0": { "uid": 0, "content": "plain" } } });
         let leading = json!({ "entries": { "0": { "uid": 0, "content": "leading" } } });
         let trailing = json!({ "entries": { "0": { "uid": 0, "content": "trailing" } } });
@@ -311,9 +350,9 @@ mod tests {
             .await
             .expect("save trailing-space world");
 
-        assert!(dir.path().join("Lore.json").exists());
-        assert!(dir.path().join(" Lore.json").exists());
-        assert!(dir.path().join("Lore .json").exists());
+        assert!(worlds_dir.join("Lore.json").exists());
+        assert!(worlds_dir.join(" Lore.json").exists());
+        assert!(worlds_dir.join("Lore .json").exists());
         assert_eq!(
             repository
                 .get_world_info("Lore")
@@ -341,17 +380,16 @@ mod tests {
             .await
             .expect("delete plain world");
 
-        assert!(!dir.path().join("Lore.json").exists());
-        assert!(dir.path().join(" Lore.json").exists());
-        assert!(dir.path().join("Lore .json").exists());
+        assert!(!worlds_dir.join("Lore.json").exists());
+        assert!(worlds_dir.join(" Lore.json").exists());
+        assert!(worlds_dir.join("Lore .json").exists());
     }
 
     #[tokio::test]
     async fn import_world_info_preserves_leading_space_from_original_filename() {
-        let dir = TestDir::new();
-        let repository =
-            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
-        let source = dir.path().join("upload.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let (worlds_dir, repository) = repository(temp.path());
+        let source = temp.path().join("upload.json");
         let json = r#"{ "z":1,"entries":{},"originalData":{"b":2,"a":3} }"#;
         std::fs::write(&source, json).expect("write import source");
 
@@ -362,24 +400,23 @@ mod tests {
 
         assert_eq!(imported_name, " Pinned");
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(" Pinned.json")).unwrap(),
+            std::fs::read_to_string(worlds_dir.join(" Pinned.json")).unwrap(),
             json
         );
     }
 
     #[tokio::test]
     async fn list_world_names_sorts_like_upstream_locale_compare() {
-        let dir = TestDir::new();
-        let repository =
-            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let (worlds_dir, repository) = repository(temp.path());
 
-        std::fs::write(dir.path().join("😀Book.json"), "{}").expect("write emoji world");
-        std::fs::write(dir.path().join("Abook.json"), "{}").expect("write latin world");
-        std::fs::write(dir.path().join("#Book.json"), "{}").expect("write symbol world");
-        std::fs::write(dir.path().join("🧠Lore.json"), "{}").expect("write brain world");
-        std::fs::write(dir.path().join("✨Lore.json"), "{}").expect("write sparkles world");
-        std::fs::write(dir.path().join("_Book.json"), "{}").expect("write underscore world");
-        std::fs::write(dir.path().join("-Book.json"), "{}").expect("write dash world");
+        std::fs::write(worlds_dir.join("😀Book.json"), "{}").expect("write emoji world");
+        std::fs::write(worlds_dir.join("Abook.json"), "{}").expect("write latin world");
+        std::fs::write(worlds_dir.join("#Book.json"), "{}").expect("write symbol world");
+        std::fs::write(worlds_dir.join("🧠Lore.json"), "{}").expect("write brain world");
+        std::fs::write(worlds_dir.join("✨Lore.json"), "{}").expect("write sparkles world");
+        std::fs::write(worlds_dir.join("_Book.json"), "{}").expect("write underscore world");
+        std::fs::write(worlds_dir.join("-Book.json"), "{}").expect("write dash world");
 
         let names = repository
             .list_world_names()

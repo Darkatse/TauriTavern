@@ -97,7 +97,7 @@ export function getBarcodeScanner() {
     return getTauri()?.barcodeScanner;
 }
 
-export const convertFileSrc = (path, protocol = 'asset') => {
+export const convertFileSrc = (path, protocol) => {
     const fn = getTauri()?.core?.convertFileSrc;
     if (typeof fn !== 'function') {
         throw new Error('Tauri convertFileSrc is unavailable');
@@ -117,6 +117,10 @@ export async function getTauriTavernSettings() {
     return invoke('get_tauritavern_settings');
 }
 
+export async function getGenerationNotificationState() {
+    return invoke('get_generation_notification_state');
+}
+
 export async function getChatBackupStorageStats() {
     return invoke('get_chat_backup_storage_stats');
 }
@@ -129,25 +133,31 @@ export async function updateTauriTavernSettings(dto) {
     return invokeWithHostNormalization('update_tauritavern_settings', { dto });
 }
 
+export async function exchangeOpenRouterCode(code, codeVerifier) {
+    return invokeWithHostNormalization('exchange_openrouter_code', {
+        dto: { code, code_verifier: codeVerifier },
+    });
+}
+
+export async function getOpenRouterProviders() {
+    return invokeWithHostNormalization('get_openrouter_providers');
+}
+
+export async function getOpenRouterModelProviders(model) {
+    return invokeWithHostNormalization('get_openrouter_model_providers', { dto: { model } });
+}
+
+export async function getNanoGptModelProviders(model) {
+    return invokeWithHostNormalization('get_nanogpt_model_providers', { dto: { model } });
+}
+
 export async function getRuntimePaths() {
     return invoke('get_runtime_paths');
 }
 
-export async function setDataRoot(dataRoot) {
-    if (typeof dataRoot !== 'string' || dataRoot.trim() === '') {
-        throw new Error('Invalid data root path');
-    }
-    return invokeWithHostNormalization('set_data_root', { data_root: dataRoot });
-}
-
-export async function openDialog(options = {}) {
-    if (!isPlainObject(options)) {
-        throw new Error('Invalid dialog options: expected an object');
-    }
-
-    Object.freeze(options);
-
-    return invokeWithHostNormalization('plugin:dialog|open', { options });
+/** Saves the folder the user picks as the next data root; `null` when they cancel. */
+export async function pickDataRoot() {
+    return invokeWithHostNormalization('pick_data_root');
 }
 
 export function writeClipboardText(text) {

@@ -33,10 +33,12 @@ pub(super) fn serve_user_css(
     match response::decide_retrieval(request, &metadata, delivery) {
         RetrievalDecision::NotModified => response::not_modified(&metadata),
         RetrievalDecision::Head => response::head(&metadata),
-        RetrievalDecision::Full | RetrievalDecision::Continue => match opened.read(None) {
-            Ok(bytes) => response::ok(&metadata, bytes),
-            Err(error) => response::store_error(error, "User CSS not found"),
-        },
+        RetrievalDecision::Full | RetrievalDecision::Continue => {
+            match response::body(opened, None, delivery) {
+                Ok(body) => response::ok(&metadata, body),
+                Err(error) => response::store_error(error, "User CSS not found"),
+            }
+        }
     }
 }
 
@@ -83,7 +85,7 @@ mod tests {
             missing: false,
             reads: Arc::clone(&reads),
         };
-        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let delivery = HostResourceDeliveryCapabilities::new(true);
 
         let get = serve_user_css(
             &store,
@@ -103,18 +105,18 @@ mod tests {
         let full_fallback = serve_user_css(
             &store,
             &conditional,
-            HostResourceDeliveryCapabilities::new(false, false),
+            HostResourceDeliveryCapabilities::new(false),
         );
 
         assert_eq!(get.status(), StatusCode::OK);
-        assert_eq!(get.body(), b"body {}");
+        assert_eq!(test_support::body_bytes(&get), b"body {}");
         assert_eq!(get.headers()[CACHE_CONTROL], "private, no-cache");
         assert_eq!(head.status(), StatusCode::OK);
         assert!(head.body().is_empty());
         assert_eq!(head.headers()[CONTENT_LENGTH], "7");
         assert_eq!(not_modified.status(), StatusCode::NOT_MODIFIED);
         assert_eq!(full_fallback.status(), StatusCode::OK);
-        assert_eq!(full_fallback.body(), b"body {}");
+        assert_eq!(test_support::body_bytes(&full_fallback), b"body {}");
         assert_eq!(reads.load(Ordering::Relaxed), 2);
     }
 
@@ -128,7 +130,7 @@ mod tests {
         let response = serve_user_css(
             &store,
             &test_support::request(Method::GET, "/css/user.css"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);

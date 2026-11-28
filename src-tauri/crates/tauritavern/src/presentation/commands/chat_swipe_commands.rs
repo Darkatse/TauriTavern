@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Manager, Resource, ResourceId, State, Webview};
+use tauri::{Manager, Resource, ResourceId, Runtime, State, Webview};
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, ColdSwipeCommitSource};
 
@@ -11,7 +11,7 @@ use crate::presentation::errors::CommandError;
 
 const CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
-struct SwipeSourceResource(Arc<dyn ChatSwipeSource>);
+pub(crate) struct SwipeSourceResource(Arc<dyn ChatSwipeSource>);
 impl Resource for SwipeSourceResource {}
 
 #[derive(Serialize)]
@@ -21,8 +21,8 @@ pub struct OpenColdChatResult {
     reader_id: ResourceId,
 }
 
-pub(super) fn commit_source(
-    webview: &Webview,
+pub(super) fn commit_source<R: Runtime>(
+    webview: &Webview<R>,
     id: ResourceId,
 ) -> Result<ColdSwipeCommitSource, CommandError> {
     let resource = webview
@@ -80,17 +80,4 @@ pub async fn open_cold_swipe_record(
     Ok(webview
         .resources_table()
         .add(ByteResource::new(reader, CHUNK_BYTES)))
-}
-
-/// A page reload cannot await JS cleanup. In-flight operations retain their own Arc.
-pub(crate) fn close_page_chat_resources(webview: &Webview) {
-    let mut table = webview.resources_table();
-    let ids: Vec<_> = table
-        .names()
-        .map(|(rid, _)| rid)
-        .filter(|rid| table.get::<SwipeSourceResource>(*rid).is_ok())
-        .collect();
-    for rid in ids {
-        let _ = table.close(rid);
-    }
 }

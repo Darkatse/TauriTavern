@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use crate::dto::provider_metadata_dto::{
-    ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
-    WorkersAiModelsRequestDto,
+    OpenRouterCodeExchangeRequestDto, ProviderModelProvidersRequestDto,
 };
 use crate::errors::ApplicationError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits, ProviderMetadataRepository,
-    SiliconFlowEndpoint,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
+    ProviderMetadataRepository,
 };
 use tt_ports::repositories::secret_repository::SecretRepository;
 
@@ -35,10 +32,19 @@ impl ProviderMetadataService {
         }
     }
 
+    pub async fn openrouter_providers(&self) -> Result<Vec<ModelProvider>, ApplicationError> {
+        self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
+
+        self.provider_metadata_repository
+            .openrouter_providers()
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub async fn openrouter_model_providers(
         &self,
         dto: ProviderModelProvidersRequestDto,
-    ) -> Result<Vec<String>, ApplicationError> {
+    ) -> Result<Vec<ModelProvider>, ApplicationError> {
         self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
         let model = required_string(&dto.model, "model")?;
 
@@ -56,6 +62,20 @@ impl ProviderMetadataService {
 
         self.provider_metadata_repository
             .openrouter_credits(&api_key)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub async fn exchange_openrouter_code(
+        &self,
+        dto: OpenRouterCodeExchangeRequestDto,
+    ) -> Result<String, ApplicationError> {
+        self.ensure_chat_completion_source_allowed(ChatCompletionSource::OpenRouter)?;
+        let code = required_string(&dto.code, "code")?;
+        let code_verifier = required_string(&dto.code_verifier, "code_verifier")?;
+
+        self.provider_metadata_repository
+            .exchange_openrouter_code(&code, &code_verifier)
             .await
             .map_err(ApplicationError::from)
     }
@@ -85,54 +105,6 @@ impl ProviderMetadataService {
             .map_err(ApplicationError::from)
     }
 
-    pub async fn siliconflow_embedding_models(
-        &self,
-        dto: SiliconFlowEmbeddingModelsRequestDto,
-    ) -> Result<Vec<Value>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::SiliconFlow)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::SILICONFLOW, "SiliconFlow")
-            .await?;
-        let endpoint = parse_siliconflow_endpoint(&dto.siliconflow_endpoint)?;
-
-        self.provider_metadata_repository
-            .siliconflow_embedding_models(&api_key, endpoint)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub async fn workers_ai_embedding_models(
-        &self,
-        dto: WorkersAiModelsRequestDto,
-    ) -> Result<Vec<Value>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::WorkersAi)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
-            .await?;
-        let account_id = required_string(&dto.workers_ai_account_id, "workers_ai_account_id")?;
-
-        self.provider_metadata_repository
-            .workers_ai_embedding_models(&api_key, &account_id)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub async fn workers_ai_multimodal_models(
-        &self,
-        dto: WorkersAiModelsRequestDto,
-    ) -> Result<Vec<String>, ApplicationError> {
-        self.ensure_chat_completion_source_allowed(ChatCompletionSource::WorkersAi)?;
-        let api_key = self
-            .read_required_secret(SecretKeys::WORKERS_AI, "Cloudflare Workers AI")
-            .await?;
-        let account_id = required_string(&dto.workers_ai_account_id, "workers_ai_account_id")?;
-
-        self.provider_metadata_repository
-            .workers_ai_multimodal_models(&api_key, &account_id)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
     fn ios_policy_is_active(&self) -> bool {
         self.ios_policy.scope == IosPolicyScope::Ios
     }
@@ -149,8 +121,7 @@ impl ProviderMetadataService {
             .ios_policy
             .capabilities
             .llm
-            .chat_completion_sources
-            .allows_source(source)
+            .allows_chat_completion_source(source)
         {
             return Ok(());
         }
@@ -190,23 +161,4 @@ fn required_string(value: &str, field_name: &str) -> Result<String, ApplicationE
     }
 
     Ok(value.to_string())
-}
-
-fn parse_siliconflow_endpoint(value: &str) -> Result<SiliconFlowEndpoint, ApplicationError> {
-    SiliconFlowEndpoint::parse_frontend(value).map_err(ApplicationError::ValidationError)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_siliconflow_endpoint;
-
-    #[test]
-    fn siliconflow_endpoint_rejects_unknown_values() {
-        let error = parse_siliconflow_endpoint("edge").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unsupported SiliconFlow endpoint")
-        );
-    }
 }

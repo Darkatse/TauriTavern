@@ -39,7 +39,14 @@ LAN Sync 与远端 TT-Sync 共用 v2 的数据集、计划、传输和提交语�
 
 ## LAN 发现与信任
 
-发现只提供设备位置和公开信息，不建立信任，也不触发同步。附近设备、手动地址和配对链接共用配对流程，按需启动本机接收服务，并由对端用户确认；二维码是辅助入口。配对链接保持 v2 格式，旧 LAN v1 设备需要重新配对。
+发现只提供设备位置和公开信息，不建立信任，也不触发同步。
+
+配对记录就是信任，只在本机用户经[原生对话框](../FrontendGuide.md#22-原生能力)确认后写入。已配对的设备可以按自己选择的范围读取本机数据，包括密钥。
+- 本机发起时，附近设备、手动地址和配对链接先解析出对端，确认后才启动接收服务、发出配对请求，对端用户再确认一次。
+- 对端发起时，宿主请页面调用 `lan_sync_review_pairing`，由它询问。
+- TT-Sync 在联系服务器之前确认。
+
+二维码是辅助入口。配对链接保持 v2 格式，旧 LAN v1 设备需要重新配对。
 
 设备名称、平台和地址是可变信息，设备身份与信任独立保存。未固定证书的连接只能读取公开设备信息；配对和数据传输使用 SPKI 固定证书校验。已配对设备更换地址时仍须验证保存的指纹与 DeviceId，保留原有授权和身份。
 
@@ -61,7 +68,7 @@ LAN 功能受宿主 `sync.lan` 能力门禁和平台权限约束。移动端权�
 
 自动同步只在应用进程运行时发起上传，使用独立保存的目标、范围和模式。TT-Sync 目标需要相应写入、删除权限；LAN 目标沿用对端回拉语义，只能将请求已接受记为已发出请求。自动任务不打开手动进度弹窗，也不强制刷新页面。
 
-接收服务随应用启动和自动上传是独立设置；启用接收服务及发现不代表批准新设备配对。
+接收服务随应用启动和自动上传是独立设置。
 
 ## 源码入口
 
@@ -72,5 +79,5 @@ LAN 功能受宿主 `sync.lan` 能力门禁和平台权限约束。移动端权�
 | 作业契约 | [共享 DTO 与事件](../../src-tauri/crates/tt-contracts/src/sync.rs) |
 | 网络、存储与数据范围 | [共享同步实现](../../src-tauri/crates/tt-adapter-sync/src/sync/)、[TT-Sync 适配](../../src-tauri/crates/tt-adapter-sync/src/tt_sync/) |
 | 发现协议与运行参数 | [LAN 发现](../../src-tauri/crates/tt-adapter-sync/src/sync/lan/peer_discovery.rs) |
-| Tauri 集成 | [服务装配](../../src-tauri/crates/tauritavern/src/app/composition/services/sync.rs)、[事件与批准适配](../../src-tauri/crates/tauritavern/src/app/composition/adapters/tauri_sync.rs) |
+| Tauri 集成 | [服务装配](../../src-tauri/crates/tauritavern/src/app/composition/services/sync.rs)、[事件与待确认请求](../../src-tauri/crates/tauritavern/src/infrastructure/sync_host.rs)、[配对对话框](../../src-tauri/crates/tauritavern/src/presentation/commands/sync_pairing.rs) |
 | 前端交互 | [面板与 Controller](../../src/scripts/tauri/setting/sync-app/)、[宿主适配](../../src/scripts/tauri/setting/setting-panel/sync-popup.js) |

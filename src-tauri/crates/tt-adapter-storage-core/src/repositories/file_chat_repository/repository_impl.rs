@@ -4,6 +4,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::fs;
 
 use crate::chat_format_importers::{import_chat_jsonl_bytes, import_chat_payloads_from_json};
@@ -290,7 +291,7 @@ impl ChatRepository for FileChatRepository {
         let search_cache_key =
             Self::character_search_cache_key(&normalized_query, character_filter);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
-            return Ok(cached.into_iter().map(ChatSearchResult::from).collect());
+            return Ok(cached);
         }
 
         let descriptors = self.list_character_chat_files(character_filter).await?;
@@ -304,7 +305,7 @@ impl ChatRepository for FileChatRepository {
                 .await;
         }
         self.flush_summary_index_best_effort().await;
-        Ok(results.into_iter().map(ChatSearchResult::from).collect())
+        Ok(results)
     }
 
     async fn list_chat_summaries(
@@ -513,24 +514,6 @@ impl ChatRepository for FileChatRepository {
         })
     }
 
-    async fn get_chat_payload_path(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat not found: {}/{}",
-                character_name, file_name
-            )));
-        }
-
-        Ok(path)
-    }
-
     async fn get_chat_payload_tail_lines(
         &self,
         character_name: &str,
@@ -642,7 +625,7 @@ impl ChatRepository for FileChatRepository {
         &self,
         character_name: &str,
         file_name: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
@@ -698,7 +681,7 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
+    ) -> Result<Box<RawValue>, DomainError> {
         self.get_character_chat_store_json_value(character_name, file_name, namespace, key)
             .await
     }
@@ -709,10 +692,16 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
-        self.set_character_chat_store_json_value(character_name, file_name, namespace, key, value)
-            .await
+        self.set_character_chat_store_json_value(
+            character_name,
+            file_name,
+            namespace,
+            key,
+            value_json,
+        )
+        .await
     }
 
     async fn update_character_chat_store_json(
@@ -721,14 +710,14 @@ impl ChatRepository for FileChatRepository {
         file_name: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError> {
         self.update_character_chat_store_json_value(
             character_name,
             file_name,
             namespace,
             key,
-            value,
+            value_json,
         )
         .await
     }

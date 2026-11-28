@@ -1,6 +1,7 @@
 // @ts-check
 
 import { t, translate } from '../../i18n.js';
+import { extractErrorText } from '../../util/command-error-utils.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { characterStemFromAvatarFileName } from '../../../tauri/main/services/characters/character-identity.js';
 import { buildSkillImportReminderKey, hasSkillImportReminder, setSkillImportReminder } from './reminders.js';
@@ -565,7 +566,7 @@ function reportInstallResults(results) {
  */
 function reportEmbeddedSkillError(error) {
     console.error('Agent Skill embedded import failed', error);
-    const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+    const message = extractErrorText(error) || t`Unknown error`;
     getToastr().error(message, t`Agent Skill import failed`);
 }
 
@@ -588,7 +589,7 @@ function embeddedSkillItemLabel(item) {
  */
 function reportEmbeddedSkillItemError(phase, item, error) {
     console.error(`Agent Skill embedded ${phase} failed`, { item, error });
-    const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
+    const message = extractErrorText(error) || t`Unknown error`;
     const title = phase === 'preview' ? t`Agent Skill preview failed` : t`Agent Skill install failed`;
     getToastr().error(`${embeddedSkillItemLabel(item)}: ${message}`, title);
 }

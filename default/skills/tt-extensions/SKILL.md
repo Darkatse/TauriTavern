@@ -47,7 +47,7 @@ From the page:
 - **Compatibility.** lodash as `window._`; polyfills for older mobile WebViews; flattened CSS `@layer` where the WebView lacks it. The tt-troubleshooting skill lists the symptoms.
 - **ChatSurface.** TauriTavern owns chat rendering.
   - JS-Slash-Runner and LittleWhiteBox register with ChatSurface as renderers, but only under their usual folder names, `JS-Slash-Runner` and `LittleWhiteBox`.
-  - Chat DOM Virtualization (TauriTavern settings, Performance; off by default; saved as `chat_virtualization_enabled` in the TauriTavern settings) needs JS-Slash-Runner 4.9.1 or later and LittleWhiteBox 3.0.4 or later. It will not start while both have code block rendering on.
+  - Chat DOM Virtualization (TauriTavern settings, Performance; off by default; saved as `chat_virtualization_enabled` in the TauriTavern settings) needs JS-Slash-Runner 4.9.1 or later and LittleWhiteBox 3.0.4 or later. It will not start while both have code block rendering on, and it stops when an extension puts its own element directly inside `#chat`; such elements belong outside `#chat` or inside a message.
 - **Embedded Runtime.** With virtualization off, it manages message iframes. Modes are Auto, Balanced, Power Saver and Off, in TauriTavern settings, Performance.
 - **Code Render.** The built-in Code Render stays off while JS-Slash-Runner or LittleWhiteBox is enabled.
 - **Long chats.** An extension that reads the chat from the page only sees the messages currently rendered; the full chat is `SillyTavern.getContext().chat`.

@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use std::path::Path;
 
+use crate::avatar_images::ImageCrop;
 use tt_domain::errors::DomainError;
-use tt_domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
+use tt_domain::models::avatar::{Avatar, AvatarUploadResult};
 use tt_domain::models::persona::{Persona, Personas};
 
 /// Repository for managing user avatars
@@ -23,6 +24,6 @@ pub trait AvatarRepository: Send + Sync {
         &self,
         file_path: &Path,
         overwrite_name: Option<String>,
-        crop_info: Option<CropInfo>,
+        crop: Option<ImageCrop>,
     ) -> Result<AvatarUploadResult, DomainError>;
 }

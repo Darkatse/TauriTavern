@@ -1,28 +1,13 @@
 use super::*;
 use serde_json::{Value, json};
 
-struct Store {
-    root: PathBuf,
-    repository: FileExtensionStoreRepository,
-}
-
-impl Store {
-    fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("extension-store-{}", uuid::Uuid::new_v4()));
-        let repository = FileExtensionStoreRepository::new(
-            root.join("entries"),
-            root.join(".staging"),
-            Arc::default(),
-            4 * 1024 * 1024,
-        );
-        Self { root, repository }
-    }
-}
-
-impl Drop for Store {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
+fn repository(root: &Path) -> FileExtensionStoreRepository {
+    FileExtensionStoreRepository::new(
+        root.join("entries"),
+        root.join(".staging"),
+        Arc::default(),
+        4 * 1024 * 1024,
+    )
 }
 
 async fn stage(
@@ -76,45 +61,45 @@ async fn read_json(repo: &FileExtensionStoreRepository, key: &str) -> Value {
 
 #[tokio::test]
 async fn json_commits_merge_values_and_keep_failed_replacements_private() {
-    let store = Store::new();
-    let repo = &store.repository;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repo = repository(temp.path());
     let original = br#"{"nested":{"keep":true},"array":[1]}"#;
-    write(repo, "settings", WriteOperation::SetJson, original).await;
+    write(&repo, "settings", WriteOperation::SetJson, original).await;
 
     let patch = br#"{"nested":{"added":null},"array":[false]}"#;
-    write(repo, "settings", WriteOperation::UpdateJson, patch).await;
+    write(&repo, "settings", WriteOperation::UpdateJson, patch).await;
     let expected = json!({
         "nested": { "keep": true, "added": null }, "array": [false],
     });
-    assert_eq!(read_json(repo, "settings").await, expected);
+    assert_eq!(read_json(&repo, "settings").await, expected);
 
     for operation in [WriteOperation::SetJson, WriteOperation::UpdateJson] {
-        let id = stage(repo, "settings", operation, b"{").await;
+        let id = stage(&repo, "settings", operation, b"{").await;
         let error = repo.finish_commit(&id, 1).await.unwrap_err().to_string();
-        let target = store
-            .root
+        let target = temp
+            .path()
             .join("entries")
             .join("example")
             .join("kv")
             .join("main")
             .join("settings.json");
         assert!(error.contains(&target.display().to_string()), "{error}");
-        assert_eq!(read_json(repo, "settings").await, expected);
+        assert_eq!(read_json(&repo, "settings").await, expected);
     }
 }
 
 #[tokio::test]
 async fn opened_readers_keep_their_versions_across_replacement_and_deletion() {
-    let store = Store::new();
-    let repo = &store.repository;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repo = repository(temp.path());
     let bytes = [0, 255, 1, 128, 3, 0, 4, 5, 6];
-    write(repo, "data.bin", WriteOperation::SetBlob, &bytes).await;
+    write(&repo, "data.bin", WriteOperation::SetBlob, &bytes).await;
     let old = repo
         .open_entry("example", "main", "data.bin", EntryKind::Blob)
         .await
         .unwrap()
         .unwrap();
-    write(repo, "data.bin", WriteOperation::SetBlob, b"replacement").await;
+    write(&repo, "data.bin", WriteOperation::SetBlob, b"replacement").await;
     let updated = repo
         .open_entry("example", "main", "data.bin", EntryKind::Blob)
         .await
@@ -129,12 +114,12 @@ async fn opened_readers_keep_their_versions_across_replacement_and_deletion() {
 
 #[tokio::test]
 async fn enumeration_returns_only_addressable_keys_and_tables() {
-    let store = Store::new();
-    let repo = &store.repository;
-    write(repo, "record", WriteOperation::SetJson, b"null").await;
-    write(repo, "data.bin", WriteOperation::SetBlob, b"bytes").await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repo = repository(temp.path());
+    write(&repo, "record", WriteOperation::SetJson, b"null").await;
+    write(&repo, "data.bin", WriteOperation::SetBlob, b"bytes").await;
     for directory in ["kv", "blobs"] {
-        let directory = store.root.join("entries/example").join(directory);
+        let directory = temp.path().join("entries/example").join(directory);
         for name in [".hidden.json", " spaced.json"] {
             fs::write(directory.join("main").join(name), b"null")
                 .await

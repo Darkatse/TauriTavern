@@ -15,6 +15,11 @@ class ContentUriArgs {
   lateinit var uri: String
 }
 
+@InvokeArg
+class SharedUriArgs {
+  lateinit var id: String
+}
+
 @TauriPlugin
 class ContentUriPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
@@ -31,6 +36,17 @@ class ContentUriPlugin(private val activity: Activity) : Plugin(activity) {
       invoke.resolve(JSObject().put("name", name))
     } catch (error: Exception) {
       invoke.reject("Failed to read selected document name: ${error.message}")
+    }
+  }
+
+  @Command
+  fun takeSharedUri(invoke: Invoke) {
+    try {
+      val id = invoke.parseArgs(SharedUriArgs::class.java).id
+      val uri = checkNotNull((activity as MainActivity).sharedUris.take(id)) { "Unknown share" }
+      invoke.resolve(JSObject().put("uri", uri.toString()))
+    } catch (error: Exception) {
+      invoke.reject("Failed to take shared file: ${error.message}")
     }
   }
 }

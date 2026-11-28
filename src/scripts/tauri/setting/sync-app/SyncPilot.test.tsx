@@ -22,12 +22,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const tr = (key: string) => key;
 
 const handles: Array<SyncProgressHandle | SyncScopeHandle> = [];
-const containers: HTMLElement[] = [];
 
 function createContainer(): HTMLElement {
     const container = document.createElement('div');
     document.body.append(container);
-    containers.push(container);
     return container;
 }
 
@@ -44,9 +42,6 @@ function close(handle: SyncProgressHandle | SyncScopeHandle): void {
 afterEach(() => {
     for (const handle of handles.splice(0)) {
         close(handle);
-    }
-    for (const container of containers.splice(0)) {
-        container.remove();
     }
 });
 

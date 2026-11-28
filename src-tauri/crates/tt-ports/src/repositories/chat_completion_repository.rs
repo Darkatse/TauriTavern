@@ -1,9 +1,12 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use tokio::sync::{mpsc::UnboundedSender, watch};
 
+use tt_contracts::observability::RequestDescriptionDto;
 use tt_domain::errors::DomainError;
+
+use crate::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 pub use tt_domain::models::chat_completion_source::ChatCompletionSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -38,10 +41,13 @@ pub struct ChatCompletionApiConfig {
     pub aws_bedrock_custom_stream_path: Option<String>,
 }
 
-pub type ChatCompletionStreamSender = UnboundedSender<String>;
-pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
 pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
+
+pub const NATIVE_CLAUDE: &str = "claude";
+pub const NATIVE_GEMINI: &str = "gemini";
+pub const NATIVE_GEMINI_INTERACTIONS: &str = "gemini_interactions";
+pub const NATIVE_OPENAI_RESPONSES: &str = "openai_responses";
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {
@@ -94,6 +100,25 @@ pub enum ChatCompletionStreamDelta {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationCall {
+    Generate,
+    GenerateStream,
+    GenerateWithDeltas,
+}
+
+impl GenerationCall {
+    pub fn is_stream(self) -> bool {
+        self != Self::Generate
+    }
+}
+
+#[derive(Debug)]
+pub struct WireRequest<'a> {
+    pub http: RequestDescriptionDto,
+    pub body: Cow<'a, Value>,
+}
+
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
     async fn list_models(
@@ -116,8 +141,8 @@ pub trait ChatCompletionRepository: Send + Sync {
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        sender: ChatCompletionStreamSender,
-        cancel: ChatCompletionCancelReceiver,
+        sender: GenerationStreamSender,
+        cancel: GenerationCancelReceiver,
     ) -> Result<(), DomainError>;
 
     async fn generate_with_deltas(
@@ -130,4 +155,15 @@ pub trait ChatCompletionRepository: Send + Sync {
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError>;
 
     async fn close_provider_session(&self, session_id: &str);
+
+    /// Builds the same request as `call` without I/O or credential exchange; does not guarantee a send.
+    /// Borrows unchanged bodies without serializing them.
+    fn describe_request<'a>(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &'a Value,
+        call: GenerationCall,
+    ) -> Result<WireRequest<'a>, DomainError>;
 }

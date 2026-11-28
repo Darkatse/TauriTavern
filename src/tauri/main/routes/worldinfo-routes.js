@@ -9,6 +9,11 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
         return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
     }
 
+    router.post('/api/worldinfo/list', async () => {
+        const bytes = await context.safeInvoke('list_world_info');
+        return jsonBytes(bytes);
+    });
+
     router.post('/api/worldinfo/get', async ({ body }) => {
         const name = typeof body?.name === 'string' ? body.name : '';
         if (name === '') {
@@ -98,10 +103,6 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
             kind: 'worldinfo-import',
             preferredName: originalFilename,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded world info file path${reason}` }, 400);
-        }
 
         try {
             const result = await context.safeInvoke('import_world_info', {
@@ -114,7 +115,7 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
 
             return jsonResponse(result || {});
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     });
 }

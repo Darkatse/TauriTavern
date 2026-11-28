@@ -33,7 +33,7 @@ pub(super) async fn handle(
             request,
         } => {
             let url = append_endpoint_segments(ELEVENLABS_API, &["text-to-speech", &voice_id])?;
-            let response = send_with_retry("ElevenLabs synthesis request", || {
+            let response = send_with_retry(|| {
                 client
                     .post(url.clone())
                     .header("xi-api-key", &api_key)
@@ -53,7 +53,7 @@ pub(super) async fn handle(
         } => {
             let url =
                 append_endpoint_segments(ELEVENLABS_API, &["history", &history_item_id, "audio"])?;
-            let response = send_with_retry("ElevenLabs history audio request", || {
+            let response = send_with_retry(|| {
                 client
                     .get(url.clone())
                     .header("xi-api-key", &api_key)
@@ -85,7 +85,7 @@ async fn get_json(
     label: &str,
 ) -> Result<TtsRouteResponse, DomainError> {
     let url = format!("{ELEVENLABS_API}/{path}");
-    let response = send_with_retry(label, || {
+    let response = send_with_retry(|| {
         client
             .get(&url)
             .header("xi-api-key", &api_key)
@@ -104,7 +104,7 @@ async fn add_voice(
     files: Vec<ElevenLabsVoiceFile>,
 ) -> Result<TtsRouteResponse, DomainError> {
     let files = prepare_files(files)?;
-    let response = send_with_retry("ElevenLabs voice upload request", || {
+    let response = send_with_retry(|| {
         let form = files.iter().enumerate().fold(
             Form::new()
                 .text("name", name.clone())

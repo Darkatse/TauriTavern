@@ -1,6 +1,6 @@
 /**
- * Read prompt cache usage from normalized completions or native Claude/Gemini streams.
- * Missing or inconsistent counters mean unknown; an explicit valid zero means a cache miss.
+ * Read prompt cache usage from normalized completions, native Claude/Gemini streams, or llama.cpp's
+ * `timings`. Missing or inconsistent counters mean unknown; an explicit valid zero means a cache miss.
  * @param {object} usage Provider usage snapshot
  * @returns {{ input_tokens: number, cached_tokens: number } | null}
  */
@@ -9,13 +9,16 @@ export function getPromptCacheUsage(usage) {
         ?? usage?.cached_tokens
         ?? usage?.prompt_cache_hit_tokens
         ?? usage?.cache_read_input_tokens
-        ?? usage?.cachedContentTokenCount;
+        ?? usage?.cachedContentTokenCount
+        ?? usage?.cache_n;
     if (cachedTokens == null) return null;
 
-    // Claude's input_tokens excludes both cache reads and cache writes.
+    // Claude's input_tokens excludes both cache reads and cache writes; llama.cpp's prompt_n counts
+    // only the prompt tokens it processed.
     const inputTokens = usage.input_tokens != null
         ? usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + cachedTokens
-        : usage.prompt_tokens ?? usage.promptTokenCount;
+        : usage.prompt_tokens ?? usage.promptTokenCount
+            ?? (usage.prompt_n != null ? usage.prompt_n + cachedTokens : null);
     if (inputTokens == null) return null;
 
     if (!Number.isSafeInteger(inputTokens) || !Number.isSafeInteger(cachedTokens)

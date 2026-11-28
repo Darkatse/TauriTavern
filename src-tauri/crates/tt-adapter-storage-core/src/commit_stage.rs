@@ -310,8 +310,8 @@ mod tests {
 
     #[tokio::test]
     async fn advertised_frame_budget_is_enforced_without_consuming_rejected_bytes() {
-        let root = std::env::temp_dir().join(format!("commit-budget-{}", Uuid::new_v4()));
-        let sessions = CommitSessions::new(root.clone(), Arc::default(), 4);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let sessions = CommitSessions::new(temp.path().to_path_buf(), Arc::default(), 4);
         let begin = sessions.begin(()).await.unwrap();
         assert!(
             sessions
@@ -325,12 +325,12 @@ mod tests {
             .unwrap();
         assert_eq!(accepted, begin.max_frame_bytes);
         sessions.abort(&begin.session_id).await.unwrap();
-        fs::remove_dir_all(root).await.unwrap();
     }
 
     #[tokio::test]
     async fn page_reload_reclaims_receivers_without_cancelling_publication() {
-        let root = std::env::temp_dir().join(format!("commit-page-{}", Uuid::new_v4()));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let page = Arc::new(PageGeneration::default());
         let sessions = Arc::new(CommitSessions::new(
             root.join("staging"),
@@ -393,12 +393,12 @@ mod tests {
         publisher.await.unwrap().unwrap();
         assert_eq!(fs::read(target).await.unwrap(), b"saved");
         sessions.abort(&current.session_id).await.unwrap();
-        fs::remove_dir_all(root).await.unwrap();
     }
 
     #[tokio::test]
     async fn concurrent_commits_above_capacity_all_publish() {
-        let root = std::env::temp_dir().join(format!("commit-capacity-{}", Uuid::new_v4()));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let sessions = Arc::new(CommitSessions::new(
             root.join("staging"),
             Arc::default(),
@@ -430,12 +430,12 @@ mod tests {
         while let Some(result) = tasks.join_next().await {
             assert_eq!(fs::read(result.unwrap()).await.unwrap(), b"saved");
         }
-        fs::remove_dir_all(root).await.unwrap();
     }
 
     #[tokio::test]
     async fn commit_cleanup_failure_keeps_published_result() {
-        let root = std::env::temp_dir().join(format!("commit-cleanup-{}", Uuid::new_v4()));
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
         let sessions = CommitSessions::new(root.join("staging"), Arc::default(), 4 * 1024 * 1024);
         let target = root.join("published");
         let id = sessions.begin(()).await.unwrap().session_id;
@@ -452,6 +452,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs::read(&target).await.unwrap(), b"saved");
-        fs::remove_dir_all(root).await.unwrap();
     }
 }

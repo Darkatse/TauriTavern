@@ -1,9 +1,10 @@
 // @ts-check
 
 import { decodeBase64ToBytes, encodeBytesToBase64 } from '../binary-utils.js';
+import { streamResponse } from '../http-utils.js';
 import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 import { commitBytes } from '../services/files/byte-commit.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
 
 /** @param {unknown} value @param {string} label */
 function requireNonEmptyString(value, label) {
@@ -55,7 +56,7 @@ async function readJson(stream) {
 
 /** @param {{ safeInvoke: Function; invokeTransport: Function }} deps */
 function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
-    const { createByteStream } = createReadableFileStreamService({ invoke: invokeTransport });
+    const { createByteStream } = createByteStreamService({ invoke: invokeTransport });
 
     async function openEntry(entry, kind) {
         const opened = await invokeTransport('open_extension_store_entry', { ...entry, kind });
@@ -146,7 +147,7 @@ function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
 
     async function getBlob(options) {
         const { stream, mimeType } = await openBlob(options);
-        return new Response(stream, { headers: { 'Content-Type': mimeType } }).blob();
+        return streamResponse(stream, { headers: { 'Content-Type': mimeType } }).blob();
     }
 
     async function getBlobStream(options) {
@@ -209,18 +210,10 @@ function createExtensionStoreApi({ safeInvoke, invokeTransport }) {
     };
 }
 
-/** @param {any} context */
-export function installExtensionStoreApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-    const { safeInvoke, invokeTransport } = context ?? {};
-    if (typeof safeInvoke !== 'function' || typeof invokeTransport !== 'function') {
-        throw new Error('Tauri main invoke transport is missing');
-    }
-    hostAbi.api ??= {};
-    hostAbi.api.extension ??= {};
-    hostAbi.api.extension.store = createExtensionStoreApi({ safeInvoke, invokeTransport });
+/**
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
+ */
+export function installExtensionStoreApi(api, context) {
+    api.extension = { store: createExtensionStoreApi(context) };
 }

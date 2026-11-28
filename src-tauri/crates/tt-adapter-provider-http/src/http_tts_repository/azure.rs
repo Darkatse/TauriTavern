@@ -2,6 +2,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 
 use super::{bytes_response, send_with_retry};
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::HostLabel;
 use tt_ports::repositories::tts_repository::{AzureTtsRequest, TtsRouteResponse};
 
 pub(super) async fn handle(
@@ -22,10 +23,10 @@ pub(super) async fn handle(
 async fn list(
     client: reqwest::Client,
     api_key: String,
-    region: String,
+    region: HostLabel,
 ) -> Result<TtsRouteResponse, DomainError> {
     let url = format!("https://{region}.tts.speech.microsoft.com/cognitiveservices/voices/list");
-    let response = send_with_retry("Azure TTS voice list request", || {
+    let response = send_with_retry(|| {
         client
             .get(&url)
             .header("Ocp-Apim-Subscription-Key", &api_key)
@@ -45,7 +46,7 @@ async fn list(
 async fn generate(
     client: reqwest::Client,
     api_key: String,
-    region: String,
+    region: HostLabel,
     text: String,
     voice: String,
 ) -> Result<TtsRouteResponse, DomainError> {
@@ -58,7 +59,7 @@ async fn generate(
         escape_xml(&voice),
         escape_xml(&text),
     );
-    let response = send_with_retry("Azure TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(&url)
             .header("Ocp-Apim-Subscription-Key", &api_key)

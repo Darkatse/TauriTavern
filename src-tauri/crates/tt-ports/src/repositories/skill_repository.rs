@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use async_trait::async_trait;
 
 use crate::workspace_fs::{WorkspaceDirectoryEntry, WorkspaceMetadata};
@@ -53,6 +55,13 @@ pub trait SkillRepository: Send + Sync {
         &self,
         input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError>;
+
+    /// Copies each Skill package under `source` to its relative path under `destination`.
+    async fn copy_import_directory(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(), DomainError>;
 
     async fn discard_import_archive(&self, path: &str) -> Result<(), DomainError>;
 

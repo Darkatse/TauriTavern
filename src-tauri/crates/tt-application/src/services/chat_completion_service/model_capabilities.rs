@@ -37,20 +37,20 @@ pub(super) enum GeminiThinkingControl {
     Level(&'static str),
 }
 
-/// `gemini-<major>[.<minor>]-<name>` inside a request model name.
-pub(super) struct GeminiModel {
-    version: (u32, u32),
+/// `<family><major>[.<minor>][-<name>]` inside a request model name, such as `kimi-k3.1-pro`.
+pub(super) struct VersionedModel {
+    pub(super) version: (u32, u32),
     name: String,
 }
 
-impl GeminiModel {
-    pub(super) fn parse(model: &str) -> Option<Self> {
+impl VersionedModel {
+    pub(super) fn parse(model: &str, family: &str) -> Option<Self> {
         let model = model.trim().to_ascii_lowercase();
         let rest = model
-            .match_indices("gemini-")
-            .map(|(index, _)| &model[index + "gemini-".len()..])
+            .match_indices(family)
+            .map(|(index, _)| &model[index + family.len()..])
             .find(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))?;
-        let (version, name) = rest.split_once('-')?;
+        let (version, name) = rest.split_once('-').unwrap_or((rest, ""));
         let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
 
         Some(Self {
@@ -59,22 +59,31 @@ impl GeminiModel {
         })
     }
 
-    fn is(&self, family: &str) -> bool {
-        self.name == family
+    /// The name after the version is `name` or starts with `name-`.
+    pub(super) fn is(&self, name: &str) -> bool {
+        self.name == name
             || self
                 .name
-                .strip_prefix(family)
+                .strip_prefix(name)
                 .is_some_and(|tail| tail.starts_with('-'))
+    }
+}
+
+pub(super) struct GeminiModel(VersionedModel);
+
+impl GeminiModel {
+    pub(super) fn parse(model: &str) -> Option<Self> {
+        VersionedModel::parse(model, "gemini-").map(Self)
     }
 
     pub(super) fn is_gemini3_or_later(&self) -> bool {
-        self.version.0 >= 3
+        self.0.version.0 >= 3
     }
 
     /// Gemini 3.6 Flash, 3.5 Flash-Lite and every later release ignore sampling
     /// parameters and reject a request that ends with a model turn.
     pub(super) fn has_fixed_sampling(&self) -> bool {
-        self.version >= (3, 6) || (self.version == (3, 5) && self.is("flash-lite"))
+        self.0.version >= (3, 6) || (self.0.version == (3, 5) && self.0.is("flash-lite"))
     }
 }
 
@@ -85,6 +94,7 @@ enum GeminiThinkingModel {
     Gemini25Pro,
     LowHighLevels,
     LowToHighLevels,
+    LowToXHighLevels,
     MinimalToHighLevels,
 }
 
@@ -135,6 +145,35 @@ pub(super) fn map_xai_reasoning_effort(
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
         RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Ok(Some("xhigh")),
+    }
+}
+
+pub(super) fn map_low_high_max_reasoning_effort(
+    value: &str,
+    provider: &str,
+) -> Result<Option<&'static str>, ApplicationError> {
+    match parse_known_reasoning_effort(value, provider)? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort(provider, value)),
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium
+        | RequestedReasoningEffort::High
+        | RequestedReasoningEffort::XHigh => Ok(Some("high")),
+        RequestedReasoningEffort::Max => Ok(Some("max")),
+    }
+}
+
+pub(super) fn map_minimax_reasoning_effort(
+    value: &str,
+) -> Result<Option<&'static str>, ApplicationError> {
+    match parse_known_reasoning_effort(value, "MiniMax")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("MiniMax", value)),
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium => Ok(Some("medium")),
+        RequestedReasoningEffort::High => Ok(Some("high")),
+        RequestedReasoningEffort::XHigh => Ok(Some("xhigh")),
+        RequestedReasoningEffort::Max => Ok(Some("max")),
     }
 }
 
@@ -191,12 +230,16 @@ pub(super) fn map_gemini_thinking_control(
         GeminiThinkingModel::LowToHighLevels => {
             low_to_high_level(effort).map(GeminiThinkingControl::Level)
         }
+        GeminiThinkingModel::LowToXHighLevels => {
+            low_to_xhigh_level(effort).map(GeminiThinkingControl::Level)
+        }
     };
 
     Ok(control)
 }
 
 fn classify_gemini_thinking_model(model: &GeminiModel) -> Option<GeminiThinkingModel> {
+    let model = &model.0;
     match model.version {
         (2, 5) if is_gemini_image_model(&model.name) => None,
         (2, 5) if model.is("flash-lite") => Some(GeminiThinkingModel::Gemini25FlashLite),
@@ -206,7 +249,10 @@ fn classify_gemini_thinking_model(model: &GeminiModel) -> Option<GeminiThinkingM
         (3, 7) | (3, 8) if model.is("flash") => Some(GeminiThinkingModel::LowToHighLevels),
         (3, _) if model.is("pro") => Some(GeminiThinkingModel::LowToHighLevels),
         (3, _) if model.is("flash") => Some(GeminiThinkingModel::MinimalToHighLevels),
-        (4, _) if model.is("argon") => Some(GeminiThinkingModel::LowToHighLevels),
+        (4, _) if model.is("argon") || model.is("carbon") => {
+            Some(GeminiThinkingModel::LowToHighLevels)
+        }
+        (4, _) => Some(GeminiThinkingModel::LowToXHighLevels),
         _ => None,
     }
 }
@@ -283,6 +329,17 @@ fn low_to_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
         RequestedReasoningEffort::High
         | RequestedReasoningEffort::Max
         | RequestedReasoningEffort::XHigh => Some("high"),
+        RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
+    }
+}
+
+fn low_to_xhigh_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+    match effort {
+        RequestedReasoningEffort::Auto => None,
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
+        RequestedReasoningEffort::Medium => Some("medium"),
+        RequestedReasoningEffort::High => Some("high"),
+        RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Some("xhigh"),
         RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
     }
 }
@@ -390,6 +447,12 @@ mod tests {
             ("gemini-3.7-flash", RequestedReasoningEffort::Minimal, "low"),
             ("gemini-3.8-flash", RequestedReasoningEffort::Minimal, "low"),
             ("gemini-4-argon", RequestedReasoningEffort::Minimal, "low"),
+            ("gemini-4-carbon", RequestedReasoningEffort::Max, "high"),
+            (
+                "gemini-4-hydrogen",
+                RequestedReasoningEffort::XHigh,
+                "xhigh",
+            ),
         ] {
             let model = GeminiModel::parse(model).expect("model must be Gemini");
             assert_eq!(

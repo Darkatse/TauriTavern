@@ -6,11 +6,15 @@
 
 工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
+只从提示词得知、没有执行者的工具，身份是 `prompt:<模型调用名称>`，例如 Legacy 聊天历史里的调用，见 [LLM gateway](LlmGateway.md#请求形状的消息与工具定义)。
+
 模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
 写给模型的文字，包括工具描述、参数说明、工具结果与错误、系统提示词，提到其他工具时用模型调用名称，例如 `workspace_read_file`；说的是本次调用的工具，就写 "this tool"。Profile、运行记录和设置界面用稳定 ID。
 
-工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射的快照。输出修订沿用原快照。`tool_request_gate` 检查快照与本轮工具选择后，调用明确分派到 Builtin、MCP 或 Extension。
+工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射的快照。输出修订沿用原快照。`tool_request_gate` 检查快照与本轮工具选择后，调用明确分派到 Builtin、MCP 或 Extension；`prompt` 工具返回可恢复的 `tool.no_executor`。
+
+提示词可以在 `generationParameters.tools` 中声明工具（例如[预设工具条目](../CurrentState/PresetToolEntries.md)），组装完成后按模型调用名称并入快照：同名时替换已有工具的描述、参数 schema 与 `fields`，执行者不变；其余成为 `prompt` 工具。
 
 新 Profile 默认启用 Shell。
 
@@ -49,11 +53,11 @@
 
 `AgentToolResult` 包含调用 ID、工具 ID、文本、结构化结果、错误信息、资源引用和图片引用。模型读取其中的 `content` 与图片，错误结果带有明确的错误标记；结构化元数据保留在记录中，不自动展开为模型文字。
 
-工具图片在入库时按字节解码并规范化一次：PNG、JPEG、WebP 且长边不超过 1280 像素、字节数不超过 1,000,000 时原样保存，否则白底转为 JPEG（质量 85）并按需缩小。工作区 `tool-results/` 保存图片文件，结果、审计与 Session 历史只记录 `{ path, mimeType }`。图片随所在消息保留在上下文中，直到 Session 压缩移走该消息；模型不接受图片时，结果原位置说明原因。无法解码或规范化后仍过大的图片按返回顺序在结果末尾说明，不影响工具的其他返回内容。图片编码和存储失败向 Run 收尾流程传播。
+工具图片在入库时按字节解码并规范化一次：PNG、JPEG、WebP 且长边不超过 1280 像素、字节数不超过 1,000,000 时原样保存，否则白底转为 JPEG（质量 85）并按需缩小。图片文件与结果记录同存于 `tool-results/`，结果、审计与 Session 历史只记录 `{ path, mimeType }`。图片随所在消息保留在上下文中，直到 Session 压缩移走该消息；模型不接受图片时，结果原位置说明原因。无法解码或规范化后仍过大的图片按返回顺序在结果末尾说明，不影响工具的其他返回内容。图片编码和存储失败向 Run 收尾流程传播。
 
 面向模型的文字各司其职：提示词说明职责与完成方式，工具说明用途与参数，结果报告事实，错误说明问题与已知的纠正办法。以理解成本衡量简洁，保留必要的内容边界和后续指引；内部配置、身份与审计细节留在记录中。
 
-MCP 与扩展共用结果审计和长结果处理。超过 [Profile 内联阈值](ProfilesAndPreset.md#调整工作方式) 时，原始 JSON 留作审计，完整可读内容写入只读 `tool-results/` 文件；模型收到开头预览、字符上限、不完整说明及文件路径，并按可用工具给出读取、分页或搜索指引。中断历史保留调用与结果的配对；结果未知时，提醒重复操作前检查状态。
+MCP 与扩展共用结果审计和长结果处理。超过 [Profile 内联阈值](ProfilesAndPreset.md#调整工作方式) 时，原始 JSON 留在 `tool-results/` 作审计，完整可读内容写入模型可读的只读目录 `long-results/`；模型收到开头预览、字符上限、不完整说明及文件路径，并按可用工具给出读取、分页或搜索指引。中断历史保留调用与结果的配对；结果未知时，提醒重复操作前检查状态。
 
 模型能够修正的请求错误也返回 tool result，例如参数不合法、读取范围不正确或文件已变化。存储和运行状态错误则向 Run 收尾流程传播。聊天中显示的正文通过工作区提交产生。
 
@@ -76,7 +80,7 @@ Skill 提供工作方法、材料和脚本，通过只读 `skills/` 视图与 `w
 需要网络、文件或脚本引擎等外部能力时，沿用仓库的 port 与 adapter 边界。验证应从可观察的调用结果和副作用入手，见 [测试](TestingStrategy.md)。
 
 - [registry.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/registry.rs)：内置目录。
-- [policy.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/policy.rs)：Invocation 工具快照。
+- [policy.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/policy.rs)：Invocation 工具快照与提示词声明的合并。
 - [tool.rs](../../src-tauri/crates/tt-domain/src/models/tool.rs)：`ToolArguments` 的线上编码换算规则。
 - [tool_request_gate.rs](../../src-tauri/crates/tt-application/src/services/tool_request_gate.rs)：工具调用检查。
 - [tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs)：分派和记录。

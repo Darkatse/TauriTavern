@@ -1,6 +1,8 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tokio::fs::{self as tokio_fs, create_dir_all};
 use tokio::io as tokio_io;
 use tt_domain::errors::DomainError;
@@ -226,6 +228,72 @@ pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, Domai
     serde_json::from_str(&contents).map_err(|error| {
         DomainError::InvalidData(format!("Invalid JSON in {}: {error}", path.display()))
     })
+}
+
+/// SillyTavern's `generateTimestamp()` in local time.
+pub const BACKUP_TIMESTAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+
+/// Why a replaced file is kept, which names the copy beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptOriginal {
+    Corrupt,
+    SafeMode,
+}
+
+impl KeptOriginal {
+    fn path_beside(self, path: &Path) -> PathBuf {
+        let suffix = match self {
+            Self::Corrupt => format!("corrupt-{}", Uuid::new_v4()),
+            Self::SafeMode => format!(
+                "safe-mode-{}",
+                chrono::Local::now().format(BACKUP_TIMESTAMP_FORMAT)
+            ),
+        };
+        let mut name = path.file_name().expect("a file path").to_owned();
+        name.push(".");
+        name.push(suffix);
+        path.with_file_name(name)
+    }
+}
+
+/// Publishes `bytes` at `path` unless the file already holds them.
+pub fn persist_changed_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    if read_stored_blocking(path)?.as_deref() != Some(bytes) {
+        persist_bytes_file_blocking(path, bytes)?;
+    }
+    Ok(())
+}
+
+/// Publishes `bytes` at `path` like [`persist_changed_blocking`], first keeping a copy of the
+/// file it replaces, and returns the copy. `path` always holds a whole file, so a failure
+/// leaves the original in place.
+pub fn replace_keeping_original_blocking(
+    path: &Path,
+    kept: KeptOriginal,
+    bytes: &[u8],
+) -> Result<Option<PathBuf>, DomainError> {
+    let kept = match read_stored_blocking(path)? {
+        Some(original) if original == bytes => return Ok(None),
+        Some(original) => {
+            let kept = kept.path_beside(path);
+            persist_bytes_file_blocking(&kept, &original)?;
+            Some(kept)
+        }
+        None => None,
+    };
+    persist_bytes_file_blocking(path, bytes)?;
+    Ok(kept)
+}
+
+fn read_stored_blocking(path: &Path) -> Result<Option<Vec<u8>>, DomainError> {
+    match std::fs::read(path) {
+        Ok(stored) => Ok(Some(stored)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DomainError::InternalError(format!(
+            "Failed to read {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 /// Generate a unique temporary file path adjacent to `target_path`.
@@ -469,6 +537,26 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
     path: &Path,
     data: &T,
 ) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        serde_json::to_writer_pretty(writer, data).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
+        })
+    })
+}
+
+/// Write bytes into a staging file, sync it, then publish by atomic replacement.
+pub fn persist_bytes_file_blocking(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    persist_written_blocking(path, |writer| {
+        io::Write::write_all(writer, bytes).map_err(|error| {
+            DomainError::InternalError(format!("Failed to write {}: {error}", path.display()))
+        })
+    })
+}
+
+fn persist_written_blocking(
+    path: &Path,
+    write: impl FnOnce(&mut io::BufWriter<std::fs::File>) -> Result<(), DomainError>,
+) -> Result<(), DomainError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
@@ -483,10 +571,8 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", temp_path.display()))
         })?;
     let result = (|| {
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, data).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
-        })?;
+        let mut writer = io::BufWriter::new(file);
+        write(&mut writer)?;
         let file = writer.into_inner().map_err(|error| {
             DomainError::InternalError(format!("Failed to finish {}: {error}", temp_path.display()))
         })?;
@@ -519,6 +605,30 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
     data: &T,
     sync_to_disk: bool,
 ) -> Result<(), DomainError> {
+    let json = serde_json::to_vec_pretty(data).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Failed to serialize JSON for {}: {error}",
+            path.display()
+        ))
+    })?;
+    write_bytes_file_impl(path, &json, sync_to_disk).await
+}
+
+/// Write bytes with atomic replacement, without forcing a disk sync.
+pub async fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    write_bytes_file_impl(path, bytes, false).await
+}
+
+/// Write bytes and sync the completed file before publishing it.
+pub async fn persist_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
+    write_bytes_file_impl(path, bytes, true).await
+}
+
+async fn write_bytes_file_impl(
+    path: &Path,
+    bytes: &[u8],
+    sync_to_disk: bool,
+) -> Result<(), DomainError> {
     use tokio::io::AsyncWriteExt;
 
     if let Some(parent) = path.parent() {
@@ -526,12 +636,6 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
         })?;
     }
-    let json = serde_json::to_vec_pretty(data).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to serialize JSON for {}: {error}",
-            path.display()
-        ))
-    })?;
     let temp_path = unique_temp_path(path);
     let mut file = tokio_fs::OpenOptions::new()
         .write(true)
@@ -543,7 +647,7 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
         })?;
     let result = async {
         let written = async {
-            file.write_all(&json).await?;
+            file.write_all(bytes).await?;
             file.flush().await
         }
         .await;
@@ -562,6 +666,16 @@ async fn write_json_file_impl<T: Serialize + ?Sized>(
         let _ = tokio_fs::remove_file(&temp_path).await;
     }
     result
+}
+
+/// How many files a directory scan reads at once.
+pub fn scan_parallelism() -> usize {
+    static PARALLELISM: LazyLock<usize> = LazyLock::new(|| {
+        std::thread::available_parallelism()
+            .map_or(4, NonZeroUsize::get)
+            .min(8)
+    });
+    *PARALLELISM
 }
 
 /// List files in a directory with a specific extension
@@ -630,31 +744,35 @@ mod tests {
     use serde_json::{Value, json};
     use std::io::Read;
 
-    fn unique_temp_root() -> PathBuf {
-        use rand::random;
-        std::env::temp_dir().join(format!("tauritavern-file-system-{}", random::<u64>()))
-    }
-
     #[tokio::test]
     async fn persist_file_keeps_existing_target_when_stage_is_missing() {
         use tokio::io::AsyncWriteExt;
 
-        let root = unique_temp_root();
-        tokio_fs::create_dir_all(&root).await.unwrap();
-        let temp = root.join("missing.txt");
-        let target = root.join("target.txt");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let stage = temp.path().join("missing.txt");
+        let target = temp.path().join("target.txt");
         tokio_fs::write(&target, b"old").await.unwrap();
-        let mut file = tokio_fs::File::create(&temp).await.unwrap();
+        let mut file = tokio_fs::File::create(&stage).await.unwrap();
         file.write_all(b"new").await.unwrap();
         file.flush().await.unwrap();
-        tokio_fs::remove_file(&temp).await.unwrap();
+        tokio_fs::remove_file(&stage).await.unwrap();
 
-        persist_file(file, &temp, &target)
+        persist_file(file, &stage, &target)
             .await
             .expect_err("missing stage must fail");
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"old");
+    }
 
-        tokio_fs::remove_dir_all(root).await.unwrap();
+    #[test]
+    fn replace_keeping_original_leaves_a_file_that_already_holds_the_bytes() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("settings.json");
+        std::fs::write(&path, b"same").unwrap();
+
+        let kept = replace_keeping_original_blocking(&path, KeptOriginal::SafeMode, b"same");
+
+        assert_eq!(kept.unwrap(), None);
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
     }
 
     #[cfg(unix)]
@@ -663,31 +781,25 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         use tokio::io::AsyncWriteExt;
 
-        let root = unique_temp_root();
-        tokio_fs::create_dir_all(&root).await.unwrap();
-        let temp = root.join("stage.txt");
-        let target = root.join("target.txt");
-        let mut file = tokio_fs::File::create(&temp).await.unwrap();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let stage = temp.path().join("stage.txt");
+        let target = temp.path().join("target.txt");
+        let mut file = tokio_fs::File::create(&stage).await.unwrap();
         file.write_all(b"new").await.unwrap();
         file.flush().await.unwrap();
         file.set_permissions(std::fs::Permissions::from_mode(0o400))
             .await
             .unwrap();
 
-        persist_file(file, &temp, &target).await.unwrap();
+        persist_file(file, &stage, &target).await.unwrap();
         assert_eq!(tokio_fs::read(&target).await.unwrap(), b"new");
-        assert!(!temp.exists());
-
-        tokio_fs::remove_dir_all(root).await.unwrap();
+        assert!(!stage.exists());
     }
 
     #[tokio::test]
     async fn move_file_no_replace_with_fallback_moves_file() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("nested").join("target.txt");
@@ -702,19 +814,12 @@ mod tests {
         let bytes = tokio_fs::read(&target).await.expect("read target");
         assert_eq!(&bytes, b"payload");
         assert!(!source.exists(), "source file should be moved/removed");
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn move_file_no_replace_with_fallback_rejects_existing_target() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("target.txt");
@@ -740,19 +845,12 @@ mod tests {
             tokio_fs::read(&target).await.expect("read target"),
             b"target"
         );
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn copy_file_no_replace_keeps_existing_target() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let source = root.join("source.txt");
         let target = root.join("target.txt");
@@ -776,19 +874,12 @@ mod tests {
             tokio_fs::read(&target).await.expect("read target"),
             b"target"
         );
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn write_json_file_replaces_target_entry_so_open_handles_keep_old_bytes() {
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let path = root.join("settings.json");
         persist_json_file(&path, &json!({ "version": 1u32, "payload": "old" }))
@@ -817,10 +908,6 @@ mod tests {
 
         assert_eq!(old_json.get("version"), Some(&json!(1u32)));
         assert_eq!(new_json.get("version"), Some(&json!(2u32)));
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
@@ -836,11 +923,8 @@ mod tests {
             }
         }
 
-        let root = unique_temp_root();
-        let _ = tokio_fs::remove_dir_all(&root).await;
-        tokio_fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
 
         let path = root.join("settings.json");
         write_json_file(&path, &json!({ "ok": true }))
@@ -860,9 +944,5 @@ mod tests {
 
         let after: Value = read_json_file(&path).await.expect("read json after error");
         assert_eq!(after, before);
-
-        tokio_fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 }

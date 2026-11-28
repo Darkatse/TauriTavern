@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use super::tool_calls::is_tool_role;
+
 const PROMPT_PLACEHOLDER: &str = "Let's get started.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,78 @@ impl PromptNames {
         self.group_names
             .iter()
             .any(|name| !name.is_empty() && message.starts_with(&format!("{name}: ")))
+    }
+}
+
+/// Tool names are protocol data, not speaker labels.
+fn prefixes_speaker_name(role: &str) -> bool {
+    role != "system" && !is_tool_role(role)
+}
+
+/// A tool result's `name` identifies the tool, not a speaker.
+pub(super) fn fold_speaker_name(message: &mut Map<String, Value>, names: &PromptNames) {
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if is_tool_role(&role) {
+        return;
+    }
+    let Some(name) = message.remove("name") else {
+        return;
+    };
+
+    let name = name.as_str().map(str::trim);
+    let prefixed = |text: &str| speaker_prefixed_text(&role, name, text, names);
+    let label = prefixed("");
+    if label.is_empty() {
+        return;
+    }
+    match message.get_mut("content") {
+        Some(Value::String(text)) => *text = prefixed(text),
+        Some(Value::Array(parts)) => match parts.iter_mut().find_map(text_part) {
+            Some(text) => *text = prefixed(text),
+            None => parts.insert(0, json!({ "type": "text", "text": label })),
+        },
+        Some(Value::Null) | None => {
+            message.insert("content".to_string(), Value::String(label));
+        }
+        Some(_) => {}
+    }
+}
+
+fn text_part(part: &mut Value) -> Option<&mut String> {
+    match part {
+        Value::String(text) => Some(text),
+        Value::Object(object) if object.get("type").and_then(Value::as_str) == Some("text") => {
+            match object.get_mut("text") {
+                Some(Value::String(text)) => Some(text),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn speaker_prefixed_text(
+    role: &str,
+    name: Option<&str>,
+    text: &str,
+    names: &PromptNames,
+) -> String {
+    match (role, name) {
+        ("system", Some("example_assistant")) => {
+            prefix_if_missing(text, &names.char_name, |text| {
+                names.starts_with_group_name(text)
+            })
+        }
+        ("system", Some("example_user")) => prefix_if_missing(text, &names.user_name, |_| false),
+        (role, Some(name)) if prefixes_speaker_name(role) => {
+            prefix_if_missing(text, name, |_| false)
+        }
+        _ => text.to_string(),
     }
 }
 
@@ -223,32 +297,12 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
         let content_text = message_object
             .get("content")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+            .unwrap_or_default();
+        let mut content_text = speaker_prefixed_text(&role, name, content_text, names);
 
-        let content_text = if role == "system" && name == Some("example_assistant") {
-            prefix_if_missing(&content_text, &names.char_name, |content| {
-                names.starts_with_group_name(content)
-            })
-        } else if role == "system" && name == Some("example_user") {
-            prefix_if_missing(&content_text, &names.user_name, |_| false)
-        } else {
-            content_text
-        };
-
-        let mut content_text = if let Some(name) = name.filter(|_| role != "system") {
-            let prefix = format!("{name}: ");
-            if content_text.starts_with(&prefix) {
-                content_text
-            } else {
-                format!("{prefix}{content_text}")
-            }
-        } else {
-            content_text
-        };
-
+        let tool_message = is_tool_role(&role);
         let mut role = role;
-        if role == "tool" && !options.tools {
+        if tool_message && !options.tools {
             role = "user".to_string();
         }
 
@@ -265,11 +319,14 @@ fn merge_messages(messages: Vec<Value>, names: &PromptNames, options: MergeOptio
 
         message_object.insert("role".to_string(), Value::String(role));
         message_object.insert("content".to_string(), Value::String(content_text));
-        message_object.remove("name");
+        if !tool_message {
+            message_object.remove("name");
+        }
 
         if !options.tools {
             message_object.remove("tool_calls");
             message_object.remove("tool_call_id");
+            message_object.remove("name");
         }
 
         normalized.push(message);

@@ -91,37 +91,10 @@ fn transport(
     WorkerTransport::spawn_with_ct(StreamableHttpClientWorker::new(http_client, config), cancel)
 }
 
-async fn serve_attempt(
-    endpoint: &McpEndpoint,
-    request_headers: &HashMap<HeaderName, HeaderValue>,
-    http_client: reqwest::Client,
-    lifecycle: ClientLifecycleMode,
-    initialize_version: ProtocolVersion,
-    cancel: &CancellationToken,
-) -> Result<McpClient, Box<ClientInitializeError>> {
-    let attempt_cancel = cancel.child_token();
-    // Worker shutdown must close the channel, not masquerade as caller cancellation.
-    let transport_cancel = attempt_cancel.child_token();
-    serve_client_with_lifecycle_and_ct(
-        client_config(initialize_version),
-        transport(endpoint, request_headers, http_client, transport_cancel),
-        lifecycle,
-        attempt_cancel,
-    )
-    .await
-    .map_err(Box::new)
-}
-
 #[derive(Debug, Error)]
 pub(super) enum ClientStartupError {
     #[error(transparent)]
     Initialize(#[from] Box<ClientInitializeError>),
-    #[error("MCP discovery failed ({discovery}); legacy initialization also failed ({initialize})")]
-    LegacyRetry {
-        discovery: Box<ClientInitializeError>,
-        #[source]
-        initialize: Box<ClientInitializeError>,
-    },
     #[error("The server selected MCP {negotiated}; accepted versions: {accepted}")]
     VersionNotAccepted {
         negotiated: ProtocolVersion,
@@ -139,43 +112,17 @@ pub(super) async fn start_client(
     cancel: &CancellationToken,
 ) -> Result<(McpClient, Arc<ServerPeerInfo>), ClientStartupError> {
     let plan = lifecycle_plan(preference);
-    let mut client = match serve_attempt(
-        endpoint,
-        request_headers,
-        http_client.clone(),
+    let client_cancel = cancel.child_token();
+    // Worker shutdown must close the channel, not masquerade as caller cancellation.
+    let transport_cancel = client_cancel.child_token();
+    let mut client = serve_client_with_lifecycle_and_ct(
+        client_config(plan.initialize_version),
+        transport(endpoint, request_headers, http_client, transport_cancel),
         plan.mode,
-        plan.initialize_version,
-        cancel,
+        client_cancel,
     )
     .await
-    {
-        Err(discovery)
-            if preference == McpProtocolVersionPreference::Auto
-                && !cancel.is_cancelled()
-                && matches!(
-                    discovery.as_ref(),
-                    ClientInitializeError::ConnectionClosed(_)
-                ) =>
-        {
-            // RMCP's expect_initialized skips SSE errors and reports ConnectionClosed.
-            // Remove this retry when RMCP delivers those errors to its Auto lifecycle.
-            tracing::debug!(%discovery, "Trying legacy MCP lifecycle after Auto startup closed");
-            serve_attempt(
-                endpoint,
-                request_headers,
-                http_client,
-                ClientLifecycleMode::Initialize,
-                ProtocolVersion::LATEST_WITH_INITIALIZE,
-                cancel,
-            )
-            .await
-            .map_err(|initialize| ClientStartupError::LegacyRetry {
-                discovery,
-                initialize,
-            })?
-        }
-        result => result?,
-    };
+    .map_err(Box::new)?;
 
     let error = match client.peer().peer_info() {
         Some(info) => {

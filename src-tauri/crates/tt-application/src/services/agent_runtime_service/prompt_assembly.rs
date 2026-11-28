@@ -5,19 +5,22 @@ use uuid::Uuid;
 
 use super::prompt_snapshot::{AgentPromptRequest, admit_prompt_snapshot};
 use super::session::session_user_message;
-use super::session_context::{session_context, session_history_groups};
+use super::session_context::{holds_context, session_context, session_history_groups};
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
 };
 use crate::dto::agent_dto::{
     AgentPreparePromptAssemblyDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPromptAssemblyScopeDto, AgentReadPromptAssemblyRequestDto, AgentResolvePromptAssemblyDto,
+    AgentSessionMacroMessagesDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::{
     FROZEN_RUN_INPUT_SNAPSHOT_KIND, FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
 };
-use tt_domain::models::agent::{AgentInvocation, AgentRunEventLevel, WorkspacePath};
+use tt_domain::models::agent::{
+    AgentInvocation, AgentModelRole, AgentRunEventLevel, WorkspacePath,
+};
 
 impl AgentRuntimeService {
     pub async fn prepare_session_run(
@@ -34,16 +37,31 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_catalog())
             .await?;
-        let history = self.read_session_history(&dto.session_id).await?;
+        let roles = [AgentModelRole::User, AgentModelRole::Assistant];
+        let history = self
+            .read_session_tail(&dto.session_id, |entries| {
+                holds_context(entries)
+                    && roles
+                        .iter()
+                        .all(|role| entries.iter().any(|entry| entry.message.role == *role))
+            })
+            .await?;
         let last_seq = history.last().map_or(0, |entry| entry.seq);
-        let mut messages = history
-            .iter()
-            .map(|entry| entry.message.clone())
-            .collect::<Vec<_>>();
+        let newest_first = || {
+            user_message
+                .iter()
+                .chain(history.iter().rev().map(|entry| &entry.message))
+        };
+        let latest = |role| newest_first().find(|message| message.role == role).cloned();
+        let macro_messages = AgentSessionMacroMessagesDto {
+            message_count: last_seq + u64::from(user_message.is_some()),
+            last_message: newest_first().next().cloned(),
+            last_user_message: latest(AgentModelRole::User),
+            last_assistant_message: latest(AgentModelRole::Assistant),
+        };
         let mut groups = session_history_groups(&session_context(&history)?)?;
         if let Some(message) = user_message {
-            groups.push(vec![message.clone()]);
-            messages.push(message);
+            groups.push(vec![message]);
         }
         let tools = self
             .prepare_invocation_tools(
@@ -85,7 +103,7 @@ impl AgentRuntimeService {
             .await?;
         Ok(crate::dto::agent_dto::AgentPrepareSessionRunResultDto {
             expected_history_seq: last_seq,
-            session_messages: messages,
+            macro_messages,
             request,
         })
     }

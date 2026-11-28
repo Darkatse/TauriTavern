@@ -268,7 +268,7 @@ jobs:
             platform: ubuntu-latest
             args: --verbose --apk --split-per-abi --target aarch64 armv7
           - mobile: ios
-            platform: macos-latest
+            platform: xcode-27
             args: --verbose
 
     concurrency:
@@ -277,6 +277,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Select Xcode 27.2 (iOS 27.2 SDK)
+        if: matrix.mobile == 'ios'
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
 
       - name: Install Android host dependencies
         if: matrix.mobile == 'android'
@@ -393,6 +397,7 @@ jobs:
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
           APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ${{ matrix.mobile == 'ios' && 'full' || '' }}
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
@@ -508,13 +513,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  notes-ai:
+  notes:
     needs: notes-context
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      final_message: ${{ steps.codex.outputs.final-message }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -552,19 +555,9 @@ jobs:
           allow-bots: true
           codex-args: '["--ephemeral"]'
 
-  notes:
-    needs: [prepare, notes-context, notes-ai]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.notes-context.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: canary-release-context
-          path: context
-
       - name: Select validated release notes
         env:
-          AI_NOTES: ${{ needs.notes-ai.outputs.final_message }}
+          AI_NOTES: ${{ steps.codex.outputs.final-message }}
         shell: bash
         run: |
           set -euo pipefail
@@ -574,15 +567,15 @@ jobs:
             && grep -qx '## Release Notes' candidate.md \
             && ! grep -q '^```' candidate.md; then
             {
-              sed -n '1p' context/fallback.md
+              sed -n '1p' .canary-notes/fallback.md
               echo
               cat candidate.md
               echo
-              sed -n '/^\[Full comparison\]/,$p' context/fallback.md
+              sed -n '/^\[Full comparison\]/,$p' .canary-notes/fallback.md
             } > release-notes.md
           else
             echo "::warning::Codex release notes unavailable or invalid; using deterministic commit notes."
-            cp context/fallback.md release-notes.md
+            cp .canary-notes/fallback.md release-notes.md
           fi
 
       - uses: actions/upload-artifact@v7

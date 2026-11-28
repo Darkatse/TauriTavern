@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
 use tt_adapter_http::github::classify_github_rate_limit;
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
 use tt_domain::models::update::{ReleaseInfo, UpdateChannel};
 use tt_ports::repositories::update_repository::UpdateRepository;
@@ -48,9 +48,7 @@ impl GitHubUpdateRepository {
             .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
             .await
-            .map_err(|error| {
-                DomainError::InternalError(format!("GitHub API request failed: {error}"))
-            })?;
+            .map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -72,7 +70,8 @@ impl GitHubUpdateRepository {
             )));
         }
 
-        response.json().await.map_err(|error| {
+        let body = upstream::read_body(response).await?;
+        serde_json::from_slice(&body).map_err(|error| {
             DomainError::InternalError(format!("Failed to parse GitHub response: {error}"))
         })
     }

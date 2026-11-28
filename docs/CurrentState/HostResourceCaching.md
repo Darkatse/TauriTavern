@@ -36,7 +36,7 @@ Delivery       当前 Tauri/Wry/IPC 入口能承载的响应形式
 - MIME、长度、mtime、opaque source revision；
 - 持有已打开 handle 的一次性 body reader。
 
-这样 local/global extension 与 original/generated thumbnail 不会在 metadata 和 body read 之间重新选择。HEAD 或 304 直接丢弃 body reader，不读取正文；原子替换路径后，已打开 handle 仍对应此前生成的 metadata。正文读取以 open 时长度为硬上界，并在读取后复核 handle 的长度与 mtime；共享数据目录中的外部原地写入或 Android replace fallback 若与读取并发，会 fail-fast，而不会组合旧 validator 与新正文。
+这样 local/global extension 与 original/generated thumbnail 不会在 metadata 和 body read 之间重新选择。HEAD 或 304 直接丢弃 body reader，不读取正文；原子替换路径后，已打开 handle 仍对应此前生成的 metadata。正文以 open 时的长度为上界，交出最后一段字节前复核 handle 的长度与 mtime，整段读取与流式交付（§6）都是如此；共享数据目录中的外部原地写入或 Android replace fallback 若与读取并发，会 fail-fast，而不会组合旧 validator 与新正文。
 
 HTTP request/response 直接使用 `http` crate 类型。旧的字符串 status/header DTO 已删除；Tauri presentation 只负责 origin gate、delivery capability 和 response header 合并。
 
@@ -114,7 +114,13 @@ identity 与 JPEG 是同一个原子 artifact：旧缓存、上游 SillyTavern �
 
 业务 mutation 不删除或预热 thumbnail cache。原文件始终先于 cache 被打开；删除后的旧 artifact 不可达，同名重建或覆盖后的 demand 会因 COM identity 不匹配而原地替换。这样 background、character、persona、archive import、同步与外部/symlink writer 都遵循同一 freshness 条件，缓存维护失败也不会把已成功的业务 mutation 伪装成失败。
 
-默认 `/thumbnail` 保持上游选择语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图可回退 original。`/thumbnail?type=bg&...&static=true` 是 gallery/folder 专用的强制静态表示：可解码 GIF/WebP/APNG 生成 first-frame JPEG；生成失败直接报错，绝不把动画 original 冒充静态预览。MP4 不引入视频解码依赖，前端预览使用占位；active background 与媒体播放始终读取 raw `/backgrounds/*`。
+`/thumbnail` 按以下规则选择表示：
+
+- 默认保持上游语义：静态图优先 generated JPEG，动画与无法生成的普通缩略图回退 original。
+- 开启角色/用户头像原图设置后，avatar 与 persona 返回 original，相当于上游关闭 `thumbnails.enabled`。带 `list=true` 的请求不受该设置影响，前端何时使用见 [FrontendHostContract §4.4](../FrontendHostContract.md#44-浏览器资源契约public)。
+- `type=bg&static=true` 是背景预览的静态表示：GIF/WebP/APNG 生成首帧 JPEG，生成失败即报错，不以动画 original 代替。MP4 不生成预览，不引入视频解码依赖。
+
+生成的缩略图只缩小不放大：avatar 与 persona 裁成 2:3，background 保持比例。尺寸见 `tt-adapter-media/src/thumbnails.rs`。
 
 ## 6. 平台 delivery
 
@@ -131,7 +137,7 @@ Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。
 
 不得用 204、空 200 或 Wry patch 模拟 Android 304。
 
-Android background video 的现有二次 Range workaround 保持：非零 Range 返回 206 和对应 range headers，但提供完整文件 stream，让 WebView 自己应用 Range。
+Wry 会把 Android 响应的正文整段复制进容量有限的 Java 堆，因此 Android 上的 Wry 交付以流传送正文：service 交出正文流（`HostResourceResponseBody::Stream`），presentation 把流的编号与长度写入 `x-tauritavern-body-stream`，`HostResourceBodyStream.kt` 经 JNI 按块读取，正文对象关闭或被回收时释放该流。IPC、其他平台、错误响应和 `ttCompat=layer` 的正文都在内存中交付。
 
 Wry 的 Android custom-protocol 响应默认使用 `Cache-Control: no-store`。本地 `RustWebViewClient` 只在响应没有任何大小写形式的 `Cache-Control` 时应用该默认值，因此 transport 不会覆盖 Host Resource 的 `private, no-cache`，错误响应仍保持 `no-store`。
 
@@ -145,9 +151,11 @@ tauri://localhost/...
 
 presentation 在路由前精确校验 scheme 和完整 authority；relative URI、外部 HTTP/HTTPS、其他 host 和带端口 authority 均不进入 Host Resource Service。
 
+Tauri 在该回调之前先读内嵌前端资源，缺失的路径回退到 index.html。Host Resource 路径读作空的内嵌资源，再由 Host 响应替换；判定与 Host Resource Service 使用同一个路由分类器。
+
 开发态 `tt-ext` 是独立注册的 trusted scheme。Production `tauri` protocol 与 dev `tt-ext` 都由 Wry 交付，因此共享同一个 delivery capability。直接 `fetch(tt-ext)` 时保留 `Request.cache` 和 `Range`；所有入口都保留 Host Resource 使用的 `Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 请求语义。`tt-ext` 对跨源 fetch 显式暴露响应头，避免 ETag、Range metadata 和 trace header 被 CORS 过滤。
 
-跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200；IPC 不启用仅属于 Wry Android 的二次 Range workaround。204/205/304 在 JavaScript `Response` 中统一使用 null body。当前契约不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
+跨源 custom scheme fetch 无法可靠承载会触发 CORS preflight 的条件头，因此 `If-Range`、`If-None-Match`、`If-Modified-Since` 请求直接走 IPC；无条件请求和单一 `Range` 继续走 `tt-ext` Wry。WebKit 的 Service Worker 上下文无法直接 fetch custom scheme 时，client bridge 改由 window 上下文 fetch 同一个 `tt-ext` endpoint，并用 transferable `ArrayBuffer` 回传正文；普通二进制资源不得降级为 serde JSON IPC。条件请求 IPC 通过通用 header wire 调用同一个 Host Resource Service，在非 Android 原样代理调用方显式条件请求的 304，在 Android 按 release 的平台约束返回完整 200。204/205/304 在 JavaScript `Response` 中统一使用 null body。当前契约不引入 Service Worker Cache API，也不声称 IPC 会自行生成浏览器缓存 validator；dev/release 共享的是资源表示与条件请求契约，自动缓存存储仍由各自 transport 负责。
 
 ## 8. 持续开发约束
 
@@ -157,7 +165,7 @@ presentation 在路由前精确校验 scheme 和完整 authority；relative URI�
 - thumbnail recipe 或单文件缓存格式发生任何可观察变化时必须升级 generator schema；JPEG COM identity 与 generated Host revision 必须继续使用同一身份；
 - data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；Host Resource Service 是 WebView 可见表示的新鲜度权威，这不是采用 immutable 前的临时 fallback；
 - 不为 mutable Host Resource 建 mutation revision registry 或 `immutable` URL。data root 允许外部/symlink writer；fresh immutable hit 会绕过 Host Resource，令外部变化无法被发现；
-- 第一方普通 browser resource 不得通过 Tauri asset protocol、base64 read command 或 server-thumbnail Blob cache 绕过本服务；
+- 第一方普通 browser resource 不得通过 base64 read command 或 server-thumbnail Blob cache 绕过本服务；
 - mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后通过稳定 URL 的真实 consumer demand 刷新表示，需要绕过 WebView 已存响应时使用 `Request.cache = "reload"`，不得用随机 query 伪造 revision；刷新不是 commit 的组成部分；
 - frontend 仅保留有独立派生职责的 background preview cache；Host background 记录必须绑定当前 raw ETag 与 preview recipe；
 - WebView synthetic response cache 只是优化，不能成为业务正确性的前提；

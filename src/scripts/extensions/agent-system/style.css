@@ -499,7 +499,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     inset: -4px;
     border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
     border-radius: 50%;
-    animation: ttas-run-orb-pulse 1.4s ease-in-out infinite;
 }
 
 .ttas-run-orb i {
@@ -669,9 +668,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     list-style: none;
 }
 
+/* The windowed list sets its own scroll position as rows come and go; scroll anchoring would move it again, and the
+ * list would read that as the user scrolling away from the bottom. */
 .ttas-run-events.is-windowed {
     --ttas-run-event-row-height: 58px;
     gap: 0;
+    overflow-anchor: none;
 }
 
 .ttas-run-event {
@@ -985,15 +987,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 
 .ttas-run-ellipsis i {
     font-style: normal;
-    animation: ttas-run-dot 1.05s ease-in-out infinite;
-}
-
-.ttas-run-ellipsis i:nth-child(2) {
-    animation-delay: 0.14s;
-}
-
-.ttas-run-ellipsis i:nth-child(3) {
-    animation-delay: 0.28s;
 }
 
 /* Active rows use browser layout; only history rows need fixed virtual heights. */
@@ -1048,8 +1041,8 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 
 .ttas-run-event-card[open] .ttas-run-event-live-stream {
     display: block;
+    max-height: none;
     overflow: visible;
-    -webkit-line-clamp: unset;
 }
 
 .ttas-run-event-live-label {
@@ -1135,8 +1128,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     font-family: inherit;
 }
 
+/* The collapsed preview shows its last three lines: it is at most three lines tall and its text overflows upward. */
 .ttas-run-event-live-stream {
-    display: -webkit-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    max-height: calc(3 * 1.45em);
     overflow: hidden;
     color: inherit;
     font-family: var(--ttas-mono);
@@ -1144,8 +1141,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     line-height: 1.45;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
+}
+
+.ttas-run-event-live-text {
+    display: block;
 }
 
 .ttas-run-event-live-stream[data-ttas-truncated] {
@@ -1153,7 +1152,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 1.4em);
 }
 
-.ttas-run-event-live.is-streaming .ttas-run-event-live-stream::after {
+.ttas-run-event-live.is-streaming .ttas-run-event-live-text:last-child::after {
     content: '';
     display: inline-block;
     width: 0.5em;
@@ -1162,11 +1161,78 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     vertical-align: -0.15em;
     border-radius: 1px;
     background-color: var(--ttas-run-panel-accent);
-    animation: ttas-run-live-caret 1.05s steps(2, start) infinite;
 }
 
-.ttas-run-event.is-live .ttas-run-event-icon {
-    animation: ttas-run-live-icon 1.6s ease-in-out infinite;
+/*
+ * The caret, the active row's dots and the live icon step with the panel's 175 ms beat (data-ttas-beat6 and
+ * data-ttas-beat9, see RunTimelineApp); each beat shows the value of the original animation at that time. A running
+ * SubAgent's color dot takes the live icon's values. Without a beat they rest fully shown.
+ */
+.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-event-live-text:last-child::after,
+.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-event-live-text:last-child::after,
+.ttas-run-panel[data-ttas-beat6="5"] .ttas-run-event-live-text:last-child::after {
+    opacity: 0;
+}
+
+.ttas-run-panel[data-ttas-beat6] .ttas-run-ellipsis i {
+    opacity: 0.34;
+}
+
+/* Each dot follows the one before it by a beat. */
+.ttas-run-panel[data-ttas-beat6="1"] .ttas-run-ellipsis i:nth-child(1),
+.ttas-run-panel[data-ttas-beat6="2"] .ttas-run-ellipsis i:nth-child(2),
+.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-ellipsis i:nth-child(3) {
+    opacity: 0.63;
+    transform: translateY(-0.9px);
+}
+
+.ttas-run-panel[data-ttas-beat6="2"] .ttas-run-ellipsis i:nth-child(1),
+.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-ellipsis i:nth-child(2),
+.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-ellipsis i:nth-child(3) {
+    opacity: 0.99;
+    transform: translateY(-2px);
+}
+
+.ttas-run-panel[data-ttas-beat6="3"] .ttas-run-ellipsis i:nth-child(1),
+.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-ellipsis i:nth-child(2),
+.ttas-run-panel[data-ttas-beat6="5"] .ttas-run-ellipsis i:nth-child(3) {
+    opacity: 0.86;
+    transform: translateY(-1.6px);
+}
+
+.ttas-run-panel[data-ttas-beat6="4"] .ttas-run-ellipsis i:nth-child(1),
+.ttas-run-panel[data-ttas-beat6="5"] .ttas-run-ellipsis i:nth-child(2),
+.ttas-run-panel[data-ttas-beat6="0"] .ttas-run-ellipsis i:nth-child(3) {
+    opacity: 0.47;
+    transform: translateY(-0.4px);
+}
+
+.ttas-run-panel[data-ttas-beat9="1"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="8"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="1"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="8"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
+    opacity: 0.95;
+}
+
+.ttas-run-panel[data-ttas-beat9="2"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="7"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="2"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="7"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
+    opacity: 0.82;
+}
+
+.ttas-run-panel[data-ttas-beat9="3"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="6"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="3"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="6"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
+    opacity: 0.65;
+}
+
+.ttas-run-panel[data-ttas-beat9="4"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="5"] .ttas-run-event.is-live .ttas-run-event-icon,
+.ttas-run-panel[data-ttas-beat9="4"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color,
+.ttas-run-panel[data-ttas-beat9="5"] .ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
+    opacity: 0.56;
 }
 
 .ttas-run-event-live-metric {
@@ -1186,18 +1252,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 
 .ttas-run-event-live-metric .is-removed {
     color: var(--ttas-run-diff-delete-color);
-}
-
-@keyframes ttas-run-live-caret {
-    50% {
-        opacity: 0;
-    }
-}
-
-@keyframes ttas-run-live-icon {
-    50% {
-        opacity: 0.55;
-    }
 }
 
 .ttas-run-empty,
@@ -1309,10 +1363,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     border-radius: 50%;
     background-color: var(--ttas-subagent-color, var(--ttas-run-panel-accent));
     box-shadow: 0 0 12px color-mix(in srgb, var(--ttas-subagent-color, var(--ttas-run-panel-accent)) 34%, transparent);
-}
-
-.ttas-subagent-item[data-ttas-status="running"] .ttas-subagent-color {
-    animation: ttas-subagent-pulse 1.4s ease-in-out infinite;
 }
 
 .ttas-subagent-copy {
@@ -2015,30 +2065,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     }
 }
 
-@keyframes ttas-run-orb-pulse {
-    0%, 100% {
-        opacity: 0;
-        transform: scale(0.84);
-    }
-
-    50% {
-        opacity: 1;
-        transform: scale(1.06);
-    }
-}
-
-@keyframes ttas-run-dot {
-    0%, 80%, 100% {
-        opacity: 0.34;
-        transform: translateY(0);
-    }
-
-    36% {
-        opacity: 1;
-        transform: translateY(-2px);
-    }
-}
-
 @keyframes ttas-run-detail-reveal {
     from {
         opacity: 0;
@@ -2048,18 +2074,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     to {
         opacity: 1;
         transform: translateY(0);
-    }
-}
-
-@keyframes ttas-subagent-pulse {
-    0%, 100% {
-        opacity: 0.62;
-        transform: scale(0.82);
-    }
-
-    50% {
-        opacity: 1;
-        transform: scale(1.12);
     }
 }
 
@@ -3473,16 +3487,16 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     transition: transform 180ms ease;
 }
 
-.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track {
+.ttas-retention-auto-toggle:has(> input:checked) > .ttas-retention-auto-track {
     color: var(--ttas-accent);
     background-color: color-mix(in srgb, var(--ttas-accent) 15%, transparent);
 }
 
-.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track span {
+.ttas-retention-auto-toggle:has(> input:checked) .ttas-retention-auto-knob {
     transform: translateX(18px);
 }
 
-.ttas-retention-auto-toggle input:focus-visible + .ttas-retention-auto-track {
+.ttas-retention-auto-toggle:has(> input:focus-visible) > .ttas-retention-auto-track {
     outline: 2px solid color-mix(in srgb, var(--ttas-accent) 58%, transparent);
     outline-offset: 2px;
 }

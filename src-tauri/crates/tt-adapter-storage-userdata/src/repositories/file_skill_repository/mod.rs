@@ -19,7 +19,7 @@ mod write;
 mod tests;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
@@ -197,6 +197,14 @@ impl SkillRepository for FileSkillRepository {
         input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError> {
         self.discover_input(input).await
+    }
+
+    async fn copy_import_directory(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(), DomainError> {
+        self.copy_import_directory(source, destination).await
     }
 
     async fn discard_import_archive(&self, path: &str) -> Result<(), DomainError> {

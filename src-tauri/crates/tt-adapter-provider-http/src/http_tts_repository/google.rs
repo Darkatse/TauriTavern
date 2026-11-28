@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::{parse_upstream_error_message, send_with_retry, upstream_error_response};
 use crate::endpoint_url::append_google_api_path;
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{
     GoogleGeminiTtsRequest, GoogleTranslateTtsRequest, TtsRouteResponse,
@@ -86,7 +87,7 @@ async fn generate_translate(
         .append_pair("f.req", &form_request)
         .finish();
     let request_id = 1000 + (Uuid::new_v4().as_u128() % 9000);
-    let response = send_with_retry("Google Translate TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(GOOGLE_TRANSLATE_TTS_URL)
             .query(&[
@@ -112,11 +113,7 @@ async fn generate_translate(
     if !response.status().is_success() {
         return upstream_error_response(response, "Google Translate TTS request failed").await;
     }
-    let body = response.text().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Google Translate TTS response read failed: {error}"
-        ))
-    })?;
+    let body = String::from_utf8_lossy(&upstream::read_body(response).await?).into_owned();
     let encoded = parse_translate_audio(&body, text.len())?;
     let mut audio = Vec::new();
     for encoded in encoded {
@@ -224,6 +221,7 @@ pub(super) async fn handle_gemini(
             model,
             base_url,
             api_key,
+            ..
         } => generate_gemini(client, text, voice, model, base_url, api_key).await,
     }
 }
@@ -258,10 +256,10 @@ async fn generate_gemini(
         &base_url,
         "v1beta",
         &format!("models/{model}:generateContent"),
-    );
-    let response = send_with_retry("Google TTS request", || {
+    )?;
+    let response = send_with_retry(|| {
         client
-            .post(&url)
+            .post(url.clone())
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/json")
             .header("x-goog-api-key", &api_key)
@@ -271,9 +269,10 @@ async fn generate_gemini(
     if !response.status().is_success() {
         return gemini_error_response(response).await;
     }
-    let payload: Value = response.json().await.map_err(|error| {
-        DomainError::InternalError(format!("Google TTS response read failed: {error}"))
-    })?;
+    let payload: Value =
+        serde_json::from_slice(&upstream::read_body(response).await?).map_err(|error| {
+            DomainError::InternalError(format!("Google TTS response is not valid JSON: {error}"))
+        })?;
     let inline_data = payload
         .get("candidates")
         .and_then(|value| value.get(0))
@@ -316,9 +315,7 @@ async fn gemini_error_response(
     response: reqwest::Response,
 ) -> Result<TtsRouteResponse, DomainError> {
     let status = response.status().as_u16();
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("Google TTS error response read failed: {error}"))
-    })?;
+    let bytes = upstream::read_body(response).await?;
     Ok(TtsRouteResponse::json_error(
         status,
         parse_upstream_error_message(&bytes, "Google TTS request failed"),

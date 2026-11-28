@@ -80,11 +80,12 @@ export class TextCompletionService {
     static TYPE = 'textgenerationwebui';
 
     /**
-     * @param {Record<string, any> & TextCompletionRequestBase & {prompt: string}} custom
+     * @param {Record<string, any> & TextCompletionRequestBase & {prompt: string, type?: string}} custom
      * @returns {TextCompletionPayload}
      */
-    static createRequestData({ stream = false, prompt, max_tokens, model, api_type, api_server, temperature, min_p, ...props }) {
+    static createRequestData({ type = 'quiet', stream = false, prompt, max_tokens, model, api_type, api_server, temperature, min_p, ...props }) {
         const payload = {
+            type,
             stream,
             prompt,
             max_tokens,
@@ -127,7 +128,7 @@ export class TextCompletionService {
 
             const json = await response.json();
             if (!response.ok || json.error) {
-                throw new Error(String(json.error?.message || 'Response not OK'));
+                throw new Error(String(json.error?.message || json.response || 'Response not OK'));
             }
 
             if (!extractData) {
@@ -178,10 +179,13 @@ export class TextCompletionService {
                 if (data?.choices?.[0]?.index > 0) {
                     const swipeIndex = data.choices[0].index - 1;
                     swipes[swipeIndex] = (swipes[swipeIndex] || '') + data.choices[0].text;
+                } else if (data?.index > 0) {
+                    const swipeIndex = data.index - 1;
+                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + data.content;
                 } else {
                     const newText = data?.choices?.[0]?.text || data?.content || '';
                     text += newText;
-                    state.reasoning += data?.choices?.[0]?.reasoning ?? '';
+                    state.reasoning += data?.choices?.[0]?.reasoning ?? data?.choices?.[0]?.thinking ?? '';
                 }
 
                 yield { text, swipes, state };
@@ -200,6 +204,10 @@ export class TextCompletionService {
         if (typeof instructPreset === 'string') {
             const instructPresetManager = getPresetManager('instruct');
             instructPreset = instructPresetManager?.getCompletionPresetByName(instructPreset);
+        }
+
+        if (!instructPreset) {
+            return prompt.map(x => x.content).join('\n\n');
         }
 
         // Clone the preset to avoid modifying the original
@@ -402,6 +410,9 @@ export class TextCompletionService {
 
         // Only take fields from the preset specified in setting_names to use as TextCompletionSettings
         const settings = structuredClone(textgenerationwebui_settings);
+        if (overridePayload.api_type) {
+            settings.type = overridePayload.api_type;
+        }
         for (const [key, value] of Object.entries(preset)) {
             if (!setting_names.includes(key)) continue;
             settings[key] = value;
@@ -422,11 +433,12 @@ export class ChatCompletionService {
     static TYPE = 'openai';
 
     /**
-     * @param {ChatCompletionPayload} custom
+     * @param {ChatCompletionPayload & {type?: string}} custom
      * @returns {ChatCompletionPayload}
      */
-    static createRequestData({ stream = false, messages, model, chat_completion_source, max_tokens, temperature, custom_url, reverse_proxy, proxy_password, custom_prompt_post_processing, ...props }) {
+    static createRequestData({ type = 'quiet', stream = false, messages, model, chat_completion_source, max_tokens, temperature, custom_url, reverse_proxy, proxy_password, custom_prompt_post_processing, ...props }) {
         const payload = {
+            type,
             stream,
             messages,
             model,
@@ -472,7 +484,7 @@ export class ChatCompletionService {
         if (!data.stream) {
             const json = await response.json();
             if (!response.ok || json.error) {
-                throw new Error(String(json.error?.message || 'Response not OK'));
+                throw new Error(String(json.error?.message || json.response || 'Response not OK'));
             }
 
             if (!extractData) {

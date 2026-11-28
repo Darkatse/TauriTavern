@@ -1,10 +1,7 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
-import { translate } from '../../../i18n.js';
-import {
-    openDialog,
-    setDataRoot,
-    updateTauriTavernSettings,
-} from '../../../../tauri-bridge.js';
+import { getCurrentLocale, translate } from '../../../i18n.js';
+import { invoke, pickDataRoot, updateTauriTavernSettings } from '../../../../tauri-bridge.js';
+import { isCommandCancelled } from '../../../util/command-error-utils.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import {
     loadChatBackupStorageStats,
@@ -14,6 +11,7 @@ import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup, createTauriTavernPanelPopup } from '../panel-popup.js';
 import { setOledBackgroundEnabled } from '../oled-background.js';
+import { buildThumbnailUrl } from '../../../../tauri/main/context/asset-path-helpers.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
 
@@ -78,6 +76,17 @@ const HELP_TOPICS = {
             'Maximum backups sharing the same character or group name.',
         ],
     },
+    generationNotifications: {
+        title: 'Generation notifications',
+        lines: ['Notifies you when generation ends while TauriTavern is in the background.'],
+    },
+    generationNotificationsWithProgress: {
+        title: 'Generation notifications',
+        lines: [
+            'Shows generation progress and notifies you when generation ends.',
+            'On Android and iOS, the system strictly limits generation by apps in the background. When this is off, leaving the app may let the system pause or end the generation.',
+        ],
+    },
     closeToTray: {
         title: 'Minimize to tray on close (Windows)',
         lines: [
@@ -102,8 +111,7 @@ const HELP_TOPICS = {
     avatarPersonaOriginalImages: {
         title: 'Enable Character/User Avatar Original Images',
         lines: [
-            'Character/User avatar originals help: on',
-            'Character/User avatar originals help: off',
+            'When enabled, character/user avatars in chat load full-size images, and lists keep thumbnails. Takes effect after reload.',
         ],
     },
     oledBackground: {
@@ -154,10 +162,7 @@ function getBackgroundThumbnailUrl(filename, isAnimated) {
         return '/img/No-Image-Placeholder.svg';
     }
 
-    const url = typeof window.__TAURITAVERN_THUMBNAIL__ === 'function'
-        ? window.__TAURITAVERN_THUMBNAIL__('bg', filename)
-        : `/thumbnail?type=bg&file=${encodeURIComponent(filename)}`;
-    return isAnimated ? `${url}&static=true` : url;
+    return buildThumbnailUrl('bg', filename, { static: isAnimated });
 }
 
 async function readBackgroundOptions() {
@@ -314,6 +319,49 @@ async function showChatVirtualizationCompatibility() {
     });
 }
 
+async function showGenerationNotificationsOffNotice() {
+    const content = createPopupColumn();
+    const title = document.createElement('b');
+    title.textContent = translate('Generation notifications turned off');
+    const explanation = document.createElement('div');
+    explanation.textContent = translate(
+        'Note: with notifications off, the system may pause or end TauriTavern while it is in the background, and a reply being generated may not arrive.',
+    );
+    content.append(title, explanation);
+
+    await callGenericPopup(content, POPUP_TYPE.TEXT, '', {
+        okButton: translate('Close'),
+        allowVerticalScrolling: true,
+        wide: false,
+        large: false,
+    });
+}
+
+async function reconcileGenerationNotificationsChange(update, capabilities) {
+    if (!update.changes.generationNotificationsEnabled) {
+        return;
+    }
+
+    if (!update.next.generationNotificationsEnabled) {
+        if (capabilities.backgroundShowsProgressUi) {
+            await showGenerationNotificationsOffNotice();
+        }
+        return;
+    }
+
+    let permission = await invoke('get_notification_permission_state');
+    if (permission === 'prompt') {
+        permission = await invoke('request_notification_permission');
+    }
+    if (permission === 'denied') {
+        toastr.warning(
+            translate(
+                'System notification permission is disabled. To be notified when generation ends, enable notifications for TauriTavern in system settings.',
+            ),
+        );
+    }
+}
+
 async function confirmChatBackupHistoryPurge() {
     const content = createPopupColumn();
     const title = document.createElement('b');
@@ -336,28 +384,12 @@ async function confirmChatBackupHistoryPurge() {
 }
 
 async function chooseDataRoot() {
-    const picked = await openDialog({
-        directory: true,
-        multiple: false,
-        title: translate('Select Data Directory'),
-    });
-
-    const selected = Array.isArray(picked) ? picked[0] : picked;
-    const normalized = String(selected || '').trim();
-    if (!normalized) {
-        return null;
-    }
-
     const confirm = createPopupColumn();
     const title = document.createElement('b');
     title.textContent = translate('Change Data Directory');
     const hint = document.createElement('div');
     hint.textContent = translate('The app will migrate data on next startup. Restart is required.');
-    const pathPreview = document.createElement('pre');
-    pathPreview.style.margin = '0';
-    pathPreview.style.whiteSpace = 'pre-wrap';
-    pathPreview.textContent = normalized;
-    confirm.append(title, hint, pathPreview);
+    confirm.append(title, hint);
 
     const confirmation = await callGenericPopup(confirm, POPUP_TYPE.CONFIRM, '', {
         okButton: translate('Confirm'),
@@ -370,21 +402,57 @@ async function chooseDataRoot() {
         return null;
     }
 
-    await setDataRoot(normalized);
+    const selected = await pickDataRoot();
+    if (!selected) {
+        return null;
+    }
 
-    await callGenericPopup(translate('Data directory saved. Restart to apply.'), POPUP_TYPE.TEXT, '', {
+    const saved = createPopupColumn();
+    const message = document.createElement('div');
+    message.textContent = translate('Data directory saved. Restart to apply.');
+    const pathPreview = document.createElement('pre');
+    pathPreview.style.margin = '0';
+    pathPreview.style.whiteSpace = 'pre-wrap';
+    pathPreview.textContent = selected;
+    saved.append(message, pathPreview);
+    await callGenericPopup(saved, POPUP_TYPE.TEXT, '', {
         okButton: translate('OK'),
         allowVerticalScrolling: true,
         wide: false,
         large: false,
     });
 
-    return normalized;
+    return selected;
+}
+
+async function setKeysExposure(allowed) {
+    try {
+        await invoke('set_keys_exposure', { allowed, locale: getCurrentLocale() });
+        return allowed;
+    } catch (error) {
+        if (isCommandCancelled(error)) {
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function setRequestProxy(settings) {
+    try {
+        await invoke('set_request_proxy', { settings, locale: getCurrentLocale() });
+        return true;
+    } catch (error) {
+        if (isCommandCancelled(error)) {
+            return false;
+        }
+        throw error;
+    }
 }
 
 function createSettingsActions(backgroundOptions) {
     return {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
+        setKeysExposure: (allowed) => runTaskOrPopup(() => setKeysExposure(allowed)),
         chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
         manageQuickAccess: () => runTaskOrPopup(async () => {
@@ -402,9 +470,9 @@ function createSettingsActions(backgroundOptions) {
             const { openBackendLogsPanel } = await import('../dev-logs.js');
             await openBackendLogsPanel();
         }),
-        openLlmApiLogs: () => runTaskOrPopup(async () => {
-            const { openLlmApiLogsPanel } = await import('../dev-logs.js');
-            await openLlmApiLogsPanel();
+        openRequestInspector: () => runTaskOrPopup(async () => {
+            const { openRequestInspector } = await import('../request-inspector.js');
+            await openRequestInspector({ select: 'latest' });
         }),
         openSync: () => runTaskOrPopup(async () => {
             const { openSyncPopup } = await import('./sync-popup.js');
@@ -431,6 +499,8 @@ export async function openTauriTavernSettingsPopup() {
         actions: createSettingsActions(backgroundModel.backgroundOptions),
         tr: translate,
     });
+    // Kept equal to what is saved, so a retry submits only what is still unsaved.
+    let stored = viewModel.values;
     let savedUpdate = null;
 
     try {
@@ -449,7 +519,7 @@ export async function openTauriTavernSettingsPopup() {
 
                 try {
                     const draft = appHandle.getDraft();
-                    const update = buildTauriTavernSettingsUpdate(viewModel.values, draft);
+                    const update = buildTauriTavernSettingsUpdate(stored, draft);
 
                     if (
                         update.requiresChatBackupPurgeConfirmation
@@ -465,12 +535,19 @@ export async function openTauriTavernSettingsPopup() {
                         await showChatVirtualizationCompatibility();
                     }
 
+                    if (update.requestProxy) {
+                        if (!await setRequestProxy(update.requestProxy)) {
+                            return false;
+                        }
+                        stored = { ...stored, requestProxy: update.requestProxy };
+                    }
+
                     if (update.hasChanges) {
                         const updatedSettings = await updateTauriTavernSettings(update.patch);
                         savedUpdate = { update, updatedSettings };
                     }
 
-                    if (draft.oledBackgroundEnabled !== viewModel.values.oledBackgroundEnabled) {
+                    if (draft.oledBackgroundEnabled !== stored.oledBackgroundEnabled) {
                         try {
                             setOledBackgroundEnabled(draft.oledBackgroundEnabled);
                         } catch (error) {
@@ -496,6 +573,12 @@ export async function openTauriTavernSettingsPopup() {
 
         if (result !== POPUP_RESULT.AFFIRMATIVE || !savedUpdate) {
             return;
+        }
+
+        try {
+            await reconcileGenerationNotificationsChange(savedUpdate.update, viewModel.capabilities);
+        } catch (error) {
+            await showErrorPopup(error);
         }
 
         applyTauriTavernSettingsUpdateEffects(savedUpdate.update, savedUpdate.updatedSettings);

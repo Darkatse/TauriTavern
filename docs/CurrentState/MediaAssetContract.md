@@ -60,36 +60,7 @@
 
 ---
 
-## 4. Android WebView 差异与当前 workaround（视频背景）
-
-现象（历史问题）：
-
-- Android `WebResourceResponse` 不支持 3xx，因此 Host Resource validator 命中时返回完整 200，而不是 304；
-
-- Android WebView 对 `video/mp4` 的请求序列通常包含多个 Range（例如 `bytes=0-`、`bytes=131072-`、尾部 Range 等）。
-- 在 Tauri mobile 的资源拦截链路中（`shouldInterceptRequest`），Android WebView 会对**拦截返回的响应流**再次应用请求的 Range 语义。
-- 若宿主已经按 Range 做了 seek/slice，再遇到非 0 起点 Range，会出现“再次 seek 导致不可满足”的情况，表现为 `416` 或请求被快速取消，最终 `<video>` 卡在 `HAVE_NOTHING`，无法进入 `loadedmetadata`。
-
-当前已落地 workaround（仅 Android + 背景视频 + 非 0 Range 起点）：
-
-- 匹配条件：
-  - 平台：Android（WebView 拦截链路）
-  - 路径：`/backgrounds/*`
-  - MIME：`video/*`
-  - Range：`start != 0`
-- 响应策略：
-  - 返回 **`206` + 正确的 `Content-Range/Content-Length`（对齐请求的范围）**
-  - 但 body 提供**完整文件 bytes**，让 WebView 自己在流上执行 Range（skip）并喂给媒体管线
-
-这保持了“对媒体管线可观察的 HTTP 契约”，并避开 Android WebView 的二次 Range 应用问题。
-
-已知代价：
-
-- 对这些请求会读取完整文件到内存；背景视频过大时可能带来额外内存/IO 压力。
-
----
-
-## 5. 回归与诊断要点
+## 4. 回归与诊断要点
 
 最小回归探针（桌面/移动均适用）：
 
@@ -97,7 +68,7 @@
 
 Android 端额外关注：
 
-- 对 `Range: bytes=131072-` 等非 0 起点 Range，应依然返回 `206` 且包含 `Content-Range`
+- 对 `Range: bytes=131072-` 等非 0 起点 Range，应依然返回 `206` 且包含 `Content-Range`，正文从起点开始（WebView 的二次跳过见 [AndroidDevelopment §9](../AndroidDevelopment.md#9-android-webview-的-range-二次跳过)）
 - 若 `<video>` 长时间停留在 `readyState=HAVE_NOTHING`，优先排查 Range 契约是否被破坏（`206`、`Content-Range`、以及是否出现快速 canceled）
 
 当需要确认媒体编码兼容性（解码层问题）：

@@ -32,7 +32,7 @@
 - header 合法时，损坏的末条预览显示“Preview unavailable”，保留条目和消息记录位置。正文缺省、空正文及 header-only 不属于损坏。
 - 日期使用末条有效 `send_date`，否则使用 mtime；正文不可用不抹去有效日期。
 - 角色列表返回完整末条正文，摘要只缓存短预览。搜索发现不可用投影时不缓存整查询，即使该文件未命中。
-- 普通摘要、搜索结果和备份详情使用轻量投影，完整 `chat_metadata` 仅在显式请求时读取并附加到本次响应。
+- 普通摘要、搜索结果和备份详情使用轻量投影，完整 `chat_metadata` 仅在显式请求时读取，按 header 里的原文附加到本次响应。
 - 目录索引是可重建缓存，版本不匹配或文件损坏时按需重建。旧索引在首次加载时清理；清理或持久化失败记录告警，不阻塞目录查询。
 - 删除聊天或角色前从当前 header 查询身份。合法旧聊天缺少 integrity 表示无身份；读取或格式错误会停止相关删除操作。目录展示按文件报告并跳过失败项。
 
@@ -51,11 +51,11 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 扩展的兼容 get 共用仓储读取器，将 JSONL 按需转换为 JSON 数组字节，由消费者解析；接口与流式错误语义见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
-角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则由 `resolvePersistedChat` 按最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
+角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。打开角色时只列聊天文件名；当前 stem 不在列表中而列表非空时，`resolvePersistedChat` 才读取完整列表，改开最近的聊天并写回；列表为空时才允许新建。恢复只在打开目标角色时发生，不做启动期全库扫描。每次等待之后，群组、角色或本次读到的聊天一旦变了，这次打开即停止，不覆盖后来的选择。
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
-第一方默认加载通过共享的 Tauri FileHandle 流读取 JSONL，以同一已打开文件及其初始大小为界；提前 EOF 视为失败，完成、取消或失败时关闭资源。各运行模式共用已解析的 `data_root` scope。
+第一方默认加载经 `open_chat_payload_jsonl` 取得宿主字节资源，经 `read_bytes` 读取原样 JSONL。读取以同一已打开文件及其初始大小为界，提前 EOF 视为失败；完成、取消或失败时关闭资源。
 
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 
@@ -83,7 +83,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 ### 3.1 Metadata 保存
 
-`saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留语义，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
+`saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留原文与顺序，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
 
 当前聊天的 metadata 与完整保存共用 `persistedChatMetadata()` 和保存队列。该 helper 排除 `lastInContextMessageId`，不修改活 metadata；metadata 保存不遍历或传输消息、不保存消息派生缓存，也不取消待执行的完整保存。integrity 弹窗及恢复留在同一次队列任务内：确认后强制完整保存，拒绝则 reload；缺文件或普通错误不回退。
 
@@ -91,7 +91,7 @@ metadata 操作要求目标文件存在。新群聊在首次问候扩展事件�
 
 storage-core 的 `chat_metadata.rs` 在路径 mutation lock 内读取最新 header、应用修改并复制正文，复用统一发布机制；成功后失效缓存并通知备份协调器。内容签名必须对应完整发布文件，不能用上传的 metadata 字节代替。integrity 表示身份而非内容版本，进程内锁不提供跨进程或 Sync 冲突隔离。
 
-JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。header 不保证字段顺序或格式，正文保持原字节。
+JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。
 
 ### 3.2 删除与重命名
 
@@ -171,10 +171,10 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 - `src/script.js`：角色聊天 canonical load/save、DOM truncation、Show More、保存队列。
 - `src/scripts/group-chats.js`：群聊 canonical load/save。
 - `src/scripts/chat-payload-transport.js`：完整 payload transport 公共入口。
-- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport 与共享 FileHandle pull stream 接入边界。
+- `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport。
 - `src/scripts/tauri/chat/jsonl.js`：同步 JSON 记录快照、字节分帧与 JSONL 读取。
 - `src/scripts/tauri/chat/commit.js`：快照捕获时机、IPC 会话、ACK 校验与提交错误分类。
-- `src/tauri/main/services/files/readable-file-stream-service.js`：跨平台 plugin-fs open/read/close pull stream。
+- `src/tauri/main/services/files/byte-stream-service.js`：宿主字节资源的 pull stream。
 - `src/tauri/main/api/chat.js`：扩展历史分页 API 与 `windowInfo()`。
 
 Rust：

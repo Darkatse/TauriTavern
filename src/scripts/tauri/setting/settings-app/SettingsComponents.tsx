@@ -70,7 +70,7 @@ export function ToggleSwitch({ checked, disabled = false, ariaLabel, onChange }:
                 aria-label={ariaLabel}
                 onChange={event => onChange(event.target.checked)}
             />
-            <span aria-hidden="true"></span>
+            <span className="tt-settings-switch-track" aria-hidden="true"></span>
         </label>
     );
 }

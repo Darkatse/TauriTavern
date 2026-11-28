@@ -232,6 +232,8 @@ pub enum SkillImportInput {
     },
     Directory {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill_root: Option<String>,
         #[serde(default)]
         source: Value,
     },

@@ -22,6 +22,7 @@ function createSettings(overrides = {}) {
             max_total_bytes: 1024 * 1024 * 1024,
         },
         close_to_tray_on_close: false,
+        generation_notifications_enabled: true,
         request_proxy: {
             enabled: false,
             url: '',
@@ -84,6 +85,7 @@ test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settin
 
     assert.equal(update.hasChanges, false);
     assert.deepEqual(update.patch, {});
+    assert.equal(update.requestProxy, null);
 });
 
 
@@ -107,11 +109,11 @@ test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', 
                 prompt_cache_ttl: '5m',
             },
         },
-        request_proxy: {
-            enabled: true,
-            url: 'http://127.0.0.1:7890',
-            bypass: ['localhost', '127.0.0.1', '10.0.0.0/8'],
-        },
+    });
+    assert.deepEqual(update.requestProxy, {
+        enabled: true,
+        url: 'http://127.0.0.1:7890',
+        bypass: ['localhost', '127.0.0.1', '10.0.0.0/8'],
     });
 });
 

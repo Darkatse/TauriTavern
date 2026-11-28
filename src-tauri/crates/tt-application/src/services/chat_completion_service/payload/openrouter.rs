@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use crate::services::openrouter;
 
 use super::super::model_capabilities::map_openrouter_reasoning_effort;
 use super::content_parts::{
@@ -21,9 +22,81 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
             AudioRewriteFallbackPolicy::Preserve,
         )?;
         apply_openrouter_overrides(body, &source_payload)?;
+        move_signatures_into_reasoning_details(body)?;
     }
 
     Ok(("/chat/completions".to_string(), upstream_payload))
+}
+
+// OpenRouter ignores `signature`; it reads `reasoning.encrypted` details.
+fn move_signatures_into_reasoning_details(
+    body: &mut Map<String, Value>,
+) -> Result<(), ApplicationError> {
+    let format = reasoning_detail_format(body.get("model").and_then(Value::as_str).unwrap_or(""));
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+
+    for message in messages.iter_mut().filter_map(Value::as_object_mut) {
+        let mut signatures = Vec::new();
+        if let Some(signature) = take_signature(message) {
+            signatures.push((None, signature));
+        }
+        if let Some(calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            for call in calls.iter_mut().filter_map(Value::as_object_mut) {
+                if let Some(signature) = take_signature(call) {
+                    let id = call.get("id").and_then(Value::as_str).map(str::to_string);
+                    signatures.push((id, signature));
+                }
+            }
+        }
+        if signatures.is_empty() {
+            continue;
+        }
+
+        let details = message.entry("reasoning_details").or_insert(Value::Null);
+        if details.is_null() {
+            *details = Value::Array(Vec::new());
+        }
+        let Value::Array(details) = details else {
+            return Err(ApplicationError::ValidationError(
+                "chat_completion.invalid_reasoning_details: OpenRouter reasoning_details must be an array"
+                    .to_string(),
+            ));
+        };
+        for (id, data) in signatures {
+            let index = details.len();
+            details.push(json!({
+                "index": index,
+                "id": id.unwrap_or_else(|| format!("signature-{index}")),
+                "type": "reasoning.encrypted",
+                "data": data,
+                "format": format,
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn take_signature(object: &mut Map<String, Value>) -> Option<String> {
+    match object.remove("signature")? {
+        Value::String(signature) if !signature.is_empty() => Some(signature),
+        _ => None,
+    }
+}
+
+fn reasoning_detail_format(model: &str) -> &'static str {
+    if model.contains("google/gemini") {
+        "google-gemini-v1"
+    } else if model.contains("anthropic/claude") {
+        "anthropic-claude-v1"
+    } else if model.contains("openai/gpt") {
+        "openai-responses-v1"
+    } else if model.contains("x-ai/grok") {
+        "xai-responses-v1"
+    } else {
+        "unknown"
+    }
 }
 
 fn apply_openrouter_overrides(
@@ -56,7 +129,7 @@ fn apply_openrouter_overrides(
         body.insert("plugins".to_string(), json!([{ "id": "web" }]));
     }
 
-    if let Some(provider) = map_provider_preferences(source_payload) {
+    if let Some(provider) = openrouter::provider_preferences(source_payload) {
         body.insert("provider".to_string(), provider);
     }
 
@@ -99,38 +172,6 @@ fn map_middleout_transforms(value: Option<&Value>) -> Option<Value> {
         "off" => Some(Value::Array(Vec::new())),
         _ => None,
     }
-}
-
-fn map_provider_preferences(source_payload: &Map<String, Value>) -> Option<Value> {
-    let order = source_payload
-        .get("provider")
-        .and_then(Value::as_array)
-        .filter(|providers| !providers.is_empty())
-        .cloned();
-    let quantizations = source_payload
-        .get("quantizations")
-        .and_then(Value::as_array)
-        .filter(|items| !items.is_empty())
-        .cloned();
-
-    if order.is_none() && quantizations.is_none() {
-        return None;
-    }
-
-    let mut provider = Map::new();
-    if let Some(order) = order {
-        let allow_fallbacks = source_payload
-            .get("allow_fallbacks")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-        provider.insert("allow_fallbacks".to_string(), Value::Bool(allow_fallbacks));
-        provider.insert("order".to_string(), Value::Array(order));
-    }
-    if let Some(quantizations) = quantizations {
-        provider.insert("quantizations".to_string(), Value::Array(quantizations));
-    }
-
-    Some(Value::Object(provider))
 }
 
 #[cfg(test)]

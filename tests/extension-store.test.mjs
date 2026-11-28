@@ -8,18 +8,16 @@ test.beforeEach(t => t.after(installHostIdentity()));
 
 const target = { namespace: 'example', key: 'entry' };
 
-function installStore(t, invoke) {
-    const previousWindow = globalThis.window;
-    globalThis.window = { __TAURITAVERN__: { api: {} } };
-    t.after(() => { globalThis.window = previousWindow; });
-    installExtensionStoreApi({ safeInvoke: invoke, invokeTransport: invoke });
-    return window.__TAURITAVERN__.api.extension.store;
+function installStore(invoke) {
+    const api = {};
+    installExtensionStoreApi(api, { safeInvoke: invoke, invokeTransport: invoke });
+    return api.extension.store;
 }
 
-test('writes preserve call-time values and normalize Blob inputs', async t => {
+test('writes preserve call-time values and normalize Blob inputs', async () => {
     let gate = Promise.withResolvers();
     let received = [];
-    const store = installStore(t, async (command, args, options) => {
+    const store = installStore(async (command, args, options) => {
         switch (command) {
             case 'begin_extension_store_commit':
                 await gate.promise;
@@ -60,9 +58,9 @@ test('writes preserve call-time values and normalize Blob inputs', async t => {
     assert.equal(Buffer.concat(received).length, 0);
 });
 
-test('JSON lookup distinguishes missing from null and rejects malformed UTF-8', async t => {
+test('JSON lookup distinguishes missing from null and rejects malformed UTF-8', async () => {
     let chunks;
-    const store = installStore(t, async (command, args) => {
+    const store = installStore(async (command, args) => {
         switch (command) {
             case 'open_extension_store_entry':
                 if (args.key === 'missing') return null;

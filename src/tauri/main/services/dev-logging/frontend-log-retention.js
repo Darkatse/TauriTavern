@@ -6,13 +6,24 @@ export const FRONTEND_LOG_RETENTION_LIMITS = Object.freeze({
     warnError: 100,
 });
 
+const RETAINED_TOTAL = FRONTEND_LOG_RETENTION_LIMITS.debug + FRONTEND_LOG_RETENTION_LIMITS.info
+    + FRONTEND_LOG_RETENTION_LIMITS.warnError;
+// A trim scans the whole list, so a list grows this far past the retained total before it is trimmed.
+const TRIM_MARGIN = 100;
+
 /** @typedef {'debug' | 'info' | 'warn' | 'error'} FrontendLogLevel */
 
 /**
+ * Trims the list to the newest entries of each level's quota, once it holds TRIM_MARGIN entries more than the
+ * quotas' total.
  * @template {{ level: FrontendLogLevel }} T
  * @param {T[]} entries
  */
 export function trimFrontendLogEntriesInPlace(entries) {
+    if (entries.length <= RETAINED_TOTAL + TRIM_MARGIN) {
+        return;
+    }
+
     let debugCount = 0;
     let infoCount = 0;
     let warnErrorCount = 0;

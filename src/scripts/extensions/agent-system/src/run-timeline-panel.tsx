@@ -7,7 +7,7 @@ import type {
     RunTimelineController,
     TimelineReadInput,
 } from './RunTimelineContract';
-import { errorText, requireAgentApi } from './host-api';
+import { errorText, readStreamingFps, requireAgentApi } from './host-api';
 import { translateAgentSystem as tr } from './i18n';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store';
 import {
@@ -17,6 +17,7 @@ import {
     subscribeAgentRunState,
 } from '../../../tauritavern/agent/agent-run-controller.js';
 import { resumeAgentRun, retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
+import { createStreamingRenderScheduler } from '../../../tauri/perf/streaming-render-policy.js';
 
 const MOUNT_ID = 'ttas_agent_run_timeline_mount';
 let historyTimelineDialogCounter = 0;
@@ -108,7 +109,10 @@ export async function mountAgentRunTimelinePanel(): Promise<void> {
             getActiveRun: () => getActiveAgentRun(),
             subscribeRunState: listener => subscribeAgentRunState(listener),
             subscribeRunEvents: listener => subscribeAgentRunEvents(listener),
-            subscribeLiveProjection: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
+            liveSource: {
+                subscribe: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
+                scheduleFrame: createStreamingRenderScheduler(readStreamingFps),
+            },
             retryFailure: input => retryAgentRunFailure(input),
             resumeRun: runId => resumeAgentRun(runId),
             retryPresentation: runId => retryAgentRunPresentation(runId),

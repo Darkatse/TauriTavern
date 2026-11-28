@@ -37,19 +37,16 @@ function stagingHost(encoding, failChunkOffset) {
     return { service, filePath, chunks, discarded };
 }
 
-test('mobile uploads preserve bytes across IPC chunks and own their staged copies', async () => {
+test('uploads preserve bytes across IPC chunks and own their staged copies', async () => {
     const bytes = Uint8Array.of(0, 255, 128, 64, 1, 2, 3, 4, 5, 6);
     for (const [identity, encoding] of [[HOSTS.android, 'base64'], [HOSTS.ios, undefined]]) {
         const restore = installHostIdentity(identity);
         try {
             const { service, filePath, chunks, discarded } = stagingHost(encoding);
             const blob = new Blob([bytes], { type: 'image/png' });
-            // A mobile picker's scoped path cannot substitute for an owned copy.
-            Object.defineProperty(blob, 'path', { value: '/private/scoped/avatar.png' });
             const file = await service.materializeUploadFile(blob, { kind: 'avatar', preferredName: 'portrait.png' });
 
             assert.equal(file.filePath, filePath);
-            assert.equal(file.isTemporary, true);
             assert.deepEqual(Buffer.concat(chunks), Buffer.from(bytes));
             assert.deepEqual(discarded, []);
             await file.cleanup();
@@ -60,14 +57,15 @@ test('mobile uploads preserve bytes across IPC chunks and own their staged copie
     }
 });
 
-test('failed upload discards the partial staged file and reports the failure', async t => {
+test('failed upload discards the partial staged file and rejects with the cause', async t => {
     t.after(installHostIdentity(HOSTS.android));
-    t.mock.method(console, 'warn', () => {});
     const { service, filePath, chunks, discarded } = stagingHost('base64', 4);
-    const file = await service.materializeUploadFile(new Blob(['abcdefgh']));
 
+    await assert.rejects(service.materializeUploadFile(new Blob(['abcdefgh'])), error => {
+        assert.match(error.message, /chunk failed/);
+        assert.equal(error.cause.message, 'chunk failed');
+        return true;
+    });
     assert.equal(Buffer.concat(chunks).toString(), 'abcd');
-    assert.equal(file.filePath, '');
-    assert.match(file.error, /chunk failed/);
     assert.deepEqual(discarded, [filePath]);
 });

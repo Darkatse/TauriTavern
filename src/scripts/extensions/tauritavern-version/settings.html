@@ -22,9 +22,9 @@
                     <span class="ttv-label" data-i18n="ttv_version.author_label">Author</span>
                     <strong>{{authorName}}</strong>
                 </div>
-                <div id="ttv-channel-row" class="ttv-channel-block">
-                    <button id="ttv-channel-toggle" class="ttv-row ttv-channel-toggle" type="button" aria-expanded="false" aria-controls="ttv-channel-body">
-                        <span class="ttv-label" data-i18n="ttv_version.channel_label">Update Channel</span>
+                <div id="ttv-update-settings-row" class="ttv-update-settings-block">
+                    <button id="ttv-update-settings-toggle" class="ttv-row ttv-update-settings-toggle" type="button" aria-expanded="false" aria-controls="ttv-update-settings-body">
+                        <span class="ttv-label" data-i18n="ttv_version.update_settings_label">Update Settings</span>
                         <span class="ttv-channel-current">
                             <!-- JS-owned dynamic text: no data-i18n, or the i18n observer would reset it
                                  whenever the panel subtree is re-attached (extensions drawer park/hydrate). -->
@@ -32,22 +32,38 @@
                             <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
                         </span>
                     </button>
-                    <div id="ttv-channel-body" class="ttv-channel-body">
-                        <div class="ttv-channel-group" role="radiogroup" aria-label="Update Channel" data-i18n="[aria-label]ttv_version.channel_label">
-                            <label class="ttv-channel-option">
-                                <input type="radio" name="tauritavern_update_channel" value="stable">
-                                <span class="ttv-channel-pill">
-                                    <span data-i18n="ttv_version.channel_stable">Stable</span>
-                                </span>
-                            </label>
-                            <label class="ttv-channel-option">
-                                <input type="radio" name="tauritavern_update_channel" value="canary">
-                                <span class="ttv-channel-pill">
-                                    <span data-i18n="ttv_version.channel_canary">Canary</span>
-                                </span>
+                    <div id="ttv-update-settings-body" class="ttv-update-settings-body">
+                        <div id="ttv-channel-section" class="ttv-update-setting-group">
+                            <div class="ttv-label" data-i18n="ttv_version.channel_label">Update Channel</div>
+                            <div class="ttv-channel-group" role="radiogroup" aria-label="Update Channel" data-i18n="[aria-label]ttv_version.channel_label">
+                                <label class="ttv-channel-option">
+                                    <input type="radio" name="tauritavern_update_channel" value="stable">
+                                    <span class="ttv-channel-pill">
+                                        <span data-i18n="ttv_version.channel_stable">Stable</span>
+                                    </span>
+                                </label>
+                                <label class="ttv-channel-option">
+                                    <input type="radio" name="tauritavern_update_channel" value="canary">
+                                    <span class="ttv-channel-pill">
+                                        <span data-i18n="ttv_version.channel_canary">Canary</span>
+                                    </span>
+                                </label>
+                            </div>
+                            <small id="ttv-channel-hint" class="ttv-channel-hint"></small>
+                        </div>
+                        <div id="ttv-update-popup-row" class="ttv-update-setting-row">
+                            <label class="ttv-label" for="tauritavern_update_popup_enabled" data-i18n="ttv_version.update_popup_label">Update Popup</label>
+                            <label class="ttv-switch">
+                                <input
+                                    id="tauritavern_update_popup_enabled"
+                                    type="checkbox"
+                                    checked
+                                    aria-label="Update Popup"
+                                    data-i18n="[aria-label]ttv_version.update_popup_label"
+                                >
+                                <span class="ttv-switch-track" aria-hidden="true"></span>
                             </label>
                         </div>
-                        <small id="ttv-channel-hint" class="ttv-channel-hint"></small>
                     </div>
                 </div>
             </div>

@@ -1,13 +1,20 @@
 use async_trait::async_trait;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::Personas;
 use tt_domain::models::settings::revision::UserSettingsRevision;
-use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+use tt_domain::models::settings::{ChatBackupSettings, SettingsSnapshot, TauriTavernSettings};
 
 pub struct SettingsCommitResult {
     pub revision: UserSettingsRevision,
     pub personas: Personas,
+}
+
+/// User settings as read, with the revision of the files they were read from.
+pub struct StoredUserSettings {
+    pub settings: JsonDocument,
+    pub revision: UserSettingsRevision,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -26,9 +33,18 @@ pub trait SettingsRepository: Send + Sync {
         settings: &TauriTavernSettings,
     ) -> Result<(), DomainError>;
     async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError>;
+    /// Writes the initial settings with `chat_backups`, keeping the originals.
+    async fn reset_tauritavern_settings(
+        &self,
+        chat_backups: ChatBackupSettings,
+    ) -> Result<(), DomainError>;
 
-    async fn save_user_settings(&self, settings: UserSettings) -> Result<(), DomainError>;
-    async fn load_user_settings(&self) -> Result<UserSettings, DomainError>;
+    /// Persona tables in the document are returned, not stored.
+    async fn save_user_settings(&self, settings: JsonDocument) -> Result<Personas, DomainError>;
+    async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError>;
+    /// Writes the factory settings except the Persona state, with `firstRun` false and
+    /// `disabled_extensions` added to the disabled list.
+    async fn reset_user_settings(&self, disabled_extensions: &[String]) -> Result<(), DomainError>;
 
     async fn begin_commit(
         &self,
@@ -47,21 +63,21 @@ pub trait SettingsRepository: Send + Sync {
     ) -> Result<SettingsCommitResult, DomainError>;
     async fn abort_commit(&self, session_id: &str) -> Result<(), DomainError>;
 
-    async fn create_snapshot(&self, settings: UserSettings) -> Result<(), DomainError>;
+    async fn create_snapshot(&self, settings: JsonDocument) -> Result<String, DomainError>;
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError>;
-    async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError>;
+    async fn load_snapshot(&self, name: &str) -> Result<JsonDocument, DomainError>;
 
     async fn get_sillytavern_settings_signature(
         &self,
     ) -> Result<SettingsAggregateSignature, DomainError>;
 
-    async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
-    async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError>;
+    async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
+    async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError>;
 
     async fn get_koboldai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError>;
     async fn get_novelai_settings(&self) -> Result<(Vec<String>, Vec<String>), DomainError>;

@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
 
@@ -8,7 +7,7 @@ use crate::presentation::errors::CommandError;
 
 #[tauri::command]
 pub async fn save_quick_reply_set(
-    payload: Value,
+    json: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command("save_quick_reply_set");
@@ -16,14 +15,14 @@ pub async fn save_quick_reply_set(
     app_state
         .services
         .quick_reply_service
-        .save_quick_reply_set(payload)
+        .save_quick_reply_set(&json)
         .await
         .map_err(map_command_error("Failed to save quick reply set"))
 }
 
 #[tauri::command]
 pub async fn delete_quick_reply_set(
-    payload: Value,
+    name: String,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command("delete_quick_reply_set");
@@ -31,7 +30,7 @@ pub async fn delete_quick_reply_set(
     app_state
         .services
         .quick_reply_service
-        .delete_quick_reply_set(payload)
+        .delete_quick_reply_set(&name)
         .await
         .map_err(map_command_error("Failed to delete quick reply set"))
 }

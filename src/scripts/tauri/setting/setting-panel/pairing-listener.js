@@ -1,5 +1,5 @@
 import { invoke, listen } from '../../../../tauri-bridge.js';
-import { translate } from '../../../i18n.js';
+import { getCurrentLocale } from '../../../i18n.js';
 import { LAN_SYNC_DEVICES_CHANGED_EVENT } from './constants.js';
 
 export async function installPairingListener(appReady) {
@@ -7,47 +7,12 @@ export async function installPairingListener(appReady) {
         listen('lan_sync:pairing_completed', () => {
             window.dispatchEvent(new Event(LAN_SYNC_DEVICES_CHANGED_EVENT));
         }),
-        listen('lan_sync:pair_request', async (event) => {
+        listen('lan_sync:pairing_review', async (event) => {
             await appReady;
-            const { callGenericPopup, POPUP_RESULT, POPUP_TYPE } = await import('../../../popup.js');
-            const payload = event.payload;
-            const requestId = payload.request_id;
-            const peerDeviceName = payload.peer_device_name;
-            const peerDeviceId = payload.peer_device_id;
-            const peerIp = payload.peer_ip;
-
-            const content = document.createElement('div');
-            content.className = 'flex-container flexFlowColumn';
-            content.style.gap = '10px';
-
-            const title = document.createElement('b');
-            title.textContent = translate('LAN Sync pairing request');
-            content.appendChild(title);
-
-            const details = document.createElement('div');
-            details.className = 'flex-container flexFlowColumn';
-            details.style.gap = '6px';
-
-            const deviceLine = document.createElement('div');
-            deviceLine.textContent = `${translate('Device')}: ${peerDeviceName} (${peerDeviceId})`;
-            details.appendChild(deviceLine);
-
-            const ipLine = document.createElement('div');
-            ipLine.textContent = `${translate('IP')}: ${peerIp}`;
-            details.appendChild(ipLine);
-
-            content.appendChild(details);
-
-            const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
-                okButton: translate('Allow'),
-                cancelButton: translate('Deny'),
-                allowVerticalScrolling: true,
-                wide: false,
-                large: false,
+            await invoke('lan_sync_review_pairing', {
+                requestId: event.payload.request_id,
+                locale: getCurrentLocale(),
             });
-
-            const accept = result === POPUP_RESULT.AFFIRMATIVE;
-            await invoke('lan_sync_confirm_pairing', { requestId, accept });
         }),
     ]);
 }

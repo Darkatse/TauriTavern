@@ -4,9 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+    createStreamingRenderScheduler,
     getStreamingRenderInterval,
     normalizeStreamingFps,
-    shouldCommitStreamingMessage,
 } from '../src/scripts/tauri/perf/streaming-render-policy.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,9 +53,35 @@ test('valid FPS is normalized without warning', () => {
     assert.deepEqual(warnings, []);
 });
 
-test('streaming DOM commits skip unchanged HTML but always commit final state', () => {
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '', nextHtml: '', final: false, fadeIn: false }), false);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>old</p>', nextHtml: '<p>new</p>', final: false, fadeIn: false }), true);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: true, fadeIn: false }), true);
-    assert.equal(shouldCommitStreamingMessage({ lastCommittedHtml: '<p>same</p>', nextHtml: '<p>same</p>', final: false, fadeIn: true }), true);
+test('a streaming preview waits a full interval after its previous render finished', async () => {
+    const originals = {
+        document: globalThis.document,
+        performance: globalThis.performance,
+        setTimeout: globalThis.setTimeout,
+        requestAnimationFrame: globalThis.requestAnimationFrame,
+    };
+    let now = 0;
+    const frames = [];
+    const delays = [];
+    Object.assign(globalThis, {
+        document: { hidden: false },
+        performance: { now: () => now },
+        setTimeout: (_callback, delay) => delays.push(delay),
+        requestAnimationFrame: callback => frames.push(callback),
+    });
+    try {
+        const schedule = createStreamingRenderScheduler(() => 30);
+        let finishRender;
+        schedule(() => new Promise(resolve => { finishRender = resolve; }));
+        frames.shift()();
+        now = 50;
+        finishRender();
+        await new Promise(resolve => originals.setTimeout(resolve, 0));
+
+        now = 60;
+        schedule(() => {});
+        assert.deepEqual(delays, [50 + 1000 / 30 - 60]);
+    } finally {
+        Object.assign(globalThis, originals);
+    }
 });

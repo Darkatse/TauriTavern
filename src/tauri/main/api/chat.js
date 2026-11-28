@@ -85,6 +85,15 @@ function createChatHandle({ safeInvoke, ref }) {
         });
     }
 
+    // Text keeps the value's key order across IPC, which decodes objects into a sorted map.
+    function storeValueJson(options) {
+        const valueJson = JSON.stringify(options?.value);
+        if (typeof valueJson !== 'string') {
+            throw new Error('Chat store value is not JSON serializable');
+        }
+        return valueJson;
+    }
+
     async function setStoreJson(options) {
         const namespace = String(options?.namespace || '').trim();
         const key = String(options?.key || '').trim();
@@ -92,7 +101,7 @@ function createChatHandle({ safeInvoke, ref }) {
             throw new Error('namespace and key are required');
         }
 
-        const value = options?.value;
+        const valueJson = storeValueJson(options);
 
         if (normalized.kind === 'character') {
             return safeInvoke('set_character_chat_store_json', {
@@ -100,7 +109,7 @@ function createChatHandle({ safeInvoke, ref }) {
                 fileName: normalized.fileName,
                 namespace,
                 key,
-                value,
+                valueJson,
             });
         }
 
@@ -108,7 +117,7 @@ function createChatHandle({ safeInvoke, ref }) {
             chatId: normalized.chatId,
             namespace,
             key,
-            value,
+            valueJson,
         });
     }
 
@@ -119,7 +128,7 @@ function createChatHandle({ safeInvoke, ref }) {
             throw new Error('namespace and key are required');
         }
 
-        const value = options?.value;
+        const valueJson = storeValueJson(options);
 
         if (normalized.kind === 'character') {
             return safeInvoke('update_character_chat_store_json', {
@@ -127,7 +136,7 @@ function createChatHandle({ safeInvoke, ref }) {
                 fileName: normalized.fileName,
                 namespace,
                 key,
-                value,
+                valueJson,
             });
         }
 
@@ -135,7 +144,7 @@ function createChatHandle({ safeInvoke, ref }) {
             chatId: normalized.chatId,
             namespace,
             key,
-            value,
+            valueJson,
         });
     }
 
@@ -444,23 +453,9 @@ function createChatApi({ safeInvoke }) {
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installChatApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    const safeInvoke = context?.safeInvoke;
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.chat = createChatApi({ safeInvoke });
+export function installChatApi(api, context) {
+    api.chat = createChatApi(context);
 }

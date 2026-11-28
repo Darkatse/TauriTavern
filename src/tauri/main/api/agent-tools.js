@@ -1,5 +1,6 @@
 // @ts-check
 
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
 import { createChannel } from '../../../tauri-bridge.js';
 import { encodeBytesToBase64 } from '../binary-utils.js';
 
@@ -48,7 +49,7 @@ export function createAgentToolsApi({ safeInvoke, channelFactory = createChannel
                 } catch (error) {
                     if (!pending.has(requestId)) return;
                     await safeInvoke('resolve_agent_extension_tool_call', {
-                        dto: { requestId, result: { kind: 'error', message: error instanceof Error ? error.message : String(error) } },
+                        dto: { requestId, result: { kind: 'error', message: extractErrorText(error) } },
                     });
                 } finally {
                     pending.delete(requestId);

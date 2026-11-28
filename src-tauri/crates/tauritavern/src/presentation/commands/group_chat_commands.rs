@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
@@ -69,30 +70,6 @@ pub async fn search_group_chats(
         .search_group_chats(&query, chat_ids.as_deref())
         .await
         .map_err(map_command_error("Failed to search group chats"))
-}
-
-#[tauri::command]
-pub async fn get_group_chat_path(
-    id: String,
-    allow_not_found: Option<bool>,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<String, CommandError> {
-    log_command(format!("get_group_chat_path {}", id));
-
-    let allow_not_found = allow_not_found.unwrap_or(false);
-    match app_state
-        .services
-        .group_chat_service
-        .get_group_chat_payload_path(&id)
-        .await
-    {
-        Ok(path) => Ok(path),
-        Err(ApplicationError::NotFound(_)) if allow_not_found => Ok(String::new()),
-        Err(error) => Err(map_command_error(format!(
-            "Failed to get group chat payload path {}",
-            id
-        ))(error)),
-    }
 }
 
 #[tauri::command]
@@ -205,10 +182,12 @@ pub async fn rename_group_chat(
 
 #[tauri::command]
 pub async fn import_group_chat_payload(
+    app: AppHandle,
     dto: ImportGroupChatDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
     log_command("import_group_chat_payload");
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services

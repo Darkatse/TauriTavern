@@ -3,6 +3,7 @@
 import { hostPlatform, isDesktopHost } from '../../../util/host-identity.js';
 import {
     getChatBackupStorageStats,
+    getGenerationNotificationState,
     getRuntimePaths,
     getTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
@@ -10,7 +11,10 @@ import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.
 import { isOledBackgroundEnabled } from '../oled-background.js';
 import { createDataRootState, createTauriTavernSettingsState } from './settings-state.js';
 
-export function resolveTauriTavernSettingsCapabilities() {
+/**
+ * @param {{ backgroundShowsProgressUi: boolean }} notificationState
+ */
+export function resolveTauriTavernSettingsCapabilities(notificationState) {
     const iosCaps = getActiveIosPolicyCapabilities();
     const supportsDataRootSelection = isDesktopHost();
 
@@ -19,6 +23,7 @@ export function resolveTauriTavernSettingsCapabilities() {
         lanSyncAllowed: iosCaps?.sync?.lan !== false,
         supportsCloseToTrayOnClose: hostPlatform() === 'windows',
         supportsDataRootSelection,
+        backgroundShowsProgressUi: notificationState.backgroundShowsProgressUi,
     };
 }
 
@@ -46,8 +51,14 @@ export async function loadChatBackupStorageStats() {
 }
 
 export async function loadTauriTavernSettingsViewModel() {
-    const settings = await getTauriTavernSettings();
-    const capabilities = resolveTauriTavernSettingsCapabilities();
+    const [settings, notificationState] = await Promise.all([
+        getTauriTavernSettings(),
+        getGenerationNotificationState(),
+    ]);
+    if (typeof notificationState?.backgroundShowsProgressUi !== 'boolean') {
+        throw new Error('TauriTavern settings: invalid generation notification capability state');
+    }
+    const capabilities = resolveTauriTavernSettingsCapabilities(notificationState);
     const { supportsDataRootSelection } = capabilities;
     const runtimePaths = supportsDataRootSelection ? await getRuntimePaths() : null;
 

@@ -4,6 +4,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::{send_with_retry, upstream_error_response};
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::TtsRouteResponse;
 
@@ -38,7 +39,7 @@ pub(super) async fn generate(
             "voice": voice_id,
         },
     });
-    let response = send_with_retry("MiMo TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(CHAT_COMPLETIONS_URL)
             .header("api-key", api_key.as_str())
@@ -52,9 +53,7 @@ pub(super) async fn generate(
         return upstream_error_response(response, "MiMo TTS request failed").await;
     }
 
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("MiMo TTS response read failed: {error}"))
-    })?;
+    let bytes = upstream::read_body(response).await?;
     let payload: Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(error) => {

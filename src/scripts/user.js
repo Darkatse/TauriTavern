@@ -938,6 +938,9 @@ jQuery(() => {
     $('#account_button').on('click', () => {
         openUserProfile();
     });
+    $('#settings_snapshots_button').on('click', () => {
+        viewSettingsSnapshots();
+    });
     setInterval(async () => {
         if (currentUser) {
             await extendUserSession();

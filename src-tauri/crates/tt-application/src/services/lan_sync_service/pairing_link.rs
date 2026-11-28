@@ -4,6 +4,7 @@ use ttsync_contract::peer::{DeviceId, Permissions};
 use url::Url;
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::lan_sync::LanPairTarget;
 
 pub(super) fn build_pair_uri(
     base_url: &str,
@@ -109,6 +110,24 @@ pub(super) fn host_for_pairing_prompt(base_url: &str) -> Result<String, DomainEr
         .host_str()
         .map(str::to_string)
         .ok_or_else(|| DomainError::InvalidData("LAN Sync base URL is missing host".to_string()))
+}
+
+pub(super) fn pair_target(
+    device_id: Option<DeviceId>,
+    device_name: Option<String>,
+    base_urls: Vec<String>,
+    spki_sha256: String,
+) -> Result<LanPairTarget, DomainError> {
+    let first = base_urls
+        .first()
+        .ok_or_else(|| DomainError::InvalidData("LAN Sync device has no address".to_string()))?;
+    Ok(LanPairTarget {
+        device_id,
+        device_name,
+        host: host_for_pairing_prompt(first)?,
+        base_urls,
+        spki_sha256,
+    })
 }
 
 pub(super) fn default_lan_permissions() -> Permissions {

@@ -64,6 +64,7 @@ pub enum TranslateRequest {
     },
     Lingva {
         base_url: Url,
+        user_configured_endpoint: bool,
         text: String,
         lang: String,
     },
@@ -75,11 +76,13 @@ pub enum TranslateRequest {
     },
     Deeplx {
         url: Url,
+        user_configured_endpoint: bool,
         text: String,
         lang: String,
     },
     OneRing {
         url: Url,
+        user_configured_endpoint: bool,
         text: String,
         from_lang: String,
         to_lang: String,

@@ -11,7 +11,6 @@ use crate::file_system::list_files_with_extension;
 use super::super::FileChatRepository;
 use super::{
     ChatFileDescriptor, FileSignature, SummaryCacheEntry, message_display_text, projection,
-    summary_cache_key,
 };
 
 impl FileChatRepository {
@@ -159,12 +158,11 @@ impl FileChatRepository {
             ))
         })?;
         let signature = Self::file_signature_from_metadata(&metadata);
-        let cache_key = summary_cache_key(&descriptor.path);
 
         let mut cache = self.summary_cache.lock().await;
         cache.ensure_loaded().await;
         let entry = cache
-            .get(&cache_key)
+            .get(&descriptor.path)
             .filter(|entry| entry.signature == signature)
             .filter(|entry| !require_fingerprint || entry.fingerprint.is_some())
             .cloned();
@@ -186,7 +184,6 @@ impl FileChatRepository {
         let (scanned, _) = self
             .scan_chat_summary_file(
                 &descriptor.path,
-                &descriptor.character_name,
                 &descriptor.file_name,
                 signature,
                 require_fingerprint,
@@ -195,7 +192,7 @@ impl FileChatRepository {
         self.summary_cache
             .lock()
             .await
-            .set(summary_cache_key(&descriptor.path), scanned.clone());
+            .set(&descriptor.path, scanned.clone());
         Ok(scanned)
     }
 
@@ -240,21 +237,18 @@ impl FileChatRepository {
             (entry, text)
         } else {
             let (entry, text) = self
-                .scan_chat_summary_file(
-                    &descriptor.path,
-                    &descriptor.character_name,
-                    &descriptor.file_name,
-                    signature,
-                    false,
-                )
+                .scan_chat_summary_file(&descriptor.path, &descriptor.file_name, signature, false)
                 .await?;
             self.summary_cache
                 .lock()
                 .await
-                .set(summary_cache_key(&descriptor.path), entry.clone());
+                .set(&descriptor.path, entry.clone());
             (entry, text)
         };
-        Ok((entry.summary.into(), text))
+        Ok((
+            entry.summary.into_search_result(&descriptor.character_name),
+            text,
+        ))
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_chat_summary(
@@ -262,11 +256,11 @@ impl FileChatRepository {
         descriptor: &ChatFileDescriptor,
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError> {
-        let mut result = ChatSearchResult::from(
-            self.get_chat_summary_entry(descriptor, false)
-                .await?
-                .summary,
-        );
+        let mut result = self
+            .get_chat_summary_entry(descriptor, false)
+            .await?
+            .summary
+            .into_search_result(&descriptor.character_name);
         if include_metadata {
             result.chat_metadata = self
                 .read_optional_chat_metadata_from_path(&descriptor.path)

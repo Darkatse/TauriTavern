@@ -1,5 +1,6 @@
 import { installWindowLayout } from '../../scripts/util/window-layout.js';
 import { installWindowBackdrop } from '../../scripts/window-backdrop.js';
+import { installDrawerBar } from '../../scripts/drawer-bar.js';
 import { invoke } from '../../tauri-bridge.js';
 import { eventSource, event_types } from '../../scripts/events.js';
 import { createTauriMainContext } from './context.js';
@@ -15,7 +16,7 @@ import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compa
 import { installMobileWindowOpenCompat } from './compat/mobile/mobile-window-open-compat.js';
 import { installDialogPolyfillCoverage } from './compat/dialog/dialog-polyfill-coverage.js';
 import { createTraceIdFactory, DEFAULT_TRACE_HEADER } from './kernel/tracing/trace.js';
-import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-response.js';
+import { commandErrorResponse } from '../../scripts/util/command-error-utils.js';
 import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
@@ -41,6 +42,7 @@ import {
     getMethod,
     getMethodHint,
     jsonResponse,
+    ownedJsonResponse,
     readRequestBody,
     textResponse,
     toUrl,
@@ -50,6 +52,7 @@ import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/e
 import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
 import { registerLifecycleFlushHandler } from './services/lifecycle/lifecycle-flush-service.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
+import { runScheduledWebStorageCleanup } from './services/web-storage/web-storage.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 2;
 
@@ -117,10 +120,11 @@ function getWindowOrigin(targetWindow) {
  *
  * Keep this object minimal: it should be an API surface, not a dumping ground.
  *
- * @param {any} context
+ * @param {import('./context/types.js').TauriMainContext} context
+ * @returns {TauriTavernHostAbi}
  */
 function installHostAbi(context) {
-    window.__TAURITAVERN__ = {
+    const hostAbi = {
         abiVersion: HOST_ABI_VERSION,
         traceHeader: DEFAULT_TRACE_HEADER,
         ready: null,
@@ -136,7 +140,10 @@ function installHostAbi(context) {
             thumbnailUrl: window.__TAURITAVERN_THUMBNAIL__,
             backgroundPath: window.__TAURITAVERN_BACKGROUND_PATH__,
         },
+        api: {},
     };
+    window.__TAURITAVERN__ = hostAbi;
+    return hostAbi;
 }
 
 function installSameOriginWindowPatches(interceptors, downloadBridge, { runtimeCompat } = {}) {
@@ -235,6 +242,7 @@ export function bootstrapTauriMain() {
         return;
     }
     bootstrapped = true;
+    const webStorageCleanup = runScheduledWebStorageCleanup();
 
     const perfEnabled = isPerfHudEnabled();
     let perfReadyPromise = null;
@@ -255,9 +263,10 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke });
-    installHostAbi(context); installLayoutApi(); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context);
-    const restoreAgentAssemblyBridges = installAgentApi(context);
-    installLlmConnectionsApi(context); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
+    const { api } = installHostAbi(context);
+    installLayoutApi(api, context); installChatApi(api, context); installChatSurfaceApi(api); installCharacterCardsApi(api, context);
+    const restoreAgentAssemblyBridges = installAgentApi(api, context);
+    installLlmConnectionsApi(api, context); installMcpApi(api, context); installSkillApi(api, context); installDevApi(api, context); installExtensionStoreApi(api, context); installDbApi(api, context); installWorldInfoApi(api);
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -270,7 +279,7 @@ export function bootstrapTauriMain() {
         window.__TAURITAVERN_PERF_READY__ = perfReadyPromise;
     }
     const router = createRouteRegistry();
-    registerRoutes(router, context, { jsonResponse, textResponse });
+    registerRoutes(router, context, { jsonResponse, ownedJsonResponse, textResponse });
 
     const nextTraceId = createTraceIdFactory('req');
 
@@ -310,8 +319,7 @@ export function bootstrapTauriMain() {
                 throw error;
             }
 
-            const message = extractErrorText(error);
-            const resolved = resolveHostErrorResponse(message);
+            const resolved = commandErrorResponse(error);
             const finalResponse = textResponse(resolved.body, resolved.status);
             finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
             const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
@@ -320,7 +328,7 @@ export function bootstrapTauriMain() {
                 method,
                 path: url.pathname,
                 durationMs,
-                message,
+                message: resolved.body,
                 error,
             });
             return finalResponse;
@@ -358,14 +366,18 @@ export function bootstrapTauriMain() {
     });
     if (isMobile) installMobileWindowOpenCompat();
     preinstallPanelRuntime();
-    const readyPromise = initializeTauriIntegration(
-        context,
-        interceptors,
-        downloadBridge,
-        perfEnabled,
-        perfReadyPromise,
-        safePerfMark,
-    );
+    const readyPromise = Promise.all([
+        initializeTauriIntegration(
+            context,
+            interceptors,
+            downloadBridge,
+            perfEnabled,
+            perfReadyPromise,
+            safePerfMark,
+        ),
+        // Extensions load after readiness, so none of them can reopen a database scheduled for deletion.
+        webStorageCleanup.catch(() => null),
+    ]).then(() => undefined);
     const runAfterTauriReady = (callback) => {
         void readyPromise.then(callback, () => {});
     };
@@ -375,6 +387,7 @@ export function bootstrapTauriMain() {
     runAfterTauriReady(() => setFrontendLogBackendForwardingEnabled(true));
     runAfterTauriReady(() => {
         installWindowBackdrop(context);
+        installDrawerBar(context);
         void installWindowLayout(context).catch(error => console.error('[TauriTavern] Window layout:', error));
     });
 
@@ -382,6 +395,11 @@ export function bootstrapTauriMain() {
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     eventSource.once(event_types.APP_READY, restoreAgentAssemblyBridges);
+    eventSource.once(event_types.APP_READY, () => {
+        void import('../../scripts/tauri/setting/web-storage.js')
+            .then(({ installWebStorage }) => installWebStorage(webStorageCleanup))
+            .catch((error) => { console.error('TauriTavern: Failed to install web storage:', error); });
+    });
     // This panel imports application state as well as rendering it.
     eventSource.once(event_types.APP_READY, () => {
         void import('../../scripts/tauri/generation-params/panel.js')

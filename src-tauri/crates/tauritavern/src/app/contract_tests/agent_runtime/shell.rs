@@ -7,9 +7,10 @@ use tt_ports::workspace_shell::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
-    let root = temp_root("agent-shell-writing");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -20,7 +21,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                 model_tool_call(
                     "readonly_write",
                     "workspace_shell",
-                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("tool-results/forbidden.txt", "forbidden")'"#}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("long-results/forbidden.txt", "forbidden")'"#}),
                 ),
                 model_tool_call(
                     "missing_context",
@@ -167,7 +168,7 @@ JS
         "scratch/finalized/draft.txt",
         "scratch/finalized/input.json",
         "scratch/leaked.json",
-        "tool-results/forbidden.txt",
+        "long-results/forbidden.txt",
     ] {
         assert!(matches!(
             files
@@ -195,7 +196,7 @@ JS
         })
         .collect::<std::collections::HashMap<_, _>>();
     assert!(errors["hidden_read"].contains("input/prompt_snapshot.json"));
-    assert!(errors["readonly_write"].contains("tool-results/forbidden.txt"));
+    assert!(errors["readonly_write"].contains("long-results/forbidden.txt"));
     assert!(errors["missing_context"].contains("context.worldInfo"));
     assert!(events.iter().any(|event| {
         event.event_type == "tool_call_failed"
@@ -235,14 +236,14 @@ JS
             .status,
         AgentRunStatus::Completed,
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate() {
-    let root = temp_root("agent-shell-failure");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let fixture = agent_runtime_fixture_with_responses(
-        &root,
+        root,
         vec![
             model_tool_response(vec![
                 model_tool_call(
@@ -331,7 +332,6 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
             .status,
         AgentRunStatus::Completed,
     );
-    fs::remove_dir_all(root).await.unwrap();
 }
 
 struct CancelledShell {
@@ -371,13 +371,14 @@ impl WorkspaceShell for CancelledShell {
 
 #[tokio::test]
 async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call() {
-    let root = temp_root("agent-shell-cancel");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let shell = Arc::new(CancelledShell {
         started: tokio::sync::Notify::new(),
         calls: AtomicUsize::new(0),
     });
     let fixture = agent_runtime_fixture_with_shell(
-        &root,
+        root,
         vec![Ok(model_tool_response(vec![
             model_tool_call(
                 "cancel_shell",
@@ -474,5 +475,4 @@ async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call
             .text,
         "cancelled shell write + resumed",
     );
-    fs::remove_dir_all(root).await.unwrap();
 }

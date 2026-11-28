@@ -7,10 +7,9 @@ use zip::{CompressionMethod, ZipWriter};
 use crate::zipkit::export_file_options;
 use tt_contracts::settings::{CORE_FILE, USER_SETTINGS_FILES};
 use tt_domain::errors::DomainError;
-use tt_domain::json_merge::merge_json_value;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::{Personas, insert_personas};
-use tt_domain::models::settings::UserSettings;
-use tt_domain::models::settings::repair::repair_sillytavern_prompt_manager_settings;
+use tt_domain::models::settings::repair::repair_prompt_manager_settings;
 
 type ReadPersonas = fn(&Path) -> Result<Personas, DomainError>;
 
@@ -280,9 +279,7 @@ fn write_export_settings(
     read_personas: ReadPersonas,
 ) -> Result<u64, DomainError> {
     let user_root = path.parent().expect("settings file parent");
-    let mut settings = UserSettings {
-        data: serde_json::json!({}),
-    };
+    let mut settings = JsonDocument::default();
     let mut source_bytes = 0;
     for &name in USER_SETTINGS_FILES {
         let section_path = user_root.join(name);
@@ -302,17 +299,19 @@ fn write_export_settings(
         if name == CORE_FILE {
             source_bytes = bytes.len() as u64;
         }
-        let section: UserSettings = serde_json::from_slice(&bytes).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid settings {}: {error}",
-                section_path.display()
-            ))
-        })?;
-        merge_json_value(&mut settings.data, section.data);
+        JsonDocument::parse(&bytes)
+            .and_then(|section| settings.merge(section))
+            .map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Invalid settings {}: {error}",
+                    section_path.display()
+                ))
+            })?;
     }
-    repair_sillytavern_prompt_manager_settings(&mut settings);
-    insert_personas(&mut settings.data, &read_personas(user_root)?);
-    serde_json::to_writer_pretty(writer, &settings)
+    repair_prompt_manager_settings(&mut settings);
+    insert_personas(&mut settings, &read_personas(user_root)?)?;
+    writer
+        .write_all(&settings.to_pretty_vec())
         .map_err(|error| internal_error("Failed to write settings to archive", error))?;
     Ok(source_bytes)
 }
@@ -377,22 +376,13 @@ fn is_transient_entry(relative_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
 
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-export-{}-{}",
-            name,
-            uuid::Uuid::new_v4().simple()
-        ))
-    }
-
     #[test]
     fn archives_exclude_staging_files_and_apply_the_user_backup_secrets_policy() {
-        let root = temp_root("export-contents");
-        let data_root = root.join("source");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = temp.path().join("source");
         let user_root = data_root.join("default-user");
         fs::create_dir_all(user_root.join("backups")).unwrap();
         let staging = format!("backups/.tmp-chat-backup-{}", uuid::Uuid::nil().simple());
@@ -407,7 +397,7 @@ mod tests {
         }
 
         for (index, include_secrets) in [None, Some(false), Some(true)].into_iter().enumerate() {
-            let output_path = root.join(format!("export-{index}.zip"));
+            let output_path = temp.path().join(format!("export-{index}.zip"));
             let prefix = if let Some(include_secrets) = include_secrets {
                 run_export_user_backup_archive(
                     &user_root,
@@ -431,25 +421,26 @@ mod tests {
                 "data/default-user/"
             };
             let archive = zip::ZipArchive::new(File::open(output_path).unwrap()).unwrap();
-            let names = archive.file_names().collect::<Vec<_>>();
+            let names = archive
+                .file_names()
+                .map(|name| name.unwrap().into_owned())
+                .collect::<Vec<_>>();
             for secret in ["secrets.json", "backups/secrets_migration_123.json"] {
                 assert_eq!(
-                    names.contains(&format!("{prefix}{secret}").as_str()),
+                    names.contains(&format!("{prefix}{secret}")),
                     include_secrets != Some(false)
                 );
             }
-            assert!(!names.contains(&format!("{prefix}{staging}").as_str()));
-            assert!(names.contains(&format!("{prefix}{kept}").as_str()));
+            assert!(!names.contains(&format!("{prefix}{staging}")));
+            assert!(names.contains(&format!("{prefix}{kept}")));
         }
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn export_refuses_to_overwrite_existing_archive() {
-        let root = temp_root("existing-output");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(&source_root).expect("create source root");
         fs::write(source_root.join("settings.json"), b"{}").expect("write source file");
         fs::write(&output_path, b"keep me").expect("write existing output");
@@ -468,17 +459,15 @@ mod tests {
             fs::read(&output_path).expect("read existing output"),
             b"keep me"
         );
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 
     #[test]
     fn export_settings_repairs_the_projection_without_rewriting_sources() {
-        let root = temp_root("settings-repair");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(source_root.join("settings")).unwrap();
-        fs::write(source_root.join(CORE_FILE), b"{}").unwrap();
+        fs::write(source_root.join(CORE_FILE), br#"{"zeta":1,"alpha":2}"#).unwrap();
         let presets_path = source_root.join(tt_contracts::settings::PRESETS_FILE);
         let presets = br#"{"oai_settings":{"prompts":[null,{"identifier":"main"}]}}"#;
         fs::write(&presets_path, presets).unwrap();
@@ -493,22 +482,24 @@ mod tests {
         )
         .unwrap();
         let mut archive = zip::ZipArchive::new(File::open(&output_path).unwrap()).unwrap();
-        let settings: UserSettings =
-            serde_json::from_reader(archive.by_name(CORE_FILE).unwrap()).unwrap();
+        let settings = std::io::read_to_string(archive.by_name(CORE_FILE).unwrap()).unwrap();
+        assert!(
+            settings.starts_with("{\n    \"zeta\": 1,\n    \"alpha\": 2,\n    \"oai_settings\""),
+            "{settings}"
+        );
+        let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
         assert_eq!(
-            settings.data["oai_settings"]["prompts"],
+            settings["oai_settings"]["prompts"],
             serde_json::json!([{"identifier": "main"}]),
         );
         assert_eq!(fs::read(presets_path).unwrap(), presets);
-        drop(archive);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn export_progress_is_weighted_by_file_bytes() {
-        let root = temp_root("byte-progress");
-        let source_root = root.join("source");
-        let output_path = root.join("export.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let source_root = temp.path().join("source");
+        let output_path = temp.path().join("export.zip");
         fs::create_dir_all(&source_root).expect("create source root");
         fs::write(source_root.join("a.json"), b"a").expect("write small source file");
         fs::write(source_root.join("b.json"), vec![b'b'; 99]).expect("write large source file");
@@ -530,7 +521,5 @@ mod tests {
 
         assert!(reports.iter().any(|percent| (3.8..4.1).contains(percent)));
         assert_eq!(reports.last().copied(), Some(96.0));
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

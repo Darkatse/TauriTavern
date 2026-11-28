@@ -1,16 +1,18 @@
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
-use super::HttpChatCompletionRepository;
-use super::context_overflow::context_overflow_or;
-use super::response_body::{provider_error, provider_error_message, read_upstream_json_body};
+use std::borrow::Cow;
+
+use super::{GenerationRequest, HttpChatCompletionRepository, response_format};
+use crate::provider_request::ProviderRequest;
+use crate::provider_response::{
+    self, context_overflow_or, provider_error, provider_error_message, read_upstream_json_body,
+};
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -27,18 +29,50 @@ pub(super) async fn list_models_with_path(
     path: &str,
 ) -> Result<Value, DomainError> {
     let url = HttpChatCompletionRepository::build_url(&config.base_url, path)?;
+    let mut request = ProviderRequest::get_json(url);
+    apply_headers(&mut request, config)?;
 
     let client = repository.metadata_client(config)?;
-    let request = client.get(url).header(ACCEPT, "application/json");
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response =
-        HttpChatCompletionRepository::send_checked(request, provider_name, "Failed to list models")
-            .await?;
+    let response = provider_response::send_checked(
+        request.with_client(&client),
+        provider_name,
+        "Failed to list models",
+    )
+    .await?;
 
     read_upstream_json_body(provider_name, "list_models", response).await
+}
+
+pub(super) fn generation_request<'a>(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    Ok(GenerationRequest::http(
+        request_head(config, endpoint_path, stream)?,
+        Cow::Borrowed(payload),
+    ))
+}
+
+pub(super) fn request_head(
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    stream: bool,
+) -> Result<ProviderRequest, DomainError> {
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
+    let mut request = ProviderRequest::post_json(url, response_format(stream));
+    apply_headers(&mut request, config)?;
+    Ok(request)
+}
+
+pub(super) fn apply_headers(
+    request: &mut ProviderRequest,
+    config: &ChatCompletionApiConfig,
+) -> Result<(), DomainError> {
+    HttpChatCompletionRepository::apply_authorization(request, config)?;
+    HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers)?;
+    HttpChatCompletionRepository::apply_additional_headers(request, config)
 }
 
 pub(super) async fn generate(
@@ -48,25 +82,10 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(payload);
-
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        provider_name,
-        "Generation request failed",
-    )
-    .await?;
+    let request = generation_request(config, endpoint_path, payload, false)?;
+    let response = repository
+        .send_generation(config, request, false, provider_name)
+        .await?;
 
     let mut body = read_upstream_json_body(provider_name, "generate", response).await?;
     if let Some(choices) = body.get_mut("choices").and_then(Value::as_array_mut) {
@@ -91,8 +110,8 @@ pub(super) async fn generate_stream(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
@@ -112,8 +131,7 @@ pub(super) async fn generate_stream(
         )
         .await
     } else {
-        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
-            .await
+        provider_response::stream_sse_response(provider_name, response, sender, cancel).await
     }
 }
 
@@ -129,7 +147,7 @@ pub(super) async fn generate_with_deltas(
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
     let mut accumulator = OpenAiChatAccumulator::default();
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+    provider_response::consume_sse_response(provider_name, response, |event| {
         accumulator.apply_event(event, on_delta)
     })
     .await?;
@@ -144,20 +162,9 @@ async fn send_stream_request(
     payload: &Value,
     provider_name: &str,
 ) -> Result<reqwest::Response, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
-
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(payload);
-
-    let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+    let request = generation_request(config, endpoint_path, payload, true)?;
+    repository
+        .send_generation(config, request, true, provider_name)
         .await
 }
 
@@ -259,7 +266,8 @@ impl OpenAiChatAccumulator {
             .get_mut("delta")
             .and_then(Value::as_object_mut)
             .ok_or_else(|| invalid_openai_response("choice is missing delta"))?;
-        if let Some(value) = take_optional_string(delta, "content")? {
+        normalize_message_reasoning(delta)?;
+        if let Some(value) = take_content_text(delta)? {
             if !value.is_empty() {
                 on_delta(ChatCompletionStreamDelta::Text {
                     text: value.clone(),
@@ -270,7 +278,6 @@ impl OpenAiChatAccumulator {
         if let Some(value) = take_optional_string(delta, "refusal")? {
             append_string_fragment(&mut self.refusal, value);
         }
-        normalize_message_reasoning(delta)?;
         if let Some(value) = take_optional_string(delta, "reasoning")? {
             append_string_fragment(&mut self.reasoning, value);
         }
@@ -520,30 +527,54 @@ fn normalize_message_reasoning(message: &mut Map<String, Value>) -> Result<(), D
             }
         }
     }
-    let details = match message.get("reasoning_details") {
-        None | Some(Value::Null) => return Ok(()),
-        Some(Value::Array(details)) => details,
+    let mut text = String::new();
+    match message.get("reasoning_details") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(details)) => {
+            for detail in details {
+                let field = match detail.get("type").and_then(Value::as_str) {
+                    Some("reasoning.text") => "text",
+                    Some("reasoning.summary") => "summary",
+                    _ => continue,
+                };
+                if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
+                    text.push_str(fragment);
+                }
+            }
+        }
         Some(_) => {
             return Err(invalid_openai_response(
                 "reasoning_details must be an array",
             ));
         }
-    };
-    let mut text = String::new();
-    for detail in details {
-        let field = match detail.get("type").and_then(Value::as_str) {
-            Some("reasoning.text") => "text",
-            Some("reasoning.summary") => "summary",
-            _ => continue,
-        };
-        if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
-            text.push_str(fragment);
-        }
+    }
+    // Mistral sends reasoning as `thinking` chunks inside `content`.
+    if let Some(Value::Array(chunks)) = message.get("content") {
+        text.extend(
+            chunks
+                .iter()
+                .filter(|chunk| chunk.get("type").and_then(Value::as_str) == Some("thinking"))
+                .filter_map(|chunk| chunk.get("thinking").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|part| part.get("text").and_then(Value::as_str)),
+        );
     }
     if !text.is_empty() {
         message.insert("reasoning_content".to_string(), Value::String(text));
     }
     Ok(())
+}
+
+fn take_content_text(delta: &mut Map<String, Value>) -> Result<Option<String>, DomainError> {
+    let Some(Value::Array(chunks)) = delta.get("content") else {
+        return take_optional_string(delta, "content");
+    };
+    let text = chunks
+        .iter()
+        .filter_map(|chunk| chunk.get("text").and_then(Value::as_str))
+        .collect();
+    delta.remove("content");
+    Ok(Some(text))
 }
 
 fn take_optional_string(
@@ -591,6 +622,10 @@ mod tests {
                 {"type": "reasoning.summary", "summary": " act"},
                 {"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}
             ]}),
+            json!({"content": [
+                {"type": "thinking", "thinking": [{"type": "text", "text": " and check"}]},
+                {"type": "text", "text": "Done"}
+            ]}),
         ] {
             let event = json!({"choices": [{"index": 0, "delta": delta}]});
             accumulator
@@ -608,11 +643,12 @@ mod tests {
             )
             .unwrap();
         let response = accumulator.finish().unwrap().body;
-        assert_eq!(streamed, "plan then act");
+        assert_eq!(streamed, "plan then act and check");
         assert_eq!(
             response["choices"][0]["message"]["reasoning_content"],
             streamed
         );
+        assert_eq!(response["choices"][0]["message"]["content"], "Done");
         assert_eq!(
             response["choices"][0]["message"]["reasoning_details"][3]["data"],
             "opaque"
@@ -638,12 +674,20 @@ mod tests {
                 json!({"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}]}),
                 json!(null),
             ),
+            (
+                json!({"content": [
+                    {"type": "thinking", "thinking": [{"type": "text", "text": "plan"}]},
+                    {"type": "text", "text": "answer"}
+                ]}),
+                json!("plan"),
+            ),
         ] {
             let original = message.clone();
             normalize_message_reasoning(message.as_object_mut().unwrap()).unwrap();
             assert_eq!(message["reasoning_content"], expected);
             assert_eq!(message["reasoning"], original["reasoning"]);
             assert_eq!(message["reasoning_details"], original["reasoning_details"]);
+            assert_eq!(message["content"], original["content"]);
         }
         let mut invalid =
             json!({"reasoning_content": 42, "reasoning": "must not mask invalid data"});

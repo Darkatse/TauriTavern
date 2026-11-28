@@ -64,3 +64,5 @@ impl fmt::Display for UpstreamFailure {
         }
     }
 }
+
+impl std::error::Error for UpstreamFailure {}

@@ -1,19 +1,6 @@
+import { commandErrorStatus } from '../../../scripts/util/command-error-utils.js';
 import { sanitizeAttachmentFileName } from '../binary-utils.js';
-
-function isNotFoundError(error) {
-    const message = String(error?.message || error || '').toLowerCase();
-    return message.includes('not found')
-        || message.includes('no such file')
-        || message.includes('enoent')
-        || message.includes('os error 2');
-}
-
-function isBadRequestError(error) {
-    const message = String(error?.message || error || '').toLowerCase();
-    return message.includes('bad request')
-        || message.includes('validation error')
-        || message.includes('invalid');
-}
+import { streamResponse } from '../http-utils.js';
 
 export function registerBackupsRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/backups/chat/get', async ({ body }) => {
@@ -65,11 +52,11 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
             await context.safeInvoke('delete_chat_backup', { name });
             return textResponse('OK');
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return textResponse('Not Found', 404);
             }
 
-            if (isBadRequestError(error)) {
+            if (commandErrorStatus(error) === 400) {
                 return textResponse('Bad Request', 400);
             }
 
@@ -91,7 +78,7 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
             const stream = await context.createChatBackupDownloadStream(name);
             const fileName = sanitizeAttachmentFileName(name, 'chat_backup.jsonl');
 
-            return new Response(stream, {
+            return streamResponse(stream, {
                 status: 200,
                 headers: {
                     'Content-Type': 'application/octet-stream',
@@ -99,11 +86,11 @@ export function registerBackupsRoutes(router, context, { jsonResponse, textRespo
                 },
             });
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return textResponse('Not Found', 404);
             }
 
-            if (isBadRequestError(error)) {
+            if (commandErrorStatus(error) === 400) {
                 return textResponse('Bad Request', 400);
             }
 

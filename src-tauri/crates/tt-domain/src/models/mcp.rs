@@ -98,6 +98,10 @@ impl McpEndpoint {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn url(&self) -> Url {
+        Url::parse(&self.0).expect("McpEndpoint holds a parsed URL")
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]

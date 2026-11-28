@@ -124,6 +124,10 @@ impl PairingApproval for StaticApproval {
         Ok(self.accept)
     }
 
+    async fn claim(&self, _request_id: &str) -> Result<LanPairingApprovalRequest, DomainError> {
+        unreachable!("only the host adapter hands out pending requests")
+    }
+
     async fn confirm(&self, _request_id: &str, _accept: bool) -> Result<(), DomainError> {
         Ok(())
     }
@@ -430,7 +434,7 @@ impl LanDeviceDiscovery for ManualPairingClient {
 }
 
 #[tokio::test]
-async fn pairing_starts_the_server_but_relocating_a_paired_device_preserves_trust_and_grants() {
+async fn resolving_a_target_never_contacts_the_peer_and_relocation_preserves_trust() {
     let local_id = test_device_id("11111111-1111-4111-8111-111111111111");
     let peer_id = test_device_id("22222222-2222-4222-8222-222222222222");
     let peers = Arc::new(MemoryPeerRepository {
@@ -480,7 +484,18 @@ async fn pairing_starts_the_server_but_relocating_a_paired_device_preserves_trus
     ] {
         assert!(service.connect_address(invalid).await.is_err(), "{invalid}");
     }
-    service.connect_address(" 127.0.0.1:50000 ").await.unwrap();
+    let target = service
+        .connect_address(" 127.0.0.1:50000 ")
+        .await
+        .unwrap()
+        .expect("a new device needs pairing");
+    assert_eq!(target.device_name.as_deref(), Some("Phone"));
+    assert_eq!(target.host, "127.0.0.1");
+    assert!(server.running_info().await.is_none());
+    assert_eq!(*client.pairings.lock().await, 0);
+    assert!(peers.load_paired_devices().await.unwrap().is_empty());
+
+    service.pair(target).await.unwrap();
     assert!(server.running_info().await.is_some());
     assert_eq!(*client.pairings.lock().await, 1);
     let mut saved = peers.load_paired_devices().await.unwrap().remove(0);
@@ -490,10 +505,13 @@ async fn pairing_starts_the_server_but_relocating_a_paired_device_preserves_trus
     client.device.lock().await.device_name = "Renamed phone".to_string();
     service.stop_server().await.unwrap();
 
-    service
-        .connect_address("https://127.0.0.1:50001/")
-        .await
-        .unwrap();
+    assert!(
+        service
+            .connect_address("https://127.0.0.1:50001/")
+            .await
+            .unwrap()
+            .is_none()
+    );
     let updated = peers.load_paired_devices().await.unwrap().remove(0);
     assert!(server.running_info().await.is_none());
     assert_eq!(*client.pairings.lock().await, 1);
@@ -513,11 +531,16 @@ async fn pairing_starts_the_server_but_relocating_a_paired_device_preserves_trus
     assert!(service.connect_address("127.0.0.1:50003").await.is_err());
     assert_eq!(*client.pairings.lock().await, 1);
     client.device.lock().await.device_id = peer_id.clone();
-    service.pair_device(peer_id.as_str()).await.unwrap();
+    let target = service.nearby_pair_target(peer_id.as_str()).await.unwrap();
+    assert_eq!(*client.pairings.lock().await, 1);
+    service.pair(target).await.unwrap();
     assert!(server.running_info().await.is_some());
     service.stop_server().await.unwrap();
     let uri = build_pair_uri("https://127.0.0.1:50000", &peer_id, "replacement-pin").unwrap();
-    service.request_pairing(&uri).await.unwrap();
+    let target = service.link_pair_target(&uri).await.unwrap();
+    assert!(server.running_info().await.is_none());
+    assert_eq!(*client.pairings.lock().await, 2);
+    service.pair(target).await.unwrap();
     assert!(server.running_info().await.is_some());
     assert_eq!(*client.pairings.lock().await, 3);
 }

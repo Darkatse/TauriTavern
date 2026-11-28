@@ -31,16 +31,27 @@ scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 
 
 ### 1.2 Xcode 27 构建
 
+发布用的 iOS 构建（canary 与 stable 的 `mobile` job）运行在 `xcode-27` runner 上，并选用 Xcode 27.2。应用的行为跟随链接的 SDK：用 iOS 26 SDK 链接的应用在 iPhone Duo 上以兼容模式运行，画布为旧 iPhone 尺寸，没有竖栏。
+
 Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符号，Rust 因此链接不到 Swift 入口。swift-rs 1.0.9、Tauri 2.12.3 与当前锁定的官方插件已把这些入口声明为 `public`；引入新的带 Swift 包的插件时，确认它的 `init_plugin_*` 也是 `public`。
 
 `swift-rs` 按所在 crate 的调试设置选择 Swift 优化级别。Tauri 与带 Swift 包的插件必须以同一模式构建：dev profile 对所有依赖关闭调试信息，不为其中个别 crate 单独开启。模式不一致时，真机在 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。
+
+### 1.3 iPhone Duo
+
+抽屉栏的规则见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md) 的抽屉栏一节。模拟器验证使用 Xcode 27.2：
+
+- iPhone Duo 的 iOS 27.2 runtime 与通用 runtime 分开下载，只包含 iPhone Duo；其他机型用通用 runtime。
+- 开合只能在 Device Hub 中切换。不要用 `simctl io screenConfig ... power` 模拟：它不改变形态，还会让 SpringBoard 崩溃。
+- 外屏可以用 `requestGeometryUpdateWithPreferences:` 旋转，内屏拒绝程序旋转。
+- 截图：外屏 `xcrun simctl io <udid> screenshot --display=primary`，内屏 `--display=primary-1`；加 `--mask=black` 才能看到显示圆角的裁切，外屏四角的圆角并不相同。
 
 ## 2. 文件导入与导出
 
 iOS 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现：
 
 - 选取：Document Picker 以 `asCopy` 生成副本，宿主把副本移动进暂存；
-- 交付：使用 Share Sheet，建议文件名由 `NSItemProvider` 提供。
+- 交付：Share Sheet 交接以交付名命名的文件。
 
 UIKit 界面在主线程上展示；在 iPad 上，popover 必须指定 sourceView/sourceRect。实现见 `platform/ios_document_picker.rs` 与 `platform/ios_share_sheet.rs`。
 
@@ -137,15 +148,15 @@ Tauri npm CLI 当前会让 `actool` 继承已关闭的 stdin，导致图标编�
 
 ## 7. AI 生成后台执行
 
-iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行：
+iOS 生成的后台租约由 Rust 生成运行时（`GenerationRuntime`）持有，不依赖 WKWebView 的 Promise、Channel 或定时器继续运行。租约在任务开始时带上提示级别（`GenerationNotice`）：请求不是 quiet 时为 `Standard`，quiet 时为 `Quiet`，TauriTavern 设置中关闭“生成通知”时一律为 `Off`。
 
-- iOS 26+ 的用户可见生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；
+- iOS 26+ 在用户已授予系统通知权限时的 `Standard` 生成使用 `BGContinuedProcessingTask`，任务由用户操作立即提交，并在系统 Live Activity 中展示；这个界面无法隐藏；
 - 流式生成以累计收到的 provider 响应字节作为单调递增的真实进度。因为 LLM 输出总量事先未知，`NSProgress` 保持 indeterminate，成功结束时再收敛到 100%；
-- iOS 16–25，以及不会展示系统 UI 的 quiet 内部生成，继续使用 `beginBackgroundTask`。`BGContinuedProcessingTask` 不适合无明确用户意图却会显示 Live Activity 的后台工作。
+- iOS 16–25、系统通知权限尚未授予或被拒绝时，以及 `Quiet`、`Off`，使用没有系统界面的 `beginBackgroundTask`。`BGContinuedProcessingTask` 不适合无明确用户意图或用户未允许通知却会显示 Live Activity 的后台工作。
 
 生命周期契约：
 
-- 普通与流式 Chat Completion 在网络请求前取得后台租约；
+- 普通与流式生成在网络请求前取得后台租约；
 - 成功、失败或用户取消都会由 Rust 立即完成对应的系统任务；
 - 若系统先触发 expiration handler，原生适配器只结束后台保护并记录警告，不把“后台保护结束”伪装成“生成失败”；
 - 系统随后可以挂起应用；若进程仍存活，生成在恢复执行后继续等待真实 provider 结果、网络错误或用户取消；

@@ -131,15 +131,13 @@ fn validate_archive<R: Read + io::Seek>(
         let entry = archive.by_index(index).map_err(|error| {
             DomainError::InvalidData(format!("Failed to read sprite pack entry: {error}"))
         })?;
-        if zipkit::zip_entry_is_symlink(&entry) {
+        let (entry_path, display_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
+        if entry.is_symlink() {
             return Err(DomainError::InvalidData(format!(
-                "Sprite pack entry cannot be a symlink: {}",
-                entry.name()
+                "Sprite pack entry cannot be a symlink: {display_name}"
             )));
         }
-
-        let (entry_path, display_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
-        if contains_parent_segment(display_name) || has_absolute_prefix(display_name) {
+        if contains_parent_segment(&display_name) || has_absolute_prefix(&display_name) {
             return Err(DomainError::InvalidData(format!(
                 "Invalid sprite pack entry path: {display_name}"
             )));
@@ -156,7 +154,7 @@ fn validate_archive<R: Read + io::Seek>(
         if !is_image_filename(file_name) {
             continue;
         }
-        validate_entry_limits(&entry, &mut total_bytes)?;
+        validate_entry_limits(&entry, &display_name, &mut total_bytes)?;
         if !validate_path_segment(file_name) {
             return Err(DomainError::InvalidData(format!(
                 "Sprite pack contains an invalid image filename: {display_name}"
@@ -186,20 +184,18 @@ fn validate_archive<R: Read + io::Seek>(
 
 fn validate_entry_limits<R: Read + ?Sized>(
     entry: &ZipFile<'_, R>,
+    name: &str,
     total_bytes: &mut u64,
 ) -> Result<(), DomainError> {
     if entry.size() > MAX_SINGLE_FILE_BYTES {
         return Err(DomainError::InvalidData(format!(
-            "Sprite pack entry '{}' exceeds {} bytes",
-            entry.name(),
-            MAX_SINGLE_FILE_BYTES
+            "Sprite pack entry '{name}' exceeds {MAX_SINGLE_FILE_BYTES} bytes"
         )));
     }
     if entry.compressed_size() > 0 && entry.size() / entry.compressed_size() > MAX_COMPRESSION_RATIO
     {
         return Err(DomainError::InvalidData(format!(
-            "Sprite pack entry '{}' has an excessive compression ratio",
-            entry.name()
+            "Sprite pack entry '{name}' has an excessive compression ratio"
         )));
     }
     *total_bytes = total_bytes

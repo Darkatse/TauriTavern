@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerAssetsRoutes } from '../src/tauri/main/routes/assets-routes.js';
@@ -36,12 +37,20 @@ test('/api/assets/get forwards to the native asset library command', async () =>
     assert.deepEqual(calls, [{ command: 'get_assets_library', args: undefined }]);
 });
 
-test('/api/assets/download streams character downloads back to upstream importer', async () => {
+test('/api/assets/download returns a character card through the host card download', async () => {
     const calls = [];
+    const discarded = [];
     const router = createAssetsRouter({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            return { data: [137, 80, 78, 71], mimeType: 'image/png' };
+            return command === 'open_staged_file'
+                ? 9
+                : { path: '/cache/content/0f3a.png', name: 'card.png', kind: 'character' };
+        },
+        adoptStagedFile: filePath => ({ filePath, cleanup: async () => { discarded.push(filePath); } }),
+        createByteStream: rid => {
+            assert.equal(rid, 9);
+            return new Blob([new Uint8Array([137, 80, 78, 71])]).stream();
         },
     });
 
@@ -60,14 +69,17 @@ test('/api/assets/download streams character downloads back to upstream importer
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('Content-Type'), 'image/png');
     assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [137, 80, 78, 71]);
-    assert.deepEqual(calls, [{
-        command: 'download_asset',
-        args: {
-            url: 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/card.png',
-            category: 'character',
-            filename: 'Seraphina.png',
+    assert.deepEqual(calls, [
+        {
+            command: 'stage_content_from_url',
+            args: {
+                url: 'https://raw.githubusercontent.com/SillyTavern/SillyTavern-Content/main/card.png',
+                locale: getSillyTavernLocale(),
+            },
         },
-    }]);
+        { command: 'open_staged_file', args: { path: '/cache/content/0f3a.png' } },
+    ]);
+    assert.deepEqual(discarded, ['/cache/content/0f3a.png']);
 });
 
 test('/api/assets/download returns upstream-style OK for stored assets', async () => {
@@ -75,7 +87,6 @@ test('/api/assets/download returns upstream-style OK for stored assets', async (
     const router = createAssetsRouter({
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            return { data: [], mimeType: 'application/octet-stream' };
         },
     });
 
@@ -99,6 +110,7 @@ test('/api/assets/download returns upstream-style OK for stored assets', async (
             url: 'https://files.catbox.moe/theme.mp3',
             category: 'bgm',
             filename: 'theme.mp3',
+            locale: getSillyTavernLocale(),
         },
     }]);
 });

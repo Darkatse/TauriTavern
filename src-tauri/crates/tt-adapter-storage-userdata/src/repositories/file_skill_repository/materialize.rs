@@ -38,21 +38,27 @@ impl FileSkillRepository {
     ) -> Result<Vec<SkillImportInput>, DomainError> {
         self.ensure_layout().await?;
         match input {
-            SkillImportInput::Directory { path, source } => {
-                tokio::task::spawn_blocking(move || {
-                    Ok(discover_skill_roots(Path::new(&path))?
-                        .into_iter()
-                        .map(|root| SkillImportInput::Directory {
-                            path: root.to_string_lossy().into_owned(),
+            SkillImportInput::Directory {
+                path,
+                skill_root: None,
+                source,
+            } => tokio::task::spawn_blocking(move || {
+                let directory = PathBuf::from(&path);
+                discover_skill_roots(&directory)?
+                    .into_iter()
+                    .map(|root| {
+                        Ok(SkillImportInput::Directory {
+                            path: path.clone(),
+                            skill_root: skill_root_within(&directory, &root)?,
                             source: source.clone(),
                         })
-                        .collect())
-                })
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!("Skill discovery task failed: {error}"))
-                })?
-            }
+                    })
+                    .collect()
+            })
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!("Skill discovery task failed: {error}"))
+            })?,
             SkillImportInput::ArchiveFile {
                 path,
                 skill_root: None,
@@ -77,18 +83,9 @@ impl FileSkillRepository {
                     let inputs = discover_skill_roots(&staging_dir)?
                         .into_iter()
                         .map(|root| {
-                            let relative = root.strip_prefix(&staging_dir).map_err(|error| {
-                                DomainError::InternalError(format!(
-                                    "Failed to compute discovered Skill archive root: {error}"
-                                ))
-                            })?;
                             Ok(SkillImportInput::ArchiveFile {
                                 path: archive_path.clone(),
-                                skill_root: if relative.as_os_str().is_empty() {
-                                    None
-                                } else {
-                                    Some(normalize_skill_path(&relative.to_string_lossy())?)
-                                },
+                                skill_root: skill_root_within(&staging_dir, &root)?,
                                 source: source.clone(),
                             })
                         })
@@ -105,6 +102,26 @@ impl FileSkillRepository {
             // Inline, embedded and already-discovered inputs are single candidates.
             input => Ok(vec![input]),
         }
+    }
+
+    pub(super) async fn copy_import_directory(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(), DomainError> {
+        let (source, destination) = (source.to_path_buf(), destination.to_path_buf());
+        tokio::task::spawn_blocking(move || {
+            for root in discover_skill_roots(&source)? {
+                let target = match skill_root_within(&source, &root)? {
+                    Some(relative) => destination.join(relative),
+                    None => destination.clone(),
+                };
+                copy_dir_contents(&root, &target)?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(format!("Skill copy task failed: {error}")))?
     }
 
     pub(super) async fn materialize_input(
@@ -143,9 +160,13 @@ impl FileSkillRepository {
                         source: source.clone(),
                     })
                 }
-                SkillImportInput::Directory { path, source } => {
-                    let source_root = PathBuf::from(path);
-                    let selected_root = select_skill_root(&source_root, None)?;
+                SkillImportInput::Directory {
+                    path,
+                    skill_root,
+                    source,
+                } => {
+                    let selected_root =
+                        select_skill_root(&PathBuf::from(path), skill_root.as_deref())?;
                     let package_root = staging_dir.join("package");
                     copy_dir_contents(&selected_root, &package_root)?;
                     Ok(PreparedImport {
@@ -249,6 +270,17 @@ impl FileSkillRepository {
         }
         result
     }
+}
+
+/// `root` relative to `container`, or `None` when they are the same directory.
+fn skill_root_within(container: &Path, root: &Path) -> Result<Option<String>, DomainError> {
+    let relative = root.strip_prefix(container).map_err(|error| {
+        DomainError::InternalError(format!("Failed to compute discovered Skill root: {error}"))
+    })?;
+    if relative.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    normalize_skill_path(&relative.to_string_lossy()).map(Some)
 }
 
 fn require_archive_file_name(value: &str) -> Result<&str, DomainError> {

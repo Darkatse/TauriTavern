@@ -70,11 +70,12 @@ Reproducing a failed reply means generating in the user's chat. If the user has 
 - More notes: the extension and compatibility sections of `references/FrontendGuide.md` in the tt-docs skill.
 
 **Chat rendering**
-- **Virtualization stopped.** When Chat DOM Virtualization fails at startup or later, a popup says it stopped and shows the error. Common errors:
+- **Virtualization stopped.** When Chat DOM Virtualization fails at startup or later, a popup says it stopped and what caused it. Common causes:
+  - an extension that puts its own element directly into the chat. The popup shows the element as `tag#id.class`, and its class or ID usually names the extension: `div.bai-bai-toolkit-long-chat-bottom-anchor` comes from ST-BaiBai-Tools, `div#typing_indicator.typing_indicator` from Typing Indicator. Turning that extension or feature off fixes it;
   - a renderer extension too old for it (JS-Slash-Runner needs 4.9.1, LittleWhiteBox 3.0.4);
-  - both renderers with code block rendering on;
+  - both renderers with code block rendering on; the popup names them;
   - a LittleWhiteBox feature it cannot run (tt-extensions skill).
-  - The popup offers to turn virtualization off and reload.
+  - Other causes come with details to include in a report. The popup offers to turn virtualization off and reload.
 - **Iframe placeholders.** With virtualization off, placeholders or reload hints in message iframes come from the Embedded Runtime, whose mode is in TauriTavern settings, Performance. With virtualization on, the renderers draw same-height placeholders for messages outside the visible range.
 - Reference: `references/CurrentState/EmbeddedRuntime.md` in the tt-docs skill.
 

@@ -1,38 +1,41 @@
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value, json};
 
+use crate::errors::ApplicationError;
+
+use super::super::model_capabilities::{VersionedModel, map_minimax_reasoning_effort};
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
 use super::shared::insert_if_present;
 
 const MINIMAX_ENDPOINT_PATH: &str = "/chat/completions";
-const M2_HER_MAX_TOKENS: u64 = 2048;
 const MINIMAX_REQUEST_FIELDS: &[&str] = &[
     "messages",
     "model",
     "temperature",
-    "max_tokens",
     "stream",
     "top_p",
     "stop",
 ];
 
-pub(super) fn build(payload: Map<String, Value>) -> (String, Value) {
+pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     merge_consecutive_tool_messages(&mut payload);
 
-    let mut upstream_payload = build_request_payload(&payload);
-    cap_m2_her_max_tokens(&mut upstream_payload);
-
-    (
+    Ok((
         MINIMAX_ENDPOINT_PATH.to_string(),
-        Value::Object(upstream_payload),
-    )
+        Value::Object(build_request_payload(&payload)?),
+    ))
 }
 
-fn build_request_payload(payload: &Map<String, Value>) -> Map<String, Value> {
+fn build_request_payload(
+    payload: &Map<String, Value>,
+) -> Result<Map<String, Value>, ApplicationError> {
     let mut request = Map::new();
 
     for key in MINIMAX_REQUEST_FIELDS {
         insert_if_present(&mut request, payload, key);
+    }
+    if let Some(max_tokens) = payload.get("max_tokens").filter(|value| !value.is_null()) {
+        request.insert("max_completion_tokens".to_string(), max_tokens.clone());
     }
 
     if payload
@@ -44,7 +47,30 @@ fn build_request_payload(payload: &Map<String, Value>) -> Map<String, Value> {
         insert_if_present(&mut request, payload, "tool_choice");
     }
 
-    request
+    let always_thinks = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(|model| VersionedModel::parse(model, "minimax-m"))
+        .is_some_and(|minimax| minimax.version == (3, 1) && minimax.is("flash"));
+    if !always_thinks && payload.get("include_reasoning").and_then(Value::as_bool) == Some(false) {
+        request.insert("thinking".to_string(), json!({ "type": "disabled" }));
+    }
+    if let Some(reasoning_effort) = payload
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .map(map_minimax_reasoning_effort)
+        .transpose()?
+        .flatten()
+    {
+        request.insert(
+            "reasoning_effort".to_string(),
+            Value::String(reasoning_effort.to_string()),
+        );
+    }
+    // Thinking never appears in `content`.
+    request.insert("reasoning_split".to_string(), Value::Bool(true));
+
+    Ok(request)
 }
 
 fn merge_consecutive_tool_messages(payload: &mut Map<String, Value>) {
@@ -65,26 +91,6 @@ fn merge_consecutive_tool_messages(payload: &mut Map<String, Value>) {
     );
 }
 
-fn cap_m2_her_max_tokens(payload: &mut Map<String, Value>) {
-    let is_m2_her = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .is_some_and(|model| model == "M2-her");
-    if !is_m2_her {
-        return;
-    }
-
-    let Some(max_tokens) = payload.get_mut("max_tokens") else {
-        return;
-    };
-
-    if let Some(value) = max_tokens.as_u64()
-        && value > M2_HER_MAX_TOKENS
-    {
-        *max_tokens = Value::Number(Number::from(M2_HER_MAX_TOKENS));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -95,7 +101,7 @@ mod tests {
     fn minimax_merges_consecutive_same_role_messages_and_preserves_tools() {
         let payload = json!({
             "chat_completion_source": "minimax",
-            "model": "MiniMax-M2.7",
+            "model": "MiniMax-M3",
             "messages": [
                 {"role": "user", "content": "one"},
                 {"role": "user", "content": "two"},
@@ -108,7 +114,7 @@ mod tests {
         .cloned()
         .expect("payload should be object");
 
-        let (endpoint_path, upstream) = build(payload);
+        let (endpoint_path, upstream) = build(payload).expect("payload should build");
         assert_eq!(endpoint_path, "/chat/completions");
 
         let body = upstream
@@ -129,18 +135,34 @@ mod tests {
     }
 
     #[test]
-    fn minimax_caps_m2_her_max_tokens() {
-        let payload = json!({
-            "chat_completion_source": "minimax",
-            "model": "M2-her",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 4096
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
+    fn minimax_sends_the_thinking_controls_each_model_accepts() {
+        for (model, thinking) in [
+            ("MiniMax-M3", Some("disabled")),
+            ("MiniMax-M3.1-Flash", None),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "minimax",
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 4096,
+                "include_reasoning": false,
+                "reasoning_effort": "min"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be object");
 
-        let (_endpoint_path, upstream) = build(payload);
-        assert_eq!(upstream["max_tokens"].as_u64(), Some(2048));
+            let (_endpoint_path, upstream) = build(payload).expect("payload should build");
+
+            assert_eq!(
+                upstream.pointer("/thinking/type").and_then(Value::as_str),
+                thinking,
+                "{model}"
+            );
+            assert_eq!(upstream["reasoning_effort"], "low", "{model}");
+            assert_eq!(upstream["reasoning_split"], true, "{model}");
+            assert_eq!(upstream["max_completion_tokens"], 4096, "{model}");
+            assert!(upstream.get("max_tokens").is_none(), "{model}");
+        }
     }
 }

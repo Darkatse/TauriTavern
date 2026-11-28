@@ -7,14 +7,15 @@ fn assert_format_error(error: DomainError) {
 
 #[tokio::test]
 async fn commit_rejects_invalid_headers_even_when_forced_and_preserves_the_target() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     let valid = "\n\u{feff}\n{\"chat_metadata\":{\"integrity\":\" \\t\\n\"}}";
     commit_payload_bytes(&repository, target.clone(), valid.as_bytes(), false)
         .await
         .unwrap();
     let path = repository
-        .get_chat_payload_path("alice", "format")
+        .resolve_chat_commit_target(&target)
         .await
         .unwrap();
 
@@ -47,18 +48,18 @@ async fn commit_rejects_invalid_headers_even_when_forced_and_preserves_the_targe
         .await
         .unwrap();
     assert_eq!(fs::read(&path).await.unwrap(), valid.as_bytes());
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     commit_payload_bytes(&repository, target.clone(), b"{}", false)
         .await
         .unwrap();
     let path = repository
-        .get_chat_payload_path("alice", "format")
+        .resolve_chat_commit_target(&target)
         .await
         .unwrap();
     for empty in ["", " \r\n\u{feff}\n\t"] {
@@ -131,7 +132,10 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             .get_character_chat_summary("alice", "format", true)
             .await
             .unwrap();
-        assert_eq!(full.chat_metadata, metadata);
+        assert_eq!(
+            full.chat_metadata.map(|stored| stored.to_string()),
+            metadata.map(|value| value.to_string())
+        );
     }
     // All readers select the final metadata object before validating identity.
     // The overwritten null must not make a valid final header unreadable.
@@ -152,7 +156,10 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
         .get_character_chat_summary("alice", "format", true)
         .await
         .unwrap();
-    assert_eq!(summary.chat_metadata.as_ref(), full[0].get("chat_metadata"));
+    assert_eq!(
+        serde_json::to_value(summary.chat_metadata).unwrap(),
+        full[0]["chat_metadata"]
+    );
     assert_eq!(
         repository
             .get_character_chat_integrity("alice", "format")
@@ -169,13 +176,12 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             .chat_id,
         summary.chat_id
     );
-
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_rewrite_history() {
-    let (repository, root) = setup_repository().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let target = character_target("alice", "format");
     for body in [b"not-json".as_slice(), b"[]", b"{\"mes\":\"\xff\"}"] {
         let payload = [
@@ -222,12 +228,12 @@ async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_r
             payload
         );
     }
-    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
-async fn json_array_reads_preserve_raw_records_and_reject_truncated_sources() {
-    let (repository, root) = setup_repository().await;
+async fn payload_reads_preserve_raw_records_and_reject_truncated_sources() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = setup_repository(temp.path()).await;
     let header = r#"{ "chat_metadata": {"integrity": "old"}, "future": [true] }"#;
     let message = r#"{ "mes": "\u4f60", "number": 1.200e1, "swipes": ["旧内容", "当前内容"] }"#;
     let source = format!("\n\u{feff}\r\n{header}\r\n\n{message}");
@@ -235,6 +241,15 @@ async fn json_array_reads_preserve_raw_records_and_reject_truncated_sources() {
     commit_payload_bytes(&repository, target.clone(), source.as_bytes(), false)
         .await
         .unwrap();
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    let reader = repository.open_payload_jsonl(target.clone()).await.unwrap();
+    assert_eq!(
+        read_chat_stream_bytes(reader).await.unwrap(),
+        fs::read(&path).await.unwrap()
+    );
     let reader = repository.open_payload_json(target.clone()).await.unwrap();
     let expected = format!("[{header},{message}]");
     assert_eq!(
@@ -242,12 +257,9 @@ async fn json_array_reads_preserve_raw_records_and_reject_truncated_sources() {
         expected.as_bytes()
     );
 
-    let reader = repository.open_payload_json(target.clone()).await.unwrap();
-    let path = repository
-        .resolve_chat_commit_target(&target)
-        .await
-        .unwrap();
-    fs::write(path, b"").await.unwrap();
-    assert!(read_chat_stream_bytes(reader).await.is_err());
-    cleanup_repository(repository, root).await;
+    let jsonl = repository.open_payload_jsonl(target.clone()).await.unwrap();
+    let json = repository.open_payload_json(target.clone()).await.unwrap();
+    fs::write(&path, b"").await.unwrap();
+    assert!(read_chat_stream_bytes(jsonl).await.is_err());
+    assert!(read_chat_stream_bytes(json).await.is_err());
 }

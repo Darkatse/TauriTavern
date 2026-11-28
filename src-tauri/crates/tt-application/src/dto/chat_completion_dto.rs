@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tt_domain::models::upstream_failure::UpstreamFailure;
+use tt_contracts::observability::RequestDescriptionDto;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatCompletionStatusRequestDto {
@@ -50,51 +51,13 @@ impl ChatCompletionGenerateRequestDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ChatCompletionStreamEventDto {
-    Chunk {
-        seq: u64,
-        data: String,
-    },
-    Done {
-        seq: u64,
-    },
-    Error {
-        seq: u64,
-        message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        details: Option<UpstreamFailure>,
-    },
-}
-
-impl ChatCompletionStreamEventDto {
-    pub(crate) fn seq(&self) -> u64 {
-        match self {
-            Self::Chunk { seq, .. } | Self::Done { seq } | Self::Error { seq, .. } => *seq,
-        }
-    }
-
-    pub(crate) fn buffered_bytes(&self) -> usize {
-        match self {
-            Self::Chunk { data, .. } => data.len(),
-            Self::Done { .. } | Self::Error { .. } => 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatCompletionStreamStatusDto {
-    Running,
-    Done,
-    Error,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatCompletionStreamReadResultDto {
-    pub events: Vec<ChatCompletionStreamEventDto>,
-    pub status: ChatCompletionStreamStatusDto,
+#[derive(Debug)]
+pub struct ChatCompletionWireRequestDto {
+    pub source: ChatCompletionSource,
+    pub base_url: String,
+    pub endpoint_path: String,
+    /// Retains the model even when the wire body moves it into the URL.
+    pub payload: Value,
+    pub body: Value,
+    pub http: RequestDescriptionDto,
 }

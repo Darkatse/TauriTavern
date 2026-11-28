@@ -18,6 +18,44 @@ pub struct WindowSnapshot {
     pub height: u32,
     pub scale: f64,
     pub insets: WindowInsets,
+    /// Present while the host draws the page's top-level drawers in a system bar region.
+    pub drawer_bar: Option<DrawerBar>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawerBar {
+    pub edge: DrawerBarEdge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawerBarEdge {
+    Left,
+    Right,
+    Top,
+}
+
+/// A top-level drawer as the page presents it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawerBarItem {
+    pub id: String,
+    pub title: String,
+    pub open: bool,
+    pub mark: Option<DrawerBarMark>,
+}
+
+/// A state the page shows on the drawer's icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DrawerBarMark {
+    /// The drawer needs the user, such as when the API is disconnected.
+    Alert,
+    /// Work started from the drawer is running.
+    Working,
+    /// The drawer holds a result the user has not seen.
+    Unread,
 }
 
 #[derive(Debug, Clone, Deserialize)]

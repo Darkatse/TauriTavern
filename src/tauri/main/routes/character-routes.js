@@ -1,9 +1,8 @@
 import { normalizeBinaryPayload, sanitizeAttachmentFileName } from '../binary-utils.js';
 import { CHARACTER_CREATE_WARNINGS } from '../services/characters/character-create-service.js';
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 import {
-    badRequestBody,
-    isBadRequestError,
     resolveExistingRouteCharacterId,
     resolveRouteCharacterId,
 } from './character-route-utils.js';
@@ -53,9 +52,9 @@ function createCharacterResponse(outcome, textResponse) {
     return response;
 }
 
-export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
+export function registerCharacterRoutes(router, context, { jsonResponse, ownedJsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
-        const characters = await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        const characters = await context.getAllCharacters();
         return jsonResponse(characters);
     });
 
@@ -64,8 +63,8 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         try {
             character = await context.getSingleCharacter(body);
         } catch (error) {
-            if (isBadRequestError(error)) {
-                return jsonResponse(badRequestBody(error), 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
             throw error;
         }
@@ -74,7 +73,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        return jsonResponse(character);
+        return ownedJsonResponse(character);
     });
 
     router.post('/api/characters/chats', async ({ body }) => {
@@ -209,7 +208,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         try {
             avatar = assertCharacterAvatarFileName(avatar, 'avatar_url', { required: true });
         } catch (error) {
-            return jsonResponse(badRequestBody(error), 400);
+            return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
         }
 
         const resolved = await resolveExistingRouteCharacterId(context, { avatar });
@@ -246,14 +245,14 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
                     avatars = avatars.map((avatar, index) =>
                         assertCharacterAvatarFileName(avatar, `avatars[${index}]`, { required: true }));
                 } catch (error) {
-                    return jsonResponse(badRequestBody(error), 400);
+                    return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
                 }
             }
 
             const result = await context.safeInvoke('bulk_merge_character_card_data', {
                 dto: {
                     avatars,
-                    data: body.data,
+                    data_json: JSON.stringify(body.data),
                     filter: body.filter ?? null,
                 },
             });
@@ -267,7 +266,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
                 const fieldName = Object.prototype.hasOwnProperty.call(body, 'avatar') ? 'avatar' : 'avatar_url';
                 avatar = assertCharacterAvatarFileName(avatar, fieldName);
             } catch (error) {
-                return jsonResponse(badRequestBody(error), 400);
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
         }
 
@@ -287,7 +286,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         await context.safeInvoke('merge_character_card_data', {
             name: characterId,
             dto: {
-                update,
+                update_json: JSON.stringify(update),
             },
         });
         context.invalidateCharacterCache();

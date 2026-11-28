@@ -10,7 +10,7 @@ use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::dev_observability_dto::{
     BackendLogEntryDto, DevBundleVersionDto, FrontendLogEntryDto, FrontendLogEntrySnapshotDto,
-    LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto,
+    LlmApiLogIndexEntryDto, LlmApiLogPreviewDto, LlmApiLogRawDto, LlmApiLogViewDto,
 };
 
 #[tauri::command]
@@ -87,6 +87,19 @@ pub async fn devlog_get_llm_api_log_preview(
 
     observability
         .get_llm_api_preview(id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn devlog_get_llm_api_log_view(
+    id: u64,
+    observability: State<'_, Arc<DevObservabilityHub>>,
+) -> Result<LlmApiLogViewDto, CommandError> {
+    log_command(format!("devlog_get_llm_api_log_view {}", id));
+
+    observability
+        .get_llm_api_view(id)
         .await
         .map_err(CommandError::from)
 }

@@ -142,6 +142,7 @@ async function openServerDialog(
         input.value = value;
         input.checked = checked;
         const text = document.createElement('span');
+        text.className = 'tt-mcp-seg-text';
         const icon = document.createElement('i');
         icon.className = `fa-solid ${iconClass}`;
         icon.setAttribute('aria-hidden', 'true');

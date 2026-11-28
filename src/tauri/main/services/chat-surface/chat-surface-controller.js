@@ -164,6 +164,8 @@ export function createChatSurfaceController({
     /** @param {HTMLElement} element @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {{ transient?: boolean }} [options] */
     function updateContent(element, transaction, { transient = false } = {}) {
         const record = contentReconciler.resolve(element, transaction);
+        // An open message editor owns the draft; closing it renders the message.
+        if (record.contentElement.querySelector('.edit_textarea')) return record.element;
         const ready = contentPreparation?.prepare({ message: record.message, messageId: record.messageId, content: transaction.content, transient }) ?? true;
         return contentReconciler.commit(record, transaction, { notifyParticipants: !transient && ready });
     }
@@ -265,7 +267,7 @@ export function createChatSurfaceController({
             for (const messageId of nextProjection.indices) {
                 residencies.getByMessageId(messageId).message = messages[messageId];
             }
-            domAdapter.syncLastMessage(messages.length - 1);
+            domAdapter.syncChatEnd(messages.length - 1);
             assertHealthy();
             return;
         }
@@ -359,7 +361,7 @@ export function createChatSurfaceController({
 
         structure = nextStructure;
         projection = nextProjection;
-        domAdapter.syncLastMessage(messages.length - 1);
+        domAdapter.syncChatEnd(messages.length - 1);
         try {
             assertCommittedResidencies(residencies, projection, domAdapter);
             participants.connected(added.map(record => ({ record })), ['didMount']);

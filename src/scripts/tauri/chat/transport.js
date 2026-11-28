@@ -4,12 +4,12 @@ import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../../../tauri/main/services/files/byte-stream-service.js';
 import { commitChatMetadata, commitChatPayload } from './commit.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 import { loadColdChatPayload } from './cold-swipes.js';
 
-const { createReadableFileStream } = createReadableFileStreamService({ invoke });
+const { createByteStream } = createByteStreamService({ invoke });
 
 export const CHAT_COMMIT_REASON = Object.freeze({
     MUTATION: 'mutation',
@@ -51,24 +51,14 @@ function groupTarget(id) {
     return { kind: 'group', chatId };
 }
 
+async function loadChatPayload(target, allowNotFound) {
+    const rid = await invoke('open_chat_payload_jsonl', { target, allowNotFound });
+    return rid === null ? [] : jsonlStreamToPayload(createByteStream(rid));
+}
+
 export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false, coldSwipes = false }) {
     const target = characterTarget({ characterName, avatarUrl, fileName });
-    if (coldSwipes) return loadColdChatPayload(target, allowNotFound);
-    const path = await invoke('get_chat_payload_path', {
-        characterName: target.characterId,
-        fileName: target.fileName,
-        allowNotFound,
-    });
-
-    if (!path) {
-        if (allowNotFound) {
-            return [];
-        }
-        throw new Error('Chat payload path is empty');
-    }
-
-    const stream = createReadableFileStream(path);
-    return jsonlStreamToPayload(stream);
+    return coldSwipes ? loadColdChatPayload(target, allowNotFound) : loadChatPayload(target, allowNotFound);
 }
 
 export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
@@ -81,18 +71,7 @@ export async function saveCharacterChatMetadata({ characterName, avatarUrl, file
 
 export async function loadGroupChatPayload({ id, allowNotFound = false, coldSwipes = false }) {
     const target = groupTarget(id);
-    if (coldSwipes) return loadColdChatPayload(target, allowNotFound);
-    const path = await invoke('get_group_chat_path', { id: target.chatId, allowNotFound });
-
-    if (!path) {
-        if (allowNotFound) {
-            return [];
-        }
-        throw new Error('Group chat payload path is empty');
-    }
-
-    const stream = createReadableFileStream(path);
-    return jsonlStreamToPayload(stream);
+    return coldSwipes ? loadColdChatPayload(target, allowNotFound) : loadChatPayload(target, allowNotFound);
 }
 
 export async function saveGroupChatPayload({ id, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {

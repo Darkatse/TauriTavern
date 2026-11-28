@@ -30,20 +30,12 @@ function normalizeSharePayload(rawPayload) {
     }
 
     if (kind === 'png') {
-        const path = String(rawPayload.path || '').trim();
-        if (!path) {
+        const { id, name } = rawPayload;
+        if (typeof id !== 'string' || !id) {
             return null;
         }
 
-        const fileName = String(rawPayload.fileName || rawPayload.name || 'shared-character.png').trim() || 'shared-character.png';
-        const mimeType = String(rawPayload.mimeType || 'image/png').trim() || 'image/png';
-
-        return {
-            kind: 'png',
-            path,
-            fileName,
-            mimeType,
-        };
+        return { kind: 'png', id, name: String(name ?? '') };
     }
 
     return null;

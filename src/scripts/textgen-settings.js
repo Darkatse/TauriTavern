@@ -27,7 +27,8 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { getActiveManualApiSamplers, loadApiSelectedSamplers, isSamplerManualPriorityEnabled } from './samplerSelect.js';
 import { SECRET_KEYS, readSecretState, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';
-import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateOpenRouterProvidersWarning } from './textgen-models.js';
+import { textCompletionTypes } from '../tauri/main/adapters/st/host-availability.js';
+import { applySavedModelProviders, getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateModelProvidersWarning } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, TOKENIZER_SUPPORTED_KEY, getTextTokens, getTokenizerBestMatch, tokenizers } from './tokenizers.js';
 import { AbortReason } from './util/AbortReason.js';
 import { onlyUnique, arraysEqual, isObject } from './utils.js';
@@ -595,8 +596,9 @@ export async function loadTextGenSettings(data, loadedSettings, adjustments = []
         setSettingByName(i, value, adjustments);
     }
 
+    textgenerationwebui_settings.type = textCompletionTypes.resolve(textgenerationwebui_settings.type);
     $('#textgen_type').val(textgenerationwebui_settings.type);
-    $('#openrouter_providers_text').val(textgenerationwebui_settings.openrouter_providers).trigger('change');
+    applySavedModelProviders('#openrouter_providers_text', textgenerationwebui_settings.openrouter_providers);
     $('#openrouter_quantizations_text').val(textgenerationwebui_settings.openrouter_quantizations).trigger('change');
     showSamplerControls(textgenerationwebui_settings.type);
     BIAS_CACHE.delete(BIAS_KEY);
@@ -1028,12 +1030,12 @@ export function initTextGenSettings() {
 
         textgenerationwebui_settings.openrouter_providers = selectedProviders;
 
-        updateOpenRouterProvidersWarning('#openrouter_providers_text');
+        updateModelProvidersWarning('#openrouter_providers_text');
         saveSettingsDebounced();
     });
 
     $('#openrouter_allow_fallbacks_textgenerationwebui').on('input', function () {
-        updateOpenRouterProvidersWarning('#openrouter_providers_text');
+        updateModelProvidersWarning('#openrouter_providers_text');
     });
 
     $('#openrouter_quantizations_text').on('change', function () {
@@ -1072,7 +1074,9 @@ export function initTextGenSettings() {
             ];
 
             for (const key of keys) {
-                const keyValue = String($(`#${key.id}`).val()).trim();
+                // Panel Runtime parks the forms of the other types, so their inputs can be absent.
+                const rawValue = $(`#${key.id}`).val();
+                const keyValue = typeof rawValue === 'string' ? rawValue.trim() : '';
                 if (keyValue.length) {
                     await writeSecret(key.secret, keyValue);
                 }
@@ -1270,7 +1274,7 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
         let logprobs = null;
         const swipes = [];
         const toolCalls = [];
-        const state = { reasoning: '' };
+        const state = { reasoning: '', usage: {} };
         while (true) {
             const { done, value } = await reader.read();
             if (done) return;
@@ -1292,6 +1296,7 @@ export async function generateTextGenWithStreaming(generate_data, signal) {
                 text += newText;
                 logprobs = parseTextgenLogprobs(newText, data.choices?.[0]?.logprobs || data?.completion_probabilities);
                 state.reasoning += data?.choices?.[0]?.reasoning ?? data?.choices?.[0]?.thinking ?? '';
+                Object.assign(state.usage, data?.timings, data?.usage);
             }
 
             yield { text, swipes, logprobs, toolCalls, state };
@@ -1555,6 +1560,7 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
         : undefined;
 
     let params = {
+        'type': type,
         'prompt': finalPrompt,
         'model': model,
         'max_new_tokens': maxTokens,

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { isDesktopHost } from '../../../scripts/util/host-identity.js';
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { createFileStagingService } from '../services/files/file-staging-service.js';
 import {
     normalizeOptionalNonNegativeInteger,
@@ -14,19 +15,6 @@ import {
     requirePlainObject,
     toSkillImportCommandInput,
 } from './skill-normalizers.js';
-
-function normalizePickedImportPaths(value) {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    const values = Array.isArray(value) ? value : [value];
-    if (values.length === 0) {
-        return null;
-    }
-
-    return [...new Set(values.map((path) => requireNonEmptyString(path, 'Skill import path')))];
-}
 
 /**
  * @param {{
@@ -63,7 +51,7 @@ function createSkillApi({
         const selected = input == null ? null : normalizeSkillImportInput(input);
         const paths = selected === null
             ? [...pendingPickedImports.keys()]
-            : selected.kind === 'archiveFile' ? [selected.path] : [];
+            : selected.kind === 'archiveFile' || selected.kind === 'directory' ? [selected.path] : [];
 
         for (const path of paths) {
             const cleanup = pendingPickedImports.get(path);
@@ -76,7 +64,7 @@ function createSkillApi({
             try {
                 await cleanup?.();
             } catch (error) {
-                console.warn('Failed to cleanup staged Skill import archive:', error);
+                console.warn('Failed to cleanup staged Skill import source:', error);
             }
         }
     }
@@ -96,13 +84,15 @@ function createSkillApi({
         return discovered.map(normalizeSkillImportInput);
     }
 
+    /** @param {Array<{ kind: string; path: string }> | null} inputs */
+    function rememberPickedImports(inputs) {
+        return inputs?.map(input => rememberPickedImport(input, () => staging.discardFile(input.path))) ?? null;
+    }
+
     async function pickImportArchiveInputs(multiple) {
         await discardPickedImport();
         const files = await safeInvoke('pick_import_files', { kind: 'skill-archive', multiple });
-        return files?.map(({ path }) => rememberPickedImport(
-            { kind: 'archiveFile', path },
-            () => staging.discardFile(path),
-        )) ?? null;
+        return rememberPickedImports(files?.map(({ path }) => ({ kind: 'archiveFile', path })) ?? null);
     }
 
     async function list(options = {}) {
@@ -138,22 +128,17 @@ function createSkillApi({
             throw new Error('Skill directory import is only available on desktop');
         }
         await discardPickedImport();
-
-        const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
-            options: {
-                title: 'Import Agent Skill Folders',
-                multiple: true,
-                directory: true,
-                recursive: true,
-            },
-        }));
-        return paths?.map((path) => ({ kind: 'directory', path })) ?? null;
+        const inputs = await safeInvoke('pick_skill_import_directories');
+        return rememberPickedImports(inputs?.map(normalizeSkillImportInput) ?? null);
     }
 
     async function downloadImport(options) {
         const request = requirePlainObject(options, 'skill import download request');
         const url = requireNonEmptyString(request.url, 'skill import URL');
-        return normalizeSkillImportInput(await safeInvoke('download_skill_import_url', { url }));
+        return normalizeSkillImportInput(await safeInvoke('download_skill_import_url', {
+            url,
+            locale: getSillyTavernLocale(),
+        }));
     }
 
     async function previewImport(options) {
@@ -257,25 +242,9 @@ function createSkillApi({
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installSkillApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    const safeInvoke = context?.safeInvoke;
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.skill = createSkillApi({
-        safeInvoke,
-    });
+export function installSkillApi(api, context) {
+    api.skill = createSkillApi(context);
 }

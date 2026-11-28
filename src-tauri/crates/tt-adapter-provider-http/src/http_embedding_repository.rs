@@ -5,17 +5,24 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde_json::{Map, Value, json};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, HttpClientProfile, upstream};
 use tt_domain::errors::DomainError;
+use tt_domain::models::vertex_ai::{VertexAiConnection, VertexAiCredential};
 use tt_ports::repositories::vector_repository::{
-    RemoteEmbeddingBatch, RemoteEmbeddingProtocol, RemoteEmbeddingRepository,
-    RemoteEmbeddingRequest, VertexEmbeddingAuth,
+    RemoteEmbeddingBatch, RemoteEmbeddingCatalog, RemoteEmbeddingProtocol,
+    RemoteEmbeddingRepository, RemoteEmbeddingRequest,
 };
 
 use crate::http_chat_completion_repository::vertexai_auth;
+use crate::workers_ai_models::{fetch_workers_ai_models, with_workers_ai_model_id};
 
 const NOMIC_EMBEDDING_URL: &str = "https://api-atlas.nomic.ai/v1/embedding/text";
 const GOOGLE_AI_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
+const OPENROUTER_EMBEDDING_MODELS_URL: &str =
+    "https://openrouter.ai/api/v1/models?output_modalities=embeddings";
+const NANOGPT_EMBEDDING_MODELS_URL: &str = "https://nano-gpt.com/api/v1/embedding-models";
+const CHUTES_EMBEDDING_MODELS_URL: &str =
+    "https://api.chutes.ai/chutes/?template=embedding&include_public=true&limit=999";
 
 pub struct HttpEmbeddingRepository {
     http_clients: Arc<HttpClientPool>,
@@ -30,86 +37,57 @@ impl HttpEmbeddingRepository {
         self.http_clients.client(HttpClientProfile::Default)
     }
 
+    fn user_endpoint_client(&self, base_url: &str) -> Result<Client, DomainError> {
+        self.http_clients
+            .user_endpoint_client(HttpClientProfile::Default, base_url)
+    }
+
     async fn send_json(
         &self,
         request: RequestBuilder,
         provider: &str,
     ) -> Result<Value, DomainError> {
-        let response = request.send().await.map_err(|error| {
-            DomainError::upstream_failure(crate::http_error::reqwest_transport_failure(&error))
-        })?;
+        let response = request.send().await.map_err(upstream::request_failure)?;
 
         if !response.status().is_success() {
             return Err(map_error_response(provider, response).await);
         }
 
-        let endpoint = response.url().clone();
-        response.json().await.map_err(|error| {
-            if error.is_decode() {
-                DomainError::InternalError(format!(
-                    "{provider} embedding response is not valid JSON: {error}"
-                ))
-            } else {
-                DomainError::upstream_failure(crate::http_error::reqwest_body_failure(
-                    &error,
-                    Some(&endpoint),
-                ))
-            }
+        let body = upstream::read_body(response).await?;
+        serde_json::from_slice(&body).map_err(|error| {
+            DomainError::InternalError(format!(
+                "{provider} embedding response is not valid JSON: {error}"
+            ))
         })
     }
 
     async fn embed_vertex(
         &self,
         model: String,
-        region: String,
-        auth: VertexEmbeddingAuth,
+        connection: VertexAiConnection,
         texts: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, DomainError> {
-        let region = normalized_region(&region);
-        let host = vertex_host(&region);
+        let url = joined_url(
+            &connection.base_url,
+            &format!("publishers/google/models/{model}:predict"),
+        )?;
+        let request = self.client()?.post(url);
+        let request = match connection.credential {
+            VertexAiCredential::ApiKey(api_key) => request.header("x-goog-api-key", api_key),
+            VertexAiCredential::ServiceAccount(service_account_json) => {
+                let token = vertexai_auth::get_service_account_access_token(
+                    &self.http_clients,
+                    &service_account_json,
+                )
+                .await?;
+                request.header(AUTHORIZATION, format!("Bearer {token}"))
+            }
+        };
         let instances = texts
             .into_iter()
             .map(|content| json!({ "content": content }))
             .collect::<Vec<_>>();
-
-        let request = match auth {
-            VertexEmbeddingAuth::Express {
-                api_key,
-                project_id,
-            } => {
-                let path = match project_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                {
-                    Some(project_id) => format!(
-                        "/v1/projects/{project_id}/locations/{region}/publishers/google/models/{model}:predict"
-                    ),
-                    None => format!("/v1/publishers/google/models/{model}:predict"),
-                };
-                let url = Url::parse(&format!("{host}{path}")).map_err(invalid_url("Vertex AI"))?;
-                self.client()?
-                    .post(url)
-                    .header("x-goog-api-key", api_key)
-                    .json(&json!({ "instances": instances }))
-            }
-            VertexEmbeddingAuth::ServiceAccount { json: credentials } => {
-                let project_id = service_account_project_id(&credentials)?;
-                let token = vertexai_auth::get_service_account_access_token(
-                    &self.http_clients,
-                    &credentials,
-                )
-                .await?;
-                let url = Url::parse(&format!(
-                    "{host}/v1/projects/{project_id}/locations/{region}/publishers/google/models/{model}:predict"
-                ))
-                .map_err(invalid_url("Vertex AI"))?;
-                self.client()?
-                    .post(url)
-                    .header(AUTHORIZATION, format!("Bearer {token}"))
-                    .json(&json!({ "instances": instances }))
-            }
-        };
+        let request = request.json(&json!({ "instances": instances }));
 
         let body = self.send_json(request, "Google Vertex AI").await?;
         let predictions = required_array(&body, "predictions", "Google Vertex AI")?;
@@ -214,7 +192,10 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             }
             RemoteEmbeddingProtocol::Extras { base_url, api_key } => {
                 let url = root_path_url(&base_url, "/api/embeddings/compute", "Extras")?;
-                let mut request = self.client()?.post(url).json(&json!({ "text": texts }));
+                let mut request = self
+                    .user_endpoint_client(&base_url)?
+                    .post(url)
+                    .json(&json!({ "text": texts }));
                 if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
                     request = request.header(AUTHORIZATION, format!("Bearer {api_key}"));
                 }
@@ -257,11 +238,9 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
                     })
                     .collect()
             }
-            RemoteEmbeddingProtocol::VertexAi {
-                model,
-                region,
-                auth,
-            } => self.embed_vertex(model, region, auth, texts).await,
+            RemoteEmbeddingProtocol::VertexAi { model, connection } => {
+                self.embed_vertex(model, connection, texts).await
+            }
             RemoteEmbeddingProtocol::Ollama {
                 base_url,
                 model,
@@ -276,7 +255,7 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
                 if keep {
                     body.insert("keep_alive".to_string(), json!(-1));
                 }
-                let request = self.client()?.post(url).json(&body);
+                let request = self.user_endpoint_client(&base_url)?.post(url).json(&body);
                 let body = self.send_json(request, "Ollama").await?;
                 parse_embedding_array(
                     body.get("embeddings")
@@ -287,7 +266,9 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             RemoteEmbeddingProtocol::LlamaCpp { base_url, api_key } => {
                 let url = v1_embeddings_url(&base_url, "Llama.cpp")?;
                 let request = optional_bearer(
-                    self.client()?.post(url).json(&json!({ "input": texts })),
+                    self.user_endpoint_client(&base_url)?
+                        .post(url)
+                        .json(&json!({ "input": texts })),
                     api_key,
                 );
                 let body = self.send_json(request, "Llama.cpp").await?;
@@ -300,7 +281,7 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             } => {
                 let url = v1_embeddings_url(&base_url, "vLLM")?;
                 let request = optional_bearer(
-                    self.client()?
+                    self.user_endpoint_client(&base_url)?
                         .post(url)
                         .json(&json!({ "input": texts, "model": model })),
                     api_key,
@@ -311,7 +292,7 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             RemoteEmbeddingProtocol::KoboldCpp { base_url, api_key } => {
                 let url = root_path_url(&base_url, "/api/extra/embeddings", "KoboldCpp")?;
                 let request = optional_bearer(
-                    self.client()?
+                    self.user_endpoint_client(&base_url)?
                         .post(url)
                         .header(CONTENT_TYPE, "application/json")
                         .json(&json!({ "input": texts })),
@@ -328,6 +309,66 @@ impl RemoteEmbeddingRepository for HttpEmbeddingRepository {
             reported_model,
         })
     }
+
+    async fn list_models(
+        &self,
+        catalog: RemoteEmbeddingCatalog,
+    ) -> Result<Vec<Value>, DomainError> {
+        let client = self
+            .http_clients
+            .client(HttpClientProfile::ProviderMetadata)?;
+        match catalog {
+            RemoteEmbeddingCatalog::OpenRouter => {
+                let request = client.get(OPENROUTER_EMBEDDING_MODELS_URL);
+                let body = self.send_json(request, "OpenRouter").await?;
+                let mut models = required_array(&body, "data", "OpenRouter")?
+                    .iter()
+                    .filter(|model| accepts_text(model))
+                    .map(|model| json!({ "id": &model["id"], "name": &model["name"] }))
+                    .collect::<Vec<_>>();
+                models.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+                Ok(models)
+            }
+            RemoteEmbeddingCatalog::NanoGpt { api_key } => {
+                let request = client
+                    .get(NANOGPT_EMBEDDING_MODELS_URL)
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "NanoGPT").await?;
+                into_array(body, "data", "NanoGPT")
+            }
+            RemoteEmbeddingCatalog::Chutes { api_key } => {
+                let request = client
+                    .get(CHUTES_EMBEDDING_MODELS_URL)
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "Chutes").await?;
+                into_array(body, "items", "Chutes")
+            }
+            RemoteEmbeddingCatalog::SiliconFlow { api_key, endpoint } => {
+                let request = client
+                    .get(format!(
+                        "{}/models?type=text&sub_type=embedding",
+                        endpoint.base_url()
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {api_key}"));
+                let body = self.send_json(request, "SiliconFlow").await?;
+                into_array(body, "data", "SiliconFlow")
+            }
+            RemoteEmbeddingCatalog::WorkersAi { api_key, account } => {
+                fetch_workers_ai_models(&client, &api_key, &account, "Text Embeddings", 100)
+                    .await?
+                    .into_iter()
+                    .map(with_workers_ai_model_id)
+                    .collect()
+            }
+        }
+    }
+}
+
+fn accepts_text(model: &Value) -> bool {
+    model
+        .pointer("/architecture/input_modalities")
+        .and_then(Value::as_array)
+        .is_some_and(|modalities| modalities.iter().any(|modality| modality == "text"))
 }
 
 fn joined_url(base_url: &str, path: &str) -> Result<Url, DomainError> {
@@ -516,39 +557,13 @@ fn required_array<'a>(
         .ok_or_else(|| invalid_response(provider, &format!("missing {field} array")))
 }
 
-fn service_account_project_id(credentials: &str) -> Result<String, DomainError> {
-    serde_json::from_str::<Value>(credentials)
-        .map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Vertex AI service account JSON parse failed: {error}"
-            ))
-        })?
-        .get("project_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            DomainError::InvalidData(
-                "Vertex AI service account JSON is missing project_id".to_string(),
-            )
-        })
-}
-
-fn normalized_region(region: &str) -> String {
-    let region = region.trim().to_ascii_lowercase();
-    if region.is_empty() {
-        "us-central1".to_string()
-    } else {
-        region
-    }
-}
-
-fn vertex_host(region: &str) -> String {
-    match region {
-        "global" => "https://aiplatform.googleapis.com".to_string(),
-        "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
-        _ => format!("https://{region}-aiplatform.googleapis.com"),
+fn into_array(mut body: Value, field: &str, provider: &str) -> Result<Vec<Value>, DomainError> {
+    match body.get_mut(field).map(Value::take) {
+        Some(Value::Array(entries)) => Ok(entries),
+        _ => Err(invalid_response(
+            provider,
+            &format!("missing {field} array"),
+        )),
     }
 }
 
@@ -609,6 +624,47 @@ fn response_error_message(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn servers_the_page_names_need_approval() {
+        let repository =
+            HttpEmbeddingRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
+        let base_url = || "http://127.0.0.1:9".to_string();
+        for protocol in [
+            RemoteEmbeddingProtocol::Ollama {
+                base_url: base_url(),
+                model: "test".into(),
+                keep: false,
+            },
+            RemoteEmbeddingProtocol::LlamaCpp {
+                base_url: base_url(),
+                api_key: Some("key".into()),
+            },
+            RemoteEmbeddingProtocol::Vllm {
+                base_url: base_url(),
+                api_key: Some("key".into()),
+                model: "test".into(),
+            },
+            RemoteEmbeddingProtocol::KoboldCpp {
+                base_url: base_url(),
+                api_key: Some("key".into()),
+            },
+            RemoteEmbeddingProtocol::Extras {
+                base_url: base_url(),
+                api_key: Some("key".into()),
+            },
+        ] {
+            let request = RemoteEmbeddingRequest {
+                protocol,
+                texts: vec!["hello".into()],
+                is_query: false,
+            };
+            let Err(error) = repository.embed(request).await else {
+                panic!("an unapproved server was reached");
+            };
+            assert!(error.to_string().contains("requires approval"), "{error}");
+        }
+    }
 
     #[test]
     fn openai_embeddings_are_sorted_by_index() {

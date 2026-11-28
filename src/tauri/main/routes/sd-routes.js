@@ -1,14 +1,6 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { createAbortError } from '../kernel/abort-error.js';
-
-function createRequestId() {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-        return crypto.randomUUID();
-    }
-
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).slice(2, 10);
-    return `${timestamp}-${random}`;
-}
+import { createRandomId } from '../kernel/random-id.js';
 
 function normalizeSubpath(wildcard) {
     const value = String(wildcard || '').trim();
@@ -38,7 +30,7 @@ function normalizeRouteResponse(value) {
 export function registerSdRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/sd/*', async ({ body, wildcard, init }) => {
         const path = normalizeSubpath(wildcard);
-        const requestId = createRequestId();
+        const requestId = createRandomId();
 
         const signal = init?.signal;
         if (signal?.aborted) {
@@ -64,6 +56,7 @@ export function registerSdRoutes(router, context, { jsonResponse, textResponse }
                 requestId,
                 path,
                 body,
+                locale: getSillyTavernLocale(),
             });
 
             if (abortRequested) {

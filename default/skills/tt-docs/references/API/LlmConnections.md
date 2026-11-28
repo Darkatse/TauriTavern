@@ -46,9 +46,9 @@ type LlmConnectionDefinition = {
 };
 ```
 
-`id` 使用小写字母、数字、`-` 或 `_`，最长 128 字符。直接连接通过 `auth.secretRef` 引用密钥；使用反向代理时可以保留 `auth: {}`。
+`id` 使用小写字母、数字、`-` 或 `_`，最长 128 字符。`auth.secretRef` 固定直连时使用的密钥，省略时使用该来源当前选中的密钥；经反代的请求使用反代密码。
 
-`routing.reverseProxy.preset` 引用用户保存的反代预设。解析连接时读取其 URL 与密码，预设更新作用于后续解析；模型名按 Profile 指定的值传递。
+`routing.reverseProxy` 仅用于支持反代的来源。`preset` 引用用户保存的反代预设，解析连接时读取预设的 URL 与密码，预设更新作用于后续解析；预设不存在时报错，URL 为空时直接连接。模型名按 Profile 指定的值传递。
 
 ## Profile 与 Model Target
 

@@ -1,8 +1,9 @@
-use serde_json::{Value, json};
+use tt_domain::json_document::JsonDocument;
 
 pub(super) use tt_contracts::settings::{
     APPEARANCE_FILE, CORE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
 };
+pub(super) const NATIVE_FILE: &str = "tauritavern-settings.json";
 pub(super) const DYNAMIC_THEME_FILE: &str = "settings/dynamic-theme.json";
 
 type FieldGroup = (&'static [&'static str], &'static [&'static str]);
@@ -163,68 +164,93 @@ const LAYOUT_FIELDS: &[FieldGroup] = &[
     ),
 ];
 
+/// Section files in revision order; the core goes last, after the sections split from it.
+pub(super) const SECTION_FILES: [&str; 5] = [
+    APPEARANCE_FILE,
+    PRESETS_FILE,
+    LAYOUT_FILE,
+    PERSONA_STATE_FILE,
+    CORE_FILE,
+];
+
 pub(super) struct UserSettingsSections {
-    pub(super) core: Value,
-    pub(super) appearance: Value,
-    pub(super) presets: Value,
-    pub(super) layout: Value,
-    pub(super) persona_state: Value,
+    pub(super) core: JsonDocument,
+    pub(super) appearance: JsonDocument,
+    pub(super) presets: JsonDocument,
+    pub(super) layout: JsonDocument,
+    pub(super) persona_state: JsonDocument,
 }
 
 impl UserSettingsSections {
-    pub(super) fn split(mut settings: Value) -> Self {
-        let mut appearance = json!({});
-        let mut presets = json!({});
-        let mut layout = json!({});
-        let mut persona_state = json!({});
-        move_fields(&mut settings, &mut appearance, APPEARANCE_FIELDS);
-        move_fields(&mut settings, &mut presets, PRESET_FIELDS);
-        move_fields(&mut settings, &mut layout, LAYOUT_FIELDS);
-        move_fields(&mut settings, &mut persona_state, PERSONA_STATE_FIELDS);
-        Self {
+    pub(super) fn split(mut settings: JsonDocument) -> serde_json::Result<Self> {
+        let mut appearance = JsonDocument::default();
+        let mut presets = JsonDocument::default();
+        let mut layout = JsonDocument::default();
+        let mut persona_state = JsonDocument::default();
+        move_fields(&mut settings, &mut appearance, APPEARANCE_FIELDS)?;
+        move_fields(&mut settings, &mut presets, PRESET_FIELDS)?;
+        move_fields(&mut settings, &mut layout, LAYOUT_FIELDS)?;
+        move_fields(&mut settings, &mut persona_state, PERSONA_STATE_FIELDS)?;
+        Ok(Self {
             core: settings,
+            appearance,
+            presets,
+            layout,
+            persona_state,
+        })
+    }
+
+    pub(super) fn into_settings(mut self) -> serde_json::Result<JsonDocument> {
+        // A selected section cannot overwrite fields owned by another section.
+        move_fields(&mut self.appearance, &mut self.core, APPEARANCE_FIELDS)?;
+        move_fields(&mut self.presets, &mut self.core, PRESET_FIELDS)?;
+        move_fields(&mut self.layout, &mut self.core, LAYOUT_FIELDS)?;
+        move_fields(
+            &mut self.persona_state,
+            &mut self.core,
+            PERSONA_STATE_FIELDS,
+        )?;
+        Ok(self.core)
+    }
+
+    pub(super) fn into_files(self) -> [JsonDocument; 5] {
+        [
+            self.appearance,
+            self.presets,
+            self.layout,
+            self.persona_state,
+            self.core,
+        ]
+    }
+
+    pub(super) fn from_files(
+        [appearance, presets, layout, persona_state, core]: [JsonDocument; 5],
+    ) -> Self {
+        Self {
+            core,
             appearance,
             presets,
             layout,
             persona_state,
         }
     }
-
-    pub(super) fn into_settings(mut self) -> Value {
-        // A selected section cannot overwrite fields owned by another section.
-        move_fields(&mut self.appearance, &mut self.core, APPEARANCE_FIELDS);
-        move_fields(&mut self.presets, &mut self.core, PRESET_FIELDS);
-        move_fields(&mut self.layout, &mut self.core, LAYOUT_FIELDS);
-        move_fields(
-            &mut self.persona_state,
-            &mut self.core,
-            PERSONA_STATE_FIELDS,
-        );
-        self.core
-    }
 }
 
-fn move_fields(source: &mut Value, target: &mut Value, groups: &[FieldGroup]) {
+fn move_fields(
+    source: &mut JsonDocument,
+    target: &mut JsonDocument,
+    groups: &[FieldGroup],
+) -> serde_json::Result<()> {
     for (parents, fields) in groups {
-        let Some(source_object) = parents
-            .iter()
-            .try_fold(&mut *source, |value, key| value.get_mut(*key))
-            .and_then(Value::as_object_mut)
-        else {
+        let Some(source_object) = source.object_mut(parents)? else {
             continue;
         };
         for field in *fields {
-            let Some(value) = source_object.remove(*field) else {
+            let Some(member) = source_object.remove(field) else {
                 continue;
             };
-            let mut target_parent = &mut *target;
-            for parent in *parents {
-                if !target_parent[*parent].is_object() {
-                    target_parent[*parent] = json!({});
-                }
-                target_parent = &mut target_parent[*parent];
-            }
-            target_parent[*field] = value;
+            target.object_entry(parents)?.set(field, member);
         }
     }
+    Ok(())
 }

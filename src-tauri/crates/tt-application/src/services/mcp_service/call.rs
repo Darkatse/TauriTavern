@@ -66,6 +66,10 @@ pub(super) fn map_call_outcome(outcome: McpCallOutcome) -> McpCallOutcomeDto {
                     message: error.message,
                     data_json: error.data.map(|value| value.to_string()),
                 },
+                McpKnownResponse::Rejected(rejection) => McpKnownResponseDto::Rejected {
+                    http_status: rejection.http_status,
+                    retry_after: rejection.retry_after,
+                },
                 McpKnownResponse::Unsupported(response) => {
                     McpKnownResponseDto::UnsupportedResponse {
                         response_type: response.response_type,

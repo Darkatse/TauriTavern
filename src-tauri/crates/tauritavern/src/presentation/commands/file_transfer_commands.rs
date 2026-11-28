@@ -1,17 +1,19 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Manager, ResourceId, State, WebviewWindow};
 
+use crate::app::AppState;
 use crate::infrastructure::staging;
-use crate::platform::file_transfer::{self, Delivery, PickKind};
+#[cfg(target_os = "android")]
+use crate::platform::file_transfer::PickedSource;
+use crate::platform::file_transfer::{self, Delivery, PickKind, PickedFile};
+use crate::presentation::commands::file_staging_commands::StagedFileResult;
+use crate::presentation::commands::helpers::{
+    ensure_ios_policy_allows, log_command, map_command_error,
+};
 use crate::presentation::errors::CommandError;
-
-#[derive(Serialize)]
-pub struct PickedFileResult {
-    path: String,
-    name: String,
-}
 
 #[derive(Serialize)]
 pub struct DeliveryResult {
@@ -26,13 +28,60 @@ impl From<Delivery> for DeliveryResult {
     }
 }
 
+/// A remote file the page may deliver but never read; the handle owns the file.
+struct RemoteDownload {
+    path: PathBuf,
+}
+
+impl tauri::Resource for RemoteDownload {}
+
+impl Drop for RemoteDownload {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "Failed to remove remote download");
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDownloadResult {
+    download_id: ResourceId,
+    mime_type: Option<String>,
+}
+
+async fn stage_selected_file(
+    app: &AppHandle,
+    kind: PickKind,
+    extension: &str,
+    file: PickedFile,
+) -> Result<StagedFileResult, CommandError> {
+    let target = staging::create_staged_file(app, kind.staging_kind(), extension).await?;
+    let path = file_transfer::materialize(app, file.source, target).await?;
+    Ok(StagedFileResult {
+        path: path.to_string_lossy().into_owned(),
+        name: file.name,
+    })
+}
+
+fn picked_file_extension(kind: PickKind, name: &str) -> Result<String, CommandError> {
+    Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|extension| kind.extensions().contains(&extension.as_str()))
+        .ok_or_else(|| CommandError::BadRequest(format!("Unsupported file type: {name}")))
+}
+
 #[tauri::command]
 pub async fn pick_import_files(
     app: AppHandle,
     window: WebviewWindow,
     kind: PickKind,
     multiple: bool,
-) -> Result<Option<Vec<PickedFileResult>>, CommandError> {
+) -> Result<Option<Vec<StagedFileResult>>, CommandError> {
     if matches!(kind, PickKind::DataArchive) {
         return Err(CommandError::BadRequest(
             "Data archives use the archive import command".into(),
@@ -41,32 +90,42 @@ pub async fn pick_import_files(
     let Some(files) = file_transfer::pick(&window, kind, multiple).await? else {
         return Ok(None);
     };
+    let extensions = files
+        .iter()
+        .map(|file| picked_file_extension(kind, &file.name))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut staged = Vec::with_capacity(files.len());
     let result = async {
-        for file in files {
-            let extension = Path::new(&file.name)
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or(kind.extensions()[0]);
-            let target = staging::create_staged_file(&app, kind.staging_kind(), extension).await?;
-            let path = file_transfer::materialize(&app, file.source, target).await?;
-            staged.push(PickedFileResult {
-                path: path.to_string_lossy().into_owned(),
-                name: file.name,
-            });
+        for (file, extension) in files.into_iter().zip(extensions) {
+            staged.push(stage_selected_file(&app, kind, &extension, file).await?);
         }
         Ok::<_, CommandError>(())
     }
     .await;
     if let Err(error) = result {
         for file in &staged {
-            if let Err(cleanup_error) = staging::discard_file(Path::new(&file.path)).await {
+            if let Err(cleanup_error) = staging::discard(Path::new(&file.path)).await {
                 tracing::warn!(%cleanup_error, "Failed to discard selected file");
             }
         }
         return Err(error);
     }
     Ok(Some(staged))
+}
+
+/// The share target forwards only PNG cards, so the file is staged as PNG.
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn stage_shared_file(
+    app: AppHandle,
+    id: String,
+    name: String,
+) -> Result<StagedFileResult, CommandError> {
+    let file = PickedFile {
+        name,
+        source: PickedSource::ContentUri(file_transfer::take_shared_uri(&app, &id).await?),
+    };
+    stage_selected_file(&app, PickKind::CharacterCard, "png", file).await
 }
 
 #[tauri::command]
@@ -80,4 +139,49 @@ pub async fn deliver_staged_file(
     Ok(file_transfer::deliver(&window, path, &file_name)
         .await?
         .into())
+}
+
+/// Downloads a remote file for [`deliver_remote_file`]; the page learns only its type.
+#[tauri::command]
+pub async fn download_remote_file(
+    app: AppHandle,
+    window: WebviewWindow,
+    url: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<RemoteDownloadResult, CommandError> {
+    log_command("download_remote_file");
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.content.external_import,
+        "content.external_import",
+    )?;
+    let download = RemoteDownload {
+        path: staging::create_host_file(&app, "bin").await?,
+    };
+    let file = app_state
+        .services
+        .content_service
+        .download_external_file(&url, &download.path)
+        .await?;
+    Ok(RemoteDownloadResult {
+        download_id: window.resources_table().add(download),
+        mime_type: file.content_type,
+    })
+}
+
+#[tauri::command]
+pub async fn deliver_remote_file(
+    window: WebviewWindow,
+    download_id: ResourceId,
+    file_name: String,
+) -> Result<DeliveryResult, CommandError> {
+    let download = window
+        .resources_table()
+        .take::<RemoteDownload>(download_id)
+        .map_err(map_command_error("Failed to access remote download"))?;
+    Ok(
+        file_transfer::deliver(&window, download.path.clone(), &file_name)
+            .await?
+            .into(),
+    )
 }

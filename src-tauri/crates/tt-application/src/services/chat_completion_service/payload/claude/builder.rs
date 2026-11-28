@@ -49,25 +49,16 @@ fn build_claude_payload_inner(
         None
     };
 
-    let native_json_output = contract.is_some_and(|contract| contract.supports_json_output);
+    // A JSON schema rides on a forced tool call unless the model rejects forced tool choice.
+    let native_json_output = contract.is_some_and(|contract| !contract.supports_forced_tool_choice);
 
     let use_system_prompt = payload
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let use_tools = payload
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
-        || !native_json_output
-            && payload
-                .get("json_schema")
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("value"))
-                .is_some_and(|value| !value.is_null());
 
     let (mut messages, system_prompt) =
-        convert_messages(payload.get("messages"), use_system_prompt, use_tools)?;
+        convert_messages(payload.get("messages"), use_system_prompt)?;
 
     let assistant_prefill = payload
         .get("assistant_prefill")

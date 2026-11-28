@@ -123,6 +123,11 @@ class MacroEngine {
 
         const preProcessed = this.#runPreProcessors(input, safeEnv);
 
+        // Without a macro opener the lexer sees only plain text, and the document evaluates to itself.
+        if (!preProcessed.includes('{{')) {
+            return this.#runPostProcessors(preProcessed, safeEnv);
+        }
+
         const { cst, lexingErrors, parserErrors } = MacroParser.parseDocument(preProcessed);
 
         // For now, we log and still try to process what we can.

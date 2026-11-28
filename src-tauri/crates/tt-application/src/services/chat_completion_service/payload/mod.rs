@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
-use super::OPENCODE_STABLE_CHAT_ID_FIELD;
+use super::STABLE_CHAT_ID_FIELD;
 use super::exchange::ChatCompletionProviderFormat;
 use super::opencode::{self, OpenCodeApiFormat};
 
@@ -14,15 +14,19 @@ mod cohere;
 mod content_parts;
 mod custom;
 mod deepseek;
+mod electronhub;
+mod extension_fields;
 mod gemini_interactions;
 mod makersuite;
 mod minimax;
+mod mistralai;
 mod moonshot;
 mod nanogpt;
 mod openai;
 mod openai_reasoning;
 mod openai_responses;
 mod openrouter;
+mod perplexity;
 mod prompt_post_processing;
 mod shared;
 mod tool_calls;
@@ -38,24 +42,27 @@ pub(super) fn build_payload(
 ) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     // Capture provider controls before wire builders discard internal fields.
+    let format = ChatCompletionProviderFormat::from_payload(source, &payload)?;
     let deepseek_options = deepseek::RequestOptions::from_payload(source, &payload)?;
     let opencode_format = (source == ChatCompletionSource::OpenCode)
         .then(|| opencode::format_from_payload(&payload))
         .transpose()?;
-    payload.remove(OPENCODE_STABLE_CHAT_ID_FIELD);
+    payload.remove(STABLE_CHAT_ID_FIELD);
     if opencode_format.is_some() {
         payload.remove("opencode_endpoint");
         payload.remove("opencode_api_format");
     }
+
+    extension_fields::project_extension_fields(&mut payload, source, format)?;
 
     if !matches!(source, ChatCompletionSource::DeepSeek) {
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
     }
 
     if source == ChatCompletionSource::OpenAi
-        && ChatCompletionProviderFormat::from_payload(source, &payload)?
-            == ChatCompletionProviderFormat::OpenAiResponses
+        && format == ChatCompletionProviderFormat::OpenAiResponses
     {
+        openai_reasoning::prepare_openai_reasoning_request(&mut payload);
         return openai_responses::build(payload);
     }
 
@@ -63,7 +70,8 @@ pub(super) fn build_payload(
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow
-        | ChatCompletionSource::Pollinations => openai::build(payload),
+        | ChatCompletionSource::Pollinations
+        | ChatCompletionSource::Fireworks => openai::build(payload),
         ChatCompletionSource::OpenCode => {
             match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
@@ -78,10 +86,13 @@ pub(super) fn build_payload(
         ChatCompletionSource::NanoGpt => nanogpt::build(payload),
         ChatCompletionSource::Chutes => chutes::build(payload),
         ChatCompletionSource::Xai => xai::build(payload),
+        ChatCompletionSource::ElectronHub => electronhub::build(payload),
+        ChatCompletionSource::Perplexity => perplexity::build(payload),
+        ChatCompletionSource::MistralAi => Ok(mistralai::build(payload)),
         ChatCompletionSource::WorkersAi => workers_ai::build(payload),
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => zai::build(payload),
-        ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
+        ChatCompletionSource::MiniMax => minimax::build(payload),
         ChatCompletionSource::Custom => custom::build(payload),
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
@@ -165,6 +176,144 @@ mod tests {
     }
 
     #[test]
+    fn each_format_receives_only_the_extension_fields_it_reads() {
+        let call = |id: &str, signature: Option<&str>| {
+            let mut call = json!({
+                "id": id, "type": "function",
+                "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" }
+            });
+            if let Some(signature) = signature {
+                call["signature"] = json!(signature);
+            }
+            call
+        };
+        let messages = json!([
+            { "role": "user", "content": "Weather?" },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [call("call_1", None)],
+                "native": {
+                    "claude": { "content": [{
+                        "type": "tool_use", "id": "call_1", "name": "weather",
+                        "input": { "city": "claude-native" }
+                    }] },
+                    "gemini": { "content": { "role": "model", "parts": [{
+                        "functionCall": { "id": "call_1", "name": "weather",
+                                          "args": { "city": "gemini-native" } },
+                        "thoughtSignature": "gemini-native-sig"
+                    }] } },
+                    "gemini_interactions": { "steps": [{
+                        "type": "function_call", "id": "call_1", "name": "weather",
+                        "arguments": { "city": "interactions-native" }, "signature": "opaque"
+                    }] },
+                    "openai_responses": { "responseId": "resp_1", "output": [{
+                        "type": "function_call", "call_id": "call_1", "name": "weather",
+                        "arguments": "{\"city\":\"responses-native\"}"
+                    }] }
+                }
+            },
+            { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" },
+            {
+                "role": "assistant",
+                "content": "And Rome?",
+                "signature": "message-sig",
+                "custom_field": "kept-field",
+                "tool_calls": [call("call_2", Some("call-sig"))]
+            },
+            { "role": "tool", "tool_call_id": "call_2", "content": "Cloudy" }
+        ]);
+        let markers = [
+            "claude-native",
+            "gemini-native",
+            "interactions-native",
+            "responses-native",
+            "message-sig",
+            "call-sig",
+            "kept-field",
+        ];
+        for (format, present) in [
+            ("openai_compat", &["kept-field"][..]),
+            ("claude_messages", &["claude-native"][..]),
+            ("openai_responses", &["responses-native"][..]),
+            (
+                "gemini_generate_content",
+                &["gemini-native", "message-sig", "call-sig"][..],
+            ),
+            (
+                "gemini_interactions",
+                &["interactions-native", "call-sig"][..],
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": format,
+                "model": "test-model",
+                "tools": [{ "type": "function", "function": {
+                    "name": "weather", "parameters": { "type": "object" }
+                } }],
+                "messages": messages.clone()
+            });
+            let (_, upstream) = build_payload(
+                ChatCompletionSource::Custom,
+                payload.as_object().unwrap().clone(),
+            )
+            .unwrap();
+            let upstream = upstream.to_string();
+            for marker in markers {
+                assert_eq!(
+                    upstream.contains(marker),
+                    present.contains(&marker),
+                    "{format}: {marker} in {upstream}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn openrouter_sends_signatures_as_reasoning_details() {
+        let payload = json!({
+            "chat_completion_source": "openrouter",
+            "model": "google/gemini-3.5-flash",
+            "messages": [
+                { "role": "user", "content": "Weather?" },
+                {
+                    "role": "assistant",
+                    "content": "Checking",
+                    "signature": "text-sig",
+                    "reasoning_details": [{ "type": "reasoning.text", "text": "Plan", "index": 0 }],
+                    "native": { "gemini": { "content": { "role": "model", "parts": [] } } },
+                    "tool_calls": [{
+                        "id": "call_1", "type": "function", "signature": "call-sig",
+                        "function": { "name": "weather", "arguments": "{}" }
+                    }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
+            ]
+        });
+        let (_, upstream) = build_payload(
+            ChatCompletionSource::OpenRouter,
+            payload.as_object().unwrap().clone(),
+        )
+        .unwrap();
+        let message = &upstream["messages"][1];
+
+        assert_eq!(
+            message["reasoning_details"],
+            json!([
+                { "type": "reasoning.text", "text": "Plan", "index": 0 },
+                { "index": 1, "id": "signature-1", "type": "reasoning.encrypted",
+                  "data": "text-sig", "format": "google-gemini-v1" },
+                { "index": 2, "id": "call_1", "type": "reasoning.encrypted",
+                  "data": "call-sig", "format": "google-gemini-v1" }
+            ])
+        );
+        assert!(message.get("signature").is_none());
+        assert!(message.get("native").is_none());
+        assert!(message["tool_calls"][0].get("signature").is_none());
+    }
+
+    #[test]
     fn claude_leaves_additional_body_overrides_to_service_layer() {
         let payload = json!({
             "chat_completion_source": "claude",
@@ -190,23 +339,42 @@ mod tests {
     }
 
     #[test]
-    fn openai_gpt_6_family_uses_responses_api() {
-        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"] {
-            let payload = json!({
-                "model": model,
-                "messages": [{"role": "user", "content": "hello"}],
-                "temperature": 0.7
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
+    fn openai_gpt_6_family_uses_responses_api_with_model_effort_levels() {
+        for (model, minimum_effort) in [
+            ("gpt-6-astra", "low"),
+            ("gpt-6-sol", "none"),
+            ("gpt-6-luna", "none"),
+            ("gpt-6.1-sol", "low"),
+            ("gpt-6.1-terra", "none"),
+            ("gpt-6.2-astra", "low"),
+            ("gpt-6.2-sol", "low"),
+        ] {
+            for (effort, expected) in [("min", minimum_effort), ("max", "max")] {
+                let payload = json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "temperature": 0.7,
+                    "reasoning_effort": effort
+                })
+                .as_object()
+                .cloned()
+                .expect("payload must be object");
 
-            let (endpoint, upstream) =
-                build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
+                let (endpoint, upstream) = build_payload(ChatCompletionSource::OpenAi, payload)
+                    .expect("payload should build");
 
-            assert_eq!(endpoint, "/responses", "{model}");
-            assert_eq!(upstream["model"], model);
-            assert_eq!(upstream["temperature"], 0.7);
+                assert_eq!(endpoint, "/responses", "{model}");
+                assert_eq!(upstream["model"], model);
+                assert_eq!(
+                    upstream["reasoning"]["effort"], expected,
+                    "{model} {effort}"
+                );
+                assert_eq!(
+                    upstream.get("temperature").is_some(),
+                    expected == "none",
+                    "{model} {effort}"
+                );
+            }
         }
     }
 
@@ -412,6 +580,57 @@ mod tests {
             });
             let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
             assert!(body.get("thinking").is_none(), "{source:?}: {model}");
+        }
+    }
+
+    #[test]
+    fn post_processing_folds_speaker_names_and_keeps_tool_messages_whole() {
+        for (format, speech, result_path, result) in [
+            (
+                "openai_compat",
+                "/messages/0/content",
+                "/messages/1",
+                json!({ "role": "tool", "tool_call_id": "call_state", "name": "read_state", "content": "hp: 3" }),
+            ),
+            (
+                "gemini_generate_content",
+                "/contents/0/parts/0/text",
+                "/contents/0/parts/1",
+                json!({ "functionResponse": { "name": "read_state", "response": { "content": "hp: 3" } } }),
+            ),
+            (
+                "gemini_interactions",
+                "/input/0/content/0/text",
+                "/input/1",
+                json!({ "type": "function_result", "name": "read_state", "call_id": "call_state",
+                        "result": [{ "type": "text", "text": "hp: 3" }] }),
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": format,
+                "custom_prompt_post_processing": "semi_tools",
+                "model": "test-model",
+                "messages": [
+                    { "role": "user", "name": "Alice", "content": "How is Mara?" },
+                    { "role": "tool", "tool_call_id": "call_state", "name": "read_state", "content": "hp: 3" }
+                ]
+            });
+            let (_, upstream) = build_payload(
+                ChatCompletionSource::Custom,
+                payload.as_object().unwrap().clone(),
+            )
+            .unwrap();
+            assert_eq!(
+                upstream.pointer(speech),
+                Some(&json!("Alice: How is Mara?")),
+                "{format}: {upstream}"
+            );
+            assert_eq!(
+                upstream.pointer(result_path),
+                Some(&result),
+                "{format}: {upstream}"
+            );
         }
     }
 }

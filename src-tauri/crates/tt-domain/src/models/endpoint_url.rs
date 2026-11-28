@@ -1,3 +1,5 @@
+use std::fmt;
+
 use url::Url;
 
 use crate::errors::DomainError;
@@ -27,6 +29,50 @@ pub fn parse_user_http_endpoint(raw: &str) -> Result<Url, DomainError> {
     }
 
     Ok(url)
+}
+
+/// Canonical origin key shared by endpoint and import grants, without a trailing slash.
+pub fn http_origin(url: &Url) -> Result<String, DomainError> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(DomainError::InvalidData(format!(
+            "Only http and https URLs can be approved, not {}:",
+            url.scheme()
+        )));
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+/// A single DNS label; untrusted values cannot escape a built-in provider's host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostLabel(String);
+
+impl HostLabel {
+    pub fn parse(name: &str, value: &str) -> Result<Self, DomainError> {
+        let value = value.trim();
+        let is_label = (1..=63).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !value.starts_with('-')
+            && !value.ends_with('-');
+        if !is_label {
+            return Err(DomainError::InvalidData(format!(
+                "{name} must be 1 to 63 letters, digits or hyphens, \
+                 not starting or ending with a hyphen: {value:?}"
+            )));
+        }
+        Ok(Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for HostLabel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 pub fn append_endpoint_path(base_url: &str, endpoint_path: &str) -> Result<Url, DomainError> {
@@ -95,7 +141,66 @@ fn parse_endpoint_base(base_url: &str) -> Result<Url, DomainError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_endpoint_path, append_endpoint_segments, parse_user_http_endpoint};
+    use url::Url;
+
+    use super::{
+        HostLabel, append_endpoint_path, append_endpoint_segments, http_origin,
+        parse_user_http_endpoint,
+    };
+
+    #[test]
+    fn http_origin_keeps_only_scheme_host_and_port() {
+        for (url, origin) in [
+            (
+                "https://user:secret@API.Example.com/v1/tts?token=x#part",
+                "https://api.example.com",
+            ),
+            ("https://example.com:443/v1", "https://example.com"),
+            ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434"),
+            ("http://[::1]:8080/", "http://[::1]:8080"),
+            ("https://bücher.example/", "https://xn--bcher-kva.example"),
+        ] {
+            assert_eq!(http_origin(&Url::parse(url).unwrap()).unwrap(), origin);
+        }
+
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.com/",
+            "data:text/plain,x",
+        ] {
+            assert!(http_origin(&Url::parse(url).unwrap()).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn host_labels_cannot_name_another_host() {
+        for label in [
+            "us-central1",
+            "eastus",
+            "us-east-1",
+            " eu ",
+            &"a".repeat(63),
+        ] {
+            assert_eq!(
+                HostLabel::parse("Region", label).unwrap().as_str(),
+                label.trim()
+            );
+        }
+
+        for value in [
+            "evil.example/x?",
+            "a.b",
+            "evil.example#",
+            "user@evil",
+            "-east",
+            "east-",
+            "",
+            "  ",
+            &"a".repeat(64),
+        ] {
+            assert!(HostLabel::parse("Region", value).is_err(), "{value:?}");
+        }
+    }
 
     #[test]
     fn user_http_endpoint_is_canonical_and_unambiguous() {

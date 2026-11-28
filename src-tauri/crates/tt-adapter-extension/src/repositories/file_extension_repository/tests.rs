@@ -1,7 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rand::random;
 use serde_json::json;
 use tokio::fs;
 
@@ -16,12 +15,7 @@ use super::git_worktree::{ManagedRef, configure_branch_switch, read_managed_stat
 
 const TEST_USER_AGENT: &str = "TauriTavern/test";
 
-fn unique_temp_root() -> PathBuf {
-    std::env::temp_dir().join(format!("tauritavern-extension-repo-{}", random::<u64>()))
-}
-
-async fn setup_paths() -> (PathBuf, PathBuf, PathBuf, PathBuf) {
-    let root = unique_temp_root();
+async fn setup_paths(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let user_extensions_dir = root.join("default-user").join("extensions");
     let global_extensions_dir = root.join("extensions").join("third-party");
     let source_store_root = root.join("_tauritavern").join("extension-sources");
@@ -40,7 +34,6 @@ async fn setup_paths() -> (PathBuf, PathBuf, PathBuf, PathBuf) {
         .expect("create global source state dir");
 
     (
-        root,
         user_extensions_dir,
         global_extensions_dir,
         source_store_root,
@@ -70,8 +63,10 @@ fn test_http_clients() -> Arc<HttpClientPool> {
 
 #[tokio::test]
 async fn embedded_install_version_and_update_round_trip_over_smart_http() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let mut server = GitTestServer::start(root.join("git-origin"));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
+    let mut server = GitTestServer::start(temp.path().join("git-origin"));
     let first = server.write_main("1.0.0");
     let remote_url = server.remote_url();
     let repository = FileExtensionRepository::new(
@@ -236,17 +231,14 @@ async fn embedded_install_version_and_update_round_trip_over_smart_http() {
         "{}",
         String::from_utf8_lossy(&fsck.stderr)
     );
-
-    drop(explicit_repo);
-    drop(repository);
-    drop(server);
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn embedded_annotated_tag_install_and_moving_tag_update() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let mut server = GitTestServer::start(root.join("git-origin"));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
+    let mut server = GitTestServer::start(temp.path().join("git-origin"));
     let first = server.write_main("1.0.0");
     server.write_annotated_tag("v1");
     let remote_url = server.remote_url();
@@ -301,17 +293,14 @@ async fn embedded_annotated_tag_install_and_moving_tag_update() {
             .display_name(),
         "main"
     );
-    drop(repo);
-
-    drop(repository);
-    drop(server);
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn branch_list_and_switch_use_remote_heads_without_full_fetch() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let mut server = GitTestServer::start(root.join("git-origin"));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
+    let mut server = GitTestServer::start(temp.path().join("git-origin"));
     let main = server.write_main("1.0.0");
     server.point_branch("same-tip", main);
     let feature = server.write_branch("feature/mobile", "2.0.0");
@@ -448,15 +437,14 @@ async fn branch_list_and_switch_use_remote_heads_without_full_fetch() {
         String::from_utf8_lossy(&status.stderr)
     );
     assert!(status.stdout.is_empty(), "moved worktree must be clean");
-
-    drop(repository);
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn legacy_branch_reads_are_lazy_and_writes_convert_to_embedded_git() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let mut server = GitTestServer::start(root.join("git-origin"));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
+    let mut server = GitTestServer::start(temp.path().join("git-origin"));
     let main = server.write_main("1.0.0");
     let feature = server.write_branch("feature/mobile", "2.0.0");
     let remote_url = server.remote_url();
@@ -571,16 +559,13 @@ async fn legacy_branch_reads_are_lazy_and_writes_convert_to_embedded_git() {
     let state = read_managed_state(&repo).expect("read migrated branch state");
     assert_eq!(state.selected.display_name(), "feature/mobile");
     assert_eq!(state.deployed, feature);
-
-    drop(repo);
-    drop(repository);
-    drop(server);
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn corrupt_embedded_git_ignores_stale_legacy_source_state() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
     let extension_dir = user_extensions_dir.join("git-ext");
     fs::create_dir_all(extension_dir.join(".git").join("refs").join("heads"))
         .await
@@ -639,14 +624,14 @@ async fn corrupt_embedded_git_ignores_stale_legacy_source_state() {
             .is_err()
     );
     assert!(repository.update_extension("git-ext", false).await.is_err());
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn embedded_repository_with_external_worktree_fails_fast() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let mut server = GitTestServer::start(root.join("git-origin"));
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
+    let mut server = GitTestServer::start(temp.path().join("git-origin"));
     server.write_main("1.0.0");
     let repository = FileExtensionRepository::new(
         user_extensions_dir.clone(),
@@ -660,7 +645,7 @@ async fn embedded_repository_with_external_worktree_fails_fast() {
         .expect("install embedded extension");
 
     let extension_path = user_extensions_dir.join("repo");
-    let external_worktree = root.join("external-worktree");
+    let external_worktree = temp.path().join("external-worktree");
     fs::create_dir(&external_worktree)
         .await
         .expect("create external worktree");
@@ -690,15 +675,13 @@ async fn embedded_repository_with_external_worktree_fails_fast() {
             .await,
         Err(DomainError::InvalidData(_))
     ));
-
-    drop(repository);
-    drop(server);
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn move_extension_moves_source_state_between_scopes() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
     let extension_dir = user_extensions_dir.join("movable-ext");
     fs::create_dir_all(&extension_dir)
         .await
@@ -744,13 +727,13 @@ async fn move_extension_moves_source_state_between_scopes() {
             .exists(),
         "global state file should exist"
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn delete_extension_removes_source_state_file() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
     let extension_dir = user_extensions_dir.join("delete-ext");
     fs::create_dir_all(&extension_dir)
         .await
@@ -785,13 +768,13 @@ async fn delete_extension_removes_source_state_file() {
             .exists(),
         "source state file should be removed"
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn delete_extension_rejects_nested_extension_identifier() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
     let repository = FileExtensionRepository::new(
         user_extensions_dir,
         global_extensions_dir,
@@ -804,13 +787,13 @@ async fn delete_extension_rejects_nested_extension_identifier() {
         .await;
 
     assert!(matches!(result, Err(DomainError::InvalidData(_))));
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
 
 #[tokio::test]
 async fn discovery_skips_missing_manifests_before_applying_local_precedence() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let (user_extensions_dir, global_extensions_dir, source_store_root) =
+        setup_paths(temp.path()).await;
     for (directory, name, has_manifest) in [
         (&user_extensions_dir, "shared", true),
         (&global_extensions_dir, "shared", true),
@@ -849,6 +832,4 @@ async fn discovery_skips_missing_manifests_before_applying_local_precedence() {
             ("third-party/shared".to_string(), ExtensionType::Local),
         ]
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
 }

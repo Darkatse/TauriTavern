@@ -4,12 +4,12 @@ import {
     type ReactNode,
     type Ref,
 } from 'react';
-import { createRoot } from 'react-dom/client';
 
 import {
     createConfirmPopup,
     errorText,
     isPopupAffirmative,
+    showReactPopup,
     tr,
     type McpTranslator,
 } from './host';
@@ -119,24 +119,18 @@ export async function openToolDialog({
     override,
     save,
 }: ToolDescriptionDialogInput): Promise<void> {
-    const mount = document.createElement('div');
     let dialog: ToolDescriptionDialogHandle | null = null;
-
-    const root = createRoot(mount);
-    try {
-        root.render(
-            <ToolDescriptionDialog
-                tool={tool}
-                override={override}
-                save={save}
-                tr={tr}
-                ref={handle => {
-                    dialog = handle;
-                }}
-            />,
-        );
-
-        const popup = createConfirmPopup(mount, {
+    await showReactPopup(
+        <ToolDescriptionDialog
+            tool={tool}
+            override={override}
+            save={save}
+            tr={tr}
+            ref={handle => {
+                dialog = handle;
+            }}
+        />,
+        mount => createConfirmPopup(mount, {
             okButton: tr('save'),
             cancelButton: tr('cancel'),
             ...(override ? { customButtons: [tr('resetCustomization')] } : {}),
@@ -149,9 +143,6 @@ export async function openToolDialog({
                 }
                 return (await dialog?.submit(reset)) === true;
             },
-        });
-        await popup.show();
-    } finally {
-        root.unmount();
-    }
+        }),
+    );
 }

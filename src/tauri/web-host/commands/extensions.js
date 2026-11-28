@@ -19,8 +19,6 @@ export function createExtensionCommands({ json, send }, fetchResource, loadDefau
         })),
         read_frontend_template: ({ name }) => readTemplate(`/scripts/templates/${name}`),
         read_frontend_extension_template: ({ extension, name }) => readTemplate(`/scripts/extensions/${extension}/${name}.html`),
-        open_extension_store_entry: () => null,
-        list_mcp_servers: () => ({ servers: [], storageIssues: [] }),
         list_agent_profiles: async () => structuredClone((await loadDefaults()).agentProfiles),
         list_skills: () => [],
         // Accept page-owned tool declarations; Agent execution remains unsupported.

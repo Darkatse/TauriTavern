@@ -1,3 +1,6 @@
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
+import { characterAvatarFileNameFromStem } from '../services/characters/character-identity.js';
+
 function normalizePinnedChats(value) {
     if (!Array.isArray(value)) {
         return [];
@@ -33,10 +36,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             );
             const responseLimit = requestedRecentLimit + pinnedChats.length;
             const withMetadata = Boolean(body?.metadata);
-            const [groups] = await Promise.all([
-                context.safeInvoke('get_all_groups'),
-                context.getAllCharacters({ shallow: true }),
-            ]);
+            const groups = await context.safeInvoke('get_all_groups');
 
             const groupChatToGroup = new Map();
             if (Array.isArray(groups)) {
@@ -129,14 +129,13 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
                         return null;
                     }
 
-                    const avatar = context.findAvatarByCharacterId(characterId);
                     const result = {
                         file_name: context.ensureJsonl(chat.file_name || ''),
                         file_size: context.formatFileSize(chat.file_size),
                         chat_items: Number(chat.message_count || 0),
                         mes: String(chat.preview || ''),
                         last_mes: Number(chat.date || 0),
-                        avatar: avatar || '',
+                        avatar: characterAvatarFileNameFromStem(characterId),
                     };
 
                     if (withMetadata) {
@@ -192,7 +191,7 @@ export function registerChatRecentRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to load recent chats',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );

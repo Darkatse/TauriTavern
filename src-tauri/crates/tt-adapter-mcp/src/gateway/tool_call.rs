@@ -1,11 +1,13 @@
 use std::future::Future;
 
+use http::StatusCode;
 use rmcp::{
     model::{
         CallToolRequest, CallToolRequestParams, ClientRequest, ContentBlock, ProtocolVersion,
         ResourceContents, ServerPeerInfo, ServerResult,
     },
     service::{PeerRequestOptions, ServiceError},
+    transport::streamable_http_client::StreamableHttpError,
 };
 use serde_json::{Map, Value};
 use tokio::time::timeout;
@@ -14,7 +16,7 @@ use tt_adapter_http::MCP_REQUEST_TIMEOUT;
 
 use tt_ports::mcp::{
     McpCallDiagnostic, McpCallIssue, McpCallOutcome, McpImageContent, McpKnownResponse,
-    McpServerError, McpTextContent, McpToolCallResult, McpUnsupportedResponse,
+    McpRejection, McpServerError, McpTextContent, McpToolCallResult, McpUnsupportedResponse,
 };
 
 use super::{DISCOVERY_TIMEOUT, client::McpClient, discovery::list_tools};
@@ -176,13 +178,38 @@ fn map_call_response(result: Result<ServerResult, ServiceError>) -> McpCallOutco
                 data: error.data,
             }))
         }
-        Err(error) => outcome_unknown(
-            "mcp.call_response_failed",
-            format!(
-                "The tool response could not be confirmed: {error}; the remote tool may have executed"
+        Err(error) => match http_rejection(&error) {
+            Some(rejection) => McpCallOutcome::KnownResponse(McpKnownResponse::Rejected(rejection)),
+            None => outcome_unknown(
+                "mcp.call_response_failed",
+                format!(
+                    "The tool response could not be confirmed: {error}; the remote tool may have executed"
+                ),
             ),
-        ),
+        },
     }
+}
+
+/// The HTTP answers that prove the server refused the call before running the tool.
+fn http_rejection(error: &ServiceError) -> Option<McpRejection> {
+    let ServiceError::TransportSend(transport) = error else {
+        return None;
+    };
+    let (status, retry_after) = match transport
+        .error
+        .downcast_ref::<StreamableHttpError<reqwest::Error>>()?
+    {
+        StreamableHttpError::HttpStatus(http) if StatusCode::TOO_MANY_REQUESTS == http.status => {
+            (StatusCode::TOO_MANY_REQUESTS, http.retry_after.clone())
+        }
+        StreamableHttpError::AuthRequired(_) => (StatusCode::UNAUTHORIZED, None),
+        StreamableHttpError::InsufficientScope(_) => (StatusCode::FORBIDDEN, None),
+        _ => return None,
+    };
+    Some(McpRejection {
+        http_status: status.as_u16(),
+        retry_after,
+    })
 }
 
 fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult {

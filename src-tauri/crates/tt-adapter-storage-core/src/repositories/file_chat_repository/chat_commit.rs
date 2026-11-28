@@ -174,6 +174,14 @@ impl FileChatRepository {
 
 #[async_trait]
 impl ChatCommitRepository for FileChatRepository {
+    async fn open_payload_jsonl(
+        &self,
+        target: ChatCommitTarget,
+    ) -> Result<Box<dyn tt_ports::byte_reader::ByteReader>, DomainError> {
+        let path = self.resolve_chat_commit_target(&target).await?;
+        super::payload_reader::open_jsonl(&path).await
+    }
+
     async fn open_payload_json(
         &self,
         target: ChatCommitTarget,

@@ -114,7 +114,7 @@ export function installChatSurfaceRuntime({
         const messages = getMessages();
         const canRefresh = (/** @type {any} */ message, /** @type {HTMLElement | null} */ element) => element
             && !contentPreparation.isTransient(message)
-            && !element.querySelector('.edit_textarea, .reasoning_edit_textarea');
+            && !element.querySelector('.reasoning_edit_textarea');
         const entries = activeController.getMountedMessageIds()
             .map(messageId => ({ messageId, message: messages[messageId] }))
             .filter(({ messageId, message }) => canRefresh(message, activeController.getMessageElement(messageId)));
@@ -289,6 +289,5 @@ export function installChatSurfaceRuntime({
         resetEpoch,
         scroll: activeController.scroll,
         setProjectionHeld,
-        setContentTransient: contentPreparation.setTransient,
     });
 }

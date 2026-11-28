@@ -1,27 +1,14 @@
 // @ts-check
 
 /**
- * @typedef {import('../notifications/system-notification-service.js').NotificationPermissionState} NotificationPermissionState
- */
-
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function extractOpenAiChunkText(value) {
-    const parsed = JSON.parse(String(value || ''));
-    const delta = parsed?.choices?.[0]?.delta;
-    return typeof delta?.content === 'string' ? delta.content : '';
-}
-
-/**
  * @param {{
  *   enabled: boolean;
+ *   chunkText: (data: string) => string;
  *   statusBridge: {
  *     supportsProgressUpdates: () => boolean;
  *     reportProgress: (outputTokens: number) => boolean;
  *   };
- *   shouldNotifyCompletion: () => boolean;
+ *   shouldReport: () => boolean;
  *   estimateTokenCount: (text: string) => number;
  *   progressThrottleMs: number;
  *   progressMinCharsDelta: number;
@@ -29,8 +16,9 @@ function extractOpenAiChunkText(value) {
  */
 function createStreamProgressReporter({
     enabled,
+    chunkText,
     statusBridge,
-    shouldNotifyCompletion,
+    shouldReport,
     estimateTokenCount,
     progressThrottleMs,
     progressMinCharsDelta,
@@ -53,18 +41,18 @@ function createStreamProgressReporter({
     return {
         /** @param {string} data */
         reportStreamChunk(data) {
-            if (!shouldNotifyCompletion()) {
+            if (!shouldReport()) {
                 return;
             }
 
             try {
-                const chunkText = extractOpenAiChunkText(data);
-                if (!chunkText) {
+                const text = chunkText(data);
+                if (!text) {
                     return;
                 }
 
-                outputChunks.push(chunkText);
-                outputChars += chunkText.length;
+                outputChunks.push(text);
+                outputChars += text.length;
 
                 const now = Date.now();
                 const shouldCompute = now - lastTokenReportAt >= progressThrottleMs
@@ -99,9 +87,8 @@ function createStreamProgressReporter({
 /**
  * @param {{
  *   notificationService: {
- *     getPermissionState: () => Promise<NotificationPermissionState>;
- *     preparePermission: () => Promise<NotificationPermissionState>;
- *     show: (params: { title: string; body: string }) => Promise<void>;
+ *     prepareForGeneration: () => Promise<boolean>;
+ *     notifyIfAllowed: (params: { title: string; body: string }) => Promise<void>;
  *   };
  *   statusBridge: {
  *     supportsProgressUpdates: () => boolean;
@@ -140,43 +127,42 @@ export function createGenerationLifecycleService({
      *   notifyFailure: boolean;
      * }} params
      */
-    async function showCompletionNotification({
+    function buildCompletionNotification({
         success,
         errorMessage,
         notifyFailure,
     }) {
-        const texts = getNotificationTexts();
+        if (!success && !notifyFailure) {
+            return null;
+        }
 
+        const texts = getNotificationTexts();
         if (success) {
-            await notificationService.show({
+            return {
                 title: texts.successTitle,
                 body: texts.successBody,
-            });
-            return;
+            };
         }
 
-        if (!notifyFailure) {
-            return;
-        }
-
-        await notificationService.show({
+        return {
             title: texts.failureTitle,
             body: normalizeFailureNotificationBody(errorMessage) || texts.failureBody,
-        });
+        };
     }
 
     return {
         /**
-         * @param {{ quiet: boolean }} params
+         * `chunkText` reads the output text of one stream event in the caller's response format.
+         * @param {{ quiet: boolean; chunkText: (data: string) => string }} params
          */
-        createLifecycle({ quiet }) {
+        createLifecycle({ quiet, chunkText }) {
             let active = false;
-            /** @type {NotificationPermissionState | null} */
-            let preparedPermissionState = null;
+            let canReportProgress = false;
             const progressReporter = createStreamProgressReporter({
                 enabled: !quiet,
+                chunkText,
                 statusBridge,
-                shouldNotifyCompletion,
+                shouldReport: () => canReportProgress && shouldNotifyCompletion(),
                 estimateTokenCount,
                 progressThrottleMs,
                 progressMinCharsDelta,
@@ -192,22 +178,22 @@ export function createGenerationLifecycleService({
                     activeCount += 1;
 
                     if (!quiet) {
-                        void notificationService.preparePermission()
-                            .then((state) => {
-                                preparedPermissionState = state;
+                        void notificationService.prepareForGeneration()
+                            .then((allowed) => {
+                                canReportProgress = allowed;
                             })
                             .catch((error) => {
                                 console.error('Failed to prepare notification permission:', error);
-                                preparedPermissionState = 'prompt';
+                                canReportProgress = false;
                             });
                     }
                 },
 
                 /**
                  * @param {{
-                 *   success?: boolean;
-                 *   errorMessage?: string;
-                 *   notifyFailure?: boolean;
+                 *   success?: boolean | undefined;
+                 *   errorMessage?: string | undefined;
+                 *   notifyFailure?: boolean | undefined;
                  * }} [params]
                  */
                 finish({ success = false, errorMessage = '', notifyFailure = true } = {}) {
@@ -216,7 +202,7 @@ export function createGenerationLifecycleService({
                     }
 
                     active = false;
-                    activeCount = Math.max(0, activeCount - 1);
+                    activeCount -= 1;
 
                     if (activeCount !== 0) {
                         return;
@@ -226,23 +212,17 @@ export function createGenerationLifecycleService({
                     const handledByNative = statusBridge.handlesCompletion();
 
                     if (!handledByNative && shouldNotify) {
-                        void (async () => {
-                            try {
-                                const permissionState = preparedPermissionState
-                                    ?? await notificationService.getPermissionState();
-                                preparedPermissionState = permissionState;
-
-                                if (permissionState === 'granted') {
-                                    await showCompletionNotification({
-                                        success: Boolean(success),
-                                        errorMessage,
-                                        notifyFailure: Boolean(notifyFailure),
-                                    });
-                                }
-                            } catch (error) {
-                                console.error('Failed to show generation completion notification:', error);
-                            }
-                        })();
+                        const notification = buildCompletionNotification({
+                            success,
+                            errorMessage,
+                            notifyFailure,
+                        });
+                        if (notification) {
+                            void notificationService.notifyIfAllowed(notification)
+                                .catch((error) => {
+                                    console.error('Failed to show generation completion notification:', error);
+                                });
+                        }
                     }
                 },
 

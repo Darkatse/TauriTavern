@@ -1,5 +1,5 @@
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
-import { badRequestBody, isNotFoundError } from './character-route-utils.js';
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 
 /**
  * @param {any} character
@@ -20,8 +20,9 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
         }
 
+        const stagedPath = body.get('staged_path');
         const file = body.get('avatar');
-        if (!(file instanceof Blob)) {
+        if (stagedPath === null && !(file instanceof Blob)) {
             return jsonResponse({ error: 'No character file provided' }, 400);
         }
 
@@ -32,23 +33,24 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             try {
                 preserveFileName = assertCharacterAvatarFileName(requestedPreservedName, 'preserved_name', { required: true });
             } catch (error) {
-                return jsonResponse(badRequestBody(error), 400);
+                return jsonResponse({ error: getCommandErrorMessage(error) }, 400);
             }
 
             replacementName = preserveFileName.slice(0, -'.png'.length);
         }
 
-        const fileType = String(body.get('file_type') || '').trim().toLowerCase();
-        const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
-        const preferredName = file instanceof File && file.name ? file.name : fallbackName;
-        const fileInfo = await context.materializeUploadFile(file, {
-            kind: 'character-import',
-            preferredName,
-            preferredExtension: fileType,
-        });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            return jsonResponse({ error: `Unable to access uploaded character file path${reason}` }, 400);
+        let fileInfo;
+        if (stagedPath !== null) {
+            fileInfo = context.adoptStagedFile(String(stagedPath));
+        } else {
+            const fileType = String(body.get('file_type') || '').trim().toLowerCase();
+            const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
+            const preferredName = file instanceof File && file.name ? file.name : fallbackName;
+            fileInfo = await context.materializeUploadFile(file, {
+                kind: 'character-import',
+                preferredName,
+                preferredExtension: fileType,
+            });
         }
 
         let imported;
@@ -61,7 +63,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
                     });
                     replaced = true;
                 } catch (error) {
-                    if (!isNotFoundError(error)) {
+                    if (commandErrorStatus(error) !== 404) {
                         throw error;
                     }
                 }
@@ -72,7 +74,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
                 });
             }
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
 
         const normalized = context.normalizeCharacter(imported.character);

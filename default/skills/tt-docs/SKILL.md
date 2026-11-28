@@ -1,6 +1,6 @@
 ---
 name: tt-docs
-description: TauriTavern's own documentation for this version — the page API (window.__TAURITAVERN__.api), frontend structure, extension support, chat rendering, logs, custom endpoints, sync, data directory, updates, iOS and mobile limits, and the in-app assistant. Open its index when another TauriTavern skill points here, or when you need the exact behavior of a TauriTavern API or feature.
+description: TauriTavern's own documentation for this version — the page API (window.__TAURITAVERN__.api), frontend structure, extension support, chat rendering, text completion, logs, custom endpoints, sync, data directory, updates, iOS and mobile limits, and the in-app assistant. Open its index when another TauriTavern skill points here, or when you need the exact behavior of a TauriTavern API or feature.
 license: AGPL-3.0
 ---
 
@@ -17,7 +17,7 @@ These are TauriTavern's own documents, from the same source revision as this app
 - `references/API/Macros.md` — Macros through `SillyTavern.getContext().macros`: registering macros and evaluating text against the live context or a captured one.
 - `references/API/ChatSurface.md` — ChatSurface: how chat messages are rendered and virtualized, the renderer participants that JS-Slash-Runner and LittleWhiteBox register, and its errors and events.
 - `references/API/Layout.md` — `api.layout`: the content viewport, system bar areas, and screen capture.
-- `references/API/Extension.md` — `api.extension.store`: the key-value and blob storage extensions use for their data.
+- `references/API/Extension.md` — `api.extension.store`: the key-value and blob storage extensions use for their data; the limits of WebView localStorage and IndexedDB, and where users review and clear them.
 - `references/API/Migration.md` — How an extension can use TauriTavern's optional chat APIs (finding the last message, search, storage, history) instead of scanning `getContext().chat`.
 - `references/API/LlmConnections.md` — `api.llmConnections`: saved model connections that Agent profiles and Model Targets refer to.
 - `references/API/Agent.md` — The Agent API: runs, Sessions, run history, profiles, tool catalogs, and registering extension tools.
@@ -32,11 +32,16 @@ These are TauriTavern's own documents, from the same source revision as this app
 
 ## Features and platforms
 
+- `references/CurrentState/NativeApiFormats.md` — How chat completion payloads and responses translate to provider-native formats (Responses, Claude, Gemini).
+- `references/CurrentState/TextCompletion.md` — Text completion for self-hosted servers and cloud services: supported types, routes, prompt/stream handling, error shapes, cancellation and iOS policy.
+- `references/CurrentState/Horde.md` — AI Horde, the crowdsourced network used as a main API: routes, host-side task polling, cancellation, error shapes and iOS policy.
 - `references/CurrentState/ThirdPartyExtensions.md` — Third-party extensions: install and update rules, local and global folders and which wins, supported compatibility, what is not supported (such as server plugins), and regression checks.
 - `references/CurrentState/EmbeddedRuntime.md` — The embedded runtime that manages message iframes for JS-Slash-Runner and LittleWhiteBox: its modes, how it runs, and how to debug it.
 - `references/CurrentState/LoggingObservability.md` — Where logs go, how errors reach the user as notifications, and the developer observability tools.
-- `references/CurrentState/UserEndpointAccess.md` — Custom API endpoints (custom URL, reverse proxy): the one-time native approval dialog, where approvals are stored, and what cancelling does.
+- `references/CurrentState/RequestInspector.md` — The Request Inspector: how an LLM request is recorded, how the structured view and readable text are derived from the record, and the request preview before sending.
+- `references/CurrentState/UserEndpointAccess.md` — Native approval for custom API endpoints (custom URL, reverse proxy) and import download sources: when it asks, pre-approved sources, where approvals are stored, and what cancelling does.
 - `references/CurrentState/Sync.md` — LAN Sync and TT-Sync: what data syncs, which settings sections sync independently, discovery and pairing, and automatic sync.
+- `references/CurrentState/SafeMode.md` — Safe mode: how it is entered, what it resets and what it keeps, and how to restore the previous settings from a snapshot.
 - `references/CurrentState/DataDirectorySelection.md` — Choosing or moving the data directory: what is supported and what is not.
 - `references/CurrentState/UpdateChannels.md` — Stable and Canary update channels, how updates are detected, and public TestFlight builds.
 - `references/CurrentState/iOSPolicy.md` — Features restricted in iOS builds: policy profiles and capabilities, how they are applied, and their known limits.

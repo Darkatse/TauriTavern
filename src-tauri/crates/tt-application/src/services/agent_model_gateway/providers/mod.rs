@@ -4,9 +4,6 @@ use crate::errors::ApplicationError;
 use crate::services::chat_completion_service::exchange::ChatCompletionProviderFormat;
 use tt_domain::models::agent::AgentModelRequest;
 
-mod claude;
-mod gemini;
-mod openai;
 mod responses;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,24 +60,6 @@ impl AgentProviderAdapter {
     pub(super) fn finalize_payload(self, payload: &mut Map<String, Value>) {
         if self == Self::OpenAiResponses {
             responses::ensure_reasoning_include(payload);
-        }
-    }
-
-    pub(super) const fn native_provider(self) -> Option<&'static str> {
-        match self {
-            Self::OpenAiCompatible => openai::NATIVE_PROVIDER,
-            Self::OpenAiResponses => responses::NATIVE_PROVIDER,
-            Self::ClaudeMessages => claude::NATIVE_PROVIDER,
-            Self::Gemini => gemini::GEMINI_NATIVE_PROVIDER,
-            Self::GeminiInteractions => gemini::INTERACTIONS_NATIVE_PROVIDER,
-        }
-    }
-
-    pub(super) const fn schema_keys_to_remove(self) -> &'static [&'static str] {
-        match self {
-            Self::OpenAiCompatible | Self::OpenAiResponses => openai::SCHEMA_KEYS_TO_REMOVE,
-            Self::ClaudeMessages => claude::SCHEMA_KEYS_TO_REMOVE,
-            Self::Gemini | Self::GeminiInteractions => gemini::SCHEMA_KEYS_TO_REMOVE,
         }
     }
 }

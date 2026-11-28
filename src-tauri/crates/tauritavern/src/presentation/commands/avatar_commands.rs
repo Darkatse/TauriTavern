@@ -1,14 +1,13 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
-use crate::presentation::commands::helpers::{
-    log_command, log_user_visible_error, map_command_error,
-};
+use crate::infrastructure::staging::validate_staged_path;
+use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-use tt_domain::models::avatar::{AvatarUploadResult, CropInfo};
+use tt_application::dto::avatar_image_dto::ImageCropDto;
+use tt_domain::models::avatar::AvatarUploadResult;
 
 #[tauri::command]
 pub async fn get_personas(
@@ -51,30 +50,19 @@ pub async fn delete_avatar(
 
 #[tauri::command]
 pub async fn upload_avatar(
+    app: AppHandle,
     file_path: String,
     overwrite_name: Option<String>,
-    crop: Option<String>,
+    crop: Option<ImageCropDto>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<AvatarUploadResult, CommandError> {
     log_command(format!("upload_avatar {}", file_path));
 
-    let crop_info = match crop {
-        Some(crop_str) => match serde_json::from_str::<CropInfo>(&crop_str) {
-            Ok(info) => Some(info),
-            Err(error) => {
-                let message = format!("Invalid avatar crop information: {}", error);
-                log_user_visible_error(&message);
-                None
-            }
-        },
-        None => None,
-    };
-
-    let path = PathBuf::from(file_path);
+    let path = validate_staged_path(&app, &file_path).await?;
     app_state
         .services
         .avatar_service
-        .upload_avatar(&path, overwrite_name, crop_info)
+        .upload_avatar(&path, overwrite_name, crop)
         .await
         .map_err(map_command_error("Failed to upload avatar"))
 }

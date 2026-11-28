@@ -170,10 +170,12 @@ const messages = {
 } as const;
 export type MessageKey = keyof typeof messages;
 export type Tr = (key: MessageKey, params?: Record<string, string | number>) => string;
-type Context = { translate?: (fallback: string, key: string) => string };
+type Translate = (fallback: string, key: string) => string;
+// SillyTavern's translate stays the same function for the page's lifetime.
+let translate: Translate | undefined;
 export const tr: Tr = (key, params = {}) => {
-    const context = (window as Window & { SillyTavern?: { getContext: () => Context } }).SillyTavern?.getContext();
-    const text = context?.translate?.(messages[key], `in_app_agent.${key}`) ?? messages[key];
+    translate ??= (window as Window & { SillyTavern?: { getContext: () => { translate?: Translate } } }).SillyTavern?.getContext().translate;
+    const text = translate?.(messages[key], `in_app_agent.${key}`) ?? messages[key];
     return text.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match);
 };
 export function errorText(error: unknown): string {

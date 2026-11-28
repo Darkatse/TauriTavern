@@ -1,13 +1,19 @@
 // @ts-check
 
+import { commandErrorForStatus } from '../../../scripts/util/command-error-utils.js';
+
 /**
  * @typedef {{ events: any[], status: string }} StreamBatch
  * @typedef {{ reader: ReadableStreamDefaultReader<MessageEvent<string>>, seq: number, cursor: number,
  *   status: string, batch: Promise<StreamBatch> | undefined }} Session
  */
 
-/** @param {ReturnType<import('../backend.js').createBackend>} backend @returns {import('../install.js').CommandHandlers} */
-export function createGenerationCommands({ json, request }) {
+/**
+ * @param {ReturnType<import('../backend.js').createBackend>} backend
+ * @param {ReturnType<import('../settings.js').createSettings>} settings
+ * @returns {import('../install.js').CommandHandlers}
+ */
+export function createGenerationCommands({ json, request }, settings) {
     /** @type {Map<string, Session>} */
     const sessions = new Map();
     /** @param {string} id */
@@ -34,6 +40,16 @@ export function createGenerationCommands({ json, request }) {
             return { events: [{ type: 'error', seq: ++session.seq, message: String(error) }], status: 'error' };
         }
     }
+    /** @param {string} streamId @param {string} url @param {unknown} dto */
+    async function start(streamId, url, dto) {
+        // Imported on first use: the upstream parser pulls in power-user.js, an app module that must load after init.js.
+        const { default: EventSourceStream } = await import('../../../scripts/sse-stream.js');
+        if (sessions.has(streamId)) throw { Conflict: `Generation stream already exists: ${streamId}` };
+        const { body } = request(url, JSON.stringify(dto));
+        if (body === null || typeof body === 'string') throw new Error('Streaming generation requires a ReadableStream body');
+        const reader = (/** @type {ReadableStream<BufferSource>} */ (body)).pipeThrough(new EventSourceStream()).getReader();
+        sessions.set(streamId, { reader, seq: 0, cursor: -1, status: 'running', batch: undefined });
+    }
     /** @param {string} id */
     async function close(id) {
         const session = sessions.get(id);
@@ -46,19 +62,35 @@ export function createGenerationCommands({ json, request }) {
         // Session chat writes are the record; there is no native history archive or OS notifier.
         chat_history_generation_started: () => undefined,
         chat_history_generation_finished: () => undefined,
+        get_generation_notification_state: async () => ({
+            enabled: Boolean((await settings.get()).generation_notifications_enabled),
+            backgroundShowsProgressUi: false,
+        }),
         get_notification_permission_state: () => 'denied',
         get_chat_completions_status: ({ dto }) => json('/api/backends/chat-completions/status', dto),
         generate_chat_completion: ({ dto }) => json('/api/backends/chat-completions/generate', dto),
-        start_chat_completion_stream: async ({ streamId, dto }) => {
-            // Imported on first use: the upstream parser pulls in power-user.js, an app module that must load after init.js.
-            const { default: EventSourceStream } = await import('../../../scripts/sse-stream.js');
-            if (sessions.has(streamId)) throw { Conflict: `Generation stream already exists: ${streamId}` };
-            const { body } = request('/api/backends/chat-completions/generate', JSON.stringify(dto));
-            if (body === null || typeof body === 'string') throw new Error('Streaming generation requires a ReadableStream body');
-            const reader = (/** @type {ReadableStream<BufferSource>} */ (body)).pipeThrough(new EventSourceStream()).getReader();
-            sessions.set(streamId, { reader, seq: 0, cursor: -1, status: 'running', batch: undefined });
+        start_chat_completion_stream: ({ streamId, dto }) => start(streamId, '/api/backends/chat-completions/generate', dto),
+        get_text_completions_status: ({ dto }) => {
+            const response = request('/api/backends/text-completions/status', JSON.stringify(dto));
+            if (typeof response.body !== 'string') {
+                throw new Error('POST /api/backends/text-completions/status: expected a JSON response');
+            }
+            const { result, data } = JSON.parse(response.body);
+            const supports_tokenization = new Headers(response.headers).get('x-supports-tokenization') === 'true';
+            return { result, data, supports_tokenization };
         },
-        read_chat_completion_stream: ({ streamId, afterSeq }) => {
+        get_text_completions_props: ({ dto }) => json('/api/backends/text-completions/props', dto),
+        generate_text_completion: ({ dto }) => {
+            const completion = json('/api/backends/text-completions/generate', dto);
+            // SillyTavern answers a failed generation with 200 and this shape.
+            if (completion?.error === true) {
+                const message = typeof completion.response === 'string' ? completion.response.trim() : '';
+                throw commandErrorForStatus(completion.status, message || 'Text completion generation failed');
+            }
+            return completion;
+        },
+        start_text_completion_stream: ({ streamId, dto }) => start(streamId, '/api/backends/text-completions/generate', dto),
+        read_generation_stream: ({ streamId, afterSeq }) => {
             const session = get(streamId);
             // Retain the unacknowledged read, including an in-flight pull, for this cursor.
             if (afterSeq === session.cursor) return session.batch;
@@ -66,8 +98,8 @@ export function createGenerationCommands({ json, request }) {
             session.cursor = afterSeq;
             return session.batch = pull(session);
         },
-        close_chat_completion_stream: ({ streamId }) => close(streamId),
+        close_generation_stream: ({ streamId }) => close(streamId),
         // Non-streaming backend requests finish synchronously, so none remain to cancel.
-        cancel_chat_completion_generation: () => undefined,
+        cancel_generation: () => undefined,
     };
 }

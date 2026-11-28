@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
@@ -9,7 +9,6 @@ import type { ActiveTimelineOptions, RunTimelineController } from './RunTimeline
 const tr = (key: string): string => key;
 const controllers: RunTimelineController[] = [];
 afterEach(() => {
-    cleanup();
     controllers.splice(0).forEach(controller => controller.dispose());
 });
 
@@ -36,6 +35,10 @@ test('presentation save failures remain visible and can be retried without resta
             getActiveRun: () => ({ runId: 'run-1' }),
             subscribeRunState: listener => { runState = listener; return () => undefined; },
             subscribeRunEvents: () => () => undefined,
+            liveSource: {
+                subscribe: () => () => undefined,
+                scheduleFrame: callback => { callback(); return () => {}; },
+            },
             retryFailure: () => Promise.resolve(),
             resumeRun: runId => { resumed.push(runId); return Promise.resolve(); },
             retryPresentation: runId => {

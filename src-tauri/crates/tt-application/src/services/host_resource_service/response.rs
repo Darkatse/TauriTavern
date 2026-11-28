@@ -8,9 +8,12 @@ use http::header::{
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode};
 use sha2::{Digest, Sha256};
-use tt_ports::host_resource::{HostResourceSourceMetadata, HostResourceStoreError};
+use tt_ports::host_resource::{
+    HostResourceSourceMetadata, HostResourceStoreError, OpenedHostResource,
+};
 
-use super::HostResourceDeliveryCapabilities;
+use super::range::ByteRange;
+use super::{HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody};
 
 const PRIVATE_REVALIDATE: HeaderValue = HeaderValue::from_static("private, no-cache");
 const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
@@ -171,31 +174,52 @@ fn representation_etag(
     })
 }
 
-pub(super) fn not_modified(metadata: &RepresentationMetadata) -> Response<Vec<u8>> {
-    representation_response(StatusCode::NOT_MODIFIED, metadata, Vec::new(), None, false)
+pub(super) fn not_modified(metadata: &RepresentationMetadata) -> HostResourceResponse {
+    representation_response(
+        StatusCode::NOT_MODIFIED,
+        metadata,
+        HostResourceResponseBody::Bytes(Vec::new()),
+        None,
+        false,
+    )
 }
 
-pub(super) fn head(metadata: &RepresentationMetadata) -> Response<Vec<u8>> {
+pub(super) fn head(metadata: &RepresentationMetadata) -> HostResourceResponse {
     representation_response(
         StatusCode::OK,
         metadata,
-        Vec::new(),
+        HostResourceResponseBody::Bytes(Vec::new()),
         metadata.content_length,
         true,
     )
 }
 
-pub(super) fn ok(metadata: &RepresentationMetadata, body: Vec<u8>) -> Response<Vec<u8>> {
-    let content_length = body.len() as u64;
+pub(super) fn body(
+    opened: OpenedHostResource,
+    range: Option<ByteRange>,
+    delivery: HostResourceDeliveryCapabilities,
+) -> Result<HostResourceResponseBody, HostResourceStoreError> {
+    if delivery.streams_bodies() {
+        opened.stream(range).map(HostResourceResponseBody::Stream)
+    } else {
+        opened.read(range).map(HostResourceResponseBody::Bytes)
+    }
+}
+
+pub(super) fn ok(
+    metadata: &RepresentationMetadata,
+    body: HostResourceResponseBody,
+) -> HostResourceResponse {
+    let content_length = body.len();
     representation_response(StatusCode::OK, metadata, body, Some(content_length), true)
 }
 
 pub(super) fn partial(
     metadata: &RepresentationMetadata,
-    body: Vec<u8>,
+    body: HostResourceResponseBody,
     range_value: String,
     declared_length: u64,
-) -> Response<Vec<u8>> {
+) -> HostResourceResponse {
     let mut response = representation_response(
         StatusCode::PARTIAL_CONTENT,
         metadata,
@@ -210,10 +234,10 @@ pub(super) fn partial(
 fn representation_response(
     status: StatusCode,
     metadata: &RepresentationMetadata,
-    body: Vec<u8>,
+    body: HostResourceResponseBody,
     content_length: Option<u64>,
     include_content_headers: bool,
-) -> Response<Vec<u8>> {
+) -> HostResourceResponse {
     let mut response = Response::new(body);
     *response.status_mut() = status;
     response.headers_mut().insert(
@@ -241,7 +265,7 @@ fn representation_response(
     response
 }
 
-pub(super) fn no_content(allowed_methods: &'static str) -> Response<Vec<u8>> {
+pub(super) fn no_content(allowed_methods: &'static str) -> HostResourceResponse {
     let mut response = base_response(StatusCode::NO_CONTENT, Vec::new());
     response
         .headers_mut()
@@ -249,7 +273,7 @@ pub(super) fn no_content(allowed_methods: &'static str) -> Response<Vec<u8>> {
     response
 }
 
-pub(super) fn method_not_allowed(allowed_methods: &'static str) -> Response<Vec<u8>> {
+pub(super) fn method_not_allowed(allowed_methods: &'static str) -> HostResourceResponse {
     let mut response = error(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed");
     response
         .headers_mut()
@@ -257,7 +281,7 @@ pub(super) fn method_not_allowed(allowed_methods: &'static str) -> Response<Vec<
     response
 }
 
-pub(super) fn error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
+pub(super) fn error(status: StatusCode, message: &str) -> HostResourceResponse {
     let body = message.as_bytes().to_vec();
     let mut response = base_response(status, body);
     response.headers_mut().insert(
@@ -268,8 +292,8 @@ pub(super) fn error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
     response
 }
 
-fn base_response(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
-    let mut response = Response::new(body);
+fn base_response(status: StatusCode, body: Vec<u8>) -> HostResourceResponse {
+    let mut response = Response::new(HostResourceResponseBody::Bytes(body));
     *response.status_mut() = status;
     response.headers_mut().insert(
         CACHE_CONTROL,
@@ -284,7 +308,7 @@ fn base_response(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
 pub(super) fn store_error(
     error_value: HostResourceStoreError,
     not_found_message: &'static str,
-) -> Response<Vec<u8>> {
+) -> HostResourceResponse {
     match error_value {
         HostResourceStoreError::NotFound(_) => error(StatusCode::NOT_FOUND, not_found_message),
         HostResourceStoreError::Forbidden(message) => error(StatusCode::FORBIDDEN, &message),
@@ -294,14 +318,14 @@ pub(super) fn store_error(
     }
 }
 
-pub(super) fn with_accept_ranges(mut response: Response<Vec<u8>>) -> Response<Vec<u8>> {
+pub(super) fn with_accept_ranges(mut response: HostResourceResponse) -> HostResourceResponse {
     response
         .headers_mut()
         .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     response
 }
 
-pub(super) fn range_not_satisfiable(message: &str, total_size: u64) -> Response<Vec<u8>> {
+pub(super) fn range_not_satisfiable(message: &str, total_size: u64) -> HostResourceResponse {
     let mut response = error(StatusCode::RANGE_NOT_SATISFIABLE, message);
     insert_header_value(
         response.headers_mut(),
@@ -353,7 +377,7 @@ mod tests {
     #[test]
     fn matching_weak_etag_respects_delivery_capability() {
         let metadata = RepresentationMetadata::raw(&source(), None).expect("metadata");
-        let first = ok(&metadata, b"data".to_vec());
+        let first = ok(&metadata, HostResourceResponseBody::Bytes(b"data".to_vec()));
         let etag = first.headers()[ETAG].to_str().expect("etag");
         let request = request(&[("if-none-match", etag)]);
 
@@ -361,7 +385,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::NotModified
         );
@@ -369,7 +393,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(false, false)
+                HostResourceDeliveryCapabilities::new(false)
             ),
             RetrievalDecision::Full
         );
@@ -378,7 +402,7 @@ mod tests {
     #[test]
     fn wildcard_and_tag_list_use_weak_if_none_match_comparison() {
         let metadata = RepresentationMetadata::raw(&source(), None).expect("metadata");
-        let response = ok(&metadata, b"data".to_vec());
+        let response = ok(&metadata, HostResourceResponseBody::Bytes(b"data".to_vec()));
         let etag = response.headers()[ETAG].to_str().expect("etag");
         let list = format!("\"other\", {etag}");
 
@@ -387,7 +411,7 @@ mod tests {
                 decide_retrieval(
                     &request(&[("if-none-match", condition)]),
                     &metadata,
-                    HostResourceDeliveryCapabilities::new(true, false)
+                    HostResourceDeliveryCapabilities::new(true)
                 ),
                 RetrievalDecision::NotModified
             );
@@ -397,7 +421,7 @@ mod tests {
     #[test]
     fn last_modified_round_trips_through_if_modified_since() {
         let metadata = RepresentationMetadata::raw(&source(), None).expect("metadata");
-        let response = ok(&metadata, b"data".to_vec());
+        let response = ok(&metadata, HostResourceResponseBody::Bytes(b"data".to_vec()));
         let last_modified = response.headers()[LAST_MODIFIED]
             .to_str()
             .expect("last modified");
@@ -406,7 +430,7 @@ mod tests {
             decide_retrieval(
                 &request(&[("if-modified-since", last_modified)]),
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::NotModified
         );
@@ -417,7 +441,7 @@ mod tests {
         let mut source = source();
         source.last_modified = UNIX_EPOCH - Duration::from_secs(1);
         let metadata = RepresentationMetadata::raw(&source, None).expect("metadata");
-        let response = ok(&metadata, b"data".to_vec());
+        let response = ok(&metadata, HostResourceResponseBody::Bytes(b"data".to_vec()));
 
         assert!(!response.headers().contains_key(LAST_MODIFIED));
     }
@@ -434,7 +458,7 @@ mod tests {
             decide_retrieval(
                 &request,
                 &metadata,
-                HostResourceDeliveryCapabilities::new(true, false)
+                HostResourceDeliveryCapabilities::new(true)
             ),
             RetrievalDecision::Continue
         );

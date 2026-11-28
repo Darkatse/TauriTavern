@@ -127,6 +127,19 @@ pub(super) struct SessionGroup {
     pub interrupted: bool,
 }
 
+/// Whether `entries`, the end of a Session history, reach back to the start of the current context.
+pub(super) fn holds_context(entries: &[AgentSessionMessage]) -> bool {
+    entries
+        .iter()
+        .rev()
+        .find_map(|entry| {
+            let compaction = entry.compaction.as_ref()?;
+            Some(compaction.kept_from_seq.unwrap_or(entry.seq))
+        })
+        .is_some_and(|start| entries[0].seq <= start)
+}
+
+/// The messages the model sees, from the end of a history that holds the current context.
 pub(super) fn session_context(
     history: &[AgentSessionMessage],
 ) -> Result<Vec<&AgentSessionMessage>, ApplicationError> {
@@ -523,7 +536,7 @@ impl AgentRuntimeService {
             .target
             .session_id()
             .expect("Session invocation target");
-        let history = self.read_session_history(session_id).await?;
+        let history = self.read_session_tail(session_id, holds_context).await?;
         let current = session_context(&history)?;
         let entries = current
             .iter()

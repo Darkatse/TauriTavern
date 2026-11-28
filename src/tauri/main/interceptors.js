@@ -1,4 +1,5 @@
 import { createAbortError, isAbortError } from './kernel/abort-error.js';
+import { streamResponse } from './http-utils.js';
 
 export function createInterceptors({
     originalFetch,
@@ -62,9 +63,7 @@ export function createInterceptors({
                         void result.body?.cancel().catch(error => console.warn('Failed to close aborted response', error));
                         throw createAbortError();
                     }
-                    if (!signal || !result.body) return result;
-                    // Native piping keeps cancellation attached after fetch resolves, including while the body is locked.
-                    return new Response(result.body.pipeThrough(new TransformStream(), { signal }), result);
+                    return signal && result.body ? streamResponse(result.body, result, signal) : result;
                 });
             return await (abortRace ? Promise.race([pending, abortRace.promise]) : pending);
         } finally {

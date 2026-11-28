@@ -1,7 +1,12 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use tauri::{Manager, Resource, ResourceId, State, Webview, ipc::Channel};
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tt_application::dto::agent_dto::{
-    AgentRunLiveFieldDto, AgentRunLiveResponseDto, AgentRunLiveToolCallDto, AgentRunLiveUpdateDto,
+    AgentOpenRunLiveProjectionDto, AgentRunLiveFieldDto, AgentRunLiveResponseDto,
+    AgentRunLiveToolCallDto, AgentRunLiveUpdateDto,
 };
 use tt_application::services::agent_runtime_service::{
     AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, AgentRunLiveResponse,
@@ -9,10 +14,112 @@ use tt_application::services::agent_runtime_service::{
 };
 use tt_domain::text_metrics::TextMetrics;
 
+use crate::app::AppState;
+use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 
+/// A subscriber's handle on a run's live projection. Closing it ends the stream that delivers the projection.
+pub(crate) struct AgentRunLiveProjectionResource {
+    run_id: String,
+    closed: CancellationToken,
+}
+
+impl Resource for AgentRunLiveProjectionResource {
+    fn close(self: Arc<Self>) {
+        self.closed.cancel();
+    }
+}
+
+/// Registers without awaiting, so no page reload sweep can pass between the page's open and its registration.
+#[tauri::command]
+pub fn open_agent_run_live_projection(
+    dto: AgentOpenRunLiveProjectionDto,
+    webview: Webview,
+) -> ResourceId {
+    log_command("open_agent_run_live_projection");
+
+    webview
+        .resources_table()
+        .add(AgentRunLiveProjectionResource {
+            run_id: dto.run_id,
+            closed: CancellationToken::new(),
+        })
+}
+
+/// Sends a snapshot and then the updates, until the run ends or the handle is closed.
+#[tauri::command]
+pub async fn stream_agent_run_live_projection(
+    rid: ResourceId,
+    channel: Channel<AgentRunLiveUpdateDto>,
+    webview: Webview,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("stream_agent_run_live_projection");
+
+    let resource = webview
+        .resources_table()
+        .get::<AgentRunLiveProjectionResource>(rid)
+        .map_err(map_command_error(
+            "Failed to access agent run live projection",
+        ))?;
+    let projection = app_state
+        .services
+        .agent_runtime_service
+        .subscribe_live_projection(&resource.run_id)
+        .await
+        .map_err(map_command_error(
+            "Failed to subscribe to agent run live projection",
+        ))?;
+    stream(projection, &resource.closed, &channel).await
+}
+
+/// `projection` is `None` when the run has no live projection, such as after it ended.
+async fn stream(
+    projection: Option<watch::Receiver<AgentRunLiveProjection>>,
+    closed: &CancellationToken,
+    channel: &Channel<AgentRunLiveUpdateDto>,
+) -> Result<(), CommandError> {
+    let send = |update| {
+        channel.send(update).map_err(map_command_error(
+            "Failed to send agent run live projection update",
+        ))
+    };
+    let Some(mut receiver) = projection else {
+        return send(AgentRunLiveUpdateDto::Snapshot {
+            calls: Vec::new(),
+            responses: Vec::new(),
+        });
+    };
+
+    let mut presenter = AgentRunLivePresenter::default();
+    let snapshot = {
+        let projection = receiver.borrow_and_update();
+        presenter.snapshot(&projection)
+    };
+    send(snapshot)?;
+
+    loop {
+        tokio::select! {
+            biased;
+            () = closed.cancelled() => return Ok(()),
+            changed = receiver.changed() => {
+                if changed.is_err() {
+                    return Ok(());
+                }
+            }
+        }
+        let updates = {
+            let projection = receiver.borrow_and_update();
+            presenter.updates(&projection)?
+        };
+        for update in updates {
+            send(update)?;
+        }
+    }
+}
+
 #[derive(Default)]
-pub(super) struct AgentRunLivePresenter {
+struct AgentRunLivePresenter {
     calls: BTreeMap<AgentRunLiveCallKey, PresentedCall>,
     responses: BTreeMap<String, PresentedResponse>,
 }
@@ -53,10 +160,7 @@ enum PresentedFields {
 }
 
 impl AgentRunLivePresenter {
-    pub(super) fn snapshot(
-        &mut self,
-        projection: &AgentRunLiveProjection,
-    ) -> AgentRunLiveUpdateDto {
+    fn snapshot(&mut self, projection: &AgentRunLiveProjection) -> AgentRunLiveUpdateDto {
         self.calls = projection
             .calls
             .iter()
@@ -81,7 +185,7 @@ impl AgentRunLivePresenter {
         }
     }
 
-    pub(super) fn updates(
+    fn updates(
         &mut self,
         projection: &AgentRunLiveProjection,
     ) -> Result<Vec<AgentRunLiveUpdateDto>, CommandError> {
@@ -308,11 +412,37 @@ fn append_field(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use serde_json::json;
     use tt_domain::models::agent::AgentInvocationExitPolicy;
     use tt_domain::models::tool::ToolId;
 
     use super::*;
+
+    #[tokio::test]
+    async fn closing_ends_a_stream_waiting_for_changes() {
+        // The run stays live, so only closing can end the stream.
+        let (_live, receiver) = watch::channel(AgentRunLiveProjection::default());
+        let closed = CancellationToken::new();
+        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let channel = Channel::new(move |body| {
+            sent.send(body).expect("the test receives every update");
+            Ok(())
+        });
+        let streaming = tokio::spawn({
+            let closed = closed.clone();
+            async move { stream(Some(receiver), &closed, &channel).await }
+        });
+        received.recv().await.expect("the snapshot");
+
+        closed.cancel();
+
+        let result = tokio::time::timeout(Duration::from_secs(5), streaming)
+            .await
+            .expect("closing ends the stream");
+        assert!(matches!(result, Ok(Ok(()))));
+    }
 
     #[test]
     fn response_cursors_survive_unicode_and_coalesced_retry() {

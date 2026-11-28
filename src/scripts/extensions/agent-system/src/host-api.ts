@@ -63,6 +63,11 @@ export function requireSillyTavernContext(): unknown {
     return context;
 }
 
+/** The user's streaming FPS setting, which paces every streaming preview. */
+export function readStreamingFps(): unknown {
+    return (requireSillyTavernContext() as { powerUserSettings: { streaming_fps: unknown } }).powerUserSettings.streaming_fps;
+}
+
 export async function confirmAction(message: string): Promise<boolean> {
     const context = getSillyTavernContext() as SillyTavernPopupContext | null | undefined;
     const Popup = context?.Popup;

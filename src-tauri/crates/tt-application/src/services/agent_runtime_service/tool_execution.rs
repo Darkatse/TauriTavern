@@ -187,6 +187,13 @@ impl AgentRuntimeService {
                     profile,
                 )
                 .await
+            } else if call.tool_id.is_prompt() {
+                Ok(AgentToolDispatchOutcome::error(
+                    call,
+                    "tool.no_executor",
+                    "This tool has no executor in this run, so the call was not performed. Continue without it.",
+                    started.elapsed().as_millis(),
+                ))
             } else if call.tool_id.extension_id().is_some() {
                 let reply = self.extension_tools.call(
                     ExtensionToolCall {

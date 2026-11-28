@@ -1,14 +1,14 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
-import { t, translate } from '../../../i18n.js';
+import { getCurrentLocale, translate } from '../../../i18n.js';
 import { canScanQrCode, scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
 import { invoke, listen, writeClipboardText } from '../../../../tauri-bridge.js';
+import { isCommandCancelled } from '../../../util/command-error-utils.js';
 import {
     LAN_SYNC_DEVICES_CHANGED_EVENT,
     SYNC_AUTOMATION_CHANGED_EVENT,
     SYNC_AUTOMATION_STATUS_CHANGED_EVENT,
     TT_SYNC_SERVERS_CHANGED_EVENT,
 } from './constants.js';
-import { formatTimestamp } from './formatters.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import { showSyncReportResult } from './sync-listeners.js';
@@ -18,7 +18,6 @@ import {
     getSyncDatasetSelection,
     getSyncTargetAlias,
     parseLanSyncPairUri,
-    parseTtSyncPairUri,
     setSyncDatasetSelection,
     setSyncTargetAlias,
 } from './sync-state.js';
@@ -304,17 +303,17 @@ function createSyncClient() {
         async subscribeLanDevices(handler) {
             return listen('lan_sync:devices_changed', event => handler(normalizeNearbyDevices(event.payload)));
         },
-        pairLanDevice: (deviceId) => invoke('lan_sync_pair_device', { deviceId }),
-        connectLanAddress: (address) => invoke('lan_sync_connect_address', { address }),
+        pairLanDevice: (deviceId) => invoke('lan_sync_pair_device', { deviceId, locale: getCurrentLocale() }),
+        connectLanAddress: (address) => invoke('lan_sync_connect_address', { address, locale: getCurrentLocale() }),
         setDeviceName: (name) => invoke('lan_sync_set_device_name', { name }),
-        requestLanPairing: (pairUri) => invoke('lan_sync_request_pairing', { pairUri }),
+        requestLanPairing: (pairUri) => invoke('lan_sync_request_pairing', { pairUri, locale: getCurrentLocale() }),
         removeLanDevice: (deviceId) => invoke('lan_sync_remove_device', { deviceId }),
         pullLanDevice: (deviceId, options) => invoke('lan_sync_sync_from_device', { deviceId, options }),
         pushLanDevice: (deviceId, options) => invoke('lan_sync_push_to_device', { deviceId, options }),
         setLanSyncMode: (mode, persist) => invoke('lan_sync_set_sync_mode', { mode, persist }),
         clearLanSyncModeOverride: () => invoke('lan_sync_clear_sync_mode_override'),
         setOverwritePolicy: (overwritePolicy) => invoke('lan_sync_set_overwrite_policy', { overwritePolicy }),
-        pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri }),
+        pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri, locale: getCurrentLocale() }),
         removeTtSyncServer: (serverDeviceId) => invoke('tt_sync_remove_server', { serverDeviceId }),
         pullTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_pull', { serverDeviceId, mode, options }),
         pushTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_push', { serverDeviceId, mode, options }),
@@ -323,52 +322,6 @@ function createSyncClient() {
         }).then(normalizeAutomationConfig),
         getAutomationStatus: () => invoke('sync_automation_get_status').then(normalizeAutomationStatus),
     };
-}
-
-async function confirmTtSyncPairing(pairUri) {
-    const parsed = parseTtSyncPairUri(pairUri, translate);
-    const content = createPopupColumn();
-
-    const title = document.createElement('b');
-    title.textContent = translate('TT-Sync pairing confirmation');
-    content.appendChild(title);
-
-    const meta = createPopupColumn();
-    meta.style.gap = '6px';
-
-    const urlLine = document.createElement('div');
-    urlLine.style.wordBreak = 'break-word';
-    urlLine.textContent = t`URL: ${parsed.baseUrl}`;
-    meta.appendChild(urlLine);
-
-    const spkiLine = document.createElement('div');
-    spkiLine.style.wordBreak = 'break-word';
-    const spkiLabel = document.createElement('span');
-    spkiLabel.textContent = `${translate('SPKI')}: `;
-    spkiLine.appendChild(spkiLabel);
-    const spkiValue = document.createElement('code');
-    spkiValue.textContent = parsed.spki;
-    spkiLine.appendChild(spkiValue);
-    meta.appendChild(spkiLine);
-
-    if (parsed.expiresAtMs) {
-        const expLine = document.createElement('div');
-        expLine.textContent = t`Expires: ${formatTimestamp(parsed.expiresAtMs)}`;
-        meta.appendChild(expLine);
-    }
-
-    content.appendChild(meta);
-
-    const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
-        okButton: translate('Trust & Pair'),
-        cancelButton: translate('Cancel'),
-        allowVerticalScrolling: true,
-        wide: false,
-        large: false,
-        defaultResult: POPUP_RESULT.NEGATIVE,
-    });
-
-    return result === POPUP_RESULT.AFFIRMATIVE;
 }
 
 async function changeSyncMode(client, status) {
@@ -492,7 +445,7 @@ function createSyncActions(client) {
             await writeClipboardText(String(text ?? ''));
         },
         scanPairUri: () => scanQrCodeWithBackCancellation(),
-        reportError: (error) => showErrorPopup(error),
+        reportError: (error) => isCommandCancelled(error) ? undefined : showErrorPopup(error),
         changeSyncMode: (status) => changeSyncMode(client, status),
         editSyncScope: ({ catalog, selection }) => editSyncScope(catalog, selection),
         showOverwritePolicyHelp: () => runTaskOrPopup(showOverwritePolicyHelp),
@@ -529,16 +482,12 @@ function createSyncActions(client) {
             const parsedUrl = new URL(trimmed);
 
             if (parsedUrl.hostname.toLowerCase() === 'tt-sync') {
-                if (!await confirmTtSyncPairing(trimmed)) {
-                    return false;
-                }
                 await client.pairTtSync(trimmed);
-                return true;
+                return;
             }
 
             parseLanSyncPairUri(trimmed, translate);
             await client.requestLanPairing(trimmed);
-            return true;
         },
         notifyLanPushRequested: () => {
             toastr.success(translate('Upload request sent.'));

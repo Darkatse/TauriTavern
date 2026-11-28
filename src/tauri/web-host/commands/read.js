@@ -31,6 +31,8 @@ export function createReadCommands(backend) {
         get_bootstrap_metadata: () => ({
             characters: json('/api/characters/all').map(characterDto), groups: json('/api/groups/all'),
             avatars: json('/api/avatars/get'), secret_state: json('/api/secrets/read'),
+            available_chat_completion_sources: 'all',
+            available_text_completion_types: 'all',
         }),
         get_sillytavern_settings: () => {
             const response = json('/api/settings/get');

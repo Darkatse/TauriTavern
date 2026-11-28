@@ -105,13 +105,9 @@ export function findUpstreamFailureDetails(value, depth = 0) {
 }
 
 /**
- * @param {UpstreamFailureDetails | null} details
+ * @param {UpstreamFailureDetails} details
+ * @param {(key: string, fallback: string) => string} translate
  */
-export function upstreamFailureFallbackText(details) {
-    if (!details) {
-        return '';
-    }
-
-    const message = UPSTREAM_FAILURE_FALLBACKS[details.code] || 'Upstream request failed.';
-    return details.endpoint ? `${message} (${details.endpoint})` : message;
+export function upstreamFailureMessage(details, translate) {
+    return translate(details.messageKey, UPSTREAM_FAILURE_FALLBACKS[details.code] || 'Upstream request failed.');
 }

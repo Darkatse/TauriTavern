@@ -1,37 +1,4 @@
-function isNotFoundError(error) {
-    const message = String(error?.message || error || '').toLowerCase();
-    return message.includes('not found')
-        || message.includes('no such file')
-        || message.includes('enoent')
-        || message.includes('os error 2');
-}
-
-function parseCommandErrorStatus(error) {
-    const message = String(error?.message || error || '');
-    if (message.startsWith('Bad request:')) {
-        return 400;
-    }
-    if (message.startsWith('Not found:')) {
-        return 404;
-    }
-    if (message.startsWith('Unauthorized:')) {
-        return 401;
-    }
-    if (message.startsWith('Too many requests:')) {
-        return 429;
-    }
-    return 500;
-}
-
-function stripCommandErrorPrefix(error) {
-    const message = String(error?.message || error || '').trim();
-    for (const prefix of ['Bad request:', 'Not found:', 'Unauthorized:', 'Too many requests:', 'Internal server error:']) {
-        if (message.startsWith(prefix)) {
-            return message.slice(prefix.length).trim();
-        }
-    }
-    return message;
-}
+import { commandErrorStatus, getCommandErrorMessage } from '../../../scripts/util/command-error-utils.js';
 
 function hasOwn(value, key) {
     return Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -78,7 +45,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             await context.safeInvoke('delete_user_file', { path });
             return jsonResponse({ ok: true });
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return textResponse('File not found', 404);
             }
 
@@ -115,10 +82,8 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             });
             return jsonResponse(uploaded || {});
         } catch (error) {
-            const status = parseCommandErrorStatus(error);
-            const message = stripCommandErrorPrefix(error);
-            if (status === 400) {
-                return jsonResponse({ error: message || 'Failed to save the image' }, 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) || 'Failed to save the image' }, 400);
             }
             return jsonResponse({ error: 'Failed to save the image' }, 500);
         }
@@ -138,10 +103,8 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             });
             return jsonResponse(Array.isArray(images) ? images : []);
         } catch (error) {
-            const status = parseCommandErrorStatus(error);
-            const message = stripCommandErrorPrefix(error);
-            if (status === 400) {
-                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) || 'Unable to retrieve files' }, 400);
             }
             return jsonResponse({ error: 'Unable to retrieve files' }, 500);
         }
@@ -166,10 +129,8 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             });
             return jsonResponse(Array.isArray(images) ? images : []);
         } catch (error) {
-            const status = parseCommandErrorStatus(error);
-            const message = stripCommandErrorPrefix(error);
-            if (status === 400) {
-                return jsonResponse({ error: message || 'Unable to retrieve files' }, 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) || 'Unable to retrieve files' }, 400);
             }
             return jsonResponse({ error: 'Unable to retrieve files' }, 500);
         }
@@ -180,10 +141,8 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             const folders = await context.safeInvoke('list_user_image_folders');
             return jsonResponse(Array.isArray(folders) ? folders : []);
         } catch (error) {
-            const status = parseCommandErrorStatus(error);
-            const message = stripCommandErrorPrefix(error);
-            if (status === 400) {
-                return jsonResponse({ error: message || 'Unable to retrieve folders' }, 400);
+            if (commandErrorStatus(error) === 400) {
+                return jsonResponse({ error: getCommandErrorMessage(error) || 'Unable to retrieve folders' }, 400);
             }
             return jsonResponse({ error: 'Unable to retrieve folders' }, 500);
         }
@@ -199,14 +158,12 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             await context.safeInvoke('delete_user_image', { path });
             return jsonResponse({ ok: true });
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return textResponse('File not found', 404);
             }
 
-            const status = parseCommandErrorStatus(error);
-            const message = stripCommandErrorPrefix(error);
-            if (status === 400) {
-                return textResponse(message || 'Invalid path', 400);
+            if (commandErrorStatus(error) === 400) {
+                return textResponse(getCommandErrorMessage(error) || 'Invalid path', 400);
             }
             return textResponse('Internal Server Error', 500);
         }
@@ -362,10 +319,6 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             kind: 'background',
             preferredName: rawFilename,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Unable to access background file path${reason}`);
-        }
 
         try {
             const uploaded = await context.safeInvoke('upload_background_from_path', {
@@ -374,12 +327,12 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
             });
             return textResponse(String(uploaded || rawFilename));
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     });
 
     router.post('/api/themes/save', async ({ body }) => {
-        await context.safeInvoke('save_theme', { dto: body || {} });
+        await context.safeInvoke('save_theme', { json: JSON.stringify(body ?? null) });
         return jsonResponse({ ok: true });
     });
 

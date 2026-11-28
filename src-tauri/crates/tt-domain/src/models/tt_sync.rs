@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use ttsync_contract::pair::PairUri;
 use ttsync_contract::peer::{DeviceId, Permissions};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,4 +19,10 @@ pub struct TtSyncPairedServer {
     pub permissions: Permissions,
     pub paired_at_ms: u64,
     pub last_sync_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TtSyncPairTarget {
+    pub pair: PairUri,
+    pub server_origin: String,
 }

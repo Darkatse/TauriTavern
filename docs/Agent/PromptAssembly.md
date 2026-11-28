@@ -17,7 +17,7 @@ Chat 的 `Generate()` 在组装前采集材料，在 `GENERATE_AFTER_DATA` 的�
 
 根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定预设、模型和上下文范围。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
 
-Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；宏环境由完整会话求出并在发送时冻结，Run 保留最终消息和组装请求。
+Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据；变量来源见 [Session API](../API/Agent.md#持续-session)。发送时 Rust 从历史末尾读到当前上下文的起点，宏环境仍按完整会话求出并冻结。Run 保留最终消息和组装请求。
 
 捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix；需要重新组装时，schemaVersion 1 的输入返回 `agent.frozen_run_input_outdated`，缺少宏重建材料时返回 `agent.macro_context_rebuild_unavailable`。
 
@@ -31,7 +31,7 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 每个 Invocation 按自己的 Profile 选择预设与连接：`currentPromptSnapshot` 取冻结的 `currentPreset` 与 `currentModelConnection`，`ref` 与 `connectionRef` 解析具名资源。“当前”是 Run 捕获时的聊天，不随根 Agent 的绑定或运行中的 UI 切换改变。
 
-聊天根 Invocation 绑定当前预设时，直接复用 `Generate()` 的 live 生成，保留扩展钩子对消息和参数的修改。其余情况都独立组装。根绑定指定预设时：
+聊天根 Invocation 绑定当前预设时，直接复用 `Generate()` 的 live 生成，保留扩展钩子对消息、工具数据和参数的修改。其余情况都独立组装。根绑定指定预设时：
 
 ```text
 冻结聊天输入
@@ -44,7 +44,9 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
-`openai.js` 的 `createAgentPromptSnapshot` 统一把 payload 转为 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，记录 `acceptsImages: isImageInliningSupported(settings) === true`，并从有效设置提供 `contextLimits: { context, response, tokenizerModel }`。`acceptsImages` 省略时为 false，非布尔值在入口报错；该值在本次 Invocation 中固定，计数、图片注入和 Session 压缩重建共用它。能力判定依赖界面全局 `main_api`，部分来源还依赖当前来源的 `model_list`。Session runtime 据此计数并决定压缩点；Legacy Chat payload 在入口适配。live 当前预设与 SDK 的快照共用 payload 准备入口，各自保留事件和调用来源语义。
+`openai.js` 的 `createAgentPromptSnapshot` 把 payload 拆为 `messages` 与 `generationParameters`。`messages` 与 `generationParameters.tools` 保持组装结果的形状，由 Rust 转为规范消息与工具，见 [LLM gateway](LlmGateway.md#请求形状的消息与工具定义)；Legacy Chat payload 走同一转换。live 当前预设与 SDK 的快照共用这一入口，各自保留事件和调用来源语义。
+
+快照还记录 `acceptsImages: isImageInliningSupported(settings) === true`，并从有效设置提供 `contextLimits: { context, response, tokenizerModel }`。`acceptsImages` 省略时为 false，非布尔值在入口报错；它在本次 Invocation 中固定，计数、图片注入和 Session 压缩重建共用它。能力判定依赖界面全局 `main_api`，部分来源还依赖当前来源的 `model_list`。Session runtime 据此计数并决定压缩点。
 
 普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 

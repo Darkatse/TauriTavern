@@ -57,7 +57,7 @@ pub struct IosPolicyCapabilities {
     pub llm: IosPolicyLlmCapabilities,
     pub network: IosPolicyNetworkCapabilities,
     pub scripting: IosPolicyScriptingCapabilities,
-    pub ai: IosPolicyImageGenerationCapabilities,
+    pub ai: IosPolicyAiCapabilities,
     pub sync: IosPolicySyncCapabilities,
     pub about: IosPolicyAboutCapabilities,
 }
@@ -99,6 +99,23 @@ pub struct IosPolicyLlmCapabilities {
     pub text_completions: IosPolicyTextCompletionCapabilities,
 }
 
+impl IosPolicyLlmCapabilities {
+    /// The custom source sends requests to a user-chosen endpoint, so it also needs endpoint overrides.
+    pub fn allows_chat_completion_source(&self, source: ChatCompletionSource) -> bool {
+        self.chat_completion_sources.allows_source(source)
+            && (source != ChatCompletionSource::Custom || self.endpoint_overrides)
+    }
+
+    pub fn available_chat_completion_sources(
+        &self,
+    ) -> impl Iterator<Item = ChatCompletionSource> + '_ {
+        ChatCompletionSource::ALL
+            .iter()
+            .copied()
+            .filter(|source| self.allows_chat_completion_source(*source))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct IosPolicyChatCompletionSourceCapabilities {
@@ -106,7 +123,7 @@ pub struct IosPolicyChatCompletionSourceCapabilities {
 }
 
 impl IosPolicyChatCompletionSourceCapabilities {
-    pub fn allows_source(&self, source: ChatCompletionSource) -> bool {
+    fn allows_source(&self, source: ChatCompletionSource) -> bool {
         match &self.allowlist {
             AllowlistSetting::Mode(AllowlistMode::All) => true,
             AllowlistSetting::List(items) => items
@@ -144,8 +161,9 @@ pub struct IosPolicyScriptingCapabilities {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct IosPolicyImageGenerationCapabilities {
+pub struct IosPolicyAiCapabilities {
     pub image_generation: bool,
+    pub horde: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,7 +222,7 @@ struct IosPolicyCapabilitiesOverride {
     #[serde(default)]
     pub scripting: IosPolicyScriptingCapabilitiesOverride,
     #[serde(default)]
-    pub ai: IosPolicyImageGenerationCapabilitiesOverride,
+    pub ai: IosPolicyAiCapabilitiesOverride,
     #[serde(default)]
     pub sync: IosPolicySyncCapabilitiesOverride,
     #[serde(default)]
@@ -285,8 +303,9 @@ struct IosPolicyScriptingCapabilitiesOverride {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
-struct IosPolicyImageGenerationCapabilitiesOverride {
+struct IosPolicyAiCapabilitiesOverride {
     pub image_generation: Option<bool>,
+    pub horde: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -339,8 +358,9 @@ impl IosPolicyCapabilities {
                     prompt_injections: true,
                     tool_registration: true,
                 },
-                ai: IosPolicyImageGenerationCapabilities {
+                ai: IosPolicyAiCapabilities {
                     image_generation: true,
+                    horde: true,
                 },
                 sync: IosPolicySyncCapabilities { lan: true },
                 about: IosPolicyAboutCapabilities { git_info: true },
@@ -397,8 +417,9 @@ impl IosPolicyCapabilities {
                     prompt_injections: false,
                     tool_registration: false,
                 },
-                ai: IosPolicyImageGenerationCapabilities {
+                ai: IosPolicyAiCapabilities {
                     image_generation: false,
+                    horde: false,
                 },
                 sync: IosPolicySyncCapabilities { lan: false },
                 about: IosPolicyAboutCapabilities { git_info: false },
@@ -416,6 +437,17 @@ impl IosPolicyCapabilities {
                     )));
                 }
             }
+        }
+        if self
+            .llm
+            .available_chat_completion_sources()
+            .next()
+            .is_none()
+        {
+            return Err(DomainError::InvalidData(
+                "ios_policy: llm.chat_completion_sources.allowlist leaves no chat completion source available"
+                    .to_string(),
+            ));
         }
 
         Ok(())
@@ -514,6 +546,10 @@ impl IosPolicyCapabilitiesOverride {
         if let Some(value) = ai.image_generation {
             capabilities.ai.image_generation = value;
             overridden.push("ai.image_generation".to_string());
+        }
+        if let Some(value) = ai.horde {
+            capabilities.ai.horde = value;
+            overridden.push("ai.horde".to_string());
         }
 
         let sync = self.sync;
@@ -667,6 +703,41 @@ mod tests {
             report
                 .overridden_capabilities
                 .contains(&"llm.endpoint_overrides".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_source_needs_endpoint_overrides() {
+        let resolve = |allowlist: &[&str]| {
+            resolve_ios_policy_activation_report(
+                IosPolicyScope::Ios,
+                Some(&serde_json::json!({
+                    "version": 1,
+                    "profile": "ios_external_beta",
+                    "overrides": {
+                        "capabilities": {
+                            "llm": { "chat_completion_sources": { "allowlist": allowlist } }
+                        }
+                    }
+                })),
+                None,
+            )
+        };
+
+        let report = resolve(&["openai", "custom"]).unwrap();
+        let available = report
+            .capabilities
+            .llm
+            .available_chat_completion_sources()
+            .collect::<Vec<_>>();
+        assert_eq!(available, [ChatCompletionSource::OpenAi]);
+
+        let error = resolve(&["custom"]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("leaves no chat completion source"),
+            "unexpected error: {error}"
         );
     }
 }

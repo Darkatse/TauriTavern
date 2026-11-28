@@ -3,10 +3,9 @@ use std::sync::Arc;
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-use tauri::{State, ipc::Channel};
+use tauri::State;
 
 use crate::app::AppState;
-use crate::presentation::commands::agent_live_projection::AgentRunLivePresenter;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
@@ -25,9 +24,9 @@ use tt_application::dto::agent_dto::{
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentResumeRunDto,
     AgentRetargetPresetRefsDto, AgentRetargetPresetRefsResultDto, AgentRunHandleDto,
-    AgentRunLiveUpdateDto, AgentRunPruneApplyResultDto, AgentRunPrunePlanDto, AgentSaveProfileDto,
-    AgentStartRunDto, AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto,
-    AgentSubscribeRunLiveProjectionDto, AgentTaskDetailDto, AgentWorkspaceFileDto,
+    AgentRunPruneApplyResultDto, AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto, AgentTaskDetailDto,
+    AgentWorkspaceFileDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -93,55 +92,6 @@ pub async fn finish_agent_run_presentation(
         .finish_run_presentation(dto)
         .await
         .map_err(map_command_error("Failed to finish agent run presentation"))
-}
-
-#[tauri::command]
-pub async fn subscribe_agent_run_live_projection(
-    dto: AgentSubscribeRunLiveProjectionDto,
-    channel: Channel<AgentRunLiveUpdateDto>,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command("subscribe_agent_run_live_projection");
-
-    let Some(mut receiver) = app_state
-        .services
-        .agent_runtime_service
-        .subscribe_live_projection(&dto.run_id)
-        .await
-        .map_err(map_command_error(
-            "Failed to subscribe to agent run live projection",
-        ))?
-    else {
-        let _ = channel.send(AgentRunLiveUpdateDto::Snapshot {
-            calls: Vec::new(),
-            responses: Vec::new(),
-        });
-        return Ok(());
-    };
-
-    let mut presenter = AgentRunLivePresenter::default();
-    let snapshot = {
-        let projection = receiver.borrow_and_update();
-        presenter.snapshot(&projection)
-    };
-    if channel.send(snapshot).is_err() {
-        return Ok(());
-    }
-
-    loop {
-        if receiver.changed().await.is_err() {
-            return Ok(());
-        }
-        let updates = {
-            let projection = receiver.borrow_and_update();
-            presenter.updates(&projection)?
-        };
-        for update in updates {
-            if channel.send(update).is_err() {
-                return Ok(());
-            }
-        }
-    }
 }
 
 #[tauri::command]

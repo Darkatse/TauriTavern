@@ -5,24 +5,48 @@ import { getCodeMirrorEditor } from '../../lib.js';
 import { callGenericPopup, POPUP_TYPE } from '../popup.js';
 import { t } from '../i18n.js';
 import { copyText } from '../utils.js';
+import { hostPlatform } from '../util/host-identity.js';
 
 /** @type {boolean | null} */
 let enabled = null;
+/** @type {Awaited<ReturnType<typeof getCodeMirrorEditor>> | null} */
+let editorBundle = null;
 
 /**
  * @typedef {object} CodeMirrorEditorHandle
  * @property {HTMLDivElement} wrapper
- * @property {number} height
  * @property {() => void} focus
  * @property {() => void} requestMeasure
  * @property {() => void} reset
  * @property {() => void} updateReadOnly
+ * @property {() => void} updateName
  * @property {(options?: { input?: boolean, selection?: boolean }) => boolean} flush
  * @property {() => void} destroy
  */
 
 /** @type {WeakMap<HTMLTextAreaElement, CodeMirrorEditorHandle>} */
 const mountedEditors = new WeakMap();
+
+/**
+ * Chromium hosts keep the editor in a shadow root: Blink re-checks every :has() anchor around it on each keystroke.
+ * WebKit hosts keep it in the page: an edit there that replaces a selection reaching the last line pulls page
+ * content into the editor.
+ */
+function isolatesEditor() {
+    const platform = hostPlatform();
+    switch (platform) {
+        case 'windows':
+        case 'android':
+        case 'ohos':
+            return true;
+        case 'macos':
+        case 'ios':
+        case 'linux':
+            return false;
+        default:
+            throw new Error(`Unsupported host platform: ${platform}`);
+    }
+}
 
 /** @param {Record<string, any>} settings */
 export function initializeCodeMirrorEditor(settings) {
@@ -35,9 +59,9 @@ export function initializeCodeMirrorEditor(settings) {
 
 /**
  * @param {HTMLTextAreaElement} source
- * @param {{ onChange?: () => void, signal?: AbortSignal }} [options]
+ * @param {{ onChange?: () => void, signal?: AbortSignal, format?: { label: string, run: (text: string) => string } }} [options]
  */
-export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
+export async function mountCodeMirrorEditor(source, { onChange, signal, format } = {}) {
     if (signal?.aborted) return null;
     if (enabled === null) {
         throw new Error('CodeMirror editor is not initialized');
@@ -54,7 +78,10 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         return existing;
     }
 
-    const { createCodeMirrorView } = await getCodeMirrorEditor();
+    // Mounting waits for the caller's synchronous work, such as a drawer showing the source, but once the bundle
+    // has loaded it finishes before the next frame, so the source never renders on its own.
+    await null;
+    const { createCodeMirrorView } = editorBundle ??= await getCodeMirrorEditor();
     if (signal?.aborted || !source.isConnected) {
         return null;
     }
@@ -63,33 +90,40 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         return loadedEditor;
     }
 
-    const sourceStyle = getComputedStyle(source);
-    const height = source.offsetHeight;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'tt-codemirror-editor';
-    wrapper.style.flex = sourceStyle.flex;
-    wrapper.style.font = sourceStyle.font;
-    wrapper.style.textAlign = sourceStyle.textAlign;
-    wrapper.style.backgroundColor = sourceStyle.backgroundColor;
-    wrapper.style.borderRadius = sourceStyle.borderRadius;
-    wrapper.style.width = '100%';
-    wrapper.style.height = `${height}px`;
-    wrapper.style.overflow = 'hidden';
-    source.insertAdjacentElement('afterend', wrapper);
-
     const sourceDisplay = source.style.display;
     const focused = document.activeElement === source;
     const [anchor, head] = source.selectionDirection === 'backward'
         ? [source.selectionEnd, source.selectionStart]
         : [source.selectionStart, source.selectionEnd];
+
+    // The editor takes the source's box. Unless that box is sized by the text, the text is never laid out.
+    const sourceContentVisibility = source.style.contentVisibility;
+    source.style.contentVisibility = 'hidden';
+    const sourceStyle = getComputedStyle(source);
+    if (sourceStyle.getPropertyValue('field-sizing') === 'content') source.style.contentVisibility = sourceContentVisibility;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'tt-codemirror-editor';
+    wrapper.style.flex = sourceStyle.flex;
+    wrapper.style.minHeight = sourceStyle.minHeight;
+    wrapper.style.font = sourceStyle.font;
+    wrapper.style.textAlign = sourceStyle.textAlign;
+    wrapper.style.backgroundColor = sourceStyle.backgroundColor;
+    wrapper.style.borderRadius = sourceStyle.borderRadius;
+    wrapper.style.width = '100%';
+    wrapper.style.height = `${source.offsetHeight}px`;
+    wrapper.style.overflow = 'hidden';
     const label = getEditorName(source);
 
     const editor = createCodeMirrorView(wrapper, {
+        isolated: isolatesEditor(),
         doc: source.value,
         readOnly: source.disabled || source.readOnly,
         ariaLabel: label,
+        describedBy: source.ariaDescribedByElements,
         placeholder: source.placeholder,
         selection: focused ? { anchor, head } : undefined,
+        resize: sourceStyle.resize,
+        format,
         onChange,
         phrases: {
             Undo: t`Undo`, Redo: t`Redo`, 'Copy all': t`Copy all`, 'Editor tools': t`Editor tools`,
@@ -116,11 +150,13 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
     /** @type {CodeMirrorEditorHandle} */
     const handle = {
         wrapper,
-        height,
         focus: editor.focus,
         requestMeasure: editor.requestMeasure,
         updateReadOnly() {
             editor.setReadOnly(source.disabled || source.readOnly);
+        },
+        updateName() {
+            editor.setAriaLabel(getEditorName(source));
         },
         reset() {
             editor.reset(source.value, source.disabled || source.readOnly);
@@ -144,8 +180,11 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         },
     };
 
+    // Built off the page, the editor joins it in one change that the next frame styles together.
     mountedEditors.set(source, handle);
+    source.insertAdjacentElement('afterend', wrapper);
     source.style.display = 'none';
+    source.style.contentVisibility = sourceContentVisibility;
     if (focused) editor.focus();
     return handle;
 }
@@ -162,6 +201,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
         return false;
     }
 
+    const { width, height, flex } = editor.wrapper.style;
     const host = document.createElement('div');
     host.className = 'height100p wide100p flex-container flexFlowColumn';
     host.append(editor.wrapper);
@@ -171,7 +211,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
     try {
         await callGenericPopup(host, POPUP_TYPE.TEXT, '', { label: getEditorName(source), wide: true, large: true, animation: 'none' });
     } finally {
-        editor.wrapper.style.height = `${editor.height}px`;
+        Object.assign(editor.wrapper.style, { width, height, flex });
         if (source.isConnected) {
             source.insertAdjacentElement('afterend', editor.wrapper);
             editor.requestMeasure();

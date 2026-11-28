@@ -60,12 +60,3 @@ export function restoreTimelineScrollAnchor(
     scroller.scrollTop = anchor.scrollTop + Math.max(0, scroller.scrollHeight - anchor.scrollHeight);
     onViewport(readTimelineViewport(scroller));
 }
-
-export function scrollTimelineToBottom(
-    scroller: HTMLElement | null,
-    onViewport: (viewport: TimelineViewport) => void,
-): void {
-    if (!scroller) return;
-    scroller.scrollTop = scroller.scrollHeight;
-    onViewport(readTimelineViewport(scroller));
-}

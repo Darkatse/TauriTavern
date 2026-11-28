@@ -4,7 +4,7 @@ import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js'
 
 const STORAGE_KEY = 'tauritavern:extensions_menu_shortcuts';
 const CONTAINER_ID = 'tauritavern_extensions_menu_shortcuts';
-const DEFAULT_SHORTCUT_IDS = ['sync'];
+const DEFAULT_SHORTCUT_IDS = ['sync', 'llm-api-logs'];
 
 const SHORTCUTS = [
     {
@@ -37,11 +37,11 @@ const SHORTCUTS = [
     },
     {
         id: 'llm-api-logs',
-        label: 'LLM API Logs',
+        label: 'Request Inspector',
         icon: 'fa-file-lines',
         open: async () => {
-            const { openLlmApiLogsPanel } = await import('./dev-logs.js');
-            await openLlmApiLogsPanel();
+            const { openRequestInspector } = await import('./request-inspector.js');
+            await openRequestInspector({ select: 'latest' });
         },
     },
     {

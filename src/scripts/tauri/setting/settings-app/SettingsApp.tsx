@@ -50,6 +50,7 @@ type SettingsAppProps = {
     controller: SettingsController;
     capabilities: SettingsCapabilities;
     initialDataRoot: SettingsDataRootState | null;
+    initialKeysExposure: boolean;
     themeOptions: SettingsOption[];
     backgroundOptions: SettingsBackgroundOption[];
     currentBackground: string;
@@ -61,6 +62,7 @@ function SettingsApp({
     controller,
     capabilities,
     initialDataRoot,
+    initialKeysExposure,
     themeOptions,
     backgroundOptions,
     currentBackground,
@@ -69,6 +71,8 @@ function SettingsApp({
 }: SettingsAppProps) {
     const { draft, chatBackupStorageStats } = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
     const [appearanceOpen, setAppearanceOpen] = useState(false);
+    const [keysExposure, setKeysExposure] = useState(initialKeysExposure);
+    const [keysExposureBusy, setKeysExposureBusy] = useState(false);
 
     const chatBackupHistoryDisabled = isZeroLimit(draft.chatBackups.maxFilesPerPrefix)
         || isZeroLimit(draft.chatBackups.maxTotalFiles)
@@ -78,6 +82,18 @@ function SettingsApp({
     const showHelp = (topic: string) => {
         void actions.showHelp(topic);
     };
+
+    async function changeKeysExposure(allowed: boolean): Promise<void> {
+        setKeysExposureBusy(true);
+        try {
+            const stored = await actions.setKeysExposure(allowed);
+            if (typeof stored === 'boolean') {
+                setKeysExposure(stored);
+            }
+        } finally {
+            setKeysExposureBusy(false);
+        }
+    }
 
     function setChatBackupStorageUnit(value: string): void {
         const nextUnit: ChatBackupStorageUnit = value === 'GiB' ? 'GiB' : 'MiB';
@@ -99,8 +115,23 @@ function SettingsApp({
                 </div>
             </header>
 
-            {capabilities.supportsCloseToTrayOnClose && (
-                <SettingsSection title={tr('Interface')} icon="fa-window-minimize">
+            <SettingsSection title={tr('Interface')} icon="fa-display">
+                <SettingRow
+                    label={tr('Generation notifications')}
+                    helpTopic={capabilities.backgroundShowsProgressUi
+                        ? 'generationNotificationsWithProgress'
+                        : 'generationNotifications'}
+                    helpTitle={tr('Learn more')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.generationNotificationsEnabled}
+                        ariaLabel={tr('Generation notifications')}
+                        onChange={checked => controller.updateDraft('generationNotificationsEnabled', checked)}
+                    />
+                </SettingRow>
+
+                {capabilities.supportsCloseToTrayOnClose && (
                     <SettingRow
                         label={tr('Minimize to tray on close (Windows)')}
                         helpTopic="closeToTray"
@@ -113,8 +144,8 @@ function SettingsApp({
                             onChange={checked => controller.updateDraft('closeToTrayOnClose', checked)}
                         />
                     </SettingRow>
-                </SettingsSection>
-            )}
+                )}
+            </SettingsSection>
 
             <SettingsSection title={tr('Performance')} icon="fa-gauge-high">
                 <SettingRow
@@ -320,16 +351,17 @@ function SettingsApp({
                     onHelp={showHelp}
                 >
                     <ToggleSwitch
-                        checked={draft.allowKeysExposure}
+                        checked={keysExposure}
+                        disabled={keysExposureBusy}
                         ariaLabel={tr('Allow Keys Exposure')}
-                        onChange={checked => controller.updateDraft('allowKeysExposure', checked)}
+                        onChange={checked => void changeKeysExposure(checked)}
                     />
                 </SettingRow>
 
                 <SettingRow
                     label={tr('Enable Character/User Avatar Original Images')}
                     helpTopic="avatarPersonaOriginalImages"
-                    helpTitle={tr('When enabled, character/user avatars load full-size images. Takes effect after reload.')}
+                    helpTitle={tr('When enabled, character/user avatars in chat load full-size images, and lists keep thumbnails. Takes effect after reload.')}
                     onHelp={showHelp}
                 >
                     <ToggleSwitch
@@ -372,7 +404,7 @@ function SettingsApp({
                     <ActionButton label={tr('Reload Frontend')} icon="fa-arrows-rotate" onClick={() => void actions.reloadFrontend()} />
                     <ActionButton label={tr('Frontend Logs')} icon="fa-terminal" onClick={() => void actions.openFrontendLogs()} />
                     <ActionButton label={tr('Backend Logs')} icon="fa-server" onClick={() => void actions.openBackendLogs()} />
-                    <ActionButton label={tr('LLM API Logs')} icon="fa-file-lines" onClick={() => void actions.openLlmApiLogs()} />
+                    <ActionButton label={tr('Request Inspector')} icon="fa-file-lines" onClick={() => void actions.openRequestInspector()} />
                 </div>
             </SettingsSection>
 
@@ -408,6 +440,7 @@ export function mountTauriTavernSettingsApp(
                 controller={controller}
                 capabilities={options.viewModel.capabilities}
                 initialDataRoot={options.viewModel.dataRoot}
+                initialKeysExposure={options.viewModel.values.allowKeysExposure}
                 themeOptions={options.themeOptions ?? []}
                 backgroundOptions={options.backgroundOptions ?? []}
                 currentBackground={options.currentBackground ?? ''}

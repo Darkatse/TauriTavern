@@ -25,8 +25,6 @@
     serviceWorker.addEventListener('message', ({ data, ports: [port] }) => {
         if (data?.type === 'tt-ext-proxy-request') void proxy(data, port);
     });
-    // Head stylesheets may load through this proxy while module scripts wait for them.
-    serviceWorker.startMessages();
     window.__TAURITAVERN_DEV_SW_READY__ = install();
 
     async function rebind() {

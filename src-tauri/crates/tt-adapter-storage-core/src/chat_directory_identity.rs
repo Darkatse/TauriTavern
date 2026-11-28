@@ -308,11 +308,7 @@ async fn legacy_candidate_is_ambiguous(
     }
 
     let character_card = characters_dir.join(format!("{}.png", candidate_key));
-    if path_is_file(&character_card).await? {
-        return Ok(true);
-    }
-
-    Ok(false)
+    path_is_file(&character_card).await
 }
 
 fn legacy_chat_dir_candidate_keys(canonical_key: &str) -> Vec<String> {

@@ -36,30 +36,46 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
         throw new Error('agent.chat_completion_required: Agent runtime requires the OpenAI/chat-completion frontend path');
     }
 
-    const { generateData } = await captureAgentDryRun(script, generationType, {
+    const dryRun = await script.Generate(generationType, {
         ...generateOptions,
         agentMode: true,
         agentContextPolicy,
         agentSystemPrompt,
-    });
-    const messages = generateData?.prompt;
-    assertMessagesReady(messages);
-    assertNoExternalToolTurns(messages);
+    }, true);
+    if (!dryRun?.generateData) {
+        throw new Error('agent.prompt_snapshot_missing: the dry run assembled no prompt');
+    }
+    const { generateData } = dryRun;
     const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(generateData.frozenRunInputSnapshot);
 
     return {
-        currentPromptSnapshotSeed: {
+        currentPromptSnapshotSeed: createCurrentPromptSnapshotSeed(generateData, {
             generationType,
             contextPolicy: agentContextPolicy,
-            messages: structuredClone(messages),
-            jsonSchema: generateOptions.jsonSchema ?? null,
-            worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation ?? null,
-        },
+            jsonSchema: generateOptions.jsonSchema,
+            frozenRunInputSnapshot,
+        }),
         frozenRunInputSnapshot,
         generationIntent: {
             source: LEGACY_DRY_RUN_SOURCE,
             generationType,
         },
+    };
+}
+
+/**
+ * @param {any} generateData
+ * @param {{ generationType: string; contextPolicy: any; jsonSchema?: any; frozenRunInputSnapshot: any }} input
+ */
+export function createCurrentPromptSnapshotSeed(generateData, { generationType, contextPolicy, jsonSchema, frozenRunInputSnapshot }) {
+    assertMessagesReady(generateData?.prompt);
+    return {
+        generationType,
+        contextPolicy,
+        messages: generateData.prompt,
+        toolData: generateData.toolData ?? null,
+        jsonSchema: jsonSchema ?? null,
+        worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation ?? null,
     };
 }
 
@@ -107,6 +123,7 @@ export async function prepareCurrentPromptPayload(input) {
             jsonSchema: seed.jsonSchema ?? null,
             agentMode: true,
             macroContext,
+            toolData: seed.toolData,
         },
     ));
 
@@ -141,51 +158,9 @@ function normalizeGenerateOptions(value) {
     return value;
 }
 
-/** @param {any} script @param {string} generationType @param {Record<string, any>} generateOptions */
-async function captureAgentDryRun(script, generationType, generateOptions) {
-    /** @type {any} */
-    let generateData = null;
-    /** @param {any} capturedGenerateData @param {boolean} dryRun */
-    const generateListener = (capturedGenerateData, dryRun) => {
-        if (dryRun === true) {
-            generateData = capturedGenerateData;
-        }
-    };
-
-    script.eventSource.on(script.event_types.GENERATE_AFTER_DATA, generateListener);
-    try {
-        await script.Generate(generationType, generateOptions, true);
-    } finally {
-        script.eventSource.removeListener(script.event_types.GENERATE_AFTER_DATA, generateListener);
-    }
-
-    if (!generateData || typeof generateData !== 'object' || Array.isArray(generateData)) {
-        throw new Error('agent.prompt_snapshot_missing: dryRun did not emit generate_after_data');
-    }
-
-    return { generateData };
-}
-
 /** @param {any} messages */
 function assertMessagesReady(messages) {
     if (!Array.isArray(messages)) {
-        throw new Error('agent.prompt_snapshot_messages_required: dryRun did not produce chat-completion messages');
-    }
-}
-
-/** @param {any[]} messages */
-function assertNoExternalToolTurns(messages) {
-    if (!Array.isArray(messages)) {
-        return;
-    }
-
-    const hasToolTurn = messages.some((message) => {
-        const role = String(message?.role || '').toLowerCase();
-        return role === 'tool'
-            || (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
-    });
-
-    if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
+        throw new Error('agent.prompt_snapshot_messages_required: Generate did not produce chat-completion messages');
     }
 }

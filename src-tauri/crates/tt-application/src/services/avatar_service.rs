@@ -1,8 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::dto::avatar_image_dto::ImageCropDto;
 use tt_domain::errors::DomainError;
-use tt_domain::models::avatar::{AvatarUploadResult, CropInfo};
+use tt_domain::models::avatar::AvatarUploadResult;
+use tt_ports::avatar_images::ImageCrop;
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 /// Service for managing user avatars
@@ -41,11 +43,11 @@ impl AvatarService {
         &self,
         file_path: &Path,
         overwrite_name: Option<String>,
-        crop_info: Option<CropInfo>,
+        crop: Option<ImageCropDto>,
     ) -> Result<AvatarUploadResult, DomainError> {
         tracing::debug!("Uploading avatar: {:?}", file_path);
         self.avatar_repository
-            .upload_avatar(file_path, overwrite_name, crop_info)
+            .upload_avatar(file_path, overwrite_name, crop.map(ImageCrop::from))
             .await
     }
 }

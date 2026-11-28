@@ -1,19 +1,15 @@
 // @ts-check
 
-import { getByPath, mergeObjects, setByPath, unsetByPath } from './form-object-utils.js';
-import { formDataToCreateCharacterDto } from './character-create-mapper.js';
+import { setByPath, unsetByPath } from './form-object-utils.js';
+import { buildCharacterCard, formDataToCharacterPayload } from './character-create-mapper.js';
 import { assertCharacterAvatarFileName } from './character-identity.js';
 import { parseCropParam } from './character-request-utils.js';
 
 /**
- * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
- */
-
-/**
+ * @typedef {import('../../context/types.js').MaterializeUploadFileFn} MaterializeUploadFileFn
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveCharacterIdFn
  * @typedef {(options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>} ResolveExistingCharacterIdFn
- * @typedef {(file: Blob, options?: { preferredName?: string; preferredExtension?: string; kind?: string }) => Promise<MaterializedFileInfo | null>} MaterializeUploadFileFn
  */
 
 /**
@@ -45,83 +41,33 @@ export function createCharacterFormService({
         return assertCharacterAvatarFileName(formData.get('avatar_url'), 'avatar_url', { required: true });
     }
 
-    /**
-     * @param {Record<string, any>} target
-     * @param {Record<string, any>} values
-     */
-    function assignObjectPaths(target, values) {
-        for (const [path, value] of Object.entries(values)) {
-            setByPath(target, path, value);
-        }
-    }
-
     /** @param {FormData} formData */
     function buildCharacterCardFromForm(formData) {
-        const dto = formDataToCreateCharacterDto(formData);
-        const baseCard = JSON.parse(dto.json_data || '{}');
-        const name = dto.name.trim();
-
-        if (!name) {
-            throw new Error('Character name is required');
-        }
-
+        const card = buildCharacterCard(formDataToCharacterPayload(formData));
         const chat = formData.has('chat')
             ? stringFromForm(formData, 'chat', '').trim()
-            : `${name} - ${new Date().toISOString()}`;
+            : `${card.name} - ${new Date().toISOString()}`;
         const createDate = stringFromForm(formData, 'create_date', '').trim();
-        const mergedExtensions = mergeObjects({}, getByPath(baseCard, 'data.extensions', {}), dto.extensions);
-
-        unsetByPath(baseCard, 'json_data');
-
-        assignObjectPaths(baseCard, {
-            name,
-            description: dto.description,
-            personality: dto.personality,
-            scenario: dto.scenario,
-            first_mes: dto.first_mes,
-            mes_example: dto.mes_example,
-            creatorcomment: dto.creator_notes,
-            avatar: 'none',
-            talkativeness: dto.talkativeness,
-            fav: dto.fav,
-            tags: dto.tags,
-            spec: 'chara_card_v2',
-            spec_version: '2.0',
-            'data.name': name,
-            'data.description': dto.description,
-            'data.personality': dto.personality,
-            'data.scenario': dto.scenario,
-            'data.first_mes': dto.first_mes,
-            'data.mes_example': dto.mes_example,
-            'data.creator_notes': dto.creator_notes,
-            'data.system_prompt': dto.system_prompt,
-            'data.post_history_instructions': dto.post_history_instructions,
-            'data.tags': dto.tags,
-            'data.creator': dto.creator,
-            'data.character_version': dto.character_version,
-            'data.alternate_greetings': dto.alternate_greetings,
-            'data.extensions': mergedExtensions,
-        });
 
         if (formData.has('chat')) {
             if (chat) {
-                setByPath(baseCard, 'chat', chat);
+                setByPath(card, 'chat', chat);
             } else {
-                unsetByPath(baseCard, 'chat');
+                unsetByPath(card, 'chat');
             }
         } else {
-            setByPath(baseCard, 'chat', chat);
+            setByPath(card, 'chat', chat);
         }
 
         if (formData.has('create_date')) {
             if (createDate) {
-                setByPath(baseCard, 'create_date', createDate);
+                setByPath(card, 'create_date', createDate);
             } else {
-                unsetByPath(baseCard, 'create_date');
+                unsetByPath(card, 'create_date');
             }
         }
 
-        return baseCard;
+        return card;
     }
 
     /** @param {FormData} formData @param {URL} requestUrl */
@@ -144,11 +90,6 @@ export function createCharacterFormService({
                 preferredName,
             });
 
-            if (!fileInfo?.filePath) {
-                const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-                throw new Error(`Bad request: unable to access avatar file path${reason}`);
-            }
-
             try {
                 await safeInvoke('update_character_card_data', {
                     name: originalCharacterId,
@@ -160,7 +101,7 @@ export function createCharacterFormService({
                     },
                 });
             } finally {
-                await fileInfo.cleanup?.();
+                await fileInfo.cleanup();
             }
 
             return;
@@ -196,10 +137,6 @@ export function createCharacterFormService({
             kind: 'avatar',
             preferredName,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Bad request: unable to access uploaded avatar file${reason}`);
-        }
 
         try {
             await safeInvoke('update_avatar', {
@@ -210,7 +147,7 @@ export function createCharacterFormService({
                 },
             });
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     }
 
@@ -230,20 +167,16 @@ export function createCharacterFormService({
             kind: 'user-avatar',
             preferredName,
         });
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Bad request: unable to access avatar file path${reason}`);
-        }
 
         try {
             const uploaded = await safeInvoke('upload_avatar', {
                 file_path: fileInfo.filePath,
                 overwrite_name: overwriteName,
-                crop: crop ? JSON.stringify(crop) : null,
+                crop: crop || null,
             });
             return uploaded;
         } finally {
-            await fileInfo.cleanup?.();
+            await fileInfo.cleanup();
         }
     }
 

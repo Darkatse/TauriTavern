@@ -31,6 +31,15 @@ pub(super) fn install_window_close_handler(window: &tauri::webview::WebviewWindo
     });
 }
 
+/// The request runs in the next process; closing the window may be held by the tray or the page.
+#[cfg(desktop)]
+pub(crate) fn exit_for_safe_mode(app_handle: &tauri::AppHandle) {
+    app_handle.exit(0);
+}
+
+#[cfg(mobile)]
+pub(crate) fn exit_for_safe_mode(_app_handle: &tauri::AppHandle) {}
+
 pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
     if let tauri::RunEvent::ExitRequested {
         code: None, api, ..

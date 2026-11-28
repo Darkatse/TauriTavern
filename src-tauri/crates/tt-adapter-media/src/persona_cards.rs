@@ -4,15 +4,18 @@ use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
 use std::time::SystemTime;
 
-use serde_json::Value;
 use tt_adapter_storage_core::file_system::{
-    persist_file_blocking, persist_json_file_blocking, unique_temp_path,
+    KeptOriginal, persist_bytes_file_blocking, persist_file_blocking,
+    replace_keeping_original_blocking, unique_temp_path,
 };
 use tt_adapter_storage_core::png_metadata::{
     PNG_SIGNATURE, read_preferred_text_chunk, replace_text_chunks, write_utf8_text_chunk,
 };
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::persona::{Persona, Personas, take_personas};
+
+use crate::avatar_images::avatar_png;
 
 const KEYWORD: &str = "persona";
 const DEFAULT_AVATAR: &[u8] = include_bytes!("../../../../default/content/user-default.png");
@@ -92,13 +95,7 @@ pub(crate) fn with_persona(image: &[u8], persona: &Persona) -> Result<Vec<u8>, D
     } else {
         // Old imports can contain JPEG/WebP bytes under an existing avatar id.
         // Preserve that id and normalize the carrier only when it is written.
-        let decoded = image::load_from_memory(image)
-            .map_err(|error| DomainError::InvalidData(format!("Invalid Persona image: {error}")))?;
-        let mut buffer = Cursor::new(Vec::new());
-        decoded
-            .write_to(&mut buffer, image::ImageFormat::Png)
-            .map_err(|error| DomainError::InternalError(error.to_string()))?;
-        normalized = buffer.into_inner();
+        normalized = avatar_png(image.to_vec(), None)?;
         &normalized
     };
     let text = serde_json::to_string(persona)
@@ -161,12 +158,12 @@ pub(crate) fn import_persona(
     let bytes = match with_persona(&image, persona) {
         Ok(bytes) => bytes,
         Err(DomainError::InvalidData(error)) => {
-            let backup = path.with_file_name(format!("{id}.corrupt-{}", uuid::Uuid::new_v4()));
-            fs::copy(&path, &backup).map_err(io_error)?;
             let bytes = with_persona(DEFAULT_AVATAR, persona)?;
-            publish(&path, &bytes)?;
-            tracing::error!(target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                "Persona {id}: {error}; original saved at {}; using the default avatar", backup.display());
+            let kept = replace_keeping_original_blocking(&path, KeptOriginal::Corrupt, &bytes)?;
+            if let Some(kept) = kept {
+                tracing::error!(target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Persona {id}: {error}; original saved at {}; using the default avatar", kept.display());
+            }
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -237,7 +234,7 @@ pub fn migrate_personas(user_root: &Path, target_user_root: &Path) -> Result<(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(io_error(error)),
     };
-    let mut settings: Value = serde_json::from_slice(&bytes)
+    let mut settings = JsonDocument::parse(&bytes)
         .map_err(|error| DomainError::InvalidData(format!("Invalid Persona settings: {error}")))?;
     let Some(personas) = take_personas(&mut settings)? else {
         return Ok(());
@@ -255,7 +252,7 @@ pub fn migrate_personas(user_root: &Path, target_user_root: &Path) -> Result<(),
         }
         import_persona(&directory, &id, &persona)?;
     }
-    persist_json_file_blocking(&path, &settings)
+    persist_bytes_file_blocking(&path, &settings.to_vec())
 }
 
 fn io_error(error: std::io::Error) -> DomainError {

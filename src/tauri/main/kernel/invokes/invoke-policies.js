@@ -34,16 +34,6 @@ const PROVIDER_METADATA_TIMEOUT_MS = 35_000;
  * @typedef {Partial<Record<TauriInvokeCommand, InvokePolicy>> & Record<string, InvokePolicy>} HostInvokePolicies
  */
 
-/**
- * @param {any} args
- * @returns {string}
- */
-function countOpenAiTokensBatchKey(args) {
-    const dto = args?.dto ?? args ?? {};
-    const json = JSON.stringify(dto);
-    return fnv1a32(json);
-}
-
 /** @param {any} args */
 function exactTokenizerRequestKey(args) {
     const dto = args?.dto ?? args ?? {};
@@ -83,17 +73,17 @@ export function createHostInvokePolicies() {
             cacheTtlMs: 5_000,
             cacheLimit: 1,
         },
-        count_openai_tokens_batch: {
-            kind: 'dedupe',
-            maxConcurrent: 1,
-            cacheTtlMs: 2_000,
-            cacheLimit: 50,
-            key: countOpenAiTokensBatchKey,
-        },
         count_openai_token_prefixes: {
             kind: 'dedupe',
             maxConcurrent: 1,
             key: exactTokenizerRequestKey,
+        },
+        get_openrouter_providers: {
+            kind: 'dedupe',
+            key: () => 'singleton',
+            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
+            cacheTtlMs: 60_000,
+            cacheLimit: 1,
         },
         get_openrouter_model_providers: {
             kind: 'dedupe',
@@ -109,30 +99,6 @@ export function createHostInvokePolicies() {
             timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
             cacheTtlMs: 60_000,
             cacheLimit: 50,
-            key: providerMetadataKey,
-        },
-        get_siliconflow_embedding_models: {
-            kind: 'dedupe',
-            maxConcurrent: 2,
-            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
-            cacheTtlMs: 60_000,
-            cacheLimit: 10,
-            key: providerMetadataKey,
-        },
-        get_workers_ai_embedding_models: {
-            kind: 'dedupe',
-            maxConcurrent: 2,
-            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
-            cacheTtlMs: 60_000,
-            cacheLimit: 10,
-            key: providerMetadataKey,
-        },
-        get_workers_ai_multimodal_models: {
-            kind: 'dedupe',
-            maxConcurrent: 2,
-            timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
-            cacheTtlMs: 60_000,
-            cacheLimit: 10,
             key: providerMetadataKey,
         },
         get_openrouter_credits: {

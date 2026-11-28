@@ -76,12 +76,4 @@ globalThis.__TAURITAVERN_EMBEDDED_RUNTIME__.getPerfSnapshot();
 
 `Ctrl+Alt+P` 打开性能 HUD，其中的 `Runtime:` 行使用同一份快照。定位单个渲染块时，可查看 host 上的 `data-tt-runtime-slot-id`。
 
-在仓库根目录运行 `pnpm run test:contracts` 执行前端契约测试，`pnpm run check` 执行完整检查。
-
-浏览器验收使用同一目录启动本地服务：
-
-```sh
-python3 -m http.server 8000 --bind 127.0.0.1
-```
-
-打开[冷恢复验收页面](http://127.0.0.1:8000/tests/browser/embedded-runtime-recovery.html)，各项应显示 `PASS`。页面通过真实浏览器检查 JSR/LWB 的冷恢复，以及未就绪或失败候选竞争预算时，健康页面的 Document、表单值和加载次数是否保持不变。
+嵌入运行时的前端测试位于 `tests/webview/`，由 `pnpm run test:dom` 运行；`pnpm run check` 执行完整检查。

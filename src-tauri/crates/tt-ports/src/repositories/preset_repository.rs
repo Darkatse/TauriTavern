@@ -1,20 +1,18 @@
 use async_trait::async_trait;
 use tt_domain::errors::DomainError;
-use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::json_document::JsonDocument;
+use tt_domain::models::preset::PresetType;
 
 /// Repository interface for preset management
 #[async_trait]
 pub trait PresetRepository: Send + Sync {
-    /// Save a preset to the appropriate directory based on its type
-    ///
-    /// # Arguments
-    ///
-    /// * `preset` - The preset to save
-    ///
-    /// # Returns
-    ///
-    /// * `Result<(), DomainError>` - Success or error
-    async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError>;
+    /// The stored document carries `name`, in place when it already has one.
+    async fn save_preset(
+        &self,
+        name: &str,
+        preset_type: &PresetType,
+        preset: JsonDocument,
+    ) -> Result<(), DomainError>;
 
     /// Delete a preset by name and type
     ///
@@ -53,12 +51,12 @@ pub trait PresetRepository: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Result<Option<Preset>, DomainError>` - The preset if found, None otherwise
+    /// * `Result<Option<JsonDocument>, DomainError>` - The stored document if found, None otherwise
     async fn get_preset(
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<Preset>, DomainError>;
+    ) -> Result<Option<JsonDocument>, DomainError>;
 
     /// List all presets of a specific type
     ///
@@ -80,10 +78,10 @@ pub trait PresetRepository: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Result<Option<DefaultPreset>, DomainError>` - The default preset if found, None otherwise
+    /// * `Result<Option<JsonDocument>, DomainError>` - The bundled document if found, None otherwise
     async fn get_default_preset(
         &self,
         name: &str,
         preset_type: &PresetType,
-    ) -> Result<Option<DefaultPreset>, DomainError>;
+    ) -> Result<Option<JsonDocument>, DomainError>;
 }

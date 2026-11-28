@@ -37,7 +37,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://tauritavern.github.io/en/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://tauritavern.github.io/en/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?style=flat-square&logo=apple&logoColor=white)](https://testflight.apple.com/join/gpqAdeTm)
-[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://github.com/Darkatse/TauriTavern/releases/latest)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://tauritavern.github.io/en/downloads/platforms/)
 
 [All platforms](https://tauritavern.github.io/en/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -142,10 +142,12 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Windows portable**: requires the WebView2 runtime on the system.
 >
 > **HarmonyOS (beta)**: the HAP in Releases is for HarmonyOS NEXT. Sign it with your own certificate to install it; we recommend [Auto-Installer](https://github.com/likuai2010/auto-installer/). It has only been tested on the emulator so far.
+>
+> **If the app won't open**: quit and reopen TauriTavern 5 times in a row within 3 minutes, and it will ask whether to start in safe mode.
 
 ## What is TauriTavern
 
-TauriTavern ports [SillyTavern](https://github.com/SillyTavern/SillyTavern) into a true native app: the frontend keeps the full upstream experience (synced to 1.19.0), while the backend is rebuilt from Node.js into Rust (Tauri v2).
+TauriTavern ports [SillyTavern](https://github.com/SillyTavern/SillyTavern) into a true native app: the frontend keeps the full upstream experience (synced to 1.19.1), while the backend is rebuilt from Node.js into Rust (Tauri v2).
 
 No Node.js to install, no command line — just download and run. Your character cards, chats, presets, world info, and frontend extensions all stay compatible with SillyTavern.
 
@@ -154,7 +156,7 @@ No Node.js to install, no command line — just download and run. Your character
 ## Highlights
 
 - 🖥️ **Five native platforms**: Windows, macOS, Linux, Android, and iOS — one experience everywhere; native HarmonyOS support is currently in beta
-- 🎭 **Full SillyTavern experience**: frontend synced to upstream 1.19.0, with fully compatible data formats and directory layout
+- 🎭 **Full SillyTavern experience**: frontend synced to upstream 1.19.1, with fully compatible data formats and directory layout
 - 🧩 **Frontend extension ecosystem**: built-in native Git — install, update, and switch branches right in the UI (Node-only backend plugins are not supported)
 - 🔄 **Built-in multi-device sync**: encrypted LAN pairing, or automatic upload via the remote TT-Sync v2
 - 🤖 **Agent framework**: tool calling, Skills, sub-agents, and a run timeline; development is ongoing

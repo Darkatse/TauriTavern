@@ -1,6 +1,7 @@
 import { Popper, getHljs } from '../lib.js';
 
-import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
+import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION, this_chid } from '../script.js';
+import { selected_group } from './group-chats.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
 import { delay, deleteValueByPath, equalsIgnoreCaseAndAccents, escapeHtml, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
@@ -106,11 +107,10 @@ export function cancelDebouncedMetadataSave() {
 }
 
 export function saveMetadataDebounced() {
-    const context = getContext();
-    const groupId = context.groupId;
-    const characterId = context.characterId;
+    const groupId = selected_group;
+    const characterId = this_chid;
 
-    cancelDebouncedMetadataSave();
+    clearTimeout(saveMetadataTimeout);
 
     saveMetadataTimeout = setTimeout(async () => {
         const newContext = getContext();
@@ -655,6 +655,16 @@ export function isCodeRenderDelegatedToThirdPartyRenderer() {
     return getEnabledChatSurfaceRendererCapabilities().length > 0;
 }
 
+/** More than one enabled renderer extension renders code blocks. */
+export class ChatSurfaceRendererConflictError extends Error {
+    /** @param {string[]} displayNames */
+    constructor(displayNames) {
+        super(`Bounded ChatSurface cannot start while multiple renderers have code block rendering enabled: ${displayNames.join(', ')}`);
+        this.name = 'ChatSurfaceRendererConflictError';
+        this.displayNames = displayNames;
+    }
+}
+
 /**
  * Initializes ChatSurface hooks and the required renderer before the first projection.
  */
@@ -662,10 +672,8 @@ export async function activateRequiredChatSurfaceExtensions() {
     const enabled = getEnabledChatSurfaceRendererCapabilities();
     const codeRenderers = enabled.filter(capability => capability.rendersCodeBlocks());
     if (codeRenderers.length > 1) {
-        throw new Error(
-            'Bounded ChatSurface cannot start while multiple renderers have code block rendering enabled: '
-            + codeRenderers.map(({ extensionName }) => extensionName).join(', '),
-        );
+        throw new ChatSurfaceRendererConflictError(codeRenderers.map(({ extensionName, internalName }) =>
+            manifests[internalName].display_name || extensionName));
     }
     const requiredNames = new Set(enabled.map(capability => capability.internalName));
     const contentExtensions = extensionNames.filter(name =>

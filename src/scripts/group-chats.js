@@ -90,6 +90,7 @@ import {
     resetChatSurfaceView,
     withChatSurfaceStructureMutation,
 } from '../script.js';
+import { getListThumbnailUrl } from './tauri/list-thumbnails.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { isExternalMediaAllowed } from './chats.js';
@@ -953,7 +954,7 @@ function getGroupAvatar(group) {
         for (const member of group.members) {
             const charIndex = characters.findIndex(x => x.avatar === member);
             if (charIndex !== -1 && characters[charIndex].avatar !== 'none') {
-                const avatar = getThumbnailUrl('avatar', characters[charIndex].avatar);
+                const avatar = getListThumbnailUrl('avatar', characters[charIndex].avatar);
                 memberAvatars.push(avatar);
             }
             if (memberAvatars.length === 4) {
@@ -1751,7 +1752,7 @@ function printGroupMembers(pageNumber = undefined) {
  * @returns {JQuery<HTMLElement>} jQuery element representing the group character block
  */
 function getGroupCharacterBlock(character) {
-    const avatar = getThumbnailUrl('avatar', character.avatar);
+    const avatar = getListThumbnailUrl('avatar', character.avatar);
     const template = $('#group_member_template .group_member').clone();
     const isFav = !!character.fav || character.fav == 'true';
     template.data('id', character.avatar);

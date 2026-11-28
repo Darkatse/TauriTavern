@@ -6,7 +6,8 @@ use super::provider_state::{
     next_provider_state, reset_transport_for_resume, responses_websocket_session_id,
 };
 use super::providers::AgentProviderAdapter;
-use super::schema::sanitize_schema_for_provider;
+use super::request_messages::canonical_request_messages;
+use super::request_tools::canonical_request_tools;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
@@ -29,6 +30,7 @@ fn model_tools(registry: &BuiltinAgentToolRegistry) -> Vec<AgentModelTool> {
             model_alias: descriptor.id.native_name().replace('.', "_"),
             description: descriptor.description.clone(),
             input_schema: descriptor.input_schema.clone(),
+            fields: Default::default(),
         })
         .collect()
 }
@@ -77,10 +79,6 @@ fn decodes_tool_call_to_canonical_identity() {
         .unwrap()
     );
     assert_eq!(decoded.tool_calls[0].call_id, "call_1");
-    assert_eq!(
-        decoded.tool_calls[0].provider_metadata["signature"],
-        "sig_1"
-    );
 }
 
 #[test]
@@ -113,8 +111,8 @@ fn session_history_replays_tools_without_readvertising_them() {
         "workspace_read_file"
     );
     assert_eq!(
-        encoded.payload["messages"][1]["name"],
-        "workspace_read_file"
+        encoded.payload["messages"][1]["tool_call_id"],
+        "history-call"
     );
 }
 
@@ -126,6 +124,8 @@ fn openai_compatible_replays_opaque_continuation() {
         "choices": [{
             "message": {
                 "content": null,
+                "refusal": null,
+                "annotations": [],
                 "reasoning": "Need tools",
                 "reasoning_content": " exact reasoning ",
                 "reasoning_details": [{
@@ -143,7 +143,9 @@ fn openai_compatible_replays_opaque_continuation() {
                         },
                         "extra_content": {
                             "google": { "thought_signature": "opaque-signature" }
-                        }
+                        },
+                        "signature": "call-signature",
+                        "index": 0
                     },
                     {
                         "id": "call_2",
@@ -174,12 +176,118 @@ fn openai_compatible_replays_opaque_continuation() {
             "data": "opaque-reasoning"
         }])
     );
+    assert!(message.get("refusal").is_none());
+    assert!(message.get("annotations").is_none());
     let calls = message["tool_calls"].as_array().unwrap();
     assert_eq!(
         calls[0]["extra_content"],
         json!({ "google": { "thought_signature": "opaque-signature" } })
     );
+    assert_eq!(calls[0]["signature"], "call-signature");
+    assert!(calls[0].get("index").is_none());
     assert!(calls[1].get("extra_content").is_none());
+}
+
+#[test]
+fn request_messages_encode_back_to_themselves() {
+    let messages = json!([
+        { "role": "system", "content": "Rules", "name": "narrator" },
+        { "role": "user", "content": "" },
+        { "role": "user", "content": [
+            { "type": "text", "text": "Hello" },
+            { "type": "text", "text": "World" }
+        ] },
+        { "role": "user", "content": [
+            { "type": "text", "text": "Look" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+        ] },
+        { "role": "tool", "tool_call_id": "call_1", "name": "read_lore", "content": "Unanswered." },
+        {
+            "role": "assistant",
+            "content": "Checking",
+            "reasoning_content": "",
+            "signature": "text-signature",
+            "prefix": true,
+            "native": { "gemini": { "content": { "role": "model", "parts": [] } } },
+            "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": { "name": "read_state", "arguments": "{\"target\":\"Alice\"}" },
+                "signature": "call-signature",
+                "extra_content": { "google": { "thought_signature": "opaque" } }
+            }]
+        },
+        { "role": "tool", "tool_call_id": "call_1", "content": "{\"hp\":3}", "note": "kept" },
+        {
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": " plan ",
+            "tool_calls": [{
+                "id": "call_2", "type": "function",
+                "function": { "name": "read_state", "arguments": "{}" }
+            }]
+        },
+        { "role": "tool", "tool_call_id": "call_2", "content": "" }
+    ]);
+
+    let canonical = canonical_request_messages(messages.as_array().unwrap().clone()).unwrap();
+    let request = basic_request("custom", Some("openai_compat"), canonical);
+    let encoded = encode_chat_completion_request(&request, false).unwrap();
+    assert_eq!(encoded.payload["messages"], messages);
+}
+
+#[test]
+fn request_tool_results_without_an_earlier_call_need_a_name() {
+    let error = canonical_request_messages(vec![
+        json!({ "role": "tool", "tool_call_id": "call_1", "content": "orphan" }),
+        json!({ "role": "assistant", "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": { "name": "read_state", "arguments": "{}" }
+        }] }),
+    ])
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.invalid_prompt_messages: message 0")
+    );
+}
+
+#[test]
+fn request_tools_encode_back_to_themselves() {
+    let tools = json!([
+        { "type": "function", "function": {
+            "name": "read_state",
+            "description": "",
+            "parameters": {
+                "type": "object",
+                "properties": { "title": { "type": "string" } },
+                "additionalProperties": false
+            },
+            "strict": true
+        } },
+        { "type": "function", "function": { "name": "ping" } }
+    ]);
+
+    let mut request = basic_request("custom", Some("openai_compat"), Vec::new());
+    request.tools = canonical_request_tools(Some(tools.clone())).unwrap();
+    let encoded = encode_chat_completion_request(&request, false).unwrap();
+    assert_eq!(encoded.payload["tools"], tools);
+}
+
+#[test]
+fn request_tools_need_distinct_names() {
+    let error = canonical_request_tools(Some(json!([
+        { "type": "function", "function": { "name": "read_state" } },
+        { "type": "function", "function": { "name": "read_state", "description": "Again" } }
+    ])))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("agent.invalid_prompt_tools: tool 1")
+    );
 }
 
 #[test]
@@ -325,12 +433,14 @@ fn encodes_tool_results_as_model_facing_text() {
             model_alias: "builtin_search".to_string(),
             description: None,
             input_schema: json!({ "type": "object" }),
+            fields: Default::default(),
         },
         AgentModelTool {
             tool_id: mcp_id.clone(),
             model_alias: "mcp_search".to_string(),
             description: None,
             input_schema: json!({ "type": "object" }),
+            fields: Default::default(),
         },
     ];
     request.messages = vec![AgentModelMessage {
@@ -457,66 +567,6 @@ fn rejects_incomplete_agent_turns_with_their_recovery_code() {
 }
 
 #[test]
-fn gemini_schema_sanitizer_projects_nested_objects_to_agent_friendly_schema() {
-    let schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "agentId": { "type": "string" },
-            "task": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                    "title": { "type": "string" },
-                    "objective": { "type": "string" },
-                    "context": {
-                        "type": "object",
-                        "additionalProperties": true,
-                        "description": "Free-form task context."
-                    }
-                },
-                "required": ["objective"]
-            }
-        },
-        "required": ["agentId", "task", "missing"]
-    });
-
-    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::Gemini);
-
-    assert_eq!(sanitized["required"], json!(["agentId", "task"]));
-    assert!(sanitized["properties"]["task"].get("required").is_none());
-    assert_eq!(sanitized["properties"]["task"]["type"], "object");
-    assert_eq!(
-        sanitized["properties"]["task"]["properties"]["context"]["type"],
-        "string"
-    );
-}
-
-#[test]
-fn claude_schema_sanitizer_only_removes_transport_metadata() {
-    let schema = json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "tool.schema.json",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "mode": {
-                "$id": "mode",
-                "type": "string",
-                "const": "draft"
-            }
-        }
-    });
-
-    let sanitized = sanitize_schema_for_provider(&schema, AgentProviderAdapter::ClaudeMessages);
-    assert!(sanitized.get("$schema").is_none());
-    assert!(sanitized.get("$id").is_none());
-    assert!(sanitized["properties"]["mode"].get("$id").is_none());
-    assert_eq!(sanitized["additionalProperties"], false);
-    assert_eq!(sanitized["properties"]["mode"]["const"], "draft");
-}
-
-#[test]
 fn openai_responses_continuation_sends_only_new_tool_results() {
     let registry = BuiltinAgentToolRegistry::all();
     let native_output = json!({
@@ -585,7 +635,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
     let messages = dto.payload["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "tool");
-    assert_eq!(messages[0]["name"], "workspace_write_file");
+    assert_eq!(messages[0]["tool_call_id"], "call_1");
     assert_eq!(dto.payload["previous_response_id"], "resp_1");
     assert!(
         dto.payload
@@ -871,68 +921,6 @@ fn gemini_provider_state_records_native_continuation() {
     assert_eq!(state["nativeContinuation"]["partCount"], 1);
 }
 
-#[test]
-fn cross_provider_switch_does_not_migrate_private_native_metadata() {
-    let request = basic_request(
-        "openai",
-        None,
-        vec![AgentModelMessage {
-            role: AgentModelRole::Assistant,
-            parts: vec![
-                AgentModelContentPart::Text {
-                    text: "portable text".to_string(),
-                },
-                AgentModelContentPart::Native {
-                    provider: "claude".to_string(),
-                    value: json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
-                },
-            ],
-            provider_metadata: Value::Null,
-        }],
-    );
-
-    let dto = encode_chat_completion_request(&request, false).unwrap();
-    let message = dto.payload["messages"][0].as_object().unwrap();
-    assert_eq!(message["content"], "portable text");
-    assert!(message.get("native").is_none());
-}
-
-#[test]
-fn same_provider_keeps_matching_private_native_metadata() {
-    for (source, format, provider, value) in [
-        (
-            "claude",
-            None,
-            "claude",
-            json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
-        ),
-        (
-            "custom",
-            Some("gemini_generate_content"),
-            "gemini",
-            json!({ "content": {
-            "role": "model", "parts": [{ "text": "plan", "thought": true, "thoughtSignature": "sig_1" }]
-        } }),
-        ),
-    ] {
-        let request = basic_request(
-            source,
-            format,
-            vec![AgentModelMessage {
-                role: AgentModelRole::Assistant,
-                parts: vec![AgentModelContentPart::Native {
-                    provider: provider.to_string(),
-                    value: value.clone(),
-                }],
-                provider_metadata: Value::Null,
-            }],
-        );
-
-        let dto = encode_chat_completion_request(&request, false).unwrap();
-        assert_eq!(dto.payload["messages"][0]["native"][provider], value);
-    }
-}
-
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {
     let mut request = basic_request("claude", None, Vec::new());
     request.tools = model_tools(&BuiltinAgentToolRegistry::all());
@@ -1046,6 +1034,7 @@ fn openai_tool_images_follow_the_complete_tool_result_group() {
         model_alias: "search".into(),
         description: None,
         input_schema: json!({"type":"object"}),
+        fields: Default::default(),
     });
     let dto = encode_chat_completion_request(&request, false).unwrap();
     assert_eq!(

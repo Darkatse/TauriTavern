@@ -5,12 +5,14 @@
 //! in `app::composition`; frontend-visible behavior is still owned by presentation
 //! commands and web resource adapters.
 
+mod environment;
 mod observability;
 mod plugins;
 mod resources;
 mod runtime_paths;
 mod setup;
 mod shutdown;
+mod thread_pool;
 mod window;
 
 use std::sync::Arc;
@@ -19,12 +21,25 @@ use tauri::Manager;
 use tt_adapter_storage_core::commit_stage::PageGeneration;
 
 use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
+use crate::presentation::commands::agent_live_projection::AgentRunLiveProjectionResource;
+use crate::presentation::commands::byte_reader_commands::ByteResource;
+use crate::presentation::commands::chat_swipe_commands::SwipeSourceResource;
+use crate::presentation::commands::helpers::close_page_resources;
 use crate::presentation::commands::registry::invoke_handler;
+use crate::presentation::web_resources::tauri_resource_adapter::read_host_resource_paths_as_empty_assets;
 
+pub(crate) use environment::host_environment;
+pub(crate) use setup::apply_startup_profile;
+pub(crate) use shutdown::exit_for_safe_mode;
 #[cfg(target_os = "windows")]
 pub(crate) use shutdown::request_frontend_shutdown;
 
 pub(crate) fn run() {
+    thread_pool::configure();
+
+    let mut context = tauri::generate_context!();
+    read_host_resource_paths_as_empty_assets(&mut context);
+
     // Builder order is part of the host contract: install native capabilities,
     // run setup to publish managed state and create the window, then expose the
     // fixed command registry.
@@ -39,15 +54,12 @@ pub(crate) fn run() {
                         .state::<Arc<AgentExtensionTools>>()
                         .clear_page(webview.label());
                 }
-                crate::presentation::commands::byte_reader_commands::close_page_byte_readers(
-                    webview,
-                );
-                crate::presentation::commands::chat_swipe_commands::close_page_chat_resources(
-                    webview,
-                );
+                close_page_resources::<ByteResource>(webview);
+                close_page_resources::<SwipeSourceResource>(webview);
+                close_page_resources::<AgentRunLiveProjectionResource>(webview);
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(shutdown::handle_run_event);
 }

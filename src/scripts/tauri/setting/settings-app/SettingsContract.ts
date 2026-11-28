@@ -16,6 +16,7 @@ export type SettingsCapabilities = {
     lanSyncAllowed: boolean;
     supportsCloseToTrayOnClose: boolean;
     supportsDataRootSelection: boolean;
+    backgroundShowsProgressUi: boolean;
 };
 
 export type ChatBackupStorageStats = {
@@ -45,6 +46,7 @@ export type SettingsValues = {
         maxTotalBytes: number;
     };
     closeToTrayOnClose: boolean;
+    generationNotificationsEnabled: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
@@ -114,12 +116,12 @@ export type SettingsDraft = {
         maxTotalUnit: ChatBackupStorageUnit;
     };
     closeToTrayOnClose: boolean;
+    generationNotificationsEnabled: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
         bypass: string;
     };
-    allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
     oledBackgroundEnabled: boolean;
     dynamicTheme: {
@@ -161,12 +163,12 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
             maxTotalUnit,
         },
         closeToTrayOnClose: values.closeToTrayOnClose,
+        generationNotificationsEnabled: values.generationNotificationsEnabled,
         requestProxy: {
             enabled: values.requestProxy.enabled,
             url: values.requestProxy.url,
             bypass: values.requestProxy.bypass.join('\n'),
         },
-        allowKeysExposure: values.allowKeysExposure,
         avatarPersonaOriginalImagesEnabled: values.avatarPersonaOriginalImagesEnabled,
         oledBackgroundEnabled: values.oledBackgroundEnabled,
         dynamicTheme: {
@@ -193,13 +195,15 @@ export type DynamicThemeDraft = SettingsDraft['dynamicTheme'];
 
 export type SettingsActions = {
     chooseDataRoot: () => Promise<string | null | undefined>;
+    /** `false` is a saved value; `null`/`undefined` mean no change. */
+    setKeysExposure: (allowed: boolean) => Promise<boolean | null | undefined>;
     chooseWallpaper: (request: { currentValue: string }) => Promise<string | null | undefined>;
     showHelp: (topicId: string) => Promise<unknown>;
     manageQuickAccess: () => Promise<unknown>;
     reloadFrontend: () => Promise<unknown>;
     openFrontendLogs: () => Promise<unknown>;
     openBackendLogs: () => Promise<unknown>;
-    openLlmApiLogs: () => Promise<unknown>;
+    openRequestInspector: () => Promise<unknown>;
     openSync: () => Promise<unknown>;
 };
 
@@ -222,13 +226,14 @@ export type SettingsHandle = {
 
 const REQUIRED_ACTIONS = [
     'chooseDataRoot',
+    'setKeysExposure',
     'chooseWallpaper',
     'showHelp',
     'manageQuickAccess',
     'reloadFrontend',
     'openFrontendLogs',
     'openBackendLogs',
-    'openLlmApiLogs',
+    'openRequestInspector',
     'openSync',
 ] as const;
 

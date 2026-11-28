@@ -4,8 +4,9 @@ use tt_domain::models::agent::AgentTaskRecord;
 
 #[tokio::test]
 async fn task_details_preserve_output_and_validate_persisted_sources_only_when_requested() {
-    let root = temp_root("agent-task-details");
-    let fixture = agent_runtime_fixture(&root);
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
+    let fixture = agent_runtime_fixture(root);
     let profile = resolve_contract_profile(&fixture).await;
     let run = contract_run("task-details", AgentRunPresentation::Background, &profile);
     fixture.agent_repository.create_run(&run).await.unwrap();
@@ -108,5 +109,4 @@ async fn task_details_preserve_output_and_validate_persisted_sources_only_when_r
         .await
         .unwrap_err();
     assert!(error.to_string().contains("agent.task_brief_invalid"));
-    let _ = fs::remove_dir_all(root).await;
 }

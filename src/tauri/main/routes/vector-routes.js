@@ -1,5 +1,13 @@
-import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
+import { commandErrorResponse } from '../../../scripts/util/command-error-utils.js';
 
+const EMBEDDING_MODEL_ROUTES = Object.freeze({
+    '/api/openai/chutes/models/embedding': 'chutes',
+    '/api/openai/nanogpt/models/embedding': 'nanogpt',
+    '/api/openai/siliconflow/models/embedding': 'siliconflow',
+    '/api/openai/workers-ai/models/embedding': 'workers_ai',
+    '/api/openrouter/models/embedding': 'openrouter',
+});
 const SUPPORTED_VECTOR_ENDPOINTS = new Set([
     'list',
     'insert',
@@ -9,6 +17,10 @@ const SUPPORTED_VECTOR_ENDPOINTS = new Set([
     'purge',
     'purge-all',
 ]);
+
+function asObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
 
 function normalizeEndpoint(wildcard) {
     return String(wildcard || '').replace(/^\/+/, '');
@@ -24,7 +36,11 @@ function vectorErrorCause(status) {
 
 async function invokeVector(context, jsonResponse, path, request) {
     try {
-        const response = await context.safeInvoke('vector_handle', { path, request });
+        const response = await context.safeInvoke('vector_handle', {
+            path,
+            request,
+            locale: getSillyTavernLocale(),
+        });
         const status = Number(response?.status);
         const safeStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : 500;
 
@@ -36,7 +52,7 @@ async function invokeVector(context, jsonResponse, path, request) {
         }
         return jsonResponse({ error: true, cause: 'embedding_unavailable', message: 'Invalid native vector response' }, 500);
     } catch (error) {
-        const resolved = resolveHostErrorResponse(extractErrorText(error));
+        const resolved = commandErrorResponse(error);
         return jsonResponse({
             error: true,
             cause: vectorErrorCause(resolved.status),
@@ -53,13 +69,12 @@ export function registerVectorRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: `Unsupported vector endpoint: ${endpoint}` }, 404);
         }
 
-        return invokeVector(
-            context,
-            jsonResponse,
-            endpoint,
-            body && typeof body === 'object' && !Array.isArray(body) ? body : {},
-        );
+        return invokeVector(context, jsonResponse, endpoint, asObject(body));
     });
+
+    for (const [path, source] of Object.entries(EMBEDDING_MODEL_ROUTES)) {
+        router.post(path, async ({ body }) => invokeVector(context, jsonResponse, 'models', { ...asObject(body), source }));
+    }
 
     router.post('/api/backends/kobold/embed', async ({ body }) => {
         return invokeVector(context, jsonResponse, 'koboldcpp-embed', {

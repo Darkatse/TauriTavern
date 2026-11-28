@@ -15,6 +15,7 @@ use super::markdown::render_markdown_value;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect, IncomingToolImage};
+use crate::services::agent_workspace_scope::LONG_RESULTS_ROOT;
 use crate::services::hashing::hex_lower;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
@@ -45,7 +46,8 @@ impl AgentRuntimeService {
             .record_tool_outcome(prepared, round, &file_base, outcome)
             .await?;
         if !outcome.result.tool_id.is_builtin() {
-            let readable_path = WorkspacePath::parse(format!("{file_base}.txt"))?;
+            let readable_path =
+                WorkspacePath::parse(format!("{LONG_RESULTS_ROOT}/{file_base}.txt"))?;
             let mut projected = outcome.result.clone();
             if let Some(mut content) = mcp_content {
                 append_notes(&mut content, &image_notes);
@@ -113,7 +115,7 @@ impl AgentRuntimeService {
             match normalized {
                 Ok(image) => {
                     let path = WorkspacePath::parse(format!(
-                        "{file_base}-{}.{}",
+                        "tool-results/{file_base}-{}.{}",
                         index + 1,
                         image.format.extension()
                     ))?;
@@ -198,7 +200,7 @@ impl AgentRuntimeService {
         file_base: &str,
         result: &AgentToolResult,
     ) -> Result<WorkspacePath, ApplicationError> {
-        let path = WorkspacePath::parse(format!("{file_base}.json"))?;
+        let path = WorkspacePath::parse(format!("tool-results/{file_base}.json"))?;
         let text = serde_json::to_string_pretty(result).map_err(|error| {
             ApplicationError::ValidationError(format!(
                 "agent.tool_result_serialize_failed: {error}"
@@ -231,21 +233,17 @@ impl AgentRuntimeService {
         round: usize,
         call_id: &str,
     ) -> Result<String, ApplicationError> {
-        let root = if self
-            .active_run_handle(run_id)
-            .await?
-            .target
-            .session_id()
-            .is_some()
-        {
-            format!("tool-results/{run_id}")
-        } else {
-            "tool-results".to_string()
-        };
-        Ok(format!(
-            "{root}/{invocation_id}/round-{round:03}-{}",
+        let base = format!(
+            "{invocation_id}/round-{round:03}-{}",
             tool_call_audit_file_stem(call_id)
-        ))
+        );
+        Ok(
+            match self.active_run_handle(run_id).await?.target.session_id() {
+                // The run ID prevents collisions in the shared Session workspace.
+                Some(_) => format!("{run_id}/{base}"),
+                None => base,
+            },
+        )
     }
 }
 
@@ -490,6 +488,25 @@ pub(super) fn mcp_known_response_result(
                     "code": error.code,
                     "message": error.message,
                     "data": error.data,
+                }
+            });
+            (result, Vec::new())
+        }
+        McpKnownResponse::Rejected(rejection) => {
+            let retry = rejection
+                .retry_after
+                .as_deref()
+                .map(|retry_after| format!("; retry after {retry_after}"))
+                .unwrap_or_default();
+            let message = format!(
+                "The MCP server rejected the call with HTTP {}; the tool did not run{retry}",
+                rejection.http_status
+            );
+            let mut result = AgentToolResult::error(call, "mcp.rejected", &message);
+            result.structured = json!({
+                "rejected": {
+                    "httpStatus": rejection.http_status,
+                    "retryAfter": rejection.retry_after,
                 }
             });
             (result, Vec::new())

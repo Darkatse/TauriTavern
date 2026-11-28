@@ -24,7 +24,7 @@ use desktop as native;
 use ios as native;
 
 #[cfg(target_os = "android")]
-pub use content_uri::plugin;
+pub use content_uri::{plugin, take_shared_uri};
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -119,6 +119,15 @@ pub async fn pick(
     native::pick(window, kind, multiple).await
 }
 
+/// Folders the user picks; only desktop hosts pick folders.
+#[cfg(desktop)]
+pub async fn pick_directories(
+    window: &WebviewWindow,
+    multiple: bool,
+) -> Result<Option<Vec<PathBuf>>, DomainError> {
+    desktop::pick_directories(window, multiple).await
+}
+
 pub async fn materialize(
     app: &AppHandle,
     source: PickedSource,
@@ -150,7 +159,7 @@ pub async fn materialize(
     .await
     .map_err(|error| DomainError::InternalError(format!("File staging task failed: {error}")))?;
     if let Err(error) = result {
-        if let Err(cleanup_error) = staging::discard_file(&destination).await {
+        if let Err(cleanup_error) = staging::discard(&destination).await {
             tracing::warn!(%cleanup_error, "Failed to remove incomplete staged file");
         }
         return Err(error);
@@ -166,7 +175,7 @@ pub async fn deliver(
 ) -> Result<Delivery, DomainError> {
     let file_name = sanitize_file_name(file_name);
     let result = native::deliver(window, &source, &file_name).await;
-    if let Err(error) = staging::discard_file(&source).await {
+    if let Err(error) = staging::discard(&source).await {
         tracing::warn!(%error, "Failed to remove file after delivery");
     }
     result

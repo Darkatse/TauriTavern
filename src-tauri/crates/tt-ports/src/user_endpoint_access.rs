@@ -1,3 +1,4 @@
 pub trait UserEndpointGrantRuntime: Send + Sync {
-    fn replace_user_endpoint_grants(&self, endpoints: &[String]);
+    /// `origins` are written by `endpoint_url::http_origin`.
+    fn allow_user_endpoints(&self, origins: &[String]);
 }

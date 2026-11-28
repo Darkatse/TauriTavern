@@ -22,10 +22,11 @@ function readSnapshot() {
     };
 }
 
-export function installLayoutApi() {
-    const hostAbi = window.__TAURITAVERN__;
-    if (!hostAbi) throw new Error('Host ABI __TAURITAVERN__ is missing');
-    hostAbi.api ??= {};
+/**
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
+ */
+export function installLayoutApi(api, context) {
     const subscribers = new Set();
     let scheduled = false;
     const deliver = (handler, snapshot) => {
@@ -41,10 +42,10 @@ export function installLayoutApi() {
             for (const handler of subscribers) deliver(handler, snapshot);
         });
     };
-    hostAbi.api.layout = {
+    api.layout = {
         snapshot: readSnapshot,
         async capture() {
-            const bytes = readByteResponse(await hostAbi.invoke.safeInvoke('capture_content_viewport'));
+            const bytes = readByteResponse(await context.safeInvoke('capture_content_viewport'));
             return new Blob([bytes], { type: 'image/png' });
         },
         async subscribe(handler) {

@@ -18,6 +18,9 @@ pub enum CommandError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("{0}")]
     Cancelled(String),
 
@@ -38,7 +41,7 @@ impl From<ApplicationError> for CommandError {
             ApplicationError::Conflict(msg) => CommandError::Conflict(msg),
             ApplicationError::NotFound(msg) => CommandError::NotFound(msg),
             ApplicationError::Unauthorized(msg) => CommandError::Unauthorized(msg),
-            ApplicationError::PermissionDenied(msg) => CommandError::Unauthorized(msg),
+            ApplicationError::PermissionDenied(msg) => CommandError::Forbidden(msg),
             ApplicationError::RateLimited(msg) => CommandError::TooManyRequests(msg),
             ApplicationError::Transient(msg) => CommandError::InternalServerError(msg),
             ApplicationError::UpstreamFailure(failure) => CommandError::UpstreamFailure(failure),
@@ -56,7 +59,7 @@ impl From<DomainError> for CommandError {
             DomainError::Conflict(msg) => CommandError::Conflict(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             error @ DomainError::WorkspaceAccessDenied { .. } => {
-                CommandError::Unauthorized(error.to_string())
+                CommandError::Forbidden(error.to_string())
             }
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
             error @ DomainError::FileIo { .. } => {

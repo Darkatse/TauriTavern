@@ -2,13 +2,18 @@
 name = "tt-adapter-http"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
+bytes = "1"
 reqwest = { workspace = true, features = ["blocking", "http2", "rustls", "socks"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "net", "sync"] }
+tracing = "0.1"
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
@@ -17,4 +22,5 @@ webpki-roots = "1"
 
 [dev-dependencies]
 rcgen = "0.14"
+tempfile = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

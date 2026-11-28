@@ -36,25 +36,22 @@ pub(super) fn extract_archive(archive_path: &Path, destination: &Path) -> Result
         let mut entry = archive.by_index(index).map_err(|error| {
             DomainError::InvalidData(format!("Failed to read Skill archive entry: {error}"))
         })?;
-        if zipkit::zip_entry_is_symlink(&entry) {
+        let (entry_path, display_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
+        if entry.is_symlink() {
             return Err(DomainError::InvalidData(format!(
-                "Skill archive entry cannot be a symlink: {}",
-                entry.name()
+                "Skill archive entry cannot be a symlink: {display_name}"
             )));
         }
         if entry.size() > MAX_SINGLE_FILE_BYTES {
             return Err(DomainError::InvalidData(format!(
-                "Skill archive entry '{}' exceeds {} bytes",
-                entry.name(),
-                MAX_SINGLE_FILE_BYTES
+                "Skill archive entry '{display_name}' exceeds {MAX_SINGLE_FILE_BYTES} bytes"
             )));
         }
         if entry.compressed_size() > 0
             && entry.size() / entry.compressed_size() > MAX_ZIP_COMPRESSION_RATIO
         {
             return Err(DomainError::InvalidData(format!(
-                "Skill archive entry '{}' has an excessive compression ratio",
-                entry.name()
+                "Skill archive entry '{display_name}' has an excessive compression ratio"
             )));
         }
         total_bytes = total_bytes
@@ -67,7 +64,6 @@ pub(super) fn extract_archive(archive_path: &Path, destination: &Path) -> Result
             )));
         }
 
-        let (entry_path, display_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
         let raw_path = entry_path.to_string_lossy().to_string();
         if is_ignored_archive_path(&raw_path) {
             continue;

@@ -25,6 +25,7 @@ import {
     setUserName,
     this_chid,
 } from '../script.js';
+import { getListThumbnailUrl } from './tauri/list-thumbnails.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import { addLongPressEvent, clearInfoBlock, debounce, delay, download, ensureImageFormatSupported, escapeHtml, flashHighlight, getBase64Async, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, parseJsonFile, setInfoBlock, findPersona, resolveAvatarData, stringToRange, sortIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents, uuidv4 } from './utils.js';
@@ -198,6 +199,7 @@ async function refreshPersonaAvatarImages(avatarId) {
     const urls = new Set([
         getUserAvatar(avatarId),
         getThumbnailUrl('persona', avatarId),
+        getListThumbnailUrl('persona', avatarId),
     ].map(url => new URL(url, window.location.href).href));
     const images = Array.from(document.images)
         .filter(image => urls.has(image.src))
@@ -282,7 +284,7 @@ function getUserAvatarBlock(avatarId) {
     if (personaTitle) setAriaRelation(template[0].querySelector(':scope > .sr-only'), 'describedby', template.find('.ch_additional_info')[0]);
     template.attr('data-avatar-id', avatarId);
     template.find('.avatar').attr('data-avatar-id', avatarId).attr('title', avatarId);
-    const avatarUrl = getThumbnailUrl('persona', avatarId);
+    const avatarUrl = getListThumbnailUrl('persona', avatarId);
     template.find('img').attr('src', avatarUrl);
 
     // Make sure description block has at least three rows. Otherwise height looks inconsistent. I don't have a better idea for this.

@@ -1,6 +1,6 @@
 /* The host sets inline display:block when the drawer opens, so zone spacing
    must come from margins rather than a flex context on the content element. */
-#tauritavern_version_settings .inline-drawer-content > * + * {
+#tauritavern_version_settings .inline-drawer-content > :not(:first-child) {
     margin-top: 8px;
 }
 
@@ -27,6 +27,76 @@
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
+#tauritavern_version_settings .ttv-update-setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+#tauritavern_version_settings .ttv-update-setting-row .ttv-label {
+    cursor: pointer;
+}
+
+#tauritavern_version_settings .ttv-switch {
+    position: relative;
+    display: inline-flex;
+    width: 42px;
+    height: 24px;
+    align-items: center;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+#tauritavern_version_settings .ttv-switch input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+#tauritavern_version_settings .ttv-switch-track {
+    position: relative;
+    width: 42px;
+    height: 22px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 999px;
+    background-color: var(--black30a);
+    transition: background-color var(--animation-duration) ease, border-color var(--animation-duration) ease, opacity var(--animation-duration) ease;
+}
+
+#tauritavern_version_settings .ttv-switch-track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background-color: var(--SmartThemeBodyColor);
+    transition: transform var(--animation-duration) ease;
+}
+
+#tauritavern_version_settings .ttv-switch input:checked + .ttv-switch-track {
+    border-color: var(--SmartThemeQuoteColor);
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 44%, var(--black30a));
+}
+
+#tauritavern_version_settings .ttv-switch input:checked + .ttv-switch-track::after {
+    transform: translateX(18px);
+}
+
+#tauritavern_version_settings .ttv-switch input:focus-visible + .ttv-switch-track {
+    outline: 2px solid var(--interactable-outline-color);
+    outline-offset: 2px;
+}
+
+#tauritavern_version_settings .ttv-switch input:disabled + .ttv-switch-track {
+    opacity: 0.5;
+    cursor: default;
+}
+
 #tauritavern_version_settings .ttv-label {
     opacity: 0.85;
     white-space: nowrap;
@@ -37,11 +107,11 @@
     word-break: break-word;
 }
 
-#tauritavern_version_settings .ttv-channel-block {
+#tauritavern_version_settings .ttv-update-settings-block {
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
-#tauritavern_version_settings .ttv-channel-toggle {
+#tauritavern_version_settings .ttv-update-settings-toggle {
     width: 100%;
     border: 0;
     background: none;
@@ -50,11 +120,11 @@
     cursor: pointer;
 }
 
-#tauritavern_version_settings .ttv-channel-toggle:hover {
+#tauritavern_version_settings .ttv-update-settings-toggle:hover {
     background-color: var(--black20a);
 }
 
-#tauritavern_version_settings .ttv-channel-toggle:focus-visible {
+#tauritavern_version_settings .ttv-update-settings-toggle:focus-visible {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: -2px;
 }
@@ -71,7 +141,7 @@
     transition: transform var(--animation-duration-2x) ease;
 }
 
-#tauritavern_version_settings .ttv-channel-toggle.open .fa-chevron-down {
+#tauritavern_version_settings .ttv-update-settings-toggle.open .fa-chevron-down {
     transform: rotate(180deg);
 }
 
@@ -79,14 +149,22 @@
     color: var(--SmartThemeQuoteColor);
 }
 
-#tauritavern_version_settings .ttv-channel-body {
+#tauritavern_version_settings .ttv-update-settings-body {
     display: none;
     padding: 10px;
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
-#tauritavern_version_settings .ttv-channel-body > * + * {
-    margin-top: 8px;
+#tauritavern_version_settings .ttv-update-setting-group:not([hidden]) + .ttv-update-setting-row {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+#tauritavern_version_settings .ttv-update-setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 #tauritavern_version_settings .ttv-channel-group {
@@ -132,14 +210,14 @@
     opacity: 1;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:checked + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:checked) > .ttv-channel-pill {
     color: var(--SmartThemeQuoteColor);
     background-color: var(--SmartThemeBlurTintColor);
     border-color: var(--SmartThemeBorderColor);
     opacity: 1;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:focus-visible + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:focus-visible) > .ttv-channel-pill {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
 }
@@ -148,7 +226,7 @@
     cursor: default;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:disabled + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:disabled) > .ttv-channel-pill {
     opacity: 0.5;
     cursor: default;
 }
@@ -204,7 +282,7 @@
     background-color: var(--black30a);
 }
 
-#tauritavern_version_settings .ttv-update-result > * + * {
+#tauritavern_version_settings .ttv-update-result > :not(:first-child) {
     margin-top: 10px;
 }
 
@@ -281,12 +359,12 @@
 }
 
 @media (max-width: 600px) {
-    #tauritavern_version_settings .ttv-row {
+    #tauritavern_version_settings .ttv-row:not(.ttv-update-settings-toggle) {
         flex-direction: column;
         align-items: flex-start;
     }
 
-    #tauritavern_version_settings .ttv-row strong {
+    #tauritavern_version_settings .ttv-row:not(.ttv-update-settings-toggle) strong {
         text-align: left;
     }
 }

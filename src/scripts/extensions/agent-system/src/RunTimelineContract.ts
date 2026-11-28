@@ -205,6 +205,9 @@ export type TimelineViewport = {
     nearBottom: boolean;
 };
 
+/** Only scrolling reports `nearBottom`; after a resize the list keeps following its bottom or not. */
+export type TimelineViewportReport = TimelineViewport | Omit<TimelineViewport, 'nearBottom'>;
+
 export type SubAgentTask = {
     taskId: string;
     targetInvocationId: string;
@@ -296,8 +299,8 @@ export type RunTimelineController = {
     selectSubAgentItem: (seq: number) => void;
     invokeDetailAction: (action: TimelineDetailAction) => void;
     retryPresentation: () => Promise<void>;
-    setTimelineViewport: (viewport: TimelineViewport) => void;
-    setSubAgentViewport: (viewport: TimelineViewport) => void;
+    setTimelineViewport: (viewport: TimelineViewportReport) => void;
+    setSubAgentViewport: (viewport: TimelineViewportReport) => void;
     startViewGesture: (event: PointerEvent) => void;
     trackViewGesture: (event: PointerEvent) => void;
     finishViewGesture: (event: PointerEvent) => void;
@@ -316,6 +319,13 @@ type SharedTimelineDeps = {
     tr: AgentSystemTr;
 };
 
+/** A run's live projection and the cadence its previews publish at. */
+export type RunTimelineLiveSource = {
+    subscribe: TauriTavernAgentApi['subscribeLiveProjection'];
+    /** Runs the callback at the next streaming render and returns a function that cancels it. */
+    scheduleFrame: (callback: () => void) => () => void;
+};
+
 export type ActiveTimelineOptions = {
     mode: 'active';
     deps: SharedTimelineDeps & {
@@ -332,8 +342,7 @@ export type ActiveTimelineOptions = {
             presentationError?: string;
         }) => void) => () => void;
         subscribeRunEvents: (listener: (event: TauriTavernAgentRunEvent) => void) => () => void;
-        subscribeLiveProjection?: TauriTavernAgentApi['subscribeLiveProjection'];
-        scheduleFrame?: (callback: () => void) => void;
+        liveSource: RunTimelineLiveSource;
         retryFailure: (input: {
             run: TimelineRun | null;
             events: readonly TauriTavernAgentRunEvent[];

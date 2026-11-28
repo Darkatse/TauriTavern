@@ -1,6 +1,7 @@
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         super::window_layout_commands::get_window_snapshot,
+        super::window_layout_commands::set_drawer_bar_items,
         super::window_layout_commands::capture_content_viewport,
         super::window_layout_commands::set_window_backdrop,
         // TriviumDB commands
@@ -10,7 +11,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::get_character,
         super::character_commands::create_character,
         super::character_commands::create_character_with_avatar,
-        super::character_commands::update_character,
         super::character_commands::update_character_card_data,
         super::character_commands::adopt_character_lorebook,
         super::character_commands::resolve_character_lorebook_adoption,
@@ -49,7 +49,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::restore_character_chat_backup,
         super::chat_commands::delete_chat_backup,
         super::chat_commands::clear_chat_cache,
-        super::chat_commands::get_chat_payload_path,
+        super::chat_commands::open_chat_payload_jsonl,
         super::chat_commands::open_chat_payload_json,
         super::chat_commands::get_chat_payload_tail,
         super::chat_commands::get_chat_payload_before,
@@ -59,7 +59,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_commands::search_group_chats,
         super::group_chat_commands::list_group_chat_summaries,
         super::group_chat_commands::list_recent_group_chat_summaries,
-        super::group_chat_commands::get_group_chat_path,
         super::group_chat_commands::get_group_chat_payload_tail,
         super::group_chat_commands::get_group_chat_payload_before,
         super::group_chat_commands::get_group_chat_payload_before_pages,
@@ -112,14 +111,20 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bootstrap_commands::get_bootstrap_metadata,
         super::bootstrap_commands::backend_error_bridge_ready,
         super::bootstrap_commands::wait_for_backend_ready,
+        // Safe mode commands
+        super::safe_mode_commands::get_safe_mode_prompt,
+        super::safe_mode_commands::dismiss_safe_mode_prompt,
+        super::safe_mode_commands::request_safe_mode,
         // Settings commands
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::get_chat_backup_storage_stats,
         super::settings_commands::update_tauritavern_settings,
+        super::settings_commands::set_keys_exposure,
+        super::settings_commands::set_request_proxy,
         #[cfg(desktop)]
         super::runtime_paths_commands::get_runtime_paths,
         #[cfg(desktop)]
-        super::runtime_paths_commands::set_data_root,
+        super::runtime_paths_commands::pick_data_root,
         super::settings_commands::begin_settings_commit,
         super::settings_commands::append_settings_commit_chunk,
         super::settings_commands::finish_settings_commit,
@@ -137,8 +142,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::dev_logging_commands::devlog_set_llm_api_log_stream_enabled,
         super::dev_logging_commands::devlog_get_llm_api_log_index,
         super::dev_logging_commands::devlog_get_llm_api_log_preview,
+        super::dev_logging_commands::devlog_get_llm_api_log_view,
         super::dev_logging_commands::devlog_get_llm_api_log_raw,
         // World info commands
+        super::world_info_commands::list_world_info,
         super::world_info_commands::get_world_info,
         super::world_info_commands::normalize_world_info_name,
         super::world_info_commands::begin_world_info_commit,
@@ -161,13 +168,12 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::secret_commands::rotate_secret,
         super::secret_commands::rename_secret,
         // Provider metadata commands
+        super::provider_metadata_commands::get_openrouter_providers,
         super::provider_metadata_commands::get_openrouter_model_providers,
         super::provider_metadata_commands::get_openrouter_credits,
+        super::provider_metadata_commands::exchange_openrouter_code,
         super::provider_metadata_commands::get_nanogpt_model_providers,
         super::provider_metadata_commands::get_nanogpt_credits,
-        super::provider_metadata_commands::get_siliconflow_embedding_models,
-        super::provider_metadata_commands::get_workers_ai_embedding_models,
-        super::provider_metadata_commands::get_workers_ai_multimodal_models,
         // LLM connection commands
         super::llm_connection_commands::list_llm_connections,
         super::llm_connection_commands::load_llm_connection,
@@ -193,7 +199,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Content commands
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,
-        super::content_commands::download_external_import_url,
         // Asset library commands
         super::asset_commands::get_assets_library,
         super::asset_commands::download_asset,
@@ -230,7 +235,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::lan_sync_commands::lan_sync_pair_device,
         super::lan_sync_commands::lan_sync_get_pairing_info,
         super::lan_sync_commands::lan_sync_request_pairing,
-        super::lan_sync_commands::lan_sync_confirm_pairing,
+        super::lan_sync_commands::lan_sync_review_pairing,
         super::lan_sync_commands::lan_sync_list_devices,
         super::lan_sync_commands::lan_sync_remove_device,
         super::lan_sync_commands::lan_sync_sync_from_device,
@@ -252,11 +257,16 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tt_sync_commands::tt_sync_push,
         // Upload staging commands
         super::file_transfer_commands::pick_import_files,
+        #[cfg(target_os = "android")]
+        super::file_transfer_commands::stage_shared_file,
         super::file_transfer_commands::deliver_staged_file,
+        super::file_transfer_commands::download_remote_file,
+        super::file_transfer_commands::deliver_remote_file,
         super::file_staging_commands::stage_file_begin,
         super::file_staging_commands::stage_file_chunk,
         super::file_staging_commands::stage_file_finish,
-        super::file_staging_commands::stage_file_from_url,
+        super::file_staging_commands::stage_content_from_url,
+        super::file_staging_commands::open_staged_file,
         super::file_staging_commands::stage_file_discard,
         // Chat payload commit commands
         super::chat_commit_commands::begin_chat_commit,
@@ -307,11 +317,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::preset_commands::save_preset,
         super::preset_commands::delete_preset,
         super::preset_commands::restore_preset,
-        super::preset_commands::save_openai_preset,
         super::preset_commands::delete_openai_preset,
         super::preset_commands::list_presets,
         super::preset_commands::preset_exists,
-        super::preset_commands::get_preset,
         // Quick reply commands
         super::quick_reply_commands::save_quick_reply_set,
         super::quick_reply_commands::delete_quick_reply_set,
@@ -332,7 +340,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::read_agent_run_checkpoint,
         super::agent_commands::resume_agent_run,
         super::agent_commands::finish_agent_run_presentation,
-        super::agent_commands::subscribe_agent_run_live_projection,
+        super::agent_live_projection::open_agent_run_live_projection,
+        super::agent_live_projection::stream_agent_run_live_projection,
         super::agent_commands::prepare_agent_prompt_assembly,
         super::agent_commands::build_agent_current_model_connection_snapshot,
         super::agent_commands::apply_agent_current_model_connection_snapshot,
@@ -366,6 +375,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::skill_commands::download_skill_import_url,
         super::skill_commands::list_skills,
         super::skill_commands::list_skill_files,
+        #[cfg(desktop)]
+        super::skill_commands::pick_skill_import_directories,
         super::skill_commands::discover_skill_imports,
         super::skill_commands::discard_skill_import_archive,
         super::skill_commands::preview_skill_import,
@@ -380,11 +391,30 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_completion_commands::get_chat_completions_status,
         super::chat_completion_commands::generate_chat_completion,
         super::chat_completion_commands::start_chat_completion_stream,
-        super::chat_completion_commands::read_chat_completion_stream,
-        super::chat_completion_commands::close_chat_completion_stream,
-        super::chat_completion_commands::cancel_chat_completion_generation,
+        super::chat_completion_commands::preview_chat_completion_request,
+        // Text completion commands
+        super::text_completion_commands::get_text_completions_status,
+        super::text_completion_commands::get_text_completions_props,
+        super::text_completion_commands::generate_text_completion,
+        super::text_completion_commands::start_text_completion_stream,
+        super::text_completion_commands::encode_text_completion_tokens,
+        super::text_completion_commands::download_ollama_model,
+        super::text_completion_commands::download_tabby_model,
+        // AI Horde commands
+        super::horde_commands::check_horde_status,
+        super::horde_commands::get_horde_text_workers,
+        super::horde_commands::get_horde_text_models,
+        super::horde_commands::get_horde_user_info,
+        super::horde_commands::start_horde_text_stream,
+        // Generation commands shared by every API family
+        super::generation_commands::get_generation_notification_state,
+        super::generation_commands::read_generation_stream,
+        super::generation_commands::close_generation_stream,
+        super::generation_commands::cancel_generation,
         // SearXNG compatibility search
         super::searxng_search_commands::search_searxng,
+        // CORS proxy compatibility
+        super::cors_proxy_commands::send_cors_proxy_request,
         // Stable diffusion (local chain) commands
         super::stable_diffusion_commands::sd_handle,
         super::stable_diffusion_commands::cancel_sd_request,
@@ -396,6 +426,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Tokenizer commands
         super::tokenizer_commands::count_openai_tokens_batch,
         super::tokenizer_commands::count_openai_token_prefixes,
+        super::tokenizer_commands::count_text_tokens,
         super::tokenizer_commands::encode_tokens,
         super::tokenizer_commands::decode_tokens,
         super::tokenizer_commands::build_openai_logit_bias,

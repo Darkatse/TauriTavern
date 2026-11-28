@@ -1,23 +1,25 @@
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tt_domain::models::persona::{Personas, insert_personas, take_personas};
+use tt_domain::models::persona::{Personas, insert_personas};
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 use crate::dto::settings_dto::{
     SettingsJsonDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
-    UpdateAgentSettingsDto, UpdateChatBackupSettingsDto, UpdateTauriTavernSettingsDto,
-    UserSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
+    UpdateAgentSettingsDto, UpdateAppUpdateSettingsDto, UpdateChatBackupSettingsDto,
+    UpdateTauriTavernSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::generation_runtime::GenerationRuntime;
 use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
-    RequestProxySettings, UserSettings,
+    AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
+    DevLoggingSettings, RequestProxySettings,
 };
-use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
+use tt_ports::repositories::settings_repository::{
+    SettingsAggregateSignature, SettingsRepository, StoredUserSettings,
+};
 pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
 #[derive(Clone)]
@@ -31,8 +33,11 @@ pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
     request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
+    generation_runtime: Arc<GenerationRuntime>,
     sillytavern_settings_cache: Mutex<Option<SettingsAggregateCacheEntry>>,
     user_settings_save_lock: Mutex<()>,
+    /// Held from load to save, so one write cannot restore a field another write just changed.
+    tauritavern_settings_write_lock: Mutex<()>,
 }
 
 impl SettingsService {
@@ -41,14 +46,17 @@ impl SettingsService {
         settings_repository: Arc<dyn SettingsRepository>,
         request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
         chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
+        generation_runtime: Arc<GenerationRuntime>,
     ) -> Self {
         Self {
             avatars,
             settings_repository,
             request_proxy_runtime,
             chat_backup_runtime,
+            generation_runtime,
             sillytavern_settings_cache: Mutex::new(None),
             user_settings_save_lock: Mutex::new(()),
+            tauritavern_settings_write_lock: Mutex::new(()),
         }
     }
 
@@ -61,6 +69,8 @@ impl SettingsService {
         self.clear_sillytavern_settings_cache().await;
         self.settings_repository.load_user_settings().await?;
         let settings = self.settings_repository.load_tauritavern_settings().await?;
+        self.generation_runtime
+            .set_notifications_enabled(settings.generation_notifications_enabled);
         self.chat_backup_runtime
             .apply_chat_backup_settings(settings.chat_backups)
             .await?;
@@ -122,20 +132,11 @@ impl SettingsService {
     ) -> Result<TauriTavernSettingsDto, ApplicationError> {
         tracing::debug!("Updating TauriTavern settings");
 
-        let request_proxy_update = dto.request_proxy.clone().map(RequestProxySettings::from);
-        if let Some(settings) = request_proxy_update.as_ref() {
-            self.request_proxy_runtime
-                .validate_request_proxy_settings(settings)?;
-        }
-
+        let write_guard = self.tauritavern_settings_write_lock.lock().await;
         let mut settings = self.settings_repository.load_tauritavern_settings().await?;
 
         if let Some(updates) = dto.updates {
-            if let Some(channel) = updates.channel {
-                settings.updates.channel = Some(channel);
-            }
-            settings.updates.startup_popup.dismissed_release_token =
-                updates.startup_popup.dismissed_release_token;
+            Self::apply_update_settings_update(&mut settings.updates, updates);
         }
 
         if let Some(perf_profile) = dto.perf_profile {
@@ -178,12 +179,8 @@ impl SettingsService {
             settings.close_to_tray_on_close = close_to_tray_on_close;
         }
 
-        if let Some(request_proxy) = dto.request_proxy {
-            settings.request_proxy = request_proxy.into();
-        }
-
-        if let Some(allow_keys_exposure) = dto.allow_keys_exposure {
-            settings.allow_keys_exposure = allow_keys_exposure;
+        if let Some(generation_notifications_enabled) = dto.generation_notifications_enabled {
+            settings.generation_notifications_enabled = generation_notifications_enabled;
         }
 
         if let Some(avatar_persona_original_images_enabled) =
@@ -276,31 +273,64 @@ impl SettingsService {
         self.settings_repository
             .save_tauritavern_settings(&settings)
             .await?;
+        self.generation_runtime
+            .set_notifications_enabled(settings.generation_notifications_enabled);
+        drop(write_guard);
 
-        let request_proxy_result = request_proxy_update.is_some().then(|| {
-            self.request_proxy_runtime
-                .apply_request_proxy_settings(&settings.request_proxy)
-        });
-        let chat_backup_result = if chat_backups_changed {
-            let result = self
-                .chat_backup_runtime
+        if chat_backups_changed {
+            self.chat_backup_runtime
                 .apply_chat_backup_settings(settings.chat_backups)
-                .await;
-            if result.is_ok() && chat_backup_reconciliation_required {
+                .await?;
+            if chat_backup_reconciliation_required {
                 self.schedule_chat_backup_reconciliation();
             }
-            Some(result)
-        } else {
-            None
-        };
-        if let Some(result) = request_proxy_result {
-            result?;
-        }
-        if let Some(result) = chat_backup_result {
-            result?;
         }
 
         Ok(TauriTavernSettingsDto::from(settings))
+    }
+
+    pub async fn set_request_proxy(
+        &self,
+        proxy: RequestProxySettings,
+    ) -> Result<(), ApplicationError> {
+        self.request_proxy_runtime
+            .validate_request_proxy_settings(&proxy)?;
+
+        let _write = self.tauritavern_settings_write_lock.lock().await;
+        let mut settings = self.settings_repository.load_tauritavern_settings().await?;
+        settings.request_proxy = proxy;
+        self.settings_repository
+            .save_tauritavern_settings(&settings)
+            .await?;
+        self.request_proxy_runtime
+            .apply_request_proxy_settings(&settings.request_proxy)?;
+        Ok(())
+    }
+
+    /// Takes effect at the next launch, when `SecretService` reads it.
+    pub async fn set_keys_exposure(&self, allowed: bool) -> Result<(), ApplicationError> {
+        let _write = self.tauritavern_settings_write_lock.lock().await;
+        let mut settings = self.settings_repository.load_tauritavern_settings().await?;
+        settings.allow_keys_exposure = allowed;
+        self.settings_repository
+            .save_tauritavern_settings(&settings)
+            .await?;
+        Ok(())
+    }
+
+    fn apply_update_settings_update(
+        settings: &mut AppUpdateSettings,
+        dto: UpdateAppUpdateSettingsDto,
+    ) {
+        if let Some(channel) = dto.channel {
+            settings.channel = Some(channel);
+        }
+        if let Some(popup_enabled) = dto.popup_enabled {
+            settings.popup_enabled = popup_enabled;
+        }
+        if let Some(token) = dto.dismissed_release_token {
+            settings.startup_popup.dismissed_release_token = Some(token);
+        }
     }
 
     fn apply_agent_settings_update(
@@ -455,14 +485,13 @@ impl SettingsService {
         &self,
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         let settings_json = async {
-            let mut user_settings = self.settings_repository.load_user_settings().await?;
-            let revision = UserSettingsRevisionDto::from_settings(&user_settings)?;
-            insert_personas(&mut user_settings.data, &self.avatars.get_personas().await?);
-            let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
-                ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
-            })?;
+            let StoredUserSettings {
+                mut settings,
+                revision,
+            } = self.settings_repository.load_user_settings().await?;
+            insert_personas(&mut settings, &self.avatars.get_personas().await?)?;
 
-            Ok::<_, ApplicationError>((settings_json, revision))
+            Ok::<_, ApplicationError>((settings.to_string(), revision))
         };
 
         let ai_settings = async {
@@ -529,14 +558,6 @@ impl SettingsService {
             ),
         ) = tokio::try_join!(settings_json, ai_settings, world_names, presets)?;
 
-        let themes_json = Self::settings_values(themes);
-        let moving_ui_presets_json = Self::settings_values(moving_ui_presets);
-        let quick_reply_presets_json = Self::settings_values(quick_reply_presets);
-        let instruct_presets_json = Self::settings_values(instruct_presets);
-        let context_presets_json = Self::settings_values(context_presets);
-        let sysprompt_presets_json = Self::settings_values(sysprompt_presets);
-        let reasoning_presets_json = Self::settings_values(reasoning_presets);
-
         let response = SillyTavernSettingsResponseDto {
             settings: settings_json,
             tauritavern_settings_revision,
@@ -549,13 +570,13 @@ impl SettingsService {
             openai_setting_names,
             textgenerationwebui_presets: textgen_settings,
             textgenerationwebui_preset_names: textgen_setting_names,
-            themes: themes_json,
-            moving_ui_presets: moving_ui_presets_json,
-            quick_reply_presets: quick_reply_presets_json,
-            instruct: instruct_presets_json,
-            context: context_presets_json,
-            sysprompt: sysprompt_presets_json,
-            reasoning: reasoning_presets_json,
+            themes,
+            moving_ui_presets,
+            quick_reply_presets,
+            instruct: instruct_presets,
+            context: context_presets,
+            sysprompt: sysprompt_presets,
+            reasoning: reasoning_presets,
             enable_extensions: true,
             enable_extensions_auto_update: true,
             enable_accounts: false,
@@ -564,17 +585,9 @@ impl SettingsService {
         Ok(response)
     }
 
-    fn settings_values(settings: Vec<UserSettings>) -> Vec<Value> {
-        settings.into_iter().map(|settings| settings.data).collect()
-    }
-
     pub async fn create_snapshot(&self) -> Result<(), ApplicationError> {
         tracing::info!("Creating settings snapshot");
-
-        let mut settings = self.settings_repository.load_user_settings().await?;
-        insert_personas(&mut settings.data, &self.avatars.get_personas().await?);
-        self.settings_repository.create_snapshot(settings).await?;
-
+        snapshot_user_settings(self.settings_repository.as_ref(), self.avatars.as_ref()).await?;
         Ok(())
     }
 
@@ -590,29 +603,39 @@ impl SettingsService {
         Ok(snapshot_dtos)
     }
 
-    pub async fn load_snapshot(&self, name: &str) -> Result<UserSettingsDto, ApplicationError> {
+    /// The snapshot's settings as indented JSON text.
+    pub async fn load_snapshot(&self, name: &str) -> Result<Vec<u8>, ApplicationError> {
         tracing::info!("Loading settings snapshot: {}", name);
 
         let settings = self.settings_repository.load_snapshot(name).await?;
 
-        Ok(UserSettingsDto::from(settings))
+        Ok(settings.to_pretty_vec())
     }
 
     pub async fn restore_snapshot(&self, name: &str) -> Result<(), ApplicationError> {
         tracing::info!("Restoring settings snapshot: {}", name);
 
         let _guard = self.user_settings_save_lock.lock().await;
-        let mut settings = self.settings_repository.load_snapshot(name).await?;
-        if let Some(personas) = take_personas(&mut settings.data)? {
-            self.avatars.import_personas(&personas).await?;
-        }
-        self.settings_repository
+        let settings = self.settings_repository.load_snapshot(name).await?;
+        let personas = self
+            .settings_repository
             .save_user_settings(settings)
             .await?;
+        self.avatars.import_personas(&personas).await?;
         self.clear_sillytavern_settings_cache().await;
 
         Ok(())
     }
+}
+
+/// Snapshots hold the Persona registry, as SillyTavern's settings file does.
+pub(crate) async fn snapshot_user_settings(
+    settings_repository: &dyn SettingsRepository,
+    avatars: &dyn AvatarRepository,
+) -> Result<String, ApplicationError> {
+    let mut settings = settings_repository.load_user_settings().await?.settings;
+    insert_personas(&mut settings, &avatars.get_personas().await?)?;
+    Ok(settings_repository.create_snapshot(settings).await?)
 }
 
 fn validate_agent_retention_settings(
@@ -632,7 +655,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
-    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
+    use tt_domain::json_document::JsonDocument;
+    use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings};
 
     #[test]
     fn agent_retention_update_applies_partial_settings() {
@@ -713,14 +737,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tauritavern_settings_update_persists_and_applies_chat_backup_policy() {
+    async fn tauritavern_settings_update_and_reload_apply_runtime_policies() {
         let repository = Arc::new(TestSettingsRepository::default());
         let backup_runtime = Arc::new(TestChatBackupRuntime::default());
+        let generation_runtime = Arc::new(GenerationRuntime::new(None, true));
         let service = SettingsService::new(
             Arc::new(TestAvatars),
-            repository,
+            repository.clone(),
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            generation_runtime.clone(),
         );
 
         let updated = service
@@ -740,8 +766,7 @@ mod tests {
                     max_total_bytes: Some(0),
                 }),
                 close_to_tray_on_close: None,
-                request_proxy: None,
-                allow_keys_exposure: None,
+                generation_notifications_enabled: Some(false),
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -756,6 +781,8 @@ mod tests {
         assert_eq!(updated.chat_backups.max_files_per_prefix, 7);
         assert_eq!(updated.chat_backups.max_total_files, -1);
         assert_eq!(updated.chat_backups.max_total_bytes, 0);
+        assert!(!updated.generation_notifications_enabled);
+        assert!(!generation_runtime.notifications_enabled());
         assert_eq!(
             backup_runtime.applied.lock().unwrap().as_slice(),
             &[ChatBackupSettings {
@@ -766,6 +793,16 @@ mod tests {
                 max_total_bytes: 0,
             }]
         );
+
+        repository
+            .save_tauritavern_settings(&TauriTavernSettings {
+                generation_notifications_enabled: true,
+                ..TauriTavernSettings::default()
+            })
+            .await
+            .expect("external sync writes settings");
+        service.reload().await.expect("reload synchronizes runtime");
+        assert!(generation_runtime.notifications_enabled());
     }
 
     #[tokio::test]
@@ -777,6 +814,7 @@ mod tests {
             repository,
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            Arc::new(GenerationRuntime::new(None, true)),
         );
 
         let update = UpdateTauriTavernSettingsDto {
@@ -795,8 +833,7 @@ mod tests {
             cold_swipes_enabled: None,
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
-            request_proxy: None,
-            allow_keys_exposure: None,
+            generation_notifications_enabled: None,
             avatar_persona_original_images_enabled: None,
             dev: None,
             dynamic_theme: None,
@@ -845,6 +882,7 @@ mod tests {
             repository,
             Arc::new(TestRequestProxyRuntime::default()),
             backup_runtime.clone(),
+            Arc::new(GenerationRuntime::new(None, true)),
         );
 
         service
@@ -864,8 +902,7 @@ mod tests {
                 cold_swipes_enabled: None,
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
-                request_proxy: None,
-                allow_keys_exposure: None,
+                generation_notifications_enabled: None,
                 avatar_persona_original_images_enabled: None,
                 dev: None,
                 dynamic_theme: None,
@@ -911,7 +948,7 @@ mod tests {
             &self,
             _: &std::path::Path,
             _: Option<String>,
-            _: Option<tt_domain::models::avatar::CropInfo>,
+            _: Option<tt_ports::avatar_images::ImageCrop>,
         ) -> Result<tt_domain::models::avatar::AvatarUploadResult, DomainError> {
             unreachable!()
         }
@@ -936,12 +973,32 @@ mod tests {
             Ok(self.settings.lock().await.clone())
         }
 
-        async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn reset_tauritavern_settings(
+            &self,
+            _chat_backups: ChatBackupSettings,
+        ) -> Result<(), DomainError> {
             unreachable!()
         }
 
-        async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
+        async fn reset_user_settings(&self, _disabled: &[String]) -> Result<(), DomainError> {
             unreachable!()
+        }
+
+        async fn save_user_settings(
+            &self,
+            _settings: JsonDocument,
+        ) -> Result<Personas, DomainError> {
+            unreachable!()
+        }
+
+        async fn load_user_settings(&self) -> Result<StoredUserSettings, DomainError> {
+            Ok(StoredUserSettings {
+                settings: JsonDocument::default(),
+                revision: tt_domain::models::settings::revision::UserSettingsRevision {
+                    hash_algorithm: String::new(),
+                    settings_hash: String::new(),
+                },
+            })
         }
 
         async fn begin_commit(
@@ -965,7 +1022,7 @@ mod tests {
             unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
+        async fn create_snapshot(&self, _settings: JsonDocument) -> Result<String, DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -973,7 +1030,7 @@ mod tests {
             unimplemented!("not used by these tests")
         }
 
-        async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
+        async fn load_snapshot(&self, _name: &str) -> Result<JsonDocument, DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -983,31 +1040,31 @@ mod tests {
             unreachable!()
         }
 
-        async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_themes(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_moving_ui_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_quick_reply_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_quick_reply_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_instruct_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_instruct_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_context_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_context_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_sysprompt_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_sysprompt_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 
-        async fn get_reasoning_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
+        async fn get_reasoning_presets(&self) -> Result<Vec<JsonDocument>, DomainError> {
             Ok(Vec::new())
         }
 

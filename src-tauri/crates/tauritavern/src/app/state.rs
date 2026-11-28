@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::infrastructure::paths::RuntimePaths;
@@ -18,12 +17,16 @@ use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
+use tt_application::services::cors_proxy_service::CorsProxyService;
 use tt_application::services::data_archive_service::DataArchiveService;
 use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
+use tt_application::services::external_import_service::ImportSourceAccessService;
+use tt_application::services::generation_runtime::GenerationRuntime;
 use tt_application::services::group_chat_service::GroupChatService;
 use tt_application::services::group_service::GroupService;
+use tt_application::services::horde_service::HordeService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
@@ -39,6 +42,7 @@ use tt_application::services::skill_service::SkillService;
 use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
 use tt_application::services::sync_automation_service::SyncAutomationService;
+use tt_application::services::text_completion_service::TextCompletionService;
 use tt_application::services::theme_service::ThemeService;
 use tt_application::services::tokenization_service::TokenizationService;
 use tt_application::services::translate_service::TranslateService;
@@ -53,7 +57,7 @@ use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::IosPolicyActivationReport;
 
-use super::{StartupProfile, composition};
+use super::{HostEnvironment, StartupProfile, composition};
 
 pub struct AppState {
     pub(crate) services: AppServices,
@@ -106,12 +110,17 @@ pub(crate) struct AppServices {
     pub(crate) agent_run_history_service: Arc<AgentRunHistoryService>,
     pub(crate) agent_run_retention_automation_service: Arc<AgentRunRetentionAutomationService>,
     pub(crate) agent_runtime_service: Arc<AgentRuntimeService>,
+    pub(crate) generation_runtime: Arc<GenerationRuntime>,
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
+    pub(crate) text_completion_service: Arc<TextCompletionService>,
+    pub(crate) horde_service: Arc<HordeService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
     pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
+    pub(crate) import_source_access_service: Arc<ImportSourceAccessService>,
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
     pub(crate) searxng_search_service: Arc<SearxngSearchService>,
+    pub(crate) cors_proxy_service: Arc<CorsProxyService>,
     pub(crate) vector_service: Arc<VectorService>,
     pub(crate) tokenization_service: Arc<TokenizationService>,
     pub(crate) stable_diffusion_service: Arc<StableDiffusionService>,
@@ -128,7 +137,7 @@ pub(crate) struct AppServices {
 
 impl AppState {
     pub(crate) async fn new(
-        app_handle: AppHandle,
+        environment: HostEnvironment,
         runtime_paths: RuntimePaths,
         startup_profile: StartupProfile,
     ) -> Result<Self, DomainError> {
@@ -140,8 +149,13 @@ impl AppState {
 
         let data_directory =
             composition::initialize_data_directory(&runtime_paths.data_root).await?;
-        let services =
-            composition::build_services(&app_handle, &data_directory, &startup_profile).await?;
+        let services = composition::build_services(
+            &environment,
+            &runtime_paths.app_root,
+            &data_directory,
+            &startup_profile,
+        )
+        .await?;
 
         tracing::info!("Application initialized successfully");
 

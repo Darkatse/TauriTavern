@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tt_contracts::byte_commit::CommitBegin;
+use tt_domain::errors::DomainError;
 use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::chat_commit_repository::{
     ChatCommitOperation, ChatCommitRepository, ChatCommitTarget, ChatSwipeSource,
@@ -47,21 +48,32 @@ impl ChatCommitService {
             .await?)
     }
 
+    pub async fn open_payload_jsonl(
+        &self,
+        locator: ChatHistoryLocator,
+        allow_not_found: bool,
+    ) -> Result<Option<Box<dyn ByteReader>>, ApplicationError> {
+        validate_chat_history_locator(&locator)?;
+        found(
+            self.repository
+                .open_payload_jsonl(target_from_locator(locator))
+                .await,
+            allow_not_found,
+        )
+    }
+
     pub async fn open_payload_json(
         &self,
         locator: ChatHistoryLocator,
         allow_not_found: bool,
     ) -> Result<Option<Box<dyn ByteReader>>, ApplicationError> {
         validate_chat_history_locator(&locator)?;
-        match self
-            .repository
-            .open_payload_json(target_from_locator(locator))
-            .await
-        {
-            Ok(reader) => Ok(Some(reader)),
-            Err(tt_domain::errors::DomainError::NotFound(_)) if allow_not_found => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        found(
+            self.repository
+                .open_payload_json(target_from_locator(locator))
+                .await,
+            allow_not_found,
+        )
     }
 
     pub async fn open_swipe_source(
@@ -70,15 +82,12 @@ impl ChatCommitService {
         allow_not_found: bool,
     ) -> Result<Option<Arc<dyn ChatSwipeSource>>, ApplicationError> {
         validate_chat_history_locator(&locator)?;
-        match self
-            .repository
-            .open_swipe_source(target_from_locator(locator))
-            .await
-        {
-            Ok(source) => Ok(Some(source)),
-            Err(tt_domain::errors::DomainError::NotFound(_)) if allow_not_found => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        found(
+            self.repository
+                .open_swipe_source(target_from_locator(locator))
+                .await,
+            allow_not_found,
+        )
     }
 
     pub async fn append(
@@ -105,6 +114,17 @@ impl ChatCommitService {
 
     pub async fn abort(&self, session_id: &str) -> Result<(), ApplicationError> {
         Ok(self.repository.abort(session_id).await?)
+    }
+}
+
+fn found<T>(
+    opened: Result<T, DomainError>,
+    allow_not_found: bool,
+) -> Result<Option<T>, ApplicationError> {
+    match opened {
+        Ok(value) => Ok(Some(value)),
+        Err(DomainError::NotFound(_)) if allow_not_found => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 

@@ -206,30 +206,11 @@ mod tests {
         assert!(repository.normalize_filename(" ... ").is_err());
     }
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     #[tokio::test]
     async fn upload_background_from_path_copies_file() {
-        let temp = TempDirGuard::new("background-upload-from-path");
-        let backgrounds_dir = temp.path.join("backgrounds");
-        let source_path = temp.path.join("source.bin");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let backgrounds_dir = temp.path().join("backgrounds");
+        let source_path = temp.path().join("source.bin");
 
         tokio::fs::write(&source_path, b"ok")
             .await

@@ -4,7 +4,8 @@ use crate::errors::ApplicationError;
 use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec};
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionNormalizationReport, ChatCompletionSource,
+    ChatCompletionNormalizationReport, ChatCompletionSource, NATIVE_CLAUDE, NATIVE_GEMINI,
+    NATIVE_GEMINI_INTERACTIONS, NATIVE_OPENAI_RESPONSES,
 };
 
 use super::custom_api_format::CustomApiFormat;
@@ -79,6 +80,16 @@ impl ChatCompletionProviderFormat {
             Self::ClaudeMessages => "claude_messages",
             Self::Gemini => "gemini",
             Self::GeminiInteractions => "gemini_interactions",
+        }
+    }
+
+    pub(crate) const fn native_key(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAiCompatible => None,
+            Self::OpenAiResponses => Some(NATIVE_OPENAI_RESPONSES),
+            Self::ClaudeMessages => Some(NATIVE_CLAUDE),
+            Self::Gemini => Some(NATIVE_GEMINI),
+            Self::GeminiInteractions => Some(NATIVE_GEMINI_INTERACTIONS),
         }
     }
 }

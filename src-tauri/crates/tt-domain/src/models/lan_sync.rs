@@ -103,9 +103,16 @@ pub fn validate_device_name(name: &str) -> Result<(), crate::errors::DomainError
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LanSyncPairRequestEvent {
+pub struct LanSyncPairingReviewEvent {
     pub request_id: String,
-    pub peer_device_id: String,
-    pub peer_device_name: String,
-    pub peer_ip: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LanPairTarget {
+    pub device_id: Option<DeviceId>,
+    pub device_name: Option<String>,
+    /// Host of the first address, which pairing tries first.
+    pub host: String,
+    pub base_urls: Vec<String>,
+    pub spki_sha256: String,
 }

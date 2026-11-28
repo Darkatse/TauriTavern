@@ -976,8 +976,10 @@ export function initRossMods() {
 
 
     function isInputElementInFocus() {
-        //return $(document.activeElement).is(":input");
-        var focused = $(':focus');
+        // Editors keep their focused element inside a shadow root.
+        let element = document.activeElement;
+        while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+        const focused = $(element);
         if (focused.is('input') || focused.is('textarea') || focused.prop('contenteditable') == 'true') {
             if (focused.attr('id') === 'send_textarea') {
                 return false;

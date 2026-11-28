@@ -1,0 +1,28 @@
+diff --git a/dist/style-mod.cjs b/dist/style-mod.cjs
+index 572f6b922761004752a8a8f633a3f586e0c26541..4b9a1aad056d650e0afb2c10e62e2bfd2f9fd732 100644
+--- a/dist/style-mod.cjs
++++ b/dist/style-mod.cjs
+@@ -125,7 +125,8 @@ StyleSet.prototype.mount = function mount (modules, root) {
+     var text = ""
+     for (var i$1 = 0; i$1 < this.modules.length; i$1++)
+       { text += this.modules[i$1].getRules() + "\n" }
+-    this.styleTag.textContent = text
++    // Replacing a document stylesheet restyles the whole page, even when its text is unchanged.
++    if (this.styleTag.textContent != text) this.styleTag.textContent = text
+     var target = root.head || root
+     if (this.styleTag.parentNode != target)
+       { target.insertBefore(this.styleTag, target.firstChild) }
+diff --git a/src/style-mod.js b/src/style-mod.js
+index 009b0bee0075c7e408bf533e23c05dfedc059d67..7fc5d507767ae17990b7812e1524021a3e353946 100644
+--- a/src/style-mod.js
++++ b/src/style-mod.js
+@@ -132,7 +132,8 @@ class StyleSet {
+       let text = ""
+       for (let i = 0; i < this.modules.length; i++)
+         text += this.modules[i].getRules() + "\n"
+-      this.styleTag.textContent = text
++      // Replacing a document stylesheet restyles the whole page, even when its text is unchanged.
++      if (this.styleTag.textContent != text) this.styleTag.textContent = text
+       let target = root.head || root
+       if (this.styleTag.parentNode != target)
+         target.insertBefore(this.styleTag, target.firstChild)

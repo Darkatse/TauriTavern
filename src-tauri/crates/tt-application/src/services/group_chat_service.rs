@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::value::RawValue;
 
 use crate::dto::chat_dto::{
     ChatSearchResultDto, DeleteGroupChatDto, ImportGroupChatDto, RenameGroupChatDto,
@@ -95,7 +95,10 @@ impl GroupChatService {
         Ok(ChatSearchResultDto::from(summary))
     }
 
-    pub async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, ApplicationError> {
+    pub async fn get_group_chat_metadata(
+        &self,
+        chat_id: &str,
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .group_chat_repository
             .get_group_chat_metadata(chat_id)
@@ -107,7 +110,7 @@ impl GroupChatService {
         chat_id: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<Box<RawValue>, ApplicationError> {
         Ok(self
             .group_chat_repository
             .get_group_chat_store_json(chat_id, namespace, key)
@@ -119,10 +122,10 @@ impl GroupChatService {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), ApplicationError> {
         self.group_chat_repository
-            .set_group_chat_store_json(chat_id, namespace, key, value)
+            .set_group_chat_store_json(chat_id, namespace, key, value_json)
             .await?;
         Ok(())
     }
@@ -132,10 +135,10 @@ impl GroupChatService {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), ApplicationError> {
         self.group_chat_repository
-            .update_group_chat_store_json(chat_id, namespace, key, value)
+            .update_group_chat_store_json(chat_id, namespace, key, value_json)
             .await?;
         Ok(())
     }
@@ -201,24 +204,6 @@ impl GroupChatService {
     /// Clear the group chat cache.
     pub async fn clear_cache(&self) -> Result<(), DomainError> {
         self.group_chat_repository.clear_cache().await
-    }
-
-    /// Get the absolute path to a group chat payload file.
-    pub async fn get_group_chat_payload_path(
-        &self,
-        chat_id: &str,
-    ) -> Result<String, ApplicationError> {
-        if chat_id.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Group chat id cannot be empty".to_string(),
-            ));
-        }
-
-        let path = self
-            .group_chat_repository
-            .get_group_chat_payload_path(chat_id)
-            .await?;
-        Ok(path.to_string_lossy().to_string())
     }
 
     /// Get the tail window for a group chat JSONL payload.

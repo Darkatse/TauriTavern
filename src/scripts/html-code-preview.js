@@ -127,7 +127,7 @@ function createHeightReporter(previewId) {
         'const mo=new MutationObserver(schedule);',
         'mo.observe(document.documentElement||document,{subtree:true,childList:true,attributes:true,characterData:true});',
         '}',
-        'window.addEventListener("load",()=>{postHeight();setTimeout(postHeight,50);setTimeout(postHeight,250);setTimeout(postHeight,1000);});',
+        'window.addEventListener("load",postHeight);',
         'window.addEventListener("resize",postHeight);',
         'postHeight();',
         '})();',

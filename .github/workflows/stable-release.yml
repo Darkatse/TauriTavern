@@ -302,7 +302,7 @@ jobs:
             platform: ubuntu-latest
             args: --verbose --apk --split-per-abi --target aarch64 armv7
           - mobile: ios
-            platform: macos-latest
+            platform: xcode-27
             args: --verbose
 
     concurrency:
@@ -316,6 +316,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Select Xcode 27.2 (iOS 27.2 SDK)
+        if: matrix.mobile == 'ios'
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
 
       - name: Install Android host dependencies
         if: matrix.mobile == 'android'
@@ -429,6 +433,7 @@ jobs:
           NDK_HOME: ${{ matrix.mobile == 'android' && steps.setup-ndk.outputs.ndk-path || '' }}
           APPLE_API_ISSUER: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY: ${{ matrix.mobile == 'ios' && secrets.APPLE_API_KEY || '' }}
+          TAURITAVERN_IOS_POLICY_PROFILE: ${{ matrix.mobile == 'ios' && 'full' || '' }}
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs

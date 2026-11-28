@@ -1,24 +1,36 @@
 use std::sync::Arc;
 
-use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::provider_metadata_dto::{
-    ProviderModelProvidersRequestDto, SiliconFlowEmbeddingModelsRequestDto,
-    WorkersAiModelsRequestDto,
+    OpenRouterCodeExchangeRequestDto, ProviderModelProvidersRequestDto,
 };
 use tt_ports::repositories::provider_metadata_repository::{
-    NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
+    ModelProvider, NanoGptCredits, NanoGptModelProviders, OpenRouterCredits,
 };
+
+#[tauri::command]
+pub async fn get_openrouter_providers(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ModelProvider>, CommandError> {
+    log_command("get_openrouter_providers");
+
+    app_state
+        .services
+        .provider_metadata_service
+        .openrouter_providers()
+        .await
+        .map_err(map_command_error("Failed to get OpenRouter providers"))
+}
 
 #[tauri::command]
 pub async fn get_openrouter_model_providers(
     dto: ProviderModelProvidersRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
+) -> Result<Vec<ModelProvider>, CommandError> {
     log_command(format!("get_openrouter_model_providers {}", dto.model));
 
     app_state
@@ -43,6 +55,21 @@ pub async fn get_openrouter_credits(
         .openrouter_credits()
         .await
         .map_err(map_command_error("Failed to get OpenRouter credits"))
+}
+
+#[tauri::command]
+pub async fn exchange_openrouter_code(
+    dto: OpenRouterCodeExchangeRequestDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<String, CommandError> {
+    log_command("exchange_openrouter_code");
+
+    app_state
+        .services
+        .provider_metadata_service
+        .exchange_openrouter_code(dto)
+        .await
+        .map_err(map_command_error("Failed to authorize OpenRouter"))
 }
 
 #[tauri::command]
@@ -72,55 +99,4 @@ pub async fn get_nanogpt_credits(
         .nanogpt_credits()
         .await
         .map_err(map_command_error("Failed to get NanoGPT credits"))
-}
-
-#[tauri::command]
-pub async fn get_siliconflow_embedding_models(
-    dto: SiliconFlowEmbeddingModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<Value>, CommandError> {
-    log_command("get_siliconflow_embedding_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .siliconflow_embedding_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get SiliconFlow embedding models",
-        ))
-}
-
-#[tauri::command]
-pub async fn get_workers_ai_embedding_models(
-    dto: WorkersAiModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<Value>, CommandError> {
-    log_command("get_workers_ai_embedding_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .workers_ai_embedding_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get Cloudflare Workers AI embedding models",
-        ))
-}
-
-#[tauri::command]
-pub async fn get_workers_ai_multimodal_models(
-    dto: WorkersAiModelsRequestDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
-    log_command("get_workers_ai_multimodal_models");
-
-    app_state
-        .services
-        .provider_metadata_service
-        .workers_ai_multimodal_models(dto)
-        .await
-        .map_err(map_command_error(
-            "Failed to get Cloudflare Workers AI multimodal models",
-        ))
 }

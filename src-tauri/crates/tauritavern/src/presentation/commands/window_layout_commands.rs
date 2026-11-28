@@ -3,11 +3,21 @@ use crate::{
     presentation::errors::CommandError,
 };
 use tauri::AppHandle;
-use tt_contracts::window_layout::{WindowBackdropRequest, WindowSnapshot};
+use tt_contracts::window_layout::{DrawerBarItem, WindowBackdropRequest, WindowSnapshot};
 
 #[tauri::command]
 pub async fn get_window_snapshot(app: AppHandle) -> Result<Option<WindowSnapshot>, CommandError> {
     window_layout::snapshot(&app).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_drawer_bar_items(
+    app: AppHandle,
+    items: Vec<DrawerBarItem>,
+) -> Result<(), CommandError> {
+    window_layout::set_drawer_bar_items(&app, items)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]

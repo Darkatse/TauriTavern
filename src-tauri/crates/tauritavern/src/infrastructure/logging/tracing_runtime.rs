@@ -26,7 +26,18 @@ pub fn init_tracing(
     std::fs::create_dir_all(log_dir)
         .map_err(|error| format!("Failed to create log directory {:?}: {}", log_dir, error))?;
 
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, log_dir, "tauritavern.log");
+    // Prunes only its own prefix; LLM API logs in this directory keep their own retention.
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("tauritavern.log")
+        .max_log_files(14)
+        .build(log_dir)
+        .map_err(|error| {
+            format!(
+                "Failed to create log file appender in {:?}: {}",
+                log_dir, error
+            )
+        })?;
     let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));

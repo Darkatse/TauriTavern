@@ -13,7 +13,8 @@ use tt_contracts::sync::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{
-    LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus, validate_device_name,
+    LanPairTarget, LanSyncPairedDevice, LanSyncPairedDeviceSummary, LanSyncStatus,
+    validate_device_name,
 };
 use tt_ports::lan_discovery::LanDeviceDiscovery;
 
@@ -27,12 +28,12 @@ mod tests;
 
 pub use inbound::LanInboundService;
 use pairing_link::{
-    build_pair_uri, decode_device_pubkey_b64url, device_pubkey_b64url, parse_device_id,
-    parse_pair_uri,
+    build_pair_uri, decode_device_pubkey_b64url, device_pubkey_b64url, pair_target,
+    parse_device_id, parse_pair_uri,
 };
 pub use ports::{
-    LanAddressDiscovery, LanInboundRequestHandler, LanPairingClient, LanPeerRepository,
-    LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
+    LanAddressDiscovery, LanInboundRequestHandler, LanPairingApprovalRequest, LanPairingClient,
+    LanPeerRepository, LanServerControl, LanServerInfo, LanSyncSettingsRepository, PairingApproval,
 };
 pub use runtime_state::LanSyncRuntimeState;
 pub use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;
@@ -236,51 +237,51 @@ impl LanSyncService {
         Ok(())
     }
 
-    pub async fn connect_address(&self, address: &str) -> Result<(), DomainError> {
+    pub async fn connect_address(
+        &self,
+        address: &str,
+    ) -> Result<Option<LanPairTarget>, DomainError> {
         let base_url = pairing_link::parse_manual_address(address)?;
         let mut device = self.pairing_client.probe_device(&base_url, None).await?;
-        let identity = self.peer_repository.load_or_create_identity().await?;
-        if device.device_id == identity.device_id {
-            return Err(DomainError::InvalidData(
-                "Cannot pair LAN Sync device with itself".to_string(),
-            ));
-        }
-        if let Some(peer) = self
+        self.ensure_other_device(&device.device_id).await?;
+        let Some(peer) = self
             .peer_repository
             .load_paired_devices()
             .await?
             .into_iter()
             .find(|peer| peer.grant.device_id == device.device_id)
-        {
-            // A manually supplied address never replaces an existing trust decision.
-            device = self
-                .pairing_client
-                .probe_device(&base_url, Some(&peer.spki_sha256))
-                .await?;
-            if device.device_id != peer.grant.device_id {
-                return Err(DomainError::AuthenticationError(
-                    "LAN Sync device identity does not match".to_string(),
-                ));
-            }
-            return self
-                .peer_repository
-                .update_paired_connection(
-                    &device.device_id,
-                    &base_url,
-                    &device.device_name,
-                    device.platform.as_deref(),
-                )
-                .await;
-        }
-        self.request_pairing_with_peer(vec![base_url], device.spki_sha256, Some(device.device_id))
+        else {
+            return pair_target(
+                Some(device.device_id),
+                Some(device.device_name),
+                vec![base_url],
+                device.spki_sha256,
+            )
+            .map(Some);
+        };
+
+        // A manually supplied address never replaces an existing trust decision.
+        device = self
+            .pairing_client
+            .probe_device(&base_url, Some(&peer.spki_sha256))
             .await?;
-        Ok(())
+        if device.device_id != peer.grant.device_id {
+            return Err(DomainError::AuthenticationError(
+                "LAN Sync device identity does not match".to_string(),
+            ));
+        }
+        self.peer_repository
+            .update_paired_connection(
+                &device.device_id,
+                &base_url,
+                &device.device_name,
+                device.platform.as_deref(),
+            )
+            .await?;
+        Ok(None)
     }
 
-    pub async fn pair_device(
-        &self,
-        device_id: &str,
-    ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
+    pub async fn nearby_pair_target(&self, device_id: &str) -> Result<LanPairTarget, DomainError> {
         let device_id = parse_device_id(device_id)?;
         let device = self
             .discover_devices()
@@ -292,17 +293,21 @@ impl LanSyncService {
                     "Device is no longer nearby. Refresh and try again.".to_string(),
                 )
             })?;
-        self.request_pairing_with_peer(device.base_urls, device.spki_sha256, Some(device_id))
-            .await
+        self.ensure_other_device(&device.device_id).await?;
+        pair_target(
+            Some(device.device_id),
+            Some(device.device_name),
+            device.base_urls,
+            device.spki_sha256,
+        )
     }
 
-    pub async fn request_pairing(
-        &self,
-        pair_uri: &str,
-    ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
+    pub async fn link_pair_target(&self, pair_uri: &str) -> Result<LanPairTarget, DomainError> {
         let parsed = parse_pair_uri(pair_uri)?;
         let mut addresses = Vec::new();
+        let mut device_name = None;
         if let Some(device_id) = &parsed.device_id {
+            self.ensure_other_device(device_id).await?;
             // A link remains usable when multicast is unavailable.
             match self.discover_devices().await {
                 Ok(devices) => {
@@ -310,6 +315,7 @@ impl LanSyncService {
                         &device.device_id == device_id && device.spki_sha256 == parsed.spki_sha256
                     }) {
                         addresses = device.base_urls;
+                        device_name = Some(device.device_name);
                     }
                 }
                 Err(error) => tracing::warn!("LAN discovery unavailable while pairing: {error}"),
@@ -318,22 +324,15 @@ impl LanSyncService {
         if !addresses.contains(&parsed.base_url) {
             addresses.push(parsed.base_url);
         }
-        self.request_pairing_with_peer(addresses, parsed.spki_sha256, parsed.device_id)
-            .await
+        pair_target(parsed.device_id, device_name, addresses, parsed.spki_sha256)
     }
 
-    async fn request_pairing_with_peer(
+    /// Requires prior native consent for this target.
+    pub async fn pair(
         &self,
-        addresses: Vec<String>,
-        spki_sha256: String,
-        expected_device_id: Option<DeviceId>,
+        target: LanPairTarget,
     ) -> Result<LanSyncPairedDeviceSummary, DomainError> {
         let identity = self.peer_repository.load_or_create_identity().await?;
-        if expected_device_id.as_ref() == Some(&identity.device_id) {
-            return Err(DomainError::InvalidData(
-                "Cannot pair LAN Sync device with itself".to_string(),
-            ));
-        }
         if self.server.running_info().await.is_none() {
             self.start_server().await?;
         }
@@ -348,9 +347,9 @@ impl LanSyncService {
         let (response, base_url) = self
             .pairing_client
             .complete_pairing(
-                &addresses,
-                &spki_sha256,
-                expected_device_id.as_ref(),
+                &target.base_urls,
+                &target.spki_sha256,
+                target.device_id.as_ref(),
                 &local_device,
                 &device_pubkey_b64url(&identity.ed25519_seed)?,
             )
@@ -360,7 +359,8 @@ impl LanSyncService {
                 "Cannot pair LAN Sync device with itself".to_string(),
             ));
         }
-        if expected_device_id
+        if target
+            .device_id
             .as_ref()
             .is_some_and(|expected| expected != &response.server_device_id)
         {
@@ -379,12 +379,29 @@ impl LanSyncService {
                 last_sync_ms: None,
             },
             base_url,
-            spki_sha256,
+            spki_sha256: target.spki_sha256,
         };
         self.peer_repository
             .upsert_paired_device(paired_device.clone())
             .await?;
         Ok(paired_device.into())
+    }
+
+    async fn ensure_other_device(&self, device_id: &DeviceId) -> Result<(), DomainError> {
+        let identity = self.peer_repository.load_or_create_identity().await?;
+        if device_id == &identity.device_id {
+            return Err(DomainError::InvalidData(
+                "Cannot pair LAN Sync device with itself".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn claim_pairing_request(
+        &self,
+        request_id: &str,
+    ) -> Result<LanPairingApprovalRequest, DomainError> {
+        self.approval.claim(request_id).await
     }
 
     pub async fn confirm_pairing(&self, request_id: &str, accept: bool) -> Result<(), DomainError> {

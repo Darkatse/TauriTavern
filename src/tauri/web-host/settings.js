@@ -11,7 +11,7 @@ function mergeDefaults(defaults, saved) {
     return result;
 }
 
-/** @param {import('./install.js').WebHostOptions['store']} store @param {() => Promise<any>} loadDefaults */
+/** @param {import('./install.js').HostStatePart} store @param {() => Promise<any>} loadDefaults */
 export function createSettings(store, loadDefaults) {
     /** Option fields ignore null; arrays and scalar values replace, objects update declared fields. @param {any} target @param {any} patch @param {any} shape */
     function applyOptions(target, patch, shape) {
@@ -32,14 +32,9 @@ export function createSettings(store, loadDefaults) {
             patch = structuredClone(patch);
             const initial = await loadDefaults();
             const value = read(initial);
-            const { updates, request_proxy, ...options } = patch;
+            // Not in the update DTO; each has its own command.
+            const { allow_keys_exposure: _keys, request_proxy: _proxy, ...options } = patch;
             applyOptions(value, options, initial);
-            // These two DTOs contain required fields rather than nested Option patches.
-            if (request_proxy != null) value.request_proxy = request_proxy;
-            if (updates != null) {
-                if (updates.channel != null) value.updates.channel = updates.channel;
-                value.updates.startup_popup.dismissed_release_token = updates.startup_popup.dismissed_release_token ?? null;
-            }
             store.save(value);
             return structuredClone(value);
         },

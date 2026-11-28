@@ -6,6 +6,7 @@ import type {
     TimelineReadInput,
     TimelineReadResult,
     TimelineViewport,
+    TimelineViewportReport,
 } from './RunTimelineContract';
 import {
     buildEventDetailTargets,
@@ -16,7 +17,7 @@ import {
 import { createTimelineDetailState } from './run-timeline-detail-state';
 import { subAgentStatusLabel } from './run-timeline-display';
 import { createRunTimelineSession } from './run-timeline-session';
-import { virtualizeTimelineItems } from './run-timeline-virtual-list';
+import { createTimelineWindow } from './run-timeline-virtual-list';
 
 export function createSubAgentTimelineController(deps: {
     readEvents: (request: TimelineReadInput) => Promise<TimelineReadResult>;
@@ -38,6 +39,9 @@ export function createSubAgentTimelineController(deps: {
     let selectedItemsRef: readonly TimelineItem[] | null = null;
     let selectedSeqRef: number | null = null;
     let selectedCache: TimelineItem | null = null;
+    const eventWindow = createTimelineWindow<TimelineItem>();
+    // The main timeline rebuilds this snapshot on each of its publishes; an unchanged one keeps its object.
+    let previous: SubAgentTimelineSnapshot | null = null;
 
     function currentItems() {
         if (eventRef !== session.events || invocationRef !== invocationId) {
@@ -46,6 +50,10 @@ export function createSubAgentTimelineController(deps: {
             items = invocationId ? timelineItemsFromEvents(session.events, { invocationId }) : [];
         }
         return items;
+    }
+
+    function currentEventWindow() {
+        return eventWindow(currentItems(), viewport.scrollTop, viewport.viewportHeight);
     }
 
     function selectedItem() {
@@ -101,21 +109,28 @@ export function createSubAgentTimelineController(deps: {
         snapshot(task: SubAgentTask | null): SubAgentTimelineSnapshot {
             const all = currentItems();
             const selected = selectedItem();
-            return {
+            const detailView = previous?.detail.loading === detail.loading && previous.detail.error === detail.error
+                && previous.detail.sections === detail.sections
+                ? previous.detail
+                : { loading: detail.loading, error: detail.error, sections: detail.sections };
+            const next: SubAgentTimelineSnapshot = {
                 open: isOpen,
                 task,
                 title: task ? task.displayName : deps.tr('subAgent'),
                 subtitle: task ? `${subAgentStatusLabel(task.status, deps.tr)} | ${task.workspaceKey}` : '',
                 displayItems: all,
-                virtualItems: virtualizeTimelineItems(all, viewport.scrollTop, viewport.viewportHeight),
+                virtualItems: currentEventWindow(),
                 selectedItem: selected,
                 selectedSeq: selected?.seq ?? null,
                 hasMoreBefore: session.hasMoreBefore,
                 loading: session.loading,
                 loadingOlder: session.loadingOlder,
                 autoStick: viewport.nearBottom,
-                detail: { loading: detail.loading, error: detail.error, sections: detail.sections },
+                detail: detailView,
             };
+            const keys = Object.keys(next) as Array<keyof SubAgentTimelineSnapshot>;
+            if (!previous || keys.some(key => next[key] !== previous?.[key])) previous = next;
+            return previous;
         },
         invocationId: () => invocationId,
         open(runId: string, nextInvocationId: string): void {
@@ -157,11 +172,9 @@ export function createSubAgentTimelineController(deps: {
             selectedSeq = seq;
             void loadDetails();
         },
-        setViewport(next: TimelineViewport): void {
-            if (viewport.scrollTop === next.scrollTop && viewport.viewportHeight === next.viewportHeight
-                && viewport.nearBottom === next.nearBottom) return;
-            viewport = next;
-            deps.onChange();
+        setViewport(next: TimelineViewportReport): void {
+            viewport = { ...viewport, ...next };
+            if (currentEventWindow() !== previous?.virtualItems || viewport.nearBottom !== previous.autoStick) deps.onChange();
         },
         dispose(): void {
             reset();

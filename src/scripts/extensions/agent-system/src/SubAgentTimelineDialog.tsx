@@ -1,4 +1,5 @@
 import {
+    memo,
     useCallback,
     useEffect,
     useLayoutEffect,
@@ -11,6 +12,7 @@ import type { AgentSystemTr } from './i18n';
 import type {
     RunTimelineController,
     SubAgentTimelineSnapshot,
+    TimelineItem,
 } from './RunTimelineContract';
 import {
     RunTimelineDetailPane,
@@ -19,12 +21,11 @@ import {
 import {
     captureTimelineScrollAnchor,
     restoreTimelineScrollAnchor,
-    scrollTimelineToBottom,
     type TimelineScrollAnchor,
 } from './RunTimelineDom';
 import { subAgentTaskStyle, timelineItemTitle } from './run-timeline-display';
 
-export function SubAgentTimelineDialog(props: {
+export const SubAgentTimelineDialog = memo(function SubAgentTimelineDialog(props: {
     controller: RunTimelineController;
     snapshot: SubAgentTimelineSnapshot;
     tr: AgentSystemTr;
@@ -56,12 +57,6 @@ export function SubAgentTimelineDialog(props: {
     }, []);
 
     useLayoutEffect(() => {
-        if (snapshot.open && snapshot.autoStick) {
-            scrollTimelineToBottom(scrollerRef.current, controller.setSubAgentViewport);
-        }
-    }, [controller, snapshot.autoStick, snapshot.displayItems, snapshot.open]);
-
-    useLayoutEffect(() => {
         restoreTimelineScrollAnchor(scrollerRef.current, anchorRef.current, controller.setSubAgentViewport);
         anchorRef.current = null;
     }, [anchorRevision, controller]);
@@ -74,6 +69,7 @@ export function SubAgentTimelineDialog(props: {
         }
     }, [controller]);
     const onTopReached = useCallback(() => { void loadOlder(); }, [loadOlder]);
+    const selectItem = useCallback((item: TimelineItem) => controller.selectSubAgentItem(item.seq), [controller]);
 
     const close = () => dialogRef.current?.close();
     const taskStyle = snapshot.task ? subAgentTaskStyle(snapshot.task) as CSSProperties : undefined;
@@ -88,63 +84,66 @@ export function SubAgentTimelineDialog(props: {
             }}
             onClose={controller.closeSubAgent}
         >
-            <div className="ttas-subagent-panel">
-                <header className="ttas-subagent-titlebar">
-                    <div className="ttas-subagent-title">
-                        <span className="ttas-subagent-title-dot" style={taskStyle} aria-hidden="true"></span>
-                        <div>
-                            <strong>{snapshot.title}</strong>
-                            <small>{snapshot.subtitle}</small>
+            {snapshot.open && (
+                <div className="ttas-subagent-panel">
+                    <header className="ttas-subagent-titlebar">
+                        <div className="ttas-subagent-title">
+                            <span className="ttas-subagent-title-dot" style={taskStyle} aria-hidden="true"></span>
+                            <div>
+                                <strong>{snapshot.title}</strong>
+                                <small>{snapshot.subtitle}</small>
+                            </div>
                         </div>
+                        <button
+                            type="button"
+                            className="menu_button menu_button_icon ttas-run-icon-button"
+                            title={tr('close')}
+                            aria-label={tr('close')}
+                            onClick={close}
+                        >
+                            <i className="fa-solid fa-xmark"></i>
+                        </button>
+                    </header>
+                    <div className="ttas-subagent-body">
+                        <RunTimelineEventList
+                            tr={tr}
+                            scrollerRef={scrollerRef}
+                            ariaLabel={tr('timelineSubAgentTimeline')}
+                            surfaceClass="ttas-subagent-timeline"
+                            listClass="ttas-subagent-events"
+                            loading={snapshot.loading}
+                            loadingOlder={snapshot.loadingOlder}
+                            emptyText={tr('timelineNoEvents')}
+                            items={snapshot.displayItems}
+                            virtualItems={snapshot.virtualItems}
+                            selectedSeq={snapshot.selectedSeq}
+                            latestSeq={null}
+                            activeSeq={null}
+                            autoStick={snapshot.autoStick}
+                            onSelect={selectItem}
+                            onTopReached={onTopReached}
+                            onViewport={controller.setSubAgentViewport}
+                        />
+                        <RunTimelineDetailPane
+                            tr={tr}
+                            rootClass="ttas-subagent-detail"
+                            ariaLabel={tr('timelineDetails')}
+                            title={snapshot.selectedItem ? timelineItemTitle(snapshot.selectedItem, tr) : tr('timelineDetails')}
+                            type={snapshot.selectedItem?.type ?? ''}
+                            items={snapshot.displayItems}
+                            hasMoreBefore={snapshot.hasMoreBefore}
+                            loadingOlder={snapshot.loadingOlder}
+                            onLoadOlder={controller.loadOlderSubAgent}
+                            selectedSeq={snapshot.selectedSeq}
+                            loading={snapshot.detail.loading}
+                            error={snapshot.detail.error}
+                            sections={snapshot.detail.sections}
+                            onSelectNav={selectItem}
+                            onAction={controller.invokeDetailAction}
+                        />
                     </div>
-                    <button
-                        type="button"
-                        className="menu_button menu_button_icon ttas-run-icon-button"
-                        title={tr('close')}
-                        aria-label={tr('close')}
-                        onClick={close}
-                    >
-                        <i className="fa-solid fa-xmark"></i>
-                    </button>
-                </header>
-                <div className="ttas-subagent-body">
-                    <RunTimelineEventList
-                        tr={tr}
-                        scrollerRef={scrollerRef}
-                        ariaLabel={tr('timelineSubAgentTimeline')}
-                        surfaceClass="ttas-subagent-timeline"
-                        listClass="ttas-subagent-events"
-                        loading={snapshot.loading}
-                        loadingOlder={snapshot.loadingOlder}
-                        emptyText={tr('timelineNoEvents')}
-                        items={snapshot.displayItems}
-                        virtualItems={snapshot.virtualItems}
-                        selectedSeq={snapshot.selectedSeq}
-                        latestSeq={null}
-                        activeSeq={null}
-                        onSelect={item => controller.selectSubAgentItem(item.seq)}
-                        onTopReached={onTopReached}
-                        onViewport={controller.setSubAgentViewport}
-                    />
-                    <RunTimelineDetailPane
-                        tr={tr}
-                        rootClass="ttas-subagent-detail"
-                        ariaLabel={tr('timelineDetails')}
-                        title={snapshot.selectedItem ? timelineItemTitle(snapshot.selectedItem, tr) : tr('timelineDetails')}
-                        type={snapshot.selectedItem?.type ?? ''}
-                        items={snapshot.displayItems}
-                        hasMoreBefore={snapshot.hasMoreBefore}
-                        loadingOlder={snapshot.loadingOlder}
-                        onLoadOlder={controller.loadOlderSubAgent}
-                        selectedSeq={snapshot.selectedSeq}
-                        loading={snapshot.detail.loading}
-                        error={snapshot.detail.error}
-                        sections={snapshot.detail.sections}
-                        onSelectNav={item => controller.selectSubAgentItem(item.seq)}
-                        onAction={controller.invokeDetailAction}
-                    />
                 </div>
-            </div>
+            )}
         </dialog>
     );
-}
+});

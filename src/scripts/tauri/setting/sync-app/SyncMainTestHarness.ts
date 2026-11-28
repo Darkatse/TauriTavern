@@ -163,7 +163,7 @@ export function createFakes() {
         editSyncScope: () => Promise.resolve(null),
         showOverwritePolicyHelp: () => Promise.resolve(),
         renameTarget: () => Promise.resolve(false),
-        connectPairUri: () => Promise.resolve(false),
+        connectPairUri: () => Promise.resolve(),
         notifyLanPushRequested: () => {
             events.push('notifyLanPushRequested');
         },

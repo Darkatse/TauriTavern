@@ -55,6 +55,7 @@
 - allowlist（如下两类）支持：
   - `"all"`
   - `["item-a", "item-b"]`
+- `llm.chat_completion_sources.allowlist` 至少要留下一个可用来源（`custom` 还要求 `llm.endpoint_overrides`）
 
 实现位置：
 
@@ -106,7 +107,7 @@ iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入出厂 profile（`ful
 
 > 这只是“首次生成默认 settings”的默认值：用户导入 settings 后可覆盖 profile/overrides，且不会被系统偷偷改回去。
 
-Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外生成、带 `-TestFlight` 后缀的专用 IPA 显式注入 `ios_external_beta` 并使用 App Store Connect export method。本地开发和其他分发方式仍由调用方明确选择 profile。公开 TestFlight 的 `What to Test` 也以同一 capability snapshot 为可见性边界，避免描述默认包中不可达的能力。
+Stable 与 Canary 的普通自签 IPA 注入 `full`；额外生成、带 `-TestFlight` 后缀的专用 IPA 注入 `ios_external_beta` 并使用 App Store Connect export method。分发构建都声明出厂 profile，因此初始设置（含安全模式写回的初始设置）总带明确的 seed，不会退回本机缓存。本地开发和其他分发方式仍由调用方明确选择 profile。公开 TestFlight 的 `What to Test` 也以同一 capability snapshot 为可见性边界，避免描述默认包中不可达的能力。
 
 ### 2.3 Activation Report（用于调试/回归）
 
@@ -152,6 +153,7 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
 | `scripting.prompt_injections` | ✅ | ✅ | ❌ |
 | `scripting.tool_registration` | ✅ | ✅ | ❌ |
 | `ai.image_generation` | ✅ | ✅ | ❌ |
+| `ai.horde` | ✅ | ✅ | ❌ |
 | `sync.lan` | ✅ | ✅ | ❌ |
 | `about.git_info` | ✅ | ✅ | ❌ |
 
@@ -177,23 +179,30 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - 行为：发现阶段过滤（system 仅 allowlist；local/global third-party 受 `third_party_execution` 控制）
 - `content.external_import`
   - Rust commands：
-    - `src-tauri/crates/tauritavern/src/presentation/commands/content_commands.rs:download_external_import_url`
-    - `src-tauri/crates/tauritavern/src/presentation/commands/file_staging_commands.rs:stage_file_from_url`
+    - `src-tauri/crates/tauritavern/src/presentation/commands/import_source.rs:ImportSources::new`（`stage_content_from_url`、`download_asset`、`download_skill_import_url`）
+    - `src-tauri/crates/tauritavern/src/presentation/commands/file_transfer_commands.rs:download_remote_file`
 - `updates.manual_check`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`
+  - 来源是否可用：`src-tauri/crates/tt-domain/src/ios_policy.rs:IosPolicyLlmCapabilities::allows_chat_completion_source`（`custom` 还要求 `llm.endpoint_overrides`）
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
 - `llm.endpoint_overrides`
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
-  - 行为：禁用时禁止 `custom` source；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
+  - 行为：禁用时 `custom` source 不可用；并拒绝任何非空 override 字段（reverse_proxy/custom_url/custom_include_headers/proxy_password）
 - `llm.chat_completion_features.web_search` / `llm.chat_completion_features.request_images`
   - Service：`src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs`
   - 行为：payload 中出现 enable_web_search/request_images 或 request_image_* 即拒绝
+- `llm.text_completions.enabled`
+  - Service：`src-tauri/crates/tt-application/src/services/text_completion_service/mod.rs`
+  - 行为：禁用时拒绝文本补全的全部命令
 - `network.request_proxy`
   - 启动期：`src-tauri/crates/tauritavern/src/app/host/setup.rs` 若 settings 中 request_proxy.enabled=true 但 capability 禁用 → 应用继续启动，但 HTTP pool 保持 fail-closed，直到用户在 Settings 中关闭 proxy
-  - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:update_tauritavern_settings` 禁止启用 proxy
+  - 运行期：`src-tauri/crates/tauritavern/src/presentation/commands/settings_commands.rs:set_request_proxy` 禁止启用 proxy
 - `ai.image_generation`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/stable_diffusion_commands.rs:sd_handle`
+- `ai.horde`
+  - Service：`src-tauri/crates/tt-application/src/services/horde_service/mod.rs`
+  - 行为：禁用时拒绝 AI Horde 的全部请求
 - `sync.lan`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/lan_sync_commands.rs:*`（所有 LAN sync 命令统一门禁）
 
@@ -202,9 +211,12 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
 - `updates.startup_check`
   - 前端系统扩展 `tauritavern-version` 在 `APP_READY` 时检查 capability 并跳过启动更新检查
   - 实现：`src/scripts/extensions/tauritavern-version/index.js`
-- `llm.text_completions.enabled`
-  - 若用户 settings 里 `main_api === "textgenerationwebui"`，iOS policy 禁用时会在加载 settings 后强制切回 chat completion（并 toast 提示）
-  - 实现：`src/script.js`
+- `llm.text_completions.enabled` / `ai.horde`
+  - 主 API 选择器去掉文本补全或 Horde；settings 里保存的主 API 被去掉时，加载 settings 时切回 chat completion 并提示
+  - 实现：`src/tauri/main/adapters/st/main-api-selector-option-parking.js`
+- `llm.chat_completion_sources.allowlist` / `llm.endpoint_overrides`
+  - bootstrap 的 `available_chat_completion_sources` 列出宿主已实现且策略允许的来源；前端删去其余 `#chat_completion_source` 选项，设置或预设指向不可用来源时切到列表中的第一个来源并提示；`/api`、`/custom-api-format` 与 Connection Manager 的请求服务按同一判断拒绝不可用的来源
+  - 实现：`src/tauri/main/adapters/st/host-availability.js` 的 `chatCompletionSources`
 
 ### 4.3 前端 UI 投影（入口隐藏/收口）
 
@@ -220,27 +232,23 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - `content.external_import=false`：隐藏 external import 按钮 + onboarding 文案块
   - `prompts.nsfw_prompt=false`：隐藏 NSFW quick edit textarea 区块（仅 UI 投影）
   - `prompts.jailbreak_prompt=false`：隐藏 Jailbreak quick edit textarea + “prefer character jailbreak”开关（仅 UI 投影）
-  - `llm.chat_completion_sources.allowlist`：过滤 `#chat_completion_source` 选项并修正当前值
   - `llm.endpoint_overrides=false`：隐藏 reverse proxy / custom endpoint 相关 UI
   - `llm.chat_completion_features.web_search=false`：隐藏 web search 开关
   - `llm.chat_completion_features.request_images=false`：隐藏 request images block
-  - `llm.text_completions.enabled=false`：移除 Text Completion option 并隐藏 panel
   - `ai.image_generation=false`：隐藏 `#bg_chat_hint`（避免 SD 相关提示露出）
 - Settings 面板投影：`src/scripts/tauri/setting/settings-app/SettingsSystemSection.tsx`
   - `network.request_proxy=false`：默认隐藏 Request Proxy details；若已有启用配置则保留只允许关闭的修复入口
   - `sync.lan=false`：隐藏 Sync panel（避免触发相机/局域网相关入口）
 - 外部导入点击门禁：`src/script.js`
   - `content.external_import=false` 时直接 toast 并 return（避免“隐藏失效/脚本触发”）
-- LLM source selector 兜底：`src/scripts/openai.js`
-  - `llm.chat_completion_sources.allowlist` + `llm.endpoint_overrides`：当当前选择不允许时自动回落到允许项（并 toast）
 - Slash Commands 注册收口：
   - `scripting.prompt_injections=false`：不注册 `/inject` `/listinjects` `/flushinject(s)` 等命令
     - `src/scripts/slash-commands.js`
   - `scripting.tool_registration=false`：不注册 `/tools-register` 等注册类命令
     - `src/scripts/tool-calling.js`
 - `tauritavern-version` 扩展（更新能力 UI）：
-  - `updates.manual_check=false`：移除 “Check for Updates” 按钮与更新渠道选择，并隐藏兼容性信息/Discord 链接
-  - `updates.startup_check=false`：跳过启动检查更新
+  - `updates.manual_check=false`：移除 “Check for Updates” 按钮、隐藏更新渠道选择，并隐藏兼容性信息/Discord/Telegram 链接
+  - `updates.startup_check=false`：隐藏“更新弹窗”开关并跳过启动检查更新（两者均为 `false` 时隐藏整个“更新设置”折叠项）
   - `about.git_info=false`：隐藏 Git Info
   - `src/scripts/extensions/tauritavern-version/index.js`
 

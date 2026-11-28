@@ -14,6 +14,9 @@ export async function installTauriTavernSettingsPanel() {
     void import('./extension-menu-shortcuts.js')
         .then(({ renderExtensionMenuShortcuts }) => renderExtensionMenuShortcuts())
         .catch(error => console.error('Failed to install TauriTavern quick access menu:', error));
+    void import('./request-inspector.js')
+        .then(({ installRequestPreviewButton }) => installRequestPreviewButton())
+        .catch(error => console.error('Failed to install the request preview button:', error));
 
     document.getElementById(TAURITAVERN_SETTINGS_BUTTON_ID)?.addEventListener('click', () => {
         runOrPopup(async () => {

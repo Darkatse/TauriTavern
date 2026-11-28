@@ -59,9 +59,11 @@
   - **Shell 阶段**
     - `initLocales()` 先于任何可见界面：语言数据是静态资源，不依赖 Host 就绪；首帧界面与启动状态文案都已是用户语言
     - `removePreloader()`（`src/scripts/loader.js`）：移除 `#preloader`
+    - 答复[安全模式](SafeMode.md)询问
     - 初始化纯前端 UI/DOM handler、基础 patch（不会做 `/api/*`）
   - **Core 阶段**
     - `await window.__TAURITAVERN_MAIN_READY__`：保证 Host 拦截器与 Rust backend readiness 就绪，失败直接传播
+    - 显示安全模式的恢复结果，然后加载 `css/user.css`
     - `/csrf-token` + 并发启动 `/api/bootstrap` 与 `/api/settings/get`
     - `initSecrets()` + `primeSecretStateSnapshot(...)` + `readSecretState()`
     - 默认 slash commands、模型/设置等核心模块初始化
@@ -103,9 +105,9 @@
 
 `/api/settings/get` 独立读取设置；`/api/bootstrap` 提供角色、群组、头像和密钥状态等启动元数据。前端并发获取，再按既有顺序应用；本次启动复用读取结果，避免重复请求。
 
-设置与角色是启动必需数据，失败会阻止启动；群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
+设置与角色是启动必需数据，失败会阻止启动，错误消息带上宿主返回的原因；内容无法加载或预设名重复的单个预设文件与 SillyTavern 一样被跳过，并显示可见错误。群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
 
-启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制或重新加载），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
+启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。后端初始化失败（包括宿主设置或 iOS 策略无法读取）时，`__TAURITAVERN_MAIN_READY__` 被拒绝，走第二个出口；原生 setup 不会因用户数据在窗口出现前退出。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制、重新加载或进入[安全模式](SafeMode.md)），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
 
 后端采样入口见 [bootstrap_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs)。
 
@@ -164,8 +166,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
     - 目的：避免 SPresets 等脚本在抽屉关闭时找不到 `#saved_regex_scripts` 触发 `MutationObserver.observe(target not Node)`。
 - `src/tauri/main/adapters/panel-runtime/top-settings-panel-parking.js`
   - 左栏 pinned 锚点分两类，判据不同：
-    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
-    - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
+    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取或更新的节点保持在线，每个锚点的读取方注在常量旁。
+    - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：让第三方脚本在抽屉关闭时仍能选中的预设与 Prompt Manager 节点。
+  - `#AdvancedFormatting` 抽屉不停放：面板外代码直接读写其中的 Instruct、Context 与分词器控件。
   - 世界书抽屉：`compat` 只 park 条目列表 `#world_popup_entries_list`（世界书 DOM 的主体），世界书下拉框、分页和编辑按钮保持在线；`aggressive` 仍 park 整个 `#wi-holder`。世界书模块持有列表节点，正常渲染与停放期间的更新使用同一个目标；重新打开只挂回原节点，不额外刷新。离屏更新仍有渲染计算，但停放期间的重型条目不连接 document，保留 DOM 裁剪收益；列表的分页后测量与条目定位跳过离屏节点。
 
 ---
@@ -179,7 +182,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）与启动失败对话框（见 §4）
-- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
+  - `src/scripts/tauri/startup/startup-dialog.js`：启动对话框原语（Shadow DOM、只能经按钮离开），失败、安全模式询问与结果共用
+  - `src/scripts/tauri/startup/safe-mode.js`：安全模式的询问、请求与结果，以及 `css/user.css` 的加载
+- `tests/webview/startup-order.test.mjs`（`pnpm run test:dom`）验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。
 
 ---
 

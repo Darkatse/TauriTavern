@@ -9,7 +9,7 @@ use tt_domain::models::llm_connection::{
     LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION, LlmConnectionDefinition, LlmConnectionId,
     LlmConnectionReverseProxy, LlmConnectionSummary,
 };
-use tt_domain::models::secret::SecretKeys;
+use tt_domain::models::vertex_ai::VertexAiAuthMode;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 use tt_ports::repositories::settings_repository::SettingsRepository;
@@ -192,6 +192,7 @@ struct ResolvedConnectionBinding {
     connection: LlmConnectionDefinition,
     source: ChatCompletionSource,
     custom_api_format: Option<String>,
+    reverse_proxy: Option<(String, String)>,
     model_id: String,
 }
 
@@ -278,6 +279,8 @@ impl LlmConnectionService {
             .resolve_connection_binding(connection_ref, model_id)
             .await?;
 
+        let binding = resolved.model_binding();
+
         for key in CONNECTION_PAYLOAD_KEYS {
             payload.remove(*key);
         }
@@ -289,16 +292,10 @@ impl LlmConnectionService {
             "chat_completion_source".to_string(),
             Value::String(resolved.source.key().to_string()),
         );
-        payload.insert(
-            "model".to_string(),
-            Value::String(resolved.model_id.clone()),
-        );
+        payload.insert("model".to_string(), Value::String(resolved.model_id));
 
-        if let Some(format) = resolved.custom_api_format.as_deref() {
-            payload.insert(
-                "custom_api_format".to_string(),
-                Value::String(format.to_string()),
-            );
+        if let Some(format) = resolved.custom_api_format {
+            payload.insert("custom_api_format".to_string(), Value::String(format));
         }
 
         if let Some(base_url) = trimmed_option(resolved.connection.endpoint.base_url.as_deref()) {
@@ -319,8 +316,7 @@ impl LlmConnectionService {
             );
         }
 
-        if let Some(reverse_proxy) = resolved.connection.routing.reverse_proxy.as_ref() {
-            let (url, password) = self.resolve_reverse_proxy(reverse_proxy).await?;
+        if let Some((url, password)) = resolved.reverse_proxy {
             payload.insert("reverse_proxy".to_string(), Value::String(url));
             payload.insert("proxy_password".to_string(), Value::String(password));
         }
@@ -400,23 +396,30 @@ impl LlmConnectionService {
             );
         }
 
-        Ok(resolved.model_binding())
+        Ok(binding)
     }
 
+    /// The proxy URL and password; `None` when the preset has no URL.
     async fn resolve_reverse_proxy(
         &self,
         proxy: &LlmConnectionReverseProxy,
-    ) -> Result<(String, String), ApplicationError> {
+    ) -> Result<Option<(String, String)>, ApplicationError> {
         let preset = match proxy {
             LlmConnectionReverseProxy::Url { url } => {
-                return Ok((url.trim().to_string(), String::new()));
+                return Ok(Some((url.trim().to_string(), String::new())));
             }
             LlmConnectionReverseProxy::Preset { preset } => preset.trim(),
         };
-        let settings = self.settings_repository.load_user_settings().await?;
-        let saved = settings
-            .data
-            .get("proxies")
+        let settings = self
+            .settings_repository
+            .load_user_settings()
+            .await?
+            .settings;
+        let proxies: Option<Value> = settings.get(&["proxies"]).map_err(|error| {
+            ApplicationError::ValidationError(format!("Invalid settings proxies: {error}"))
+        })?;
+        let saved = proxies
+            .as_ref()
             .and_then(Value::as_array)
             .and_then(|proxies| {
                 proxies
@@ -432,17 +435,15 @@ impl LlmConnectionService {
             .get("url")
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "llm_connection.proxy_preset_url_missing: proxy preset `{preset}` has no URL"
-                ))
-            })?;
+            .unwrap_or_default();
+        if url.is_empty() {
+            return Ok(None);
+        }
         let password = saved
             .get("password")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        Ok((url.to_string(), password.to_string()))
+        Ok(Some((url.to_string(), password.to_string())))
     }
 
     pub async fn resolve_model_binding(
@@ -491,12 +492,17 @@ impl LlmConnectionService {
         })?;
         let source = self.validate_connection(&connection)?;
         let custom_api_format = normalized_custom_api_format(&connection);
+        let reverse_proxy = match connection.routing.reverse_proxy.as_ref() {
+            Some(proxy) => self.resolve_reverse_proxy(proxy).await?,
+            None => None,
+        };
 
         Ok(ResolvedConnectionBinding {
             connection_ref: id.as_str().to_string(),
             connection,
             source,
             custom_api_format,
+            reverse_proxy,
             model_id: model_id.to_string(),
         })
     }
@@ -740,12 +746,7 @@ fn validate_auth(
     source: ChatCompletionSource,
 ) -> Result<(), ApplicationError> {
     let Some(secret_ref) = &connection.auth.secret_ref else {
-        if connection.routing.reverse_proxy.is_some() {
-            return Ok(());
-        }
-        return Err(ApplicationError::ValidationError(
-            "llm_connection.secret_ref_required: auth.secretRef is required without reverse proxy routing".to_string(),
-        ));
+        return Ok(());
     };
     if secret_ref.key.trim().is_empty() {
         return Err(ApplicationError::ValidationError(
@@ -786,7 +787,7 @@ fn validate_routing(
                 .to_string(),
         ));
     }
-    if !supports_reverse_proxy(source) {
+    if !source.supports_reverse_proxy() {
         return Err(ApplicationError::ValidationError(format!(
             "llm_connection.reverse_proxy_unsupported: source `{}` does not support reverse proxy routing",
             source.key()
@@ -809,60 +810,24 @@ fn expected_secret_key(
     connection: &LlmConnectionDefinition,
     source: ChatCompletionSource,
 ) -> Result<&'static str, ApplicationError> {
-    if source == ChatCompletionSource::VertexAi {
-        let mode = connection
-            .endpoint
-            .source_specific
-            .get("vertexai_auth_mode")
-            .and_then(Value::as_str)
-            .unwrap_or("express")
-            .trim()
-            .to_ascii_lowercase();
-        return match mode.as_str() {
-            "" | "express" => Ok(SecretKeys::VERTEXAI),
-            "full" => Ok(SecretKeys::VERTEXAI_SERVICE_ACCOUNT),
-            other => Err(ApplicationError::ValidationError(format!(
-                "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{other}`"
-            ))),
-        };
+    if source != ChatCompletionSource::VertexAi {
+        return Ok(source.secret_key());
     }
 
-    match source {
-        ChatCompletionSource::OpenAi => Ok(SecretKeys::OPENAI),
-        ChatCompletionSource::OpenCode => Ok(SecretKeys::OPENCODE),
-        ChatCompletionSource::OpenRouter => Ok(SecretKeys::OPENROUTER),
-        ChatCompletionSource::Custom => Ok(SecretKeys::CUSTOM),
-        ChatCompletionSource::Claude => Ok(SecretKeys::CLAUDE),
-        ChatCompletionSource::Makersuite => Ok(SecretKeys::MAKERSUITE),
-        ChatCompletionSource::DeepSeek => Ok(SecretKeys::DEEPSEEK),
-        ChatCompletionSource::Cohere => Ok(SecretKeys::COHERE),
-        ChatCompletionSource::Groq => Ok(SecretKeys::GROQ),
-        ChatCompletionSource::Moonshot => Ok(SecretKeys::MOONSHOT),
-        ChatCompletionSource::NanoGpt => Ok(SecretKeys::NANOGPT),
-        ChatCompletionSource::Chutes => Ok(SecretKeys::CHUTES),
-        ChatCompletionSource::SiliconFlow => Ok(SecretKeys::SILICONFLOW),
-        ChatCompletionSource::WorkersAi => Ok(SecretKeys::WORKERS_AI),
-        ChatCompletionSource::Zai => Ok(SecretKeys::ZAI),
-        ChatCompletionSource::MiniMax => Ok(SecretKeys::MINIMAX),
-        ChatCompletionSource::AwsBedrock => Ok(SecretKeys::AWS_BEDROCK),
-        ChatCompletionSource::Xai => Ok(SecretKeys::XAI),
-        ChatCompletionSource::Pollinations => Ok(SecretKeys::POLLINATIONS),
-        ChatCompletionSource::VertexAi => unreachable!("Vertex AI handled above"),
-    }
-}
-
-fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
-    matches!(
-        source,
-        ChatCompletionSource::OpenAi
-            | ChatCompletionSource::Claude
-            | ChatCompletionSource::Makersuite
-            | ChatCompletionSource::VertexAi
-            | ChatCompletionSource::DeepSeek
-            | ChatCompletionSource::Moonshot
-            | ChatCompletionSource::Zai
-            | ChatCompletionSource::Xai
-    )
+    let mode = connection
+        .endpoint
+        .source_specific
+        .get("vertexai_auth_mode")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    VertexAiAuthMode::parse(mode)
+        .map(VertexAiAuthMode::secret_key)
+        .map_err(|_| {
+            ApplicationError::ValidationError(format!(
+                "llm_connection.vertexai_auth_mode_unsupported: unsupported vertexai_auth_mode `{}`",
+                mode.trim()
+            ))
+        })
 }
 
 fn trimmed_option(value: Option<&str>) -> Option<&str> {

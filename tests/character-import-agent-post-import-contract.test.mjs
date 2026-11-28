@@ -27,7 +27,7 @@ test('/api/characters/import returns character data, lorebook adoption and Agent
         },
     };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png', cleanup: async () => {} }),
         safeInvoke: async () => ({ character: imported, lorebook: { status: 'none' } }),
         normalizeCharacter: character => character,
         invalidateCharacterCache: () => {},
@@ -64,7 +64,7 @@ test('/api/characters/import uses the explicit replacement command for an existi
     const calls = [];
     const imported = { name: 'Updated Alice', avatar: 'Alice.png' };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/update.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/update.png', cleanup: async () => {} }),
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             return { character: imported, lorebook: { status: 'none' } };
@@ -95,12 +95,46 @@ test('/api/characters/import uses the explicit replacement command for an existi
     ]);
 });
 
+test('/api/characters/import replaces from a host-staged file by path and releases it on failure (#428)', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const discarded = [];
+    const context = {
+        materializeUploadFile: async () => {
+            throw new Error('a staged file must not be uploaded again');
+        },
+        adoptStagedFile: filePath => ({ filePath, cleanup: async () => { discarded.push(filePath); } }),
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            throw new Error('Bad request: corrupt card');
+        },
+    };
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const body = new FormData();
+    body.set('staged_path', '/cache/character-card/0f3a.png');
+    body.set('file_type', 'png');
+    body.set('preserved_name', 'Alice.png');
+    await assert.rejects(router.handle({
+        method: 'POST',
+        path: '/api/characters/import',
+        url: new URL('http://localhost/api/characters/import'),
+        body,
+    }), /corrupt card/);
+
+    assert.deepEqual(calls, [{
+        command: 'replace_character',
+        args: { dto: { file_path: '/cache/character-card/0f3a.png', name: 'Alice' } },
+    }]);
+    assert.deepEqual(discarded, ['/cache/character-card/0f3a.png']);
+});
+
 test('/api/characters/import preserves an exact name when there is no character to replace', async () => {
     const router = createRouteRegistry();
     const calls = [];
     const imported = { name: 'Alice', avatar: 'Alice.png' };
     const context = {
-        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png' }),
+        materializeUploadFile: async () => ({ filePath: '/tmp/Alice.png', cleanup: async () => {} }),
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             if (command === 'replace_character') {

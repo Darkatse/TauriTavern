@@ -34,12 +34,9 @@ test('Skill import ownership lasts through preview and cleanup, and release is i
 
 async function installHarness(overrides = {}) {
     const calls = [];
-    globalThis.window = {
-        __TAURITAVERN__: { api: {} },
-    };
-
     const { installSkillApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/skill.js')));
-    installSkillApi({
+    const api = {};
+    installSkillApi(api, {
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
             return { command, args };
@@ -49,7 +46,7 @@ async function installHarness(overrides = {}) {
 
     return {
         calls,
-        skill: globalThis.window.__TAURITAVERN__.api.skill,
+        skill: api.skill,
     };
 }
 

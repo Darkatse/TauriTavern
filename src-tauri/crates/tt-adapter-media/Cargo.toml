@@ -2,6 +2,7 @@
 name = "tt-adapter-media"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
@@ -20,4 +21,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 base64 = "0.23"
+tempfile = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

@@ -100,7 +100,7 @@ install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
 2. 通过 `src-tauri/crates/tt-contracts/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
 3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 一次完成 local/global 选源、打开文件和 metadata/revision 构造
-   - 第三方资源不支持 Range，会整体读入内存；移动宿主上源文件超过 32 MiB 时返回 `413`（`GET`、`HEAD` 与条件请求一致）
+   - 第三方资源不支持 Range。iOS 与 OpenHarmony 把正文读入内存，源文件超过 32 MiB 时返回 `413`，`GET`、`HEAD` 与条件请求一致
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；条件命中时按 transport capability 返回 304 或完整 200（见 `docs/CurrentState/HostResourceCaching.md`）
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
@@ -121,7 +121,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 - `convertFileSrc('', 'tt-ext')` 的结果可能因平台/WebView 不同而表现为 `tt-ext://localhost/` 或 `http(s)://tt-ext.localhost/`
 - Service Worker 的直接 `tt-ext` fetch 保留原请求 cache mode；`Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 在直连或 IPC 路径中保持同一 Host Resource 语义，并通过 `Access-Control-Expose-Headers: *` 保留直连响应的完整表示头
 - `If-Range`、`If-None-Match`、`If-Modified-Since` 会触发 custom scheme 跨源 preflight，必须直接通过通用 header wire 进入 IPC；其余 Service Worker `fetch(tt-ext)` 失败时切换到 window-context `fetch(tt-ext)`，正文以 transferable `ArrayBuffer` 返回。普通二进制资源不得经过 serde JSON IPC
-- window 代理在文档解析期间就调用 `startMessages()` 开始接收请求：`<head>` 中的 `/css/user.css` 可能经它加载，而 module 脚本要等这个样式表；等到 DOMContentLoaded 才投递，双方会互相等待
+- window 代理在 DOMContentLoaded 后开始接收请求：`<head>` 中没有经它加载的资源，`/css/user.css` 在安全模式提示答复后才动态插入
 - 非 Android 的 production、`tt-ext` 与 IPC fallback 都能代理 304；Android 按 Wry 硬约束返回完整 200。IPC 不另建 Cache API，因此自动生成 validator 的存储行为仍由具体 transport 决定
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。

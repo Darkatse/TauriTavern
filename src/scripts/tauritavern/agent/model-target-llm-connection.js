@@ -57,6 +57,21 @@ const SOURCE_ALIASES = Object.freeze({
     'mini max': 'minimax',
 });
 
+/**
+ * The sources of `ChatCompletionSource::supports_reverse_proxy` in tt-domain.
+ * @type {ReadonlySet<string>}
+ */
+const REVERSE_PROXY_SOURCES = new Set([
+    'openai',
+    'claude',
+    'makersuite',
+    'vertexai',
+    'deepseek',
+    'moonshot',
+    'zai',
+    'xai',
+]);
+
 /** @type {Readonly<Record<string, string>>} */
 const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
     opencode: 'opencode_endpoint',
@@ -65,6 +80,7 @@ const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
     minimax: 'minimax_endpoint',
     moonshot: 'moonshot_endpoint',
     vertexai: 'vertexai_region',
+    pollinations: 'pollinations_endpoint',
 });
 
 /**
@@ -134,10 +150,18 @@ export function modelBindingFromTarget(target) {
 
 /**
  * The chat-completion source a target runs on; `api` may hold an alias.
- * @param {AgentModelTarget} target
+ * @param {Pick<AgentModelTarget, 'api'>} target
  */
 export function modelTargetSource(target) {
     return normalizeChatCompletionSource(target.api);
+}
+
+/**
+ * @param {Pick<AgentModelTarget, 'mode' | 'api'>} target
+ * @returns {boolean}
+ */
+export function modelTargetSupportsReverseProxy(target) {
+    return target.mode === 'cc' && REVERSE_PROXY_SOURCES.has(modelTargetSource(target));
 }
 
 /**
@@ -182,14 +206,14 @@ export function buildLlmConnectionFromModelTarget(target) {
         endpoint,
         auth: target.secretRef ? {
             secretRef: {
-                key: String(target.secretRef.key).trim(),
-                id: String(target.secretRef.id).trim(),
-                ...(String(target.secretRef.labelSnapshot || '').trim()
-                    ? { labelSnapshot: String(target.secretRef.labelSnapshot).trim() }
+                key: target.secretRef.key.trim(),
+                id: target.secretRef.id.trim(),
+                ...(target.secretRef.labelSnapshot?.trim()
+                    ? { labelSnapshot: target.secretRef.labelSnapshot.trim() }
                     : {}),
             },
         } : {},
-        routing: proxy && proxy !== NO_PROXY_PRESET
+        routing: modelTargetSupportsReverseProxy(target) && proxy && proxy !== NO_PROXY_PRESET
             ? { reverseProxy: { preset: proxy } }
             : {},
         adapterHints: structuredClone(target.adapterHints || {}),
@@ -303,12 +327,8 @@ function assertModelTargetConvertible(target) {
     if (!String(target.model || '').trim()) {
         throw new Error(`model target "${target.name || target.id}" is missing model`);
     }
-    const proxy = String(target.proxy || '').trim();
-    if (!target.secretRef && proxy && proxy !== NO_PROXY_PRESET) {
-        return;
-    }
-    if (!target.secretRef?.key || !target.secretRef?.id) {
-        throw new Error(`model target "${target.name || target.id}" is missing secret reference`);
+    if (target.secretRef && (!target.secretRef.key?.trim() || !target.secretRef.id?.trim())) {
+        throw new Error(`model target "${target.name || target.id}" has an invalid secret reference`);
     }
 }
 

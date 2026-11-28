@@ -1,18 +1,16 @@
 // @ts-check
 
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
 import { assertCurrentChat } from './agent-chat-identity.js';
 import {
     assertActiveAgentMessage,
     captureMessageTarget,
-    finalizeGeneratedMessage,
     getActiveMessageId,
     initialCommitSaveType,
-    isAutoCommitTextPath,
     mergeAgentCommitExtraIntoMessage,
     mergePersistentStateExtraIntoMessage,
     normalizeCommitMode,
     persistActiveChat,
-    prepareGeneratedReplyForDisplay,
     prepareGeneratedReplyForSave,
     restoreAgentExtra,
     snapshotAgentExtra,
@@ -25,6 +23,15 @@ import {
 } from './agent-chat-commit-reasoning.js';
 import { CHAT_COMMIT_REASON } from '../../../scripts/chat-payload-transport.js';
 import { finishHostPresentation } from './agent-chat-presentation-checkpoint.js';
+import {
+    applyLiveProjectionUpdate,
+    createLiveWriteScheduler,
+    endLiveWrite,
+    finalizeLiveMessage,
+    finalizeLivePartial,
+    flushLiveWriteFrame,
+    stopLiveProjection,
+} from './agent-chat-live-write.js';
 
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
@@ -40,6 +47,7 @@ export function attachHostCommitBridge({
     subscribeLiveProjection = null,
     loadScript = loadMainScript,
     persistChat = persistActiveChat,
+    scheduleRender = createLiveWriteScheduler(),
     presentation = null,
     chatLength = null,
     finishPresentation = null,
@@ -64,7 +72,13 @@ export function attachHostCommitBridge({
         rawCommittedText: '',
         commitSeq: 0,
         reasoning: createCommitReasoningState(),
-        current: null,
+        // The projected write shown in chat. It stays after its projection ends,
+        // until a commit or the terminal save takes it over.
+        liveWrite: null,
+        // The projected call whose appends still extend `liveWrite`.
+        liveCall: null,
+        // Created on the first render; see createGeneratedReplyPreview.
+        preview: null,
         pendingWrite: null,
         pendingFrame: null,
         liveMessageEventsEmitted: false,
@@ -73,6 +87,7 @@ export function attachHostCommitBridge({
         chatLength,
         loadScript,
         persistChat,
+        scheduleRender,
         liveEnabled: typeof subscribeLiveProjection === 'function',
         finishPresentation,
         terminalEvent: null,
@@ -202,7 +217,7 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             assertActiveAgentMessage(script.chat, state);
             // `getMessage` is the complete cleaned target, not an append
             // fragment. Use appendFinal to rewrite this run's chat message.
-            const firstPublishedOutput = state.commitSeq === 0 && state.current != null;
+            const firstPublishedOutput = state.commitSeq === 0 && state.liveWrite != null;
             await script.saveReply({
                 type: 'appendFinal',
                 getMessage,
@@ -233,11 +248,11 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
         resolution = { messageId: String(messageId) };
     } catch (error) {
         resolution = {
-            error: String(error?.message ?? error),
+            error: extractErrorText(error),
         };
     }
     if (!resolution.error) {
-        state.current = null;
+        endLiveWrite(state);
         state.pendingWrite = null;
         if (isExplicit) {
             stopLiveProjection(state);
@@ -246,179 +261,6 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
     await safeInvoke('resolve_agent_chat_commit', {
         dto: { runId: state.runId, commitId, ...resolution },
     });
-}
-
-function applyLiveProjectionUpdate(state, update) {
-    switch (update.type) {
-        case 'snapshot': {
-            for (const call of update.calls) {
-                const write = liveWriteFromCall(call);
-                if (write) {
-                    state.current = write;
-                }
-            }
-            scheduleLiveWriteFrame(state);
-            return;
-        }
-        case 'replace': {
-            const write = liveWriteFromCall(update.call);
-            if (write) {
-                state.current = write;
-                scheduleLiveWriteFrame(state);
-            }
-            return;
-        }
-        case 'append': {
-            if (!sameLiveCall(state.current, update)) return;
-            if (update.field === 'path') {
-                state.current.path += update.text;
-            } else if (update.field === 'content') {
-                state.current.content += update.text;
-            } else {
-                throw new Error(`agent.live_write_field_invalid: unsupported write field ${update.field}`);
-            }
-            scheduleLiveWriteFrame(state);
-            return;
-        }
-        case 'responseReplace':
-        case 'responseAppend':
-        case 'responseRemove':
-        case 'remove':
-            // Removal means the live projection no longer owns this call. It
-            // does not revoke content the user has already received.
-            return;
-        default:
-            throw new Error(`agent.live_update_invalid: unsupported update ${update.type}`);
-    }
-}
-
-function liveWriteFromCall(call) {
-    return call.toolId === 'builtin:workspace.write_file'
-        && call.invocationExitPolicy === 'run_finish_allowed'
-        ? call
-        : null;
-}
-
-function sameLiveCall(current, update) {
-    return current?.invocationId === update.invocationId
-        && current?.toolCallIndex === update.toolCallIndex;
-}
-
-function scheduleLiveWriteFrame(state) {
-    if (state.pendingFrame || !state.current) return;
-    /** @type {{ id: number | null; release: (() => void) | null; promise: Promise<void> | null }} */
-    const frame = { id: null, release: null, promise: null };
-    const ready = new Promise(resolve => {
-        frame.release = resolve;
-        frame.id = requestAnimationFrame(() => {
-            frame.id = null;
-            resolve();
-        });
-    });
-    frame.promise = ready
-        .then(() => renderCurrentLiveWrite(state))
-        .finally(() => {
-            if (state.pendingFrame === frame) {
-                state.pendingFrame = null;
-            }
-        });
-    state.pendingFrame = frame;
-    void frame.promise.catch(reportAsyncError);
-}
-
-async function flushLiveWriteFrame(state) {
-    const frame = state.pendingFrame;
-    if (frame?.id != null) {
-        cancelAnimationFrame(frame.id);
-        frame.id = null;
-        frame.release?.();
-    }
-    if (frame?.promise) {
-        await frame.promise;
-    }
-    await renderCurrentLiveWrite(state);
-}
-
-async function renderCurrentLiveWrite(state) {
-    const current = state.current;
-    if (!current
-        || !isAutoCommitTextPath(current.path)) {
-        return;
-    }
-
-    const script = await state.loadScript();
-    await assertCurrentChat(state.chatRef, state.stableChatId);
-
-    if (state.messageId == null) {
-        const getMessage = prepareGeneratedReplyForDisplay(script, current.content, state.generationType);
-        if (!getMessage) return;
-        const lengthBefore = script.chat.length;
-        await script.saveReply({
-            type: initialCommitSaveType(state.generationType, 'replace'),
-            getMessage,
-            fromStreaming: true,
-        });
-        const messageId = getActiveMessageId(script.chat);
-        captureMessageTarget(state, script.chat, messageId, lengthBefore);
-    }
-
-    const latest = state.current;
-    if (!latest
-        || !isAutoCommitTextPath(latest.path)) {
-        return;
-    }
-    const getMessage = prepareGeneratedReplyForDisplay(script, latest.content, state.generationType);
-    if (!getMessage) return;
-
-    assertActiveAgentMessage(script.chat, state);
-    const messageId = Number(state.messageId);
-    const message = script.chat[messageId];
-    if (message.mes === getMessage) return;
-    message.mes = getMessage;
-    if (typeof script.syncMesToSwipe !== 'function' || !script.syncMesToSwipe(messageId)) {
-        throw new Error('agent.live_write_swipe_sync_failed: active swipe could not be updated');
-    }
-    if (typeof script.updateMessageBlock !== 'function') {
-        throw new Error('updateMessageBlock is not available');
-    }
-    script.updateMessageBlock(messageId, message, { transient: true });
-}
-
-async function finalizeLivePartial(state) {
-    if (!state.current) return;
-    await flushLiveWriteFrame(state);
-    if (state.messageId == null) return;
-
-    await assertCurrentChat(state.chatRef, state.stableChatId);
-    const script = await state.loadScript();
-    assertActiveAgentMessage(script.chat, state);
-    const messageId = Number(state.messageId);
-    const firstPublishedOutput = state.commitSeq === 0;
-    await script.saveReply({
-        type: 'appendFinal',
-        getMessage: String(script.chat[messageId].mes ?? ''),
-        fromStreaming: firstPublishedOutput,
-    });
-    if (firstPublishedOutput) {
-        await finalizeLiveMessage(state, script, messageId, state.generationType);
-    }
-    await state.persistChat(script, CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
-    state.current = null;
-}
-
-async function finalizeLiveMessage(state, script, messageId, generationType) {
-    if (state.liveMessageEventsEmitted) return script.finalizeMessageContent(messageId);
-    await finalizeGeneratedMessage(script, messageId, generationType);
-    state.liveMessageEventsEmitted = true;
-}
-
-function stopLiveProjection(state) {
-    state.liveEnabled = false;
-    if (typeof state.stopLive === 'function') {
-        state.stopLive();
-        state.stopLive = null;
-    }
-    state.current = null;
 }
 
 async function handlePersistentStateMetadataUpdateRequested({ state, event, safeInvoke }) {
@@ -445,7 +287,7 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
             dto: {
                 runId: state.runId,
                 updateId,
-                error: String(error?.message ?? error),
+                error: extractErrorText(error),
             },
         });
     }

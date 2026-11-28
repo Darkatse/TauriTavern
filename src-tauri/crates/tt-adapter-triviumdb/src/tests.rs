@@ -38,8 +38,8 @@ async fn close(backend: &TriviumDatabaseBackend) -> Result<Value, DomainError> {
 
 #[tokio::test]
 async fn failed_batches_do_not_commit_and_open_options_cannot_silently_change() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(
         &backend,
         json!({"dim": 2, "syncMode": "full", "autoBuildQuiver": false}),
@@ -93,8 +93,8 @@ async fn failed_batches_do_not_commit_and_open_options_cannot_silently_change() 
 
 #[tokio::test]
 async fn persisted_node_ids_round_trip_through_graph_search_and_tql() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2, "autoBuildQuiver": false}))
         .await
         .unwrap();
@@ -162,8 +162,8 @@ async fn persisted_node_ids_round_trip_through_graph_search_and_tql() {
 
 #[tokio::test]
 async fn reopening_without_text_queries_preserves_explicit_index_content() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2, "loadTextIndex": false}))
         .await
         .unwrap();
@@ -201,8 +201,8 @@ async fn reopening_without_text_queries_preserves_explicit_index_content() {
 
 #[tokio::test]
 async fn tql_binds_values_once_and_uses_native_statement_classification() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2})).await.unwrap();
     let text = "quote ' slash \\ newline\n carriage\r nul\0 $id2 中文";
     let payload =
@@ -263,14 +263,14 @@ async fn tql_binds_values_once_and_uses_native_statement_classification() {
 
 #[tokio::test]
 async fn failed_close_keeps_the_instance_available_for_retry() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2})).await.unwrap();
     let id = operation(&backend, json!({"type": "insert", "vector": [1, 0]}))
         .await
         .unwrap();
     // Refuse creation of the engine's checkpoint temp file without platform permissions.
-    let blocker = root.path().join("db-memory/database.tdb.tmp");
+    let blocker = temp.path().join("db-memory/database.tdb.tmp");
     std::fs::create_dir(&blocker).unwrap();
     assert!(close(&backend).await.is_err());
     assert_eq!(
@@ -297,8 +297,8 @@ async fn failed_close_keeps_the_instance_available_for_retry() {
 
 #[tokio::test]
 async fn queued_close_then_reopen_share_one_instance_owner() {
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2})).await.unwrap();
     let id = operation(&backend, json!({"type": "insert", "vector": [1, 0]}))
         .await
@@ -340,8 +340,8 @@ async fn queued_close_then_reopen_share_one_instance_owner() {
 #[tokio::test]
 async fn transfer_maintenance_preserves_namespace_time_across_retries_and_writes() {
     use std::time::{Duration, SystemTime};
-    let root = tempfile::tempdir().unwrap();
-    let backend = TriviumDatabaseBackend::new(root.path().into());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let backend = TriviumDatabaseBackend::new(temp.path().into());
     open(&backend, json!({"dim": 2, "autoBuildQuiver": false}))
         .await
         .unwrap();
@@ -351,7 +351,7 @@ async fn transfer_maintenance_preserves_namespace_time_across_retries_and_writes
     )
     .await
     .unwrap();
-    let directory = root.path().join("db-memory");
+    let directory = temp.path().join("db-memory");
     let original = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
     // Only WAL exists before the first flush. Lock and temporary file times are irrelevant.
     let temporary = directory.join("database.tdb.unused.tmp");

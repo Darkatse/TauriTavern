@@ -1,347 +1,409 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
-use std::io::ErrorKind;
-use std::io::{Cursor, Read};
+use std::collections::{HashMap, HashSet};
+use std::io::{self, Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use brotli_decompressor::Decompressor;
 use flate2::read::GzDecoder;
-use miktik::{CumulativeEstimateOptions, TokenizerError, TokenizerRegistry};
+use miktik::{
+    ARTIFACT_VERSION, Framing, Model, Source, Tokenizer, TokenizerError, TokenizerRegistry,
+};
 use serde_json::Value;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OnceCell};
 
-use tt_adapter_http::{HttpClientPool, HttpClientProfile};
+use tt_adapter_http::{HttpClientPool, PinnedFile, PinnedFileCache};
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
-const CLAUDE_JSON_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/claude.json.gz");
-const DEEPSEEK_JSON_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/deepseek.json.gz");
-const GEMMA_MODEL_GZIP_BYTES: &[u8] =
-    include_bytes!("../../../resources/tokenizers/gemma.model.gz");
-const PREFIX_ESTIMATE_CONTEXT_BYTES: usize = 64;
+// The bundled sources and their origins are listed in resources/tokenizers/NOTICE.md.
+const CLAUDE_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/claude.json.br");
+const DEEPSEEK_JSON_BROTLI: &[u8] =
+    include_bytes!("../../../resources/tokenizers/deepseek.json.br");
+const GEMMA3_MODEL_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/gemma3.model.br");
+const GLM_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/glm.json.br");
+const KIMI_TIKTOKEN_BROTLI: &[u8] =
+    include_bytes!("../../../resources/tokenizers/kimi.tiktoken.br");
+const QWEN2_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/qwen2.json.br");
+const QWEN3_5_JSON_BROTLI: &[u8] = include_bytes!("../../../resources/tokenizers/qwen3.5.json.br");
+
+const BROTLI_BUFFER_BYTES: usize = 64 * 1024;
+const SOURCES_DIR: &str = "sources";
+
+macro_rules! sillytavern {
+    ($file:literal) => {
+        concat!(
+            "https://raw.githubusercontent.com/SillyTavern/SillyTavern/7e8663cd9c184a550b37238218bdd32c6efc68e9/src/tokenizers/",
+            $file
+        )
+    };
+}
+macro_rules! sillytavern_tokenizers {
+    ($file:literal) => {
+        concat!(
+            "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/798bcd823dfd04227a79b487e1cf29e6de9aaece/",
+            $file
+        )
+    };
+}
+
+/// Counts names MikTik resolves to no model, and estimates for models whose source cannot be
+/// downloaded.
+const FALLBACK_TOKENIZER: &str = "gpt-4o";
+/// How long estimates use the fallback tokenizer after a source could not be downloaded, before
+/// the next preparation downloads it again.
+const DOWNLOAD_RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
+/// The tokens SillyTavern's message count adds for the reply to every request, whatever the
+/// model's own reply primer: its frontend takes two of them off each message it counts on its own,
+/// so a message counts its framing and one token more.
+const SILLYTAVERN_REPLY_TOKENS: usize = 3;
+/// The bytes of segment text whose estimates each tokenizer keeps.
+const SEGMENT_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum ResourceCompression {
     None,
     Gzip,
+    Brotli,
 }
 
 #[derive(Clone, Copy)]
-enum ModelSource {
-    Bundled {
-        bytes: &'static [u8],
-        compression: ResourceCompression,
-    },
+enum SourceOrigin {
+    /// An OpenAI encoding built into MikTik.
+    Builtin,
+    /// Brotli-compressed source bytes.
+    Bundled(&'static [u8]),
+    /// The digest covers the downloaded bytes before decompression.
     Remote {
-        url: &'static str,
+        file: PinnedFile,
         compression: ResourceCompression,
     },
 }
 
+/// Where a model's tokenizer comes from.
 #[derive(Clone, Copy)]
-struct ModelResourceSpec {
-    file_name: &'static str,
-    source: ModelSource,
+struct TokenizerSource {
+    /// The encoding's name, or the source's file name. A model's artifact is named after its
+    /// source, so a source under a new name makes the old artifact stale.
+    name: &'static str,
+    origin: SourceOrigin,
 }
 
+enum TokenizerState {
+    Ready(Arc<Tokenizer>),
+    /// The source could not be downloaded: until `retry_at`, estimates use the fallback tokenizer
+    /// and exact methods fail with `error`.
+    Unavailable {
+        error: String,
+        retry_at: Instant,
+    },
+}
+
+/// Why a tokenizer could not be prepared.
+enum PrepareError {
+    /// Its source could not be downloaded, or arrived with another SHA-256.
+    Download(DomainError),
+    Other(DomainError),
+}
+
+impl From<DomainError> for PrepareError {
+    fn from(error: DomainError) -> Self {
+        Self::Other(error)
+    }
+}
+
+/// Tokenizers from MikTik, kept as artifacts in the cache directory.
+///
+/// A model's tokenizer is compiled from its source once, written as an artifact, and loaded from
+/// the artifact from then on: in milliseconds, and holding only what estimates need until an
+/// exact method first runs.
 pub struct MiktikTokenizerRepository {
-    registry: Arc<TokenizerRegistry>,
     cache_dir: PathBuf,
-    http_clients: Arc<HttpClientPool>,
-    ready_models: RwLock<HashSet<&'static str>>,
-    registration_guard: Mutex<()>,
+    sources: PinnedFileCache,
+    /// Each model's tokenizer by model id, once its preparation finished.
+    states: RwLock<HashMap<&'static str, TokenizerState>>,
+    /// One lock per model id, held while that model's tokenizer is prepared.
+    preparing: HashMap<&'static str, Mutex<()>>,
+    /// Set once stale files were removed from the cache, before the first preparation.
+    swept: OnceCell<()>,
 }
 
 impl MiktikTokenizerRepository {
     pub fn new(cache_dir: PathBuf, http_clients: Arc<HttpClientPool>) -> Self {
         Self {
-            registry: Arc::new(TokenizerRegistry::new()),
+            sources: PinnedFileCache::new(cache_dir.join(SOURCES_DIR), http_clients),
             cache_dir,
-            http_clients,
-            ready_models: RwLock::new(HashSet::new()),
-            registration_guard: Mutex::new(()),
+            states: RwLock::new(HashMap::new()),
+            preparing: Model::all()
+                .iter()
+                .map(|model| (model.id(), Mutex::new(())))
+                .collect(),
+            swept: OnceCell::new(),
         }
     }
 
-    fn canonical_model(requested_model: &str) -> &'static str {
-        TokenizerRegistry::resolve_model_ref(requested_model)
+    fn resolve(name: &str) -> &'static Model {
+        Model::resolve(name).unwrap_or_else(Self::fallback)
     }
 
-    fn model_resource_spec(canonical: &str) -> Option<ModelResourceSpec> {
-        match canonical {
-            "claude" => Some(ModelResourceSpec {
-                file_name: "claude.json",
-                source: ModelSource::Bundled {
-                    bytes: CLAUDE_JSON_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "deepseek" => Some(ModelResourceSpec {
-                file_name: "deepseek.json",
-                source: ModelSource::Bundled {
-                    bytes: DEEPSEEK_JSON_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "gemma" => Some(ModelResourceSpec {
-                file_name: "gemma.model",
-                source: ModelSource::Bundled {
-                    bytes: GEMMA_MODEL_GZIP_BYTES,
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "kimi" => Some(ModelResourceSpec {
-                file_name: "kimi.tiktoken",
-                source: ModelSource::Remote {
-                    url: "https://huggingface.co/moonshotai/Kimi-K2-Instruct/resolve/main/tiktoken.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "llama3" => Some(ModelResourceSpec {
-                file_name: "llama3.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama3.json",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "llama" => Some(ModelResourceSpec {
-                file_name: "llama.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/llama.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "mistral" => Some(ModelResourceSpec {
-                file_name: "mistral.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/mistral.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "yi" => Some(ModelResourceSpec {
-                file_name: "yi.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/yi.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "jamba" => Some(ModelResourceSpec {
-                file_name: "jamba.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/jamba.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "nerdstash" => Some(ModelResourceSpec {
-                file_name: "nerdstash.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "nerdstash_v2" => Some(ModelResourceSpec {
-                file_name: "nerdstash_v2.model",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/src/tokenizers/nerdstash_v2.model",
-                    compression: ResourceCompression::None,
-                },
-            }),
-            "command-r" => Some(ModelResourceSpec {
-                file_name: "command-r.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-r.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "command-a" => Some(ModelResourceSpec {
-                file_name: "command-a.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/command-a.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "qwen2" => Some(ModelResourceSpec {
-                file_name: "qwen2.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/qwen2.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            "nemo" => Some(ModelResourceSpec {
-                file_name: "nemo.json",
-                source: ModelSource::Remote {
-                    url: "https://raw.githubusercontent.com/SillyTavern/SillyTavern-Tokenizers/main/nemo.json.gz",
-                    compression: ResourceCompression::Gzip,
-                },
-            }),
-            _ => None,
-        }
+    fn fallback() -> &'static Model {
+        Model::resolve(FALLBACK_TOKENIZER)
+            .expect("the fallback tokenizer is a row of MikTik's model table")
     }
 
-    async fn ensure_model_ready_canonical(
-        &self,
-        canonical: &'static str,
-    ) -> Result<(), DomainError> {
-        if self.is_model_ready(canonical).await {
-            return Ok(());
-        }
-
-        if Self::model_resource_spec(canonical).is_none() {
-            self.warm_model(canonical).await?;
-            self.mark_model_ready(canonical).await;
-            return Ok(());
-        }
-
-        let _guard = self.registration_guard.lock().await;
-
-        if self.is_model_ready(canonical).await {
-            return Ok(());
-        }
-
-        let mut model_path = self.ensure_model_file(canonical).await?;
-        self.register_model_file(canonical, &model_path)?;
-
-        if self.warm_model(canonical).await.is_err() {
-            self.remove_model_file(&model_path).await?;
-            model_path = self.materialize_model_file(canonical).await?;
-            self.register_model_file(canonical, &model_path)?;
-            self.warm_model(canonical).await?;
-        }
-
-        self.mark_model_ready(canonical).await;
-        Ok(())
+    fn source(model: &Model) -> Option<TokenizerSource> {
+        let encoding = match model.source() {
+            Source::Builtin(encoding) => encoding,
+            Source::Registered(_) => return Self::registered_source(model.id()),
+        };
+        Some(TokenizerSource {
+            name: encoding.name(),
+            origin: SourceOrigin::Builtin,
+        })
     }
 
-    fn register_model_file(
-        &self,
-        canonical: &'static str,
-        model_path: &Path,
-    ) -> Result<(), DomainError> {
-        self.registry
-            .register_model_file(canonical, model_path)
-            .map_err(|error| Self::map_tokenizer_error("register model resource", canonical, error))
+    fn registered_source(id: &str) -> Option<TokenizerSource> {
+        let bundled = |name, bytes| (name, SourceOrigin::Bundled(bytes));
+        let remote = |name, url, compression, sha256| {
+            (
+                name,
+                SourceOrigin::Remote {
+                    file: PinnedFile { url, sha256 },
+                    compression,
+                },
+            )
+        };
+        let (name, origin) = match id {
+            "claude" => bundled("claude.json", CLAUDE_JSON_BROTLI),
+            "deepseek" => bundled("deepseek.json", DEEPSEEK_JSON_BROTLI),
+            "gemini" | "gemma" => bundled("gemma3.model", GEMMA3_MODEL_BROTLI),
+            "kimi" | "kimi-k3" => bundled("kimi.tiktoken", KIMI_TIKTOKEN_BROTLI),
+            "qwen2" => bundled("qwen2.json", QWEN2_JSON_BROTLI),
+            "qwen3.5" => bundled("qwen3.5.json", QWEN3_5_JSON_BROTLI),
+            "glm" => bundled("glm.json", GLM_JSON_BROTLI),
+            // Downloaded rather than bundled, so that TauriTavern does not redistribute it under
+            // MiniMax's license. ModelScope is reachable where Hugging Face is not.
+            "minimax" => remote(
+                "minimax.json",
+                "https://modelscope.cn/models/MiniMax/MiniMax-M3/resolve/master/tokenizer.json",
+                ResourceCompression::None,
+                "bb1f1626cf01448f1e3b6036d0a061ffc66c91d9046aada14ea23a5441b5ad6e",
+            ),
+            "llama3" => remote(
+                "llama3.json",
+                sillytavern!("llama3.json"),
+                ResourceCompression::None,
+                "7a413fb6f10a3e285a400d7cc9b8959c32116caf81ba8a60a4ec26b9aca2bd25",
+            ),
+            "llama" => remote(
+                "llama.model",
+                sillytavern!("llama.model"),
+                ResourceCompression::None,
+                "9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347",
+            ),
+            "mistral" => remote(
+                "mistral.model",
+                sillytavern!("mistral.model"),
+                ResourceCompression::None,
+                "dadfd56d766715c61d2ef780a525ab43b8e6da4de6865bda3d95fdef5e134055",
+            ),
+            "yi" => remote(
+                "yi.model",
+                sillytavern!("yi.model"),
+                ResourceCompression::None,
+                "386c49cf943d71aa110361135338c50e38beeff0a66593480421f37b319e1a39",
+            ),
+            "jamba" => remote(
+                "jamba.model",
+                sillytavern!("jamba.model"),
+                ResourceCompression::None,
+                "8b0df4fb43262c452ef37061951a06df4c63ca191d02a60ea08f14428af24376",
+            ),
+            "nerdstash" => remote(
+                "nerdstash.model",
+                sillytavern!("nerdstash.model"),
+                ResourceCompression::None,
+                "578fa0ed4d6dbee435f21d7f7a741506d09cdd93cce241008abf725407cbdb41",
+            ),
+            "nerdstash_v2" => remote(
+                "nerdstash_v2.model",
+                sillytavern!("nerdstash_v2.model"),
+                ResourceCompression::None,
+                "005ad680b10f1abd406bdb0ca9c6a5d83fc1f6e0a855bdd1942c1ceab1fb47ab",
+            ),
+            "command-r" => remote(
+                "command-r.json",
+                sillytavern_tokenizers!("command-r.json.gz"),
+                ResourceCompression::Gzip,
+                "132fc87df0e48b604b0888c2519f920f63757b9a85d74be698f3a1851d840007",
+            ),
+            "command-a" => remote(
+                "command-a.json",
+                sillytavern_tokenizers!("command-a.json.gz"),
+                ResourceCompression::Gzip,
+                "cb15a5c52a21d51f342cc47360285715364a1cf60eedc078e1f97dd9f0c16e0c",
+            ),
+            "nemo" => remote(
+                "nemo.json",
+                sillytavern_tokenizers!("nemo.json.gz"),
+                ResourceCompression::Gzip,
+                "97bb0b00f9c33bd9919283325eca46213c0aa991e984ea6799203d2872a63086",
+            ),
+            _ => return None,
+        };
+        Some(TokenizerSource { name, origin })
     }
 
-    async fn warm_model(&self, canonical: &'static str) -> Result<(), DomainError> {
-        let registry = Arc::clone(&self.registry);
-
-        tokio::task::spawn_blocking(move || registry.get_canonical(canonical))
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Tokenizer warm-up task failed for '{canonical}': {error}"
-                ))
-            })?
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-
-        Ok(())
+    fn artifact_path(&self, model: &Model, source: TokenizerSource) -> PathBuf {
+        self.cache_dir
+            .join("compiled")
+            .join(format!("v{ARTIFACT_VERSION}"))
+            .join(format!("{}-{}.mtk", model.id(), source.name))
     }
 
-    async fn ensure_model_file(&self, canonical: &'static str) -> Result<PathBuf, DomainError> {
-        let spec = Self::model_resource_spec(canonical).ok_or_else(|| {
-            DomainError::NotFound(format!(
-                "Tokenizer resource spec is missing for model '{}'",
-                canonical
-            ))
-        })?;
-
-        let path = self.cache_dir.join(spec.file_name);
-        if path.exists() {
-            return Ok(path);
-        }
-
-        self.write_model_file(&path, spec).await?;
-        Ok(path)
+    fn read_states(&self) -> RwLockReadGuard<'_, HashMap<&'static str, TokenizerState>> {
+        // Entries are only inserted or removed whole, so the map is valid after a panic.
+        self.states.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    async fn materialize_model_file(
-        &self,
-        canonical: &'static str,
-    ) -> Result<PathBuf, DomainError> {
-        let spec = Self::model_resource_spec(canonical).ok_or_else(|| {
-            DomainError::NotFound(format!(
-                "Tokenizer resource spec is missing for model '{}'",
-                canonical
-            ))
-        })?;
-        let path = self.cache_dir.join(spec.file_name);
-        self.write_model_file(&path, spec).await?;
-        Ok(path)
+    fn write_states(&self) -> RwLockWriteGuard<'_, HashMap<&'static str, TokenizerState>> {
+        self.states.write().unwrap_or_else(PoisonError::into_inner)
     }
 
-    async fn write_model_file(
-        &self,
-        path: &Path,
-        spec: ModelResourceSpec,
-    ) -> Result<(), DomainError> {
-        let bytes = self.load_model_bytes(spec).await?;
-        self.write_bytes(path, &bytes).await
-    }
-
-    async fn load_model_bytes(&self, spec: ModelResourceSpec) -> Result<Vec<u8>, DomainError> {
-        match spec.source {
-            ModelSource::Bundled { bytes, compression } => {
-                Self::decode_model_payload(bytes, compression, spec.file_name)
+    /// Whether estimates for `model` need no preparation now.
+    fn is_settled(&self, model: &Model) -> bool {
+        let states = self.read_states();
+        match states.get(model.id()) {
+            Some(TokenizerState::Ready(_)) => true,
+            Some(TokenizerState::Unavailable { retry_at, .. }) => {
+                Instant::now() < *retry_at
+                    && matches!(
+                        states.get(Self::fallback().id()),
+                        Some(TokenizerState::Ready(_))
+                    )
             }
-            ModelSource::Remote { url, compression } => {
-                let payload = self.download_model_payload(url).await?;
-                Self::decode_model_payload(&payload, compression, url)
+            None => false,
+        }
+    }
+
+    /// Estimates with the tokenizer for the name: the model's own, or the fallback tokenizer while
+    /// the model's source cannot be downloaded.
+    fn estimate_with<T>(
+        &self,
+        name: &str,
+        estimate: impl FnOnce(&Tokenizer) -> T,
+    ) -> Result<Estimated<T>, DomainError> {
+        let model = Self::resolve(name);
+        let (tokenizer, fallback) = {
+            let states = self.read_states();
+            let fallback = matches!(
+                states.get(model.id()),
+                Some(TokenizerState::Unavailable { .. })
+            );
+            let id = if fallback {
+                Self::fallback().id()
+            } else {
+                model.id()
+            };
+            let Some(TokenizerState::Ready(tokenizer)) = states.get(id) else {
+                return Err(DomainError::InternalError(format!(
+                    "The tokenizer for '{id}' is not prepared"
+                )));
+            };
+            (Arc::clone(tokenizer), fallback)
+        };
+        Ok(Estimated {
+            value: estimate(&tokenizer),
+            fallback,
+        })
+    }
+
+    /// The model's own tokenizer, which exact methods need.
+    fn exact(&self, name: &str) -> Result<Arc<Tokenizer>, DomainError> {
+        let id = Self::resolve(name).id();
+        match self.read_states().get(id) {
+            Some(TokenizerState::Ready(tokenizer)) => Ok(Arc::clone(tokenizer)),
+            Some(TokenizerState::Unavailable { error, .. }) => Err(DomainError::InternalError(
+                format!("The tokenizer for '{id}' is unavailable: {error}"),
+            )),
+            None => Err(DomainError::InternalError(format!(
+                "The tokenizer for '{id}' is not prepared"
+            ))),
+        }
+    }
+
+    /// Loads the model's artifact, compiling it first when there is none or it does not load.
+    async fn prepare(&self, model: &'static Model) -> Result<Arc<Tokenizer>, PrepareError> {
+        let id = model.id();
+        let source = Self::source(model).ok_or_else(|| {
+            DomainError::NotFound(format!("No tokenizer source is known for '{id}'"))
+        })?;
+        let artifact_path = self.artifact_path(model, source);
+
+        match tokio::fs::read(&artifact_path).await {
+            Ok(artifact) => {
+                match blocking("Tokenizer load", move || load(model, artifact)).await? {
+                    Ok(tokenizer) => return Ok(tokenizer),
+                    Err(error) => tracing::warn!(
+                        model = id,
+                        %error,
+                        "Rebuilding a tokenizer artifact that does not load"
+                    ),
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(DomainError::InternalError(format!(
+                    "Failed to read tokenizer artifact '{}': {error}",
+                    artifact_path.display()
+                ))
+                .into());
             }
         }
+
+        let source_bytes = match source.origin {
+            SourceOrigin::Builtin => None,
+            SourceOrigin::Bundled(bytes) => Some(
+                blocking("Tokenizer source", move || {
+                    decompress(bytes, ResourceCompression::Brotli, source.name)
+                })
+                .await??,
+            ),
+            SourceOrigin::Remote { file, compression } => {
+                Some(self.remote_source(file, compression).await?)
+            }
+        };
+        let artifact = blocking("Tokenizer compile", move || {
+            build_artifact(model, source_bytes)
+        })
+        .await??;
+        self.write_bytes(&artifact_path, &artifact).await?;
+        let tokenizer = blocking("Tokenizer load", move || load(model, artifact))
+            .await?
+            .map_err(|error| tokenizer_error("load the compiled tokenizer", id, error))?;
+        Ok(tokenizer)
     }
 
-    async fn download_model_payload(&self, url: &str) -> Result<Vec<u8>, DomainError> {
-        let http_client = self.http_clients.client(HttpClientProfile::Tokenizer)?;
-        let response = http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to download tokenizer resource '{}': {:?}",
-                    url, error
-                ))
-            })?
-            .error_for_status()
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Tokenizer resource request failed for '{}': {}",
-                    url, error
-                ))
-            })?;
-
-        let payload = response.bytes().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read downloaded tokenizer bytes from '{}': {}",
-                url, error
-            ))
-        })?;
-
-        Ok(payload.to_vec())
-    }
-
-    fn decode_model_payload(
-        payload: &[u8],
+    async fn remote_source(
+        &self,
+        file: PinnedFile,
         compression: ResourceCompression,
-        source_name: &str,
-    ) -> Result<Vec<u8>, DomainError> {
-        match compression {
-            ResourceCompression::None => Ok(payload.to_vec()),
-            ResourceCompression::Gzip => {
-                let mut decoder = GzDecoder::new(Cursor::new(payload));
-                let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed).map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to decompress tokenizer payload '{}': {}",
-                        source_name, error
-                    ))
-                })?;
-                Ok(decompressed)
-            }
-        }
+    ) -> Result<Vec<u8>, PrepareError> {
+        let path = self.sources.get(file).await.map_err(|error| match error {
+            error @ DomainError::FileIo { .. } => PrepareError::Other(error),
+            error => PrepareError::Download(error),
+        })?;
+        let payload = tokio::fs::read(&path).await.map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to read tokenizer source '{}': {error}",
+                path.display()
+            ))
+        })?;
+        Ok(blocking("Tokenizer source", move || {
+            decompress(&payload, compression, file.url)
+        })
+        .await??)
     }
 
     async fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
@@ -388,315 +450,435 @@ impl MiktikTokenizerRepository {
         path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), nonce))
     }
 
-    async fn remove_model_file(&self, path: &Path) -> Result<(), DomainError> {
-        match tokio::fs::remove_file(path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(format!(
-                "Failed to remove invalid tokenizer resource '{}': {}",
-                path.display(),
-                error
-            ))),
-        }
-    }
-
-    async fn is_model_ready(&self, canonical: &'static str) -> bool {
-        self.ready_models.read().await.contains(canonical)
-    }
-
-    async fn mark_model_ready(&self, canonical: &'static str) {
-        self.ready_models.write().await.insert(canonical);
-    }
-
-    fn map_tokenizer_error(action: &str, model: &str, error: TokenizerError) -> DomainError {
-        match error {
-            TokenizerError::ModelNotFound(message) => {
-                DomainError::NotFound(format!("Failed to {} for '{}': {}", action, model, message))
-            }
-            TokenizerError::LoadError(message)
-            | TokenizerError::EncodeError(message)
-            | TokenizerError::DecodeError(message) => DomainError::InternalError(format!(
-                "Failed to {} for '{}': {}",
-                action, model, message
-            )),
-        }
-    }
-
-    fn value_to_text(value: &Value) -> Cow<'_, str> {
-        match value {
-            Value::String(text) => Cow::Borrowed(text),
-            _ => Cow::Owned(value.to_string()),
-        }
-    }
-
-    fn message_values_text(messages: &[Value]) -> String {
-        let mut values = Vec::new();
-        for message in messages {
-            match message {
-                Value::Object(map) => {
-                    for value in map.values() {
-                        values.push(Self::value_to_text(value).into_owned());
-                    }
-                }
-                _ => values.push(Self::value_to_text(message).into_owned()),
+    /// Removes what this version does not use from the cache directory: artifacts of another
+    /// artifact version or another source, sources no model downloads, and interrupted writes.
+    async fn remove_stale_files(&self) -> Result<(), DomainError> {
+        let mut used = HashSet::from([self.cache_dir.join(SOURCES_DIR)]);
+        let mut downloaded = Vec::new();
+        for model in Model::all() {
+            let Some(source) = Self::source(model) else {
+                continue;
+            };
+            used.insert(self.artifact_path(model, source));
+            if let SourceOrigin::Remote { file, .. } = source.origin {
+                downloaded.push(file);
             }
         }
-        values.join("\n\n")
+        let cache_dir = self.cache_dir.clone();
+        blocking("Tokenizer cache sweep", move || {
+            remove_unused(&cache_dir, &used)
+        })
+        .await?
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to remove stale tokenizer cache files: {error}"
+            ))
+        })?;
+        self.sources.keep_only(&downloaded).await
     }
 
-    fn count_openai_messages(
+    /// Forgets `tokenizer`, whose artifact holds a definition MikTik cannot read, and removes the
+    /// artifact, so that the next preparation compiles it again. A tokenizer that is no longer the
+    /// model's is left alone: the model is prepared again only once it holds no ready tokenizer,
+    /// so under the write lock its artifact is still the one `tokenizer` was loaded from.
+    fn discard(&self, tokenizer: &Arc<Tokenizer>) {
+        let model = tokenizer.model();
+        let mut states = self.write_states();
+        if !matches!(
+            states.get(model.id()),
+            Some(TokenizerState::Ready(current)) if Arc::ptr_eq(current, tokenizer)
+        ) {
+            return;
+        }
+        states.remove(model.id());
+        let Some(source) = Self::source(model) else {
+            return;
+        };
+        let path = self.artifact_path(model, source);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => tracing::warn!(
+                path = %path.display(),
+                %error,
+                "Failed to remove an unusable tokenizer artifact"
+            ),
+        }
+    }
+
+    /// The error of an exact method. An artifact whose definition turns out unusable is
+    /// discarded, so that the next call works again.
+    fn exact_error(
         &self,
-        canonical: &'static str,
-        messages: &[Value],
-    ) -> Result<usize, DomainError> {
-        let is_legacy = canonical == "gpt-3.5-turbo-0301";
-        let tokens_per_message = if is_legacy { 4_i32 } else { 3_i32 };
-        let tokens_per_name = if is_legacy { -1_i32 } else { 1_i32 };
-        let tokenizer = self
-            .registry
-            .get_canonical(canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-        let mut total = 0_i32;
-
-        for message in messages {
-            total += tokens_per_message;
-
-            match message {
-                Value::Object(map) => {
-                    for (key, value) in map {
-                        let text = Self::value_to_text(value);
-                        let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
-                            Self::map_tokenizer_error("count tokens", canonical, error)
-                        })?;
-                        total += count as i32;
-                        if key == "name" {
-                            total += tokens_per_name;
-                        }
-                    }
-                }
-                _ => {
-                    let text = Self::value_to_text(message);
-                    let count = tokenizer.count_tokens(text.as_ref()).map_err(|error| {
-                        Self::map_tokenizer_error("count tokens", canonical, error)
-                    })?;
-                    total += count as i32;
-                }
-            }
+        action: &str,
+        tokenizer: &Arc<Tokenizer>,
+        error: TokenizerError,
+    ) -> DomainError {
+        if matches!(error, TokenizerError::Artifact(_)) {
+            self.discard(tokenizer);
         }
-
-        total += 3;
-        if is_legacy {
-            total += 9;
-        }
-
-        Ok(total.max(0) as usize)
+        tokenizer_error(action, tokenizer.model().id(), error)
     }
 }
 
 #[async_trait::async_trait]
 impl TokenizerRepository for MiktikTokenizerRepository {
-    async fn ensure_model_ready(&self, model: &str) -> Result<(), DomainError> {
-        let canonical = Self::canonical_model(model);
-        self.ensure_model_ready_canonical(canonical).await
+    async fn ensure_model_ready(&self, name: &str) -> Result<(), DomainError> {
+        let model = Self::resolve(name);
+        if self.is_settled(model) {
+            return Ok(());
+        }
+
+        self.swept
+            .get_or_init(|| async {
+                if let Err(error) = self.remove_stale_files().await {
+                    tracing::warn!(%error, "Tokenizer cache keeps stale files");
+                }
+            })
+            .await;
+        let _preparing = self.preparing[model.id()].lock().await;
+        if self.is_settled(model) {
+            return Ok(());
+        }
+
+        match self.prepare(model).await {
+            Ok(tokenizer) => {
+                self.write_states()
+                    .insert(model.id(), TokenizerState::Ready(tokenizer));
+                Ok(())
+            }
+            Err(PrepareError::Download(error)) => {
+                tracing::warn!(
+                    model = model.id(),
+                    %error,
+                    "Estimating with the fallback tokenizer until the tokenizer source downloads"
+                );
+                self.write_states().insert(
+                    model.id(),
+                    TokenizerState::Unavailable {
+                        error: error.to_string(),
+                        retry_at: Instant::now() + DOWNLOAD_RETRY_AFTER,
+                    },
+                );
+                self.ensure_model_ready(FALLBACK_TOKENIZER).await
+            }
+            Err(PrepareError::Other(error)) => Err(error),
+        }
     }
 
     fn encode(&self, model: &str, text: &str) -> Result<Vec<u32>, DomainError> {
-        let canonical = Self::canonical_model(model);
-        let tokenizer = self
-            .registry
-            .get_canonical(canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-
+        let tokenizer = self.exact(model)?;
         tokenizer
             .encode(text)
-            .map_err(|error| Self::map_tokenizer_error("encode text", canonical, error))
+            .map_err(|error| self.exact_error("encode text", &tokenizer, error))
     }
 
     fn decode(&self, model: &str, token_ids: &[u32]) -> Result<String, DomainError> {
-        let canonical = Self::canonical_model(model);
-        let tokenizer = self
-            .registry
-            .get_canonical(canonical)
-            .map_err(|error| Self::map_tokenizer_error("load tokenizer", canonical, error))?;
-
+        let tokenizer = self.exact(model)?;
         tokenizer
             .decode(token_ids)
-            .map_err(|error| Self::map_tokenizer_error("decode token ids", canonical, error))
+            .map_err(|error| self.exact_error("decode token ids", &tokenizer, error))
     }
 
-    fn count_messages(&self, model: &str, messages: &[Value]) -> Result<usize, DomainError> {
-        let canonical = Self::canonical_model(model);
-
-        if TokenizerRegistry::is_sentencepiece_model(canonical)
-            || TokenizerRegistry::is_web_tokenizer_model(canonical)
-        {
-            let text = Self::message_values_text(messages);
-            return self
-                .registry
-                .count_tokens_canonical(canonical, &text)
-                .map_err(|error| {
-                    Self::map_tokenizer_error("count message values", canonical, error)
-                });
-        }
-
-        self.count_openai_messages(canonical, messages)
+    fn estimate_messages(
+        &self,
+        model: &str,
+        requests: &[&[Value]],
+    ) -> Result<Estimated<Vec<usize>>, DomainError> {
+        self.estimate_with(model, |tokenizer| {
+            let estimate = |text: &str| tokenizer.estimate_tokens(text);
+            match MessageFraming::of(tokenizer.model()) {
+                Some(framing) => requests
+                    .iter()
+                    .map(|messages| framing.total(messages, estimate))
+                    .collect(),
+                None => {
+                    let mut text = String::new();
+                    requests
+                        .iter()
+                        .map(|messages| estimate(message_values_text(messages, &mut text)))
+                        .collect()
+                }
+            }
+        })
     }
 
-    fn count_text_prefixes(
+    fn estimate_text(&self, model: &str, text: &str) -> Result<Estimated<usize>, DomainError> {
+        self.estimate_with(model, |tokenizer| tokenizer.estimate_tokens(text))
+    }
+
+    fn estimate_text_prefixes(
         &self,
         model: &str,
         base: &str,
         suffixes: &[String],
         stop_at: Option<usize>,
-    ) -> Result<Vec<usize>, DomainError> {
-        // Empty text has no message wrapper, just like the frontend text counter.
-        let empty_prefixes = if base.is_empty() {
-            suffixes
-                .iter()
-                .take_while(|suffix| suffix.is_empty())
-                .count()
-        } else {
-            0
-        };
-        let mut token_counts = vec![0; empty_prefixes];
-        if empty_prefixes == suffixes.len() || (empty_prefixes > 0 && stop_at == Some(0)) {
-            token_counts.resize(suffixes.len(), 0);
-            return Ok(token_counts);
-        }
+    ) -> Result<Estimated<Vec<usize>>, DomainError> {
+        self.estimate_with(model, |tokenizer| {
+            let framing_tokens = MessageFraming::of(tokenizer.model())
+                .map_or(0, |framing| framing.content_message());
 
-        let canonical = Self::canonical_model(model);
-        let additions = suffixes[empty_prefixes..]
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let empty_text_count = self
-            .registry
-            .count_tokens_canonical(canonical, "")
-            .map_err(|error| Self::map_tokenizer_error("count empty text", canonical, error))?;
-        let empty_message_count = TokenizerRepository::count_messages(
-            self,
-            canonical,
-            &[serde_json::json!({
-                "content": "",
-            })],
-        )?;
-        let wrapper_tokens = empty_message_count
-            .checked_sub(empty_text_count)
-            .ok_or_else(|| {
-                DomainError::InternalError(format!(
-                    "content-only message wrapper reduced the token count for '{canonical}'"
-                ))
-            })?;
-        let options = CumulativeEstimateOptions {
-            context_bytes: PREFIX_ESTIMATE_CONTEXT_BYTES,
-            stop_at: stop_at.map(|limit| limit.saturating_sub(wrapper_tokens)),
-        };
+            // Empty text has no message around it, as the frontend counts it.
+            let empty_prefixes = if base.is_empty() {
+                suffixes
+                    .iter()
+                    .take_while(|suffix| suffix.is_empty())
+                    .count()
+            } else {
+                0
+            };
+            let mut estimates = vec![0; empty_prefixes];
+            if empty_prefixes == suffixes.len() || (empty_prefixes > 0 && stop_at == Some(0)) {
+                estimates.resize(suffixes.len(), 0);
+                return estimates;
+            }
 
-        let estimates = self
-            .registry
-            .estimate_cumulative_token_counts_canonical(canonical, base, &additions, options)
-            .map_err(|error| {
-                Self::map_tokenizer_error("estimate cumulative token counts", canonical, error)
-            })?;
-        if estimates.len() != additions.len() {
-            return Err(DomainError::InternalError(format!(
-                "cumulative token estimate returned {} counts for {} suffixes on '{canonical}'",
-                estimates.len(),
-                additions.len()
-            )));
-        }
-
-        for count in estimates {
-            token_counts.push(count.checked_add(wrapper_tokens).ok_or_else(|| {
-                DomainError::InternalError(format!(
-                    "cumulative token estimate overflowed for '{canonical}'"
-                ))
-            })?);
-        }
-
-        Ok(token_counts)
+            let content_stop_at = stop_at.map(|limit| limit.saturating_sub(framing_tokens));
+            estimates.extend(
+                tokenizer
+                    .estimate_cumulative_token_counts(
+                        base,
+                        &suffixes[empty_prefixes..],
+                        content_stop_at,
+                    )
+                    .into_iter()
+                    .map(|estimate| estimate + framing_tokens),
+            );
+            estimates
+        })
     }
+}
+
+/// SillyTavern's count of OpenAI-style message JSON, for models whose provider frames each
+/// message: every message adds the model's framing and the tokens of each of its values, a `name`
+/// key adjusts that, and the reply adds SillyTavern's tokens.
+struct MessageFraming {
+    per_message: usize,
+    per_name: isize,
+    per_reply: usize,
+}
+
+impl MessageFraming {
+    /// `None` when only message content counts.
+    fn of(model: &Model) -> Option<Self> {
+        let Framing::ChatMl { per_message, .. } = model.framing() else {
+            return None;
+        };
+        // This snapshot counts a name in place of the role, and since 2023-10 adds up to nine
+        // tokens to every request.
+        let legacy = model.id() == "gpt-3.5-turbo-0301";
+        Some(Self {
+            per_message,
+            per_name: if legacy { -1 } else { 1 },
+            per_reply: SILLYTAVERN_REPLY_TOKENS + if legacy { 9 } else { 0 },
+        })
+    }
+
+    fn total(&self, messages: &[Value], estimate: impl Fn(&str) -> usize) -> usize {
+        let mut total = self.per_reply;
+        for message in messages {
+            total += self.per_message;
+            match message {
+                Value::Object(map) => {
+                    for (key, value) in map {
+                        total += estimate(&value_text(value));
+                        if key == "name" {
+                            total = total.saturating_add_signed(self.per_name);
+                        }
+                    }
+                }
+                _ => total += estimate(&value_text(message)),
+            }
+        }
+        total
+    }
+
+    /// The tokens a message of only content adds to its content.
+    fn content_message(&self) -> usize {
+        self.per_message + self.per_reply
+    }
+}
+
+fn value_text(value: &Value) -> Cow<'_, str> {
+    match value {
+        Value::String(text) => Cow::Borrowed(text),
+        _ => Cow::Owned(value.to_string()),
+    }
+}
+
+/// The values of every message, as one text written into `text`.
+fn message_values_text<'a>(messages: &[Value], text: &'a mut String) -> &'a str {
+    text.clear();
+    let mut first = true;
+    let mut push = |value: &Value| {
+        if !std::mem::take(&mut first) {
+            text.push_str("\n\n");
+        }
+        text.push_str(&value_text(value));
+    };
+    for message in messages {
+        match message {
+            Value::Object(map) => map.values().for_each(&mut push),
+            _ => push(message),
+        }
+    }
+    text
+}
+
+/// The artifact of `model`'s tokenizer, from `source` or, for a built-in encoding, from MikTik.
+fn build_artifact(model: &'static Model, source: Option<Vec<u8>>) -> Result<Vec<u8>, DomainError> {
+    let registry = TokenizerRegistry::new();
+    if let Some(source) = source {
+        registry
+            .register_model_bytes(model.id(), source)
+            .map_err(|error| tokenizer_error("register the tokenizer source", model.id(), error))?;
+    }
+    registry
+        .get(model.id())
+        .map(|tokenizer| tokenizer.to_bytes())
+        .map_err(|error| tokenizer_error("convert the tokenizer source", model.id(), error))
+}
+
+fn load(model: &'static Model, artifact: Vec<u8>) -> Result<Arc<Tokenizer>, TokenizerError> {
+    let registry = TokenizerRegistry::with_segment_cache(SEGMENT_CACHE_BYTES);
+    registry.register_model_bytes(model.id(), artifact)?;
+    registry.get(model.id())
+}
+
+fn decompress(
+    payload: &[u8],
+    compression: ResourceCompression,
+    source_name: &str,
+) -> Result<Vec<u8>, DomainError> {
+    let mut decoder: Box<dyn Read + '_> = match compression {
+        ResourceCompression::None => return Ok(payload.to_vec()),
+        ResourceCompression::Gzip => Box::new(GzDecoder::new(Cursor::new(payload))),
+        ResourceCompression::Brotli => Box::new(Decompressor::new(payload, BROTLI_BUFFER_BYTES)),
+    };
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to decompress tokenizer payload '{}': {}",
+            source_name, error
+        ))
+    })?;
+    Ok(decompressed)
+}
+
+/// Removes every entry under `dir` that is not in `used` or on the way to it.
+fn remove_unused(dir: &Path, used: &HashSet<PathBuf>) -> io::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if used.contains(&path) {
+            continue;
+        }
+        if used.iter().any(|used_path| used_path.starts_with(&path)) {
+            remove_unused(&path, used)?;
+        } else if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Runs CPU-bound work off the async runtime.
+async fn blocking<T: Send + 'static>(
+    task: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, DomainError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| DomainError::InternalError(format!("{task} task failed: {error}")))
+}
+
+fn tokenizer_error(action: &str, model: &str, error: TokenizerError) -> DomainError {
+    DomainError::InternalError(format!("Failed to {action} for '{model}': {error}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
+    use miktik::Model;
     use serde_json::json;
 
-    use super::{MiktikTokenizerRepository, ModelSource};
+    use super::MiktikTokenizerRepository;
     use tt_adapter_http::HttpClientPool;
     use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
-    static NEXT_TEMP_CACHE_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
-    fn unique_temp_cache_dir() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let sequence = NEXT_TEMP_CACHE_DIR_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "tauritavern-tokenizer-test-{}-{nonce}-{sequence}",
-            std::process::id()
-        ))
+    fn repository(cache_dir: &std::path::Path) -> MiktikTokenizerRepository {
+        MiktikTokenizerRepository::new(
+            cache_dir.to_path_buf(),
+            Arc::new(HttpClientPool::new(TEST_USER_AGENT)),
+        )
     }
 
-    fn test_http_clients() -> Arc<HttpClientPool> {
-        Arc::new(HttpClientPool::new(TEST_USER_AGENT))
+    async fn prepared(cache_dir: &std::path::Path, models: &[&str]) -> MiktikTokenizerRepository {
+        let repository = repository(cache_dir);
+        for model in models {
+            repository
+                .ensure_model_ready(model)
+                .await
+                .expect("tokenizer should prepare");
+        }
+        repository
     }
 
-    fn bundled_model_bytes(canonical: &str) -> Vec<u8> {
-        let spec = MiktikTokenizerRepository::model_resource_spec(canonical)
-            .expect("bundled model spec should exist");
-        match spec.source {
-            ModelSource::Bundled { bytes, compression } => {
-                MiktikTokenizerRepository::decode_model_payload(bytes, compression, spec.file_name)
-                    .expect("bundled tokenizer payload should decode")
-            }
-            ModelSource::Remote { .. } => panic!("expected bundled tokenizer source"),
+    #[test]
+    fn every_miktik_model_has_a_source() {
+        for model in Model::all() {
+            assert!(
+                MiktikTokenizerRepository::source(model).is_some(),
+                "no tokenizer source for '{}'",
+                model.id()
+            );
         }
     }
 
     #[tokio::test]
-    async fn bundled_models_are_usable_without_network() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
-        let messages = vec![json!({"role": "user", "content": "hello world"})];
+    async fn bundled_models_and_unknown_names_estimate_without_network() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let names = [
+            "claude-3-7-sonnet",
+            "deepseek-chat",
+            "gemini-2.0-flash",
+            "kimi-k3",
+            "qwen-plus",
+            "qwen3.6-plus",
+            "glm-5.3",
+            "my-local-model",
+            "gpt-4o",
+        ];
+        let repository = prepared(temp.path(), &names).await;
+        let messages = [json!({"role": "user", "content": "hello world, 世界"})];
 
-        TokenizerRepository::ensure_model_ready(&repository, "claude-3-7-sonnet")
-            .await
-            .expect("claude bundled tokenizer should prepare");
-        TokenizerRepository::ensure_model_ready(&repository, "deepseek-chat")
-            .await
-            .expect("deepseek bundled tokenizer should prepare");
-        TokenizerRepository::ensure_model_ready(&repository, "gemini-2.0-flash")
-            .await
-            .expect("gemma bundled tokenizer should prepare");
+        let estimates = names.map(|name| {
+            repository
+                .estimate_messages(name, &[&messages])
+                .expect("prepared tokenizer should estimate")
+        });
 
-        let claude =
-            TokenizerRepository::count_messages(&repository, "claude-3-7-sonnet", &messages)
-                .expect("claude bundled tokenizer should count");
-        let deepseek = TokenizerRepository::count_messages(&repository, "deepseek-chat", &messages)
-            .expect("deepseek bundled tokenizer should count");
-        let gemini =
-            TokenizerRepository::count_messages(&repository, "gemini-2.0-flash", &messages)
-                .expect("gemma bundled tokenizer should count");
-
-        let _ = std::fs::remove_dir_all(cache_dir);
-        assert!(claude > 0);
-        assert!(deepseek > 0);
-        assert!(gemini > 0);
+        assert!(estimates.iter().all(|estimate| estimate.value[0] > 0));
+        assert_eq!(estimates[7], estimates[8], "unknown names use o200k");
+        assert!(
+            estimates.iter().all(|estimate| !estimate.fallback),
+            "o200k is the tokenizer of unknown names, not a fallback"
+        );
     }
 
     #[tokio::test]
     async fn local_engines_match_golden_text() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let temp = tempfile::tempdir().expect("create temp dir");
         let text = "Hello, 世界 👨‍👩‍👧‍👦\n";
         let cases: [(&str, &[u32]); 3] = [
             (
@@ -713,82 +895,163 @@ mod tests {
                     240, 53965, 105, 477, 240, 53965, 104, 203,
                 ],
             ),
+            // Gemma 3, as the reference SentencePiece encodes it.
             (
                 "gemma",
                 &[
-                    4521, 235269, 40642, 235248, 241568, 235879, 241355, 235879, 244355, 235879,
-                    244670, 108,
+                    9259, 236764, 84679, 236743, 243874, 237243, 243767, 237243, 244814, 237243,
+                    244990, 107,
                 ],
             ),
         ];
+        let repository = prepared(temp.path(), &cases.map(|(model, _)| model)).await;
 
         for (model, expected_ids) in cases {
-            TokenizerRepository::ensure_model_ready(&repository, model)
-                .await
-                .expect("tokenizer should prepare");
-            let ids = TokenizerRepository::encode(&repository, model, text)
+            let ids = repository
+                .encode(model, text)
                 .expect("golden text should encode");
             assert_eq!(ids, expected_ids, "token ids changed for '{model}'");
-            if model == "claude" {
-                // Content-only counting must agree with the encoded text.
-                assert_eq!(
-                    repository
-                        .count_messages(model, &[json!({ "content": text })])
-                        .expect("plain text should count"),
-                    expected_ids.len(),
-                );
-            }
             assert_eq!(
-                TokenizerRepository::decode(&repository, model, &ids)
+                repository
+                    .decode(model, &ids)
                     .expect("golden token ids should decode"),
                 text,
                 "roundtrip changed for '{model}'"
             );
         }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[tokio::test]
-    async fn corrupt_bundled_cache_is_rebuilt() {
-        let cache_dir = unique_temp_cache_dir();
-        std::fs::create_dir_all(&cache_dir).expect("cache dir should be created");
-        std::fs::write(cache_dir.join("claude.json"), b"not a tokenizer")
-            .expect("corrupt cache should be written");
+    async fn tokenizers_load_from_artifacts_and_the_cache_keeps_only_what_is_used() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let text = "Artifacts load in milliseconds.\n世界设定 🙂\n";
+        let models = ["gpt-4o", "claude"];
+        let compiled = prepared(temp.path(), &models).await;
+        let estimates = models.map(|model| compiled.estimate_text(model, text).unwrap().value);
+        let ids = models.map(|model| compiled.encode(model, text).unwrap());
 
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+        let artifact_dir = temp
+            .path()
+            .join("compiled")
+            .join(format!("v{}", miktik::ARTIFACT_VERSION));
+        let claude_artifact = artifact_dir.join("claude-claude.json.mtk");
+        let stale = [
+            temp.path()
+                .join("compiled")
+                .join("v0")
+                .join("claude-claude.json.mtk"),
+            artifact_dir.join("gemma-gemma.model.mtk"),
+            temp.path().join("gemma.model"),
+            temp.path().join("kimi.tiktoken"),
+            temp.path().join(".claude.json.1.2.tmp"),
+        ];
+        for path in &stale {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"stale").unwrap();
+        }
+        std::fs::write(&claude_artifact, b"not an artifact").unwrap();
 
-        TokenizerRepository::ensure_model_ready(&repository, "claude")
-            .await
-            .expect("corrupt bundled cache should be rebuilt");
+        let loaded = prepared(temp.path(), &models).await;
+        let reloaded_estimates =
+            models.map(|model| loaded.estimate_text(model, text).unwrap().value);
+        let reloaded_ids = models.map(|model| loaded.encode(model, text).unwrap());
+        let rebuilt = std::fs::read(&claude_artifact).unwrap();
+        let mut kept = std::fs::read_dir(&artifact_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        kept.sort();
+        let stale_left = stale.iter().filter(|path| path.exists()).count();
 
-        let cached =
-            std::fs::read(cache_dir.join("claude.json")).expect("rebuilt cache should be readable");
-        assert_eq!(cached, bundled_model_bytes("claude"));
-
-        let _ = std::fs::remove_dir_all(cache_dir);
+        assert_eq!(reloaded_estimates, estimates);
+        assert_eq!(reloaded_ids, ids);
+        assert!(
+            rebuilt.starts_with(b"MIKTIK"),
+            "the damaged artifact is rebuilt"
+        );
+        assert_eq!(kept, ["claude-claude.json.mtk", "gpt-4o-o200k_base.mtk"]);
+        assert_eq!(stale_left, 0);
     }
 
-    #[test]
-    fn openai_0301_keeps_legacy_message_count_rules() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
-        let messages = vec![json!({"role": "user", "name": "Alice", "content": "hello"})];
+    #[tokio::test]
+    async fn sources_that_cannot_download_estimate_with_the_fallback_until_they_do() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let http_clients = Arc::new(HttpClientPool::new(TEST_USER_AGENT));
+        http_clients.block_requests_for_invalid_proxy();
+        let repository = MiktikTokenizerRepository::new(temp.path().to_path_buf(), http_clients);
+        let text = "A source that cannot download.\n下载不了的源。";
 
-        let legacy =
-            TokenizerRepository::count_messages(&repository, "gpt-3.5-turbo-0301", &messages)
-                .expect("legacy OpenAI tokenizer should count");
-        let modern = TokenizerRepository::count_messages(&repository, "gpt-3.5-turbo", &messages)
-            .expect("modern OpenAI tokenizer should count");
+        repository
+            .ensure_model_ready("llama3")
+            .await
+            .expect("an undownloadable source should not fail estimates");
+        let estimate = repository.estimate_text("llama3", text).unwrap();
+        let fallback = repository.estimate_text("gpt-4o", text).unwrap();
+        let exact = repository.encode("llama3", text);
 
-        let _ = std::fs::remove_dir_all(cache_dir);
+        assert_eq!(estimate.value, fallback.value);
+        assert!(
+            estimate.fallback,
+            "an estimate of the fallback tokenizer says so"
+        );
+        assert!(!fallback.fallback);
+        assert!(
+            exact.is_err(),
+            "exact methods need the model's own tokenizer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_late_error_of_a_replaced_tokenizer_keeps_its_replacement() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = prepared(temp.path(), &["claude"]).await;
+        let artifact = temp
+            .path()
+            .join("compiled")
+            .join(format!("v{}", miktik::ARTIFACT_VERSION))
+            .join("claude-claude.json.mtk");
+
+        let replaced = repository.exact("claude").unwrap();
+        repository.discard(&replaced);
+        repository.ensure_model_ready("claude").await.unwrap();
+        let replacement = repository.exact("claude").unwrap();
+        repository.discard(&replaced);
+        let current = repository.exact("claude");
+        let artifact_kept = artifact.exists();
+
+        assert!(Arc::ptr_eq(&current.unwrap(), &replacement));
+        assert!(artifact_kept);
+    }
+
+    #[tokio::test]
+    async fn openai_0301_keeps_legacy_message_count_rules() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repository = prepared(temp.path(), &["gpt-3.5-turbo-0301", "gpt-4"]).await;
+        let messages = [json!({"role": "user", "name": "Alice", "content": "hello"})];
+
+        let legacy = repository
+            .estimate_messages("gpt-3.5-turbo-0301", &[&messages])
+            .unwrap()
+            .value[0];
+        let modern = repository
+            .estimate_messages("gpt-4", &[&messages])
+            .unwrap()
+            .value[0];
+
         assert_eq!(legacy, modern + 8);
     }
 
     #[tokio::test]
-    async fn cumulative_prefix_estimates_track_boundary_corpus_across_backends() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
+    async fn prefix_estimates_equal_the_estimate_of_each_prefix() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let models = [
+            "gpt-4o",
+            "gpt-3.5-turbo-0301",
+            "claude",
+            "deepseek",
+            "gemma",
+        ];
+        let repository = prepared(temp.path(), &models).await;
         let fragments = [
             "",
             "a",
@@ -804,29 +1067,12 @@ mod tests {
             "<|not-a-special-token|>",
         ];
 
-        for model in [
-            "gpt-4o",
-            "gpt-3.5-turbo-0301",
-            "claude",
-            "deepseek",
-            "gemma",
-        ] {
-            TokenizerRepository::ensure_model_ready(&repository, model)
-                .await
-                .expect("tokenizer should prepare");
+        for model in models {
             for base_index in 0..fragments.len() {
-                let base = fragments[..=base_index].concat();
+                let base = fragments[..base_index].concat();
                 let suffixes = (0..32)
                     .map(|index| fragments[(base_index + index) % fragments.len()].to_string())
                     .collect::<Vec<_>>();
-                let actual = TokenizerRepository::count_text_prefixes(
-                    &repository,
-                    model,
-                    &base,
-                    &suffixes,
-                    None,
-                )
-                .expect("incremental prefix counts should succeed");
 
                 let mut content = base.clone();
                 let expected = suffixes
@@ -836,100 +1082,31 @@ mod tests {
                         if content.is_empty() {
                             return 0;
                         }
-                        TokenizerRepository::count_messages(
-                            &repository,
-                            model,
-                            &[json!({ "content": content })],
-                        )
-                        .expect("complete prefix count should succeed")
+                        repository
+                            .estimate_messages(model, &[&[json!({ "content": content })]])
+                            .unwrap()
+                            .value[0]
                     })
                     .collect::<Vec<_>>();
+                let actual = repository
+                    .estimate_text_prefixes(model, &base, &suffixes, None)
+                    .unwrap()
+                    .value;
+                assert_eq!(actual, expected, "prefix estimates changed for {model}");
 
-                if miktik::TokenizerRegistry::is_tiktoken_model(
-                    MiktikTokenizerRepository::canonical_model(model),
-                ) {
-                    assert_eq!(actual, expected, "prefix counts changed for {model}");
-                } else {
-                    for (estimate, exact) in actual.iter().zip(&expected) {
-                        assert!(
-                            estimate.abs_diff(*exact) <= 1,
-                            "prefix estimate drifted for {model}: estimate={estimate}, exact={exact}"
-                        );
-                    }
-                }
-            }
-        }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
-    }
-
-    #[tokio::test]
-    async fn cumulative_prefix_estimates_stay_close_on_large_world_info() {
-        let cache_dir = unique_temp_cache_dir();
-        let repository = MiktikTokenizerRepository::new(cache_dir.clone(), test_http_clients());
-        let base =
-            "Stable world context with ordinary text, punctuation, and spacing.\n".repeat(120);
-        let suffixes = (0..32)
-            .map(|index| format!("Entry {index}: 世界设定 with details, spaces, and emoji 🙂.\n"))
-            .collect::<Vec<_>>();
-
-        for model in ["gpt-4o", "claude", "deepseek", "gemma"] {
-            TokenizerRepository::ensure_model_ready(&repository, model)
-                .await
-                .expect("tokenizer should prepare");
-
-            let mut content = base.clone();
-            let exact_counts = suffixes
-                .iter()
-                .map(|suffix| {
-                    content.push_str(suffix);
-                    TokenizerRepository::count_messages(
-                        &repository,
-                        model,
-                        &[json!({ "content": content })],
-                    )
-                    .expect("complete prefix count should succeed")
-                })
-                .collect::<Vec<_>>();
-
-            let estimated_counts = TokenizerRepository::count_text_prefixes(
-                &repository,
-                model,
-                &base,
-                &suffixes,
-                None,
-            )
-            .expect("cumulative prefix estimates should succeed");
-
-            for (estimate, exact) in estimated_counts.iter().zip(&exact_counts) {
-                let tolerance = exact.div_ceil(20).max(1);
-                assert!(
-                    estimate.abs_diff(*exact) <= tolerance,
-                    "large world-info estimate drifted for {model}: estimate={estimate}, exact={exact}"
+                let stop_at = expected[20];
+                let stop_index = expected.iter().position(|&count| count >= stop_at).unwrap();
+                let mut stopped = expected.clone();
+                stopped[stop_index..].fill(expected[stop_index]);
+                assert_eq!(
+                    repository
+                        .estimate_text_prefixes(model, &base, &suffixes, Some(stop_at))
+                        .unwrap()
+                        .value,
+                    stopped,
+                    "prefix estimates did not stop for {model}"
                 );
             }
-
-            let stop_at = estimated_counts[20];
-            let stop_index = estimated_counts
-                .iter()
-                .position(|&count| count >= stop_at)
-                .expect("estimates should reach the selected threshold");
-
-            let stopped_counts = TokenizerRepository::count_text_prefixes(
-                &repository,
-                model,
-                &base,
-                &suffixes,
-                Some(stop_at),
-            )
-            .expect("stopped prefix estimates should succeed");
-
-            let mut expected_stopped_counts = estimated_counts;
-            let terminal_count = expected_stopped_counts[stop_index];
-            expected_stopped_counts[stop_index..].fill(terminal_count);
-            assert_eq!(stopped_counts, expected_stopped_counts);
         }
-
-        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }

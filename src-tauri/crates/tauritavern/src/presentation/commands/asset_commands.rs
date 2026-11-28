@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
-use crate::presentation::commands::helpers::{
-    ensure_ios_policy_allows, log_command, map_command_error,
-};
+use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::import_source::ImportSources;
 use crate::presentation::errors::CommandError;
-use tt_application::services::asset_service::AssetDownloadResult;
 use tt_domain::models::asset::AssetCatalog;
 
 #[tauri::command]
@@ -26,23 +24,21 @@ pub async fn get_assets_library(
 
 #[tauri::command]
 pub async fn download_asset(
+    window: WebviewWindow,
     url: String,
     category: String,
     filename: String,
+    locale: String,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AssetDownloadResult, CommandError> {
+) -> Result<(), CommandError> {
     log_command(format!("download_asset {}", category));
 
-    ensure_ios_policy_allows(
-        &app_state.ios_policy,
-        app_state.ios_policy.capabilities.content.external_import,
-        "content.external_import",
-    )?;
-
+    let sources = ImportSources::new(&window, &app_state, &locale)
+        .map_err(map_command_error("Failed to download asset"))?;
     app_state
         .services
         .asset_service
-        .download_asset(&url, &category, &filename)
+        .download_asset(&url, &category, &filename, &sources)
         .await
         .map_err(map_command_error("Failed to download asset"))
 }

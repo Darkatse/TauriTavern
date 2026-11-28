@@ -38,7 +38,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://tauritavern.github.io/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://tauritavern.github.io/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?style=flat-square&logo=apple&logoColor=white)](https://testflight.apple.com/join/gpqAdeTm)
-[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://github.com/Darkatse/TauriTavern/releases/latest)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://tauritavern.github.io/downloads/platforms/)
 
 [全部平台下载](https://tauritavern.github.io/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -143,10 +143,12 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Windows 便携版**（Portable）：需系统已安装 WebView2 运行时。
 >
 > **鸿蒙用户（Beta）**：Release 里的 HAP 适用于 HarmonyOS NEXT。请使用自己的证书签名安装，推荐使用 [Auto-Installer（小白调试助手）](https://github.com/likuai2010/auto-installer/)。当前仅在模拟器上进行过测试。
+>
+> **应用无法打开时**：在 3 分钟内连续退出并重新打开 TauriTavern 5 次，会询问是否进入安全模式。
 
 ## 这是什么
 
-TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.19.0），后端从 Node.js 重构为 Rust（Tauri v2）。
+TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.19.1），后端从 Node.js 重构为 Rust（Tauri v2）。
 
 不需要安装 Node.js，不需要命令行，安装即用。你的角色卡、聊天记录、预设、世界书与前端扩展，全部兼容。
 
@@ -155,7 +157,7 @@ TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植
 ## 特性亮点
 
 - 🖥️ **全平台原生**：Windows、macOS、Linux、Android、iOS，桌面与移动同一份体验；原生鸿蒙版当前处于 Beta 支持。
-- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.19.0，数据格式与目录布局完全兼容
+- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.19.1，数据格式与目录布局完全兼容
 - 🧩 **前端扩展生态**：内置原生 Git，安装、更新、切换分支都在界面内完成（不支持上游 Node-only 后端插件）
 - 🔄 **内置多设备同步**：局域网加密配对同步，或经远端 TT-Sync v2 自动上传
 - 🤖 **Agent 框架**：工具调用、Skills、子代理与运行时间线，持续演进中

@@ -18,6 +18,14 @@ impl WorldInfoService {
         }
     }
 
+    pub async fn list_world_info(&self) -> Result<WorldInfoJsonDto, ApplicationError> {
+        let books = self.world_info_repository.list_world_info().await?;
+        let bytes = serde_json::to_vec(&books).map_err(|error| {
+            ApplicationError::InternalError(format!("Failed to encode world info list: {error}"))
+        })?;
+        Ok(WorldInfoJsonDto { bytes })
+    }
+
     pub async fn get_world_info(&self, name: &str) -> Result<WorldInfoJsonDto, ApplicationError> {
         let bytes = self
             .world_info_repository

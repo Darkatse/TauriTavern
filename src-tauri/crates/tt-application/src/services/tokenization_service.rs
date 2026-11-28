@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -6,12 +5,13 @@ use crate::dto::tokenization_dto::{
     DecodeTokensRequestDto, DecodeTokensResponseDto, EncodeTokensRequestDto,
     EncodeTokensResponseDto, LogitBiasEntryDto, OpenAiLogitBiasRequestDto,
     OpenAiLogitBiasResponseDto, OpenAiTokenCountBatchRequestDto, OpenAiTokenCountBatchResponseDto,
-    OpenAiTokenPrefixCountRequestDto,
+    OpenAiTokenPrefixCountRequestDto, TextTokenCountRequestDto, TextTokenCountResponseDto,
 };
 use crate::errors::ApplicationError;
-use tt_ports::repositories::tokenizer_repository::TokenizerRepository;
+use serde_json::Value;
+use tt_domain::errors::DomainError;
+use tt_ports::repositories::tokenizer_repository::{Estimated, TokenizerRepository};
 
-const DEFAULT_MODEL: &str = "gpt-4o";
 const REPLACEMENT_CHARACTER: &str = "\u{fffd}";
 
 pub struct TokenizationService {
@@ -29,194 +29,210 @@ impl TokenizationService {
         &self,
         dto: OpenAiTokenCountBatchRequestDto,
     ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
+        let OpenAiTokenCountBatchRequestDto { model, requests } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
+
+        let Estimated {
+            value: token_counts,
+            fallback,
+        } = self
+            .blocking("Token count batch", move |repository| {
+                let requests: Vec<&[Value]> = requests
+                    .iter()
+                    .map(|request| request.messages.as_slice())
+                    .collect();
+                repository.estimate_messages(&model, &requests)
+            })
             .await?;
 
-        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
-        let model = model.into_owned();
-        let requests = dto.requests;
-
-        let token_counts = tokio::task::spawn_blocking(move || {
-            let mut token_counts = Vec::with_capacity(requests.len());
-
-            for request in requests {
-                let token_count = tokenizer_repository
-                    .count_messages(&model, &request.messages)
-                    .map_err(ApplicationError::from)?;
-                token_counts.push(token_count);
-            }
-
-            Ok::<_, ApplicationError>(token_counts)
+        Ok(OpenAiTokenCountBatchResponseDto {
+            token_counts,
+            fallback,
         })
-        .await
-        .map_err(|error| {
-            ApplicationError::InternalError(format!("Token count batch task failed: {error}"))
-        })??;
-
-        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
     }
 
     pub async fn count_openai_token_prefixes(
         &self,
         dto: OpenAiTokenPrefixCountRequestDto,
     ) -> Result<OpenAiTokenCountBatchResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
+        let OpenAiTokenPrefixCountRequestDto {
+            model,
+            base,
+            suffixes,
+            stop_at,
+        } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
+
+        let Estimated {
+            value: token_counts,
+            fallback,
+        } = self
+            .blocking("Token prefix count", move |repository| {
+                repository.estimate_text_prefixes(&model, &base, &suffixes, stop_at)
+            })
             .await?;
 
-        let tokenizer_repository = Arc::clone(&self.tokenizer_repository);
-        let model = model.into_owned();
-        let base = dto.base;
-        let suffixes = dto.suffixes;
-        let stop_at = dto.stop_at;
-
-        let token_counts = tokio::task::spawn_blocking(move || {
-            tokenizer_repository
-                .count_text_prefixes(&model, &base, &suffixes, stop_at)
-                .map_err(ApplicationError::from)
+        Ok(OpenAiTokenCountBatchResponseDto {
+            token_counts,
+            fallback,
         })
-        .await
-        .map_err(|error| {
-            ApplicationError::InternalError(format!("Token prefix count task failed: {error}"))
-        })??;
+    }
 
-        Ok(OpenAiTokenCountBatchResponseDto { token_counts })
+    pub async fn count_text_tokens(
+        &self,
+        dto: TextTokenCountRequestDto,
+    ) -> Result<TextTokenCountResponseDto, ApplicationError> {
+        let TextTokenCountRequestDto { model, text } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
+
+        let Estimated {
+            value: count,
+            fallback,
+        } = self
+            .blocking("Text token count", move |repository| {
+                repository.estimate_text(&model, &text)
+            })
+            .await?;
+
+        Ok(TextTokenCountResponseDto { count, fallback })
     }
 
     pub async fn encode_tokens(
         &self,
         dto: EncodeTokensRequestDto,
     ) -> Result<EncodeTokensResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
-            .await?;
-        let ids = self
-            .tokenizer_repository
-            .encode(model.as_ref(), &dto.text)?;
+        let EncodeTokensRequestDto { model, text } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let chunks = self.decode_token_chunks(model.as_ref(), &ids);
-
-        Ok(EncodeTokensResponseDto {
-            count: ids.len(),
-            ids,
-            chunks,
+        self.blocking("Token encode", move |repository| {
+            let ids = repository.encode(&model, &text)?;
+            let chunks = decode_token_chunks(repository, &model, &ids);
+            Ok(EncodeTokensResponseDto {
+                count: ids.len(),
+                ids,
+                chunks,
+            })
         })
+        .await
     }
 
     pub async fn decode_tokens(
         &self,
         dto: DecodeTokensRequestDto,
     ) -> Result<DecodeTokensResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
-            .await?;
-        let text = self.tokenizer_repository.decode(model.as_ref(), &dto.ids)?;
+        let DecodeTokensRequestDto { model, ids } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        let chunks = self.decode_token_chunks(model.as_ref(), &dto.ids);
-
-        Ok(DecodeTokensResponseDto { text, chunks })
+        self.blocking("Token decode", move |repository| {
+            let text = repository.decode(&model, &ids)?;
+            let chunks = decode_token_chunks(repository, &model, &ids);
+            Ok(DecodeTokensResponseDto { text, chunks })
+        })
+        .await
     }
 
     pub async fn build_openai_logit_bias(
         &self,
         dto: OpenAiLogitBiasRequestDto,
     ) -> Result<OpenAiLogitBiasResponseDto, ApplicationError> {
-        let model = self.normalize_model(&dto.model);
-        self.tokenizer_repository
-            .ensure_model_ready(model.as_ref())
-            .await?;
-        let mut bias: HashMap<String, f32> = HashMap::new();
+        let OpenAiLogitBiasRequestDto { model, entries } = dto;
+        self.tokenizer_repository.ensure_model_ready(&model).await?;
 
-        for (entry_index, entry) in dto.entries.into_iter().enumerate() {
-            let token_ids = match self.resolve_entry_tokens(model.as_ref(), &entry) {
-                Ok(token_ids) => token_ids,
-                Err(error) => {
-                    tracing::warn!(
-                        model = model.as_ref(),
-                        entry_index,
-                        %error,
-                        "Skipping logit bias entry that could not be encoded"
-                    );
-                    continue;
+        self.blocking("Logit bias", move |repository| {
+            let mut bias: HashMap<String, f32> = HashMap::new();
+            for (entry_index, entry) in entries.into_iter().enumerate() {
+                let token_ids = match entry_tokens(repository, &model, &entry) {
+                    Ok(token_ids) => token_ids,
+                    Err(error) => {
+                        tracing::warn!(
+                            model,
+                            entry_index,
+                            %error,
+                            "Skipping logit bias entry that could not be encoded"
+                        );
+                        continue;
+                    }
+                };
+
+                for token_id in token_ids {
+                    bias.insert(token_id.to_string(), entry.value);
                 }
-            };
-
-            for token_id in token_ids {
-                bias.insert(token_id.to_string(), entry.value);
             }
-        }
-
-        Ok(bias)
+            Ok(bias)
+        })
+        .await
     }
 
-    fn resolve_entry_tokens(
+    /// Runs tokenizer work off the async runtime: long texts take milliseconds, and the first
+    /// exact call of a tokenizer builds its exact engine.
+    async fn blocking<T: Send + 'static>(
         &self,
-        model: &str,
-        entry: &LogitBiasEntryDto,
-    ) -> Result<Vec<u32>, ApplicationError> {
-        if let Some(ids) = Self::parse_inline_token_ids(&entry.text) {
-            return Ok(ids);
-        }
-
-        self.tokenizer_repository
-            .encode(model, &entry.text)
+        task: &'static str,
+        work: impl FnOnce(&dyn TokenizerRepository) -> Result<T, DomainError> + Send + 'static,
+    ) -> Result<T, ApplicationError> {
+        let repository = Arc::clone(&self.tokenizer_repository);
+        tokio::task::spawn_blocking(move || work(repository.as_ref()))
+            .await
+            .map_err(|error| {
+                ApplicationError::InternalError(format!("{task} task failed: {error}"))
+            })?
             .map_err(ApplicationError::from)
     }
+}
 
-    fn decode_token_chunks(&self, model: &str, ids: &[u32]) -> Vec<String> {
-        ids.iter()
-            .map(|id| {
-                // A token may contain only part of a UTF-8 sequence. Chunks are
-                // display metadata, so decode them lossily without hiding a full decode error.
-                self.tokenizer_repository
-                    .decode(model, &[*id])
-                    .unwrap_or_else(|_| REPLACEMENT_CHARACTER.to_string())
-            })
-            .collect()
+fn entry_tokens(
+    repository: &dyn TokenizerRepository,
+    model: &str,
+    entry: &LogitBiasEntryDto,
+) -> Result<Vec<u32>, DomainError> {
+    if let Some(ids) = parse_inline_token_ids(&entry.text) {
+        return Ok(ids);
     }
 
-    fn parse_inline_token_ids(text: &str) -> Option<Vec<u32>> {
-        let trimmed = text.trim();
+    repository.encode(model, &entry.text)
+}
 
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+fn decode_token_chunks(
+    repository: &dyn TokenizerRepository,
+    model: &str,
+    ids: &[u32],
+) -> Vec<String> {
+    ids.iter()
+        .map(|id| {
+            // A token may contain only part of a UTF-8 sequence. Chunks are
+            // display metadata, so decode them lossily without hiding a full decode error.
+            repository
+                .decode(model, &[*id])
+                .unwrap_or_else(|_| REPLACEMENT_CHARACTER.to_string())
+        })
+        .collect()
+}
+
+fn parse_inline_token_ids(text: &str) -> Option<Vec<u32>> {
+    let trimmed = text.trim();
+
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let array = value.as_array()?;
+    let mut ids = Vec::with_capacity(array.len());
+
+    for item in array {
+        let value = item.as_u64()?;
+        if value > u32::MAX as u64 {
             return None;
         }
-
-        let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
-        let array = value.as_array()?;
-        let mut ids = Vec::with_capacity(array.len());
-
-        for item in array {
-            let value = item.as_u64()?;
-            if value > u32::MAX as u64 {
-                return None;
-            }
-            ids.push(value as u32);
-        }
-
-        Some(ids)
+        ids.push(value as u32);
     }
 
-    fn normalize_model<'a>(&self, model: &'a str) -> Cow<'a, str> {
-        let trimmed = model.trim();
-        if trimmed.is_empty() {
-            Cow::Borrowed(DEFAULT_MODEL)
-        } else {
-            Cow::Borrowed(trimmed)
-        }
-    }
+    Some(ids)
 }
 
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use serde_json::Value;
-    use tt_domain::errors::DomainError;
 
     use super::*;
 
@@ -248,8 +264,30 @@ mod tests {
             }
         }
 
-        fn count_messages(&self, _model: &str, _messages: &[Value]) -> Result<usize, DomainError> {
+        fn estimate_messages(
+            &self,
+            _model: &str,
+            _requests: &[&[Value]],
+        ) -> Result<Estimated<Vec<usize>>, DomainError> {
             unreachable!("token chunk tests do not count messages")
+        }
+
+        fn estimate_text(
+            &self,
+            _model: &str,
+            _text: &str,
+        ) -> Result<Estimated<usize>, DomainError> {
+            unreachable!("token chunk tests do not count text")
+        }
+
+        fn estimate_text_prefixes(
+            &self,
+            _model: &str,
+            _base: &str,
+            _suffixes: &[String],
+            _stop_at: Option<usize>,
+        ) -> Result<Estimated<Vec<usize>>, DomainError> {
+            unreachable!("token chunk tests do not count prefixes")
         }
     }
 

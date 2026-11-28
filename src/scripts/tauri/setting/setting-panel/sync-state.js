@@ -123,39 +123,3 @@ export function parseLanSyncPairUri(pairUri, tr = (key) => key) {
     const deviceId = parsed.searchParams.get('device_id') || null;
     return { baseUrl, spki, deviceId };
 }
-
-export function parseTtSyncPairUri(pairUri, tr = (key) => key) {
-    const parsed = new URL(String(pairUri || '').trim());
-    if (parsed.protocol.toLowerCase() !== 'tauritavern:') {
-        throw new Error(tr('Pair URI must start with tauritavern://'));
-    }
-
-    const host = parsed.hostname.toLowerCase();
-    const path = parsed.pathname.toLowerCase();
-    if (host !== 'tt-sync' || path !== '/pair') {
-        throw new Error(tr('Pair URI is not a TT-Sync pairing link'));
-    }
-
-    const version = parsed.searchParams.get('v') || '';
-    if (version !== '2') {
-        throw new Error(tr('Pair URI must be v=2'));
-    }
-
-    const baseUrl = parsed.searchParams.get('url') || '';
-    if (!baseUrl) {
-        throw new Error(tr('Pair URI missing url'));
-    }
-
-    const spki = parsed.searchParams.get('spki') || '';
-    if (!spki) {
-        throw new Error(tr('Pair URI missing spki'));
-    }
-
-    const expiresAtMsRaw = parsed.searchParams.get('exp') || '';
-    const expiresAtMs = expiresAtMsRaw ? Number(expiresAtMsRaw) : null;
-    if (expiresAtMsRaw && (expiresAtMs === null || Number.isNaN(expiresAtMs))) {
-        throw new Error(tr('Pair URI has invalid exp'));
-    }
-
-    return { baseUrl, spki, expiresAtMs };
-}

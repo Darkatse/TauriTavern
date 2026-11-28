@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 use ttsync_contract::sync::SyncMode;
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::sync_pairing::{PairingPeer, ensure_pairing_consent};
 use crate::presentation::errors::CommandError;
 use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
 use tt_domain::models::tt_sync::TtSyncPairedServer;
@@ -50,13 +51,25 @@ impl From<TtSyncPairedServer> for TtSyncPairedServerDto {
 pub async fn tt_sync_pair(
     app_state: State<'_, Arc<AppState>>,
     pair_uri: String,
+    locale: String,
+    window: WebviewWindow,
 ) -> Result<TtSyncPairedServerDto, CommandError> {
     log_command("tt_sync_pair");
 
-    app_state
-        .services
-        .tt_sync_service
-        .pair(&pair_uri)
+    let service = &app_state.services.tt_sync_service;
+    let target = service
+        .resolve_pairing(&pair_uri)
+        .map_err(map_command_error("Failed to pair TT-Sync server"))?;
+    ensure_pairing_consent(
+        &window,
+        &locale,
+        PairingPeer::SyncServer {
+            origin: &target.server_origin,
+        },
+    )
+    .await?;
+    service
+        .pair(target)
         .await
         .map(TtSyncPairedServerDto::from)
         .map_err(map_command_error("Failed to pair TT-Sync server"))

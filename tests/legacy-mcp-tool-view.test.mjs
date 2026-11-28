@@ -34,6 +34,7 @@ async function createContext({ tools = [descriptor], invokeCommand, createExecut
         return { tools, diagnostics: [] };
     });
     return createLegacyMcpGenerationContext({
+        locale: 'zh-cn',
         invokeCommand: command,
         createExecutionCallId,
     });
@@ -183,6 +184,7 @@ test('MCP execution uses a fresh executionCallId and preserves complete known/no
                     toolId: descriptor.toolId,
                     argumentsJson: '{"value":42}',
                 },
+                locale: 'zh-cn',
             },
         },
     ]);

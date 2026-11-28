@@ -1,16 +1,15 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::settings::{
-    AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, ClaudeModelSettings,
-    DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl, RequestProxySettings,
-    SettingsSnapshot, StartupUpdatePopupSettings, TauriTavernSettings, TauriTavernUpdateSettings,
-    UserSettings,
+    AgentRunRetentionSettings, AgentSettings, AppUpdateSettings, ChatBackupSettings,
+    ClaudeModelSettings, DevLoggingSettings, DynamicThemeSettings, ModelSettings, PromptCacheTtl,
+    RequestProxySettings, SettingsSnapshot, TauriTavernSettings,
 };
 use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettingsDto {
-    pub updates: TauriTavernUpdateSettingsDto,
+    pub updates: AppUpdateSettingsDto,
     pub perf_profile: String,
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
@@ -19,6 +18,7 @@ pub struct TauriTavernSettingsDto {
     pub codemirror_editor_enabled: bool,
     pub chat_backups: ChatBackupSettingsDto,
     pub close_to_tray_on_close: bool,
+    pub generation_notifications_enabled: bool,
     pub request_proxy: RequestProxySettingsDto,
     pub allow_keys_exposure: bool,
     pub avatar_persona_original_images_enabled: bool,
@@ -29,20 +29,23 @@ pub struct TauriTavernSettingsDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TauriTavernUpdateSettingsDto {
+pub struct AppUpdateSettingsDto {
     #[serde(default)]
     pub channel: Option<UpdateChannel>,
-    pub startup_popup: StartupUpdatePopupSettingsDto,
+    pub popup_enabled: bool,
+    pub dismissed_release_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartupUpdatePopupSettingsDto {
+pub struct UpdateAppUpdateSettingsDto {
+    pub channel: Option<UpdateChannel>,
+    pub popup_enabled: Option<bool>,
     pub dismissed_release_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTauriTavernSettingsDto {
-    pub updates: Option<TauriTavernUpdateSettingsDto>,
+    pub updates: Option<UpdateAppUpdateSettingsDto>,
     pub perf_profile: Option<String>,
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
@@ -51,8 +54,7 @@ pub struct UpdateTauriTavernSettingsDto {
     pub codemirror_editor_enabled: Option<bool>,
     pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
-    pub request_proxy: Option<RequestProxySettingsDto>,
-    pub allow_keys_exposure: Option<bool>,
+    pub generation_notifications_enabled: Option<bool>,
     pub avatar_persona_original_images_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
@@ -161,12 +163,6 @@ pub struct UpdateModelSettingsDto {
     pub claude: Option<UpdateClaudeModelSettingsDto>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserSettingsDto {
-    #[serde(flatten)]
-    pub data: Value,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettingsSaveResultDto {
     pub result: String,
@@ -190,7 +186,7 @@ pub struct SettingsSnapshotDto {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SillyTavernSettingsResponseDto {
     pub settings: String,
     pub tauritavern_settings_revision: UserSettingsRevisionDto,
@@ -203,32 +199,18 @@ pub struct SillyTavernSettingsResponseDto {
     pub openai_setting_names: Vec<String>,
     pub textgenerationwebui_presets: Vec<String>,
     pub textgenerationwebui_preset_names: Vec<String>,
-    pub themes: Vec<Value>,
+    pub themes: Vec<JsonDocument>,
     #[serde(rename = "movingUIPresets")]
-    pub moving_ui_presets: Vec<Value>,
+    pub moving_ui_presets: Vec<JsonDocument>,
     #[serde(rename = "quickReplyPresets")]
-    pub quick_reply_presets: Vec<Value>,
-    pub instruct: Vec<Value>,
-    pub context: Vec<Value>,
-    pub sysprompt: Vec<Value>,
-    pub reasoning: Vec<Value>,
+    pub quick_reply_presets: Vec<JsonDocument>,
+    pub instruct: Vec<JsonDocument>,
+    pub context: Vec<JsonDocument>,
+    pub sysprompt: Vec<JsonDocument>,
+    pub reasoning: Vec<JsonDocument>,
     pub enable_extensions: bool,
     pub enable_extensions_auto_update: bool,
     pub enable_accounts: bool,
-}
-
-impl From<UserSettings> for UserSettingsDto {
-    fn from(settings: UserSettings) -> Self {
-        Self {
-            data: settings.data,
-        }
-    }
-}
-
-impl From<UserSettingsDto> for UserSettings {
-    fn from(dto: UserSettingsDto) -> Self {
-        Self { data: dto.data }
-    }
 }
 
 impl From<SettingsSnapshot> for SettingsSnapshotDto {
@@ -244,7 +226,7 @@ impl From<SettingsSnapshot> for SettingsSnapshotDto {
 impl From<TauriTavernSettings> for TauriTavernSettingsDto {
     fn from(settings: TauriTavernSettings) -> Self {
         Self {
-            updates: TauriTavernUpdateSettingsDto::from(settings.updates),
+            updates: AppUpdateSettingsDto::from(settings.updates),
             perf_profile: settings.perf_profile,
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
@@ -253,6 +235,7 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             codemirror_editor_enabled: settings.codemirror_editor_enabled,
             chat_backups: ChatBackupSettingsDto::from(settings.chat_backups),
             close_to_tray_on_close: settings.close_to_tray_on_close,
+            generation_notifications_enabled: settings.generation_notifications_enabled,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             allow_keys_exposure: settings.allow_keys_exposure,
             avatar_persona_original_images_enabled: settings.avatar_persona_original_images_enabled,
@@ -352,19 +335,12 @@ impl From<ModelSettings> for ModelSettingsDto {
     }
 }
 
-impl From<TauriTavernUpdateSettings> for TauriTavernUpdateSettingsDto {
-    fn from(settings: TauriTavernUpdateSettings) -> Self {
+impl From<AppUpdateSettings> for AppUpdateSettingsDto {
+    fn from(settings: AppUpdateSettings) -> Self {
         Self {
             channel: settings.channel,
-            startup_popup: StartupUpdatePopupSettingsDto::from(settings.startup_popup),
-        }
-    }
-}
-
-impl From<StartupUpdatePopupSettings> for StartupUpdatePopupSettingsDto {
-    fn from(settings: StartupUpdatePopupSettings) -> Self {
-        Self {
-            dismissed_release_token: settings.dismissed_release_token,
+            popup_enabled: settings.popup_enabled,
+            dismissed_release_token: settings.startup_popup.dismissed_release_token,
         }
     }
 }

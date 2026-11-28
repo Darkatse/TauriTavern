@@ -6,6 +6,7 @@ members = [
     "crates/tt-ports",
     "crates/tt-application",
     "crates/tt-adapter-http",
+    "crates/tt-adapter-external-import",
     "crates/tt-adapter-mcp",
     "crates/tt-adapter-tokenization",
     "crates/tt-adapter-sync",
@@ -22,6 +23,10 @@ members = [
 default-members = ["crates/tauritavern"]
 resolver = "3"
 
+[workspace.package]
+# The oldest rustc among the packaging toolchains (Nix, Flatpak).
+rust-version = "1.95"
+
 [workspace.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 rand = "0.10"
@@ -31,6 +36,7 @@ serde_json = "1"
 sha2 = { version = "0.11", default-features = false }
 # Only the Windows tray entry inherits this; see crates/tauritavern/Cargo.toml.
 tauri = "2.12.3"
+tempfile = "3"
 thiserror = "2"
 ttsync-fs = "2"
 ttsync-contract = "2"
@@ -63,3 +69,11 @@ lto = true
 opt-level = "s"
 panic = "unwind"
 strip = "symbols"
+
+# tests/perf/backend.mjs: release code generation, built incrementally, with the symbols callgrind splits steps at.
+[profile.perf]
+inherits = "release"
+codegen-units = 16
+incremental = true
+lto = false
+strip = "none"

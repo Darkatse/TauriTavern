@@ -44,6 +44,7 @@
       "wallpaper_enabled": false
     },
     "embedded_runtime_profile": "auto",
+    "generation_notifications_enabled": true,
     "models": {
       "claude": {
         "prompt_cache_ttl": "off"
@@ -67,9 +68,8 @@
     },
     "updates": {
       "channel": null,
-      "startup_popup": {
-        "dismissed_release_token": null
-      }
+      "dismissed_release_token": null,
+      "popup_enabled": true
     }
   }
 }

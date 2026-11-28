@@ -9,7 +9,7 @@ First-party UI 包含：
 - Agent System；
 - In-App Assistant；
 - MCP Manager；
-- Tauri Settings、Dev Logs 与 Sync。
+- Tauri Settings、Dev Logs、请求查看器、Sync 与 Web Storage。
 
 这些界面统一使用 React、React DOM 与 strict TypeScript/TSX。上游 SillyTavern 前端、第三方扩展和由 WebView 直接加载的宿主脚本不属于 React 组件源码。
 
@@ -40,7 +40,9 @@ src/scripts/extensions/in-app-agent/src
 src/scripts/extensions/mcp-manager/src
 src/scripts/tauri/setting/settings-app
 src/scripts/tauri/setting/dev-logs-app
+src/scripts/tauri/setting/request-inspector-app
 src/scripts/tauri/setting/sync-app
+src/scripts/tauri/setting/web-storage-app
 ```
 
 入口和稳定输出如下：
@@ -52,7 +54,9 @@ src/scripts/tauri/setting/sync-app
 | MCP Manager | `mcp-manager/src/index.tsx` | `mcp-manager/dist/index.bundle.js` | MCP manifest |
 | Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
 | Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
+| 请求查看器 | `request-inspector-app/RequestInspectorApp.tsx` | `setting/dist/request-inspector.bundle.js` | `setting/request-inspector.js` |
 | Sync | `sync-app/index.ts` | `setting/dist/sync.bundle.js` | Sync popup 与 listener 外壳 |
+| Web Storage | `web-storage-app/WebStorageApp.tsx` | `setting/dist/web-storage.bundle.js` | `setting/web-storage.js` |
 
 In-App Assistant 的 manifest 加载构建生成的 `dist/index.bundle.css`，因为光标样式要从 app-use 包导入；Agent System 与 MCP Manager 的 manifest 直接加载 `style.css`。所以改了助手的 `style.css`，要经 rspack 重新构建才会生效。
 
@@ -86,12 +90,13 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 - `index.tsx` 负责挂载；`host.ts` 负责 Host 与 SillyTavern 边界。
 - Manager、server dialog 与 test-call dialog 保持 feature-local，不依赖 Agent 或 Settings 的 UI runtime。
 
-### Settings、Dev Logs 与 Sync
+### Settings、Dev Logs、请求查看器、Sync 与 Web Storage
 
 - Raw Settings 外壳创建 Popup、读取 Host 数据并向 React root 注入 typed options、actions 与 translator。
 - React root 不读取外壳内部状态；外壳也不依赖 React component instance，只持有公开 mount handle。
 - 扩展菜单快捷入口是设备本地的展示偏好；Raw Settings 外壳复用上游 Popup 管理选择，并由 DOM adapter 投影到既有 `#extensionsMenu`，不新增 React root 或后端设置。
-- 三个功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。
+- 这些功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。几个岛共用的模块放在 `setting/shared/`，一个岛不 import 另一个岛的目录。
+- 请求查看器的界面规则见[请求查看器](RequestInspector.md#7-界面)。
 
 ## 5. 宿主调用契约
 
@@ -101,9 +106,11 @@ Settings 系列 bundle 通过 named export 暴露挂载函数：
 | --- | --- |
 | `mountTauriTavernSettingsApp()` | `getDraft()`、`setChatBackupStorageStats()`、`unmount()` |
 | `mountTauriTavernDevLogsApp()` | `unmount()` |
+| `mountTauriTavernRequestInspectorApp()` | `unmount()` |
 | `mountTauriTavernSyncApp()` | `refresh()`、`refreshAutomationStatus()`、`unmount()` |
 | `mountTauriTavernSyncProgressApp()` | `update()`、`unmount()` |
 | `mountTauriTavernSyncScopeApp()` | `getSelection()`、`unmount()` |
+| `mountTauriTavernWebStorageApp()` | `unmount()` |
 
 挂载参数在 JS/TS 边界校验。外壳只通过这些 handle 与 island 交互；新增能力应优先扩展对应 feature contract，而不是读取 React DOM 或组件内部状态。
 
@@ -120,16 +127,21 @@ Agent 与 MCP 由 manifest 加载后自行启动。它们的外部契约是 mani
 
 ## 7. 测试与开发
 
-Rstest、Testing Library 与 `happy-dom` 覆盖组件交互、controller 行为、订阅生命周期和稳定边界。Node contract tests 覆盖 Host ABI 与浏览器 JavaScript 集成；Rust tests 覆盖后端领域和适配器行为。
+需要 DOM 的测试由 Rstest 在 Chromium 和 WebKit 中各运行一次，也就是发布端 WebView 的两种引擎；纯 Node 逻辑由 node:test 运行（`tests/*.test.mjs`），Rust tests 覆盖后端领域和适配器行为。
 
-`happy-dom` 不提供真实布局、滚动和平台 WebView 行为。涉及 pointer、focus、native dialog、scroll anchor、移动端 viewport 或主题级联的改动，还需要在真实 Tauri WebView 中验证。
+- 第一方组件测试与源码放在一起；宿主 JavaScript 的测试位于 `tests/webview/`。
+- 测试按产品的方式加载代码：产品中打包的代码由 Rstest 打包；WebView 原生加载的宿主 JavaScript 从测试服务器按 URL 导入，不打包也不 mock，依赖整个应用的模块在应用帧中运行。入口见 `tests/helpers/frontend.mjs`。
+- 依赖布局的测试加载组件样式，并在挂载前给容器真实尺寸。
+- 测试之间的清理与还原由 `rstest.config.mjs` 统一负责。
 
-常用命令：
+移动端 viewport、软键盘、主题级联和平台权限属于 WebView 嵌入层，仍需在 Tauri WebView 中验证。
+
+首次运行前安装浏览器：`pnpm exec playwright install chromium webkit`。常用命令：
 
 ```bash
 pnpm run check:types
 pnpm run check:lint
-pnpm run test:ui
+pnpm run test:dom
 pnpm run web:build
 pnpm run check
 ```

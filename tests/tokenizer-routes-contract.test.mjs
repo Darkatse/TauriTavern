@@ -116,6 +116,43 @@ test('OpenAI prefix route preserves compact parts and rejects invalid bodies', a
 
 
 
+test('Text count routes count plain text with each local tokenizer', async () => {
+    const capturedDtos = [];
+    const router = createTokenizerRouter({
+        async safeInvoke(command, { dto }) {
+            assert.equal(command, 'count_text_tokens');
+            capturedDtos.push(dto);
+            return { count: 5 };
+        },
+    });
+
+    for (const model of LOCAL_TOKENIZERS) {
+        const response = await router.handle(tokenizerRequest(`/api/tokenizers/${model}/count-text`, { text: 'hello' }));
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { count: 5 });
+    }
+    const openaiResponse = await router.handle(tokenizerRequest(
+        '/api/tokenizers/openai/count-text',
+        { text: 'hello' },
+        '?model=gpt-4o',
+    ));
+    assert.deepEqual(await openaiResponse.json(), { count: 5 });
+
+    assert.deepEqual(capturedDtos, [
+        ...LOCAL_TOKENIZERS.map(model => ({ model, text: 'hello' })),
+        { model: 'gpt-4o', text: 'hello' },
+    ]);
+
+    const failingRouter = createTokenizerRouter({
+        async safeInvoke() {
+            throw new Error('model unavailable');
+        },
+    });
+    const failedResponse = await failingRouter.handle(tokenizerRequest('/api/tokenizers/claude/count-text', { text: 'hello' }));
+    assert.equal(failedResponse.status, 500);
+    assert.deepEqual(await failedResponse.json(), { error: 'model unavailable' });
+});
+
 test('Tokenizer codec routes reject invalid text and token ids before invoke', async () => {
     let invokeCount = 0;
     const router = createTokenizerRouter({
@@ -130,6 +167,12 @@ test('Tokenizer codec routes reject invalid text and token ids before invoke', a
         { text: 42 },
     ));
     assert.equal(encodeResponse.status, 400);
+
+    const countResponse = await router.handle(tokenizerRequest(
+        '/api/tokenizers/gpt2/count-text',
+        { text: 42 },
+    ));
+    assert.equal(countResponse.status, 400);
 
     const decodeResponse = await router.handle(tokenizerRequest(
         '/api/tokenizers/gpt2/decode',
@@ -157,4 +200,36 @@ test('Tokenizer operational failures preserve upstream empty results and expose 
         chunks: [],
         error: 'model unavailable',
     });
+});
+
+test('Remote text completion tokenization keeps the count and fails as upstream does', async () => {
+    let failure = null;
+    const router = createTokenizerRouter({
+        async safeInvoke(command) {
+            assert.equal(command, 'encode_text_completion_tokens');
+            if (failure) {
+                throw failure;
+            }
+            return { count: 2, ids: [15043, 3186] };
+        },
+    });
+    const encode = () => router.handle(tokenizerRequest(
+        '/api/tokenizers/remote/textgenerationwebui/encode',
+        { text: 'Hello world', api_type: 'koboldcpp', url: 'http://127.0.0.1:5001' },
+    ));
+
+    const tokens = await encode();
+    assert.equal(tokens.status, 200);
+    assert.deepEqual(await tokens.json(), { count: 2, ids: [15043, 3186], fallback: false });
+
+    failure = { Unauthorized: 'KoboldCpp endpoint rejected the API key' };
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+        const failed = await encode();
+        assert.equal(failed.status, 200);
+        assert.deepEqual(await failed.json(), { error: true });
+    } finally {
+        console.warn = originalWarn;
+    }
 });

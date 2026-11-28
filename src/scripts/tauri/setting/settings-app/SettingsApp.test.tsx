@@ -20,14 +20,10 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const tr = (key: string) => key;
 
 const handles: SettingsHandle[] = [];
-const containers: HTMLElement[] = [];
 
 afterEach(() => {
     for (const handle of handles.splice(0)) {
         act(() => handle.unmount());
-    }
-    for (const container of containers.splice(0)) {
-        container.remove();
     }
 });
 
@@ -59,6 +55,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
             ...overrides.chatBackups,
         },
         closeToTrayOnClose: false,
+        generationNotificationsEnabled: true,
         requestProxy: { enabled: false, url: '', bypass: [], ...overrides.requestProxy },
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
@@ -79,13 +76,14 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
 function createActions(overrides: Partial<SettingsActions> = {}): SettingsActions {
     return {
         chooseDataRoot: () => Promise.resolve(null),
+        setKeysExposure: () => Promise.resolve(null),
         chooseWallpaper: () => Promise.resolve(null),
         showHelp: () => Promise.resolve(),
         manageQuickAccess: () => Promise.resolve(),
         reloadFrontend: () => Promise.resolve(),
         openFrontendLogs: () => Promise.resolve(),
         openBackendLogs: () => Promise.resolve(),
-        openLlmApiLogs: () => Promise.resolve(),
+        openRequestInspector: () => Promise.resolve(),
         openSync: () => Promise.resolve(),
         ...overrides,
     };
@@ -99,6 +97,7 @@ function createOptions(overrides: Partial<SettingsMountOptions> = {}): SettingsM
                 lanSyncAllowed: true,
                 supportsCloseToTrayOnClose: true,
                 supportsDataRootSelection: true,
+                backgroundShowsProgressUi: false,
             },
             values: createValues(),
             dataRoot: {
@@ -126,7 +125,6 @@ function createOptions(overrides: Partial<SettingsMountOptions> = {}): SettingsM
 function mountApp(options: SettingsMountOptions = createOptions()): { container: HTMLElement; handle: SettingsHandle } {
     const container = document.createElement('div');
     document.body.append(container);
-    containers.push(container);
     let handle!: SettingsHandle;
     act(() => {
         handle = mountTauriTavernSettingsApp(container, options);
@@ -252,6 +250,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
         lanSyncAllowed: false,
         supportsCloseToTrayOnClose: false,
         supportsDataRootSelection: false,
+        backgroundShowsProgressUi: false,
     };
     options.viewModel.values = createValues({
         requestProxy: { enabled: true, url: 'http://127.0.0.1:7890', bypass: ['localhost'] },
@@ -331,4 +330,37 @@ test('choosing a data root projects busy state and the pending migration result'
         .toContain('Configured data directory: /new/root');
     expect(chooseButton.disabled).toBe(false);
     expect(container.textContent).toContain('Data directory migration is pending.');
+});
+
+test('the keys exposure switch shows only what the host stored', async () => {
+    const user = userEvent.setup();
+    const requested: boolean[] = [];
+    let answer!: (stored: boolean | null) => void;
+    const options = createOptions({
+        actions: createActions({
+            setKeysExposure: allowed => new Promise<boolean | null>(resolve => {
+                requested.push(allowed);
+                answer = resolve;
+            }),
+        }),
+    });
+    const { container } = mountApp(options);
+    const toggle = within(container).getByRole<HTMLInputElement>('checkbox', { name: 'Allow Keys Exposure' });
+
+    await user.click(toggle);
+    expect(toggle.disabled).toBe(true);
+    await act(async () => {
+        answer(null);
+        await Promise.resolve();
+    });
+    expect(toggle.checked).toBe(false);
+
+    await user.click(toggle);
+    await act(async () => {
+        answer(true);
+        await Promise.resolve();
+    });
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(false);
+    expect(requested).toEqual([true, true]);
 });

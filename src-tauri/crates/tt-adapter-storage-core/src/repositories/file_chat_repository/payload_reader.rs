@@ -166,6 +166,12 @@ impl<R: Read> Records<R> {
     }
 }
 
+pub(super) async fn open_jsonl(path: &Path) -> Result<Box<dyn ByteReader>, DomainError> {
+    Ok(blocking_reader(
+        OpenedChatFile::open(path).await?.full_range(),
+    ))
+}
+
 pub(super) async fn open_json_array(path: &Path) -> Result<Box<dyn ByteReader>, DomainError> {
     let source = OpenedChatFile::open(path).await?;
     Ok(blocking_reader(JsonArrayReader {

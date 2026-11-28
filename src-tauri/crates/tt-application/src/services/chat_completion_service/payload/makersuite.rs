@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_ports::repositories::chat_completion_repository::NATIVE_GEMINI;
 
 use super::super::model_capabilities::{
     GeminiModel, GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
@@ -14,8 +15,8 @@ use super::content_parts::{
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
-    OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
-    message_tool_name, normalize_tool_result_payload,
+    OpenAiToolCall, extract_openai_tool_calls, is_tool_role, message_tool_call_id,
+    normalize_tool_result_payload, tool_response_name,
 };
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
@@ -194,40 +195,32 @@ fn build_google_payload(
         generation_config.insert("stopSequences".to_string(), Value::Array(stop.clone()));
     }
 
+    let json_schema = payload
+        .get("json_schema")
+        .and_then(Value::as_object)
+        .and_then(|schema| schema.get("value"))
+        .filter(|value| !value.is_null());
+
     let response_mime_type = payload
         .get("responseMimeType")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| Value::String(value.to_string()))
-        .or_else(|| {
-            payload
-                .get("json_schema")
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("value"))
-                .filter(|value| !value.is_null())
-                .map(|_| Value::String("application/json".to_string()))
-        });
-
-    let response_schema = payload
-        .get("responseSchema")
-        .cloned()
-        .filter(|value| !value.is_null())
-        .or_else(|| {
-            payload
-                .get("json_schema")
-                .and_then(Value::as_object)
-                .and_then(|schema| schema.get("value"))
-                .cloned()
-                .filter(|value| !value.is_null())
-        });
+        .or_else(|| json_schema.map(|_| Value::String("application/json".to_string())));
 
     if let Some(response_mime_type) = response_mime_type {
         generation_config.insert("responseMimeType".to_string(), response_mime_type);
     }
 
-    if let Some(response_schema) = response_schema {
-        generation_config.insert("responseSchema".to_string(), response_schema);
+    // Gemini's OpenAPI-subset fields cannot carry arbitrary JSON Schema.
+    if let Some(response_schema) = payload
+        .get("responseSchema")
+        .filter(|value| !value.is_null())
+    {
+        generation_config.insert("responseSchema".to_string(), response_schema.clone());
+    } else if let Some(json_schema) = json_schema {
+        generation_config.insert("responseJsonSchema".to_string(), json_schema.clone());
     }
 
     if enable_image_modality {
@@ -296,42 +289,45 @@ fn build_google_payload(
         );
     }
 
-    let mut tools = Vec::<Value>::new();
+    let mut function_declarations = Vec::<Value>::new();
+    let mut built_in_tools = Vec::<Value>::new();
 
     if is_custom || (!enable_image_modality && !is_gemma3) {
         if let Some(raw_tools) = payload.get("tools") {
-            let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
-
-            if !function_declarations.is_empty() {
-                tools.push(json!({ "function_declarations": function_declarations }));
-            } else if !custom_tools.is_empty() {
-                tools.extend(custom_tools);
-            }
+            (function_declarations, built_in_tools) = split_openai_tools(raw_tools);
         }
 
         if enable_web_search
             && (is_custom || (!is_learnlm && !GOOGLE_NO_SEARCH_MODELS.contains(&model)))
-            && !tools
-                .iter()
-                .any(|tool| tool.get("function_declarations").is_some())
         {
-            tools.push(json!({ "google_search": {} }));
+            built_in_tools.push(json!({ "google_search": {} }));
         }
     }
 
-    if !tools.is_empty() {
-        request.insert("tools".to_string(), Value::Array(tools));
-
-        if request_has_function_declarations(&request)
-            && let Some(tool_choice) = payload.get("tool_choice")
-        {
-            request.insert(
-                "toolConfig".to_string(),
-                json!({
-                    "functionCallingConfig": map_tool_choice_to_makersuite(tool_choice)?
-                }),
+    let mut tools = Vec::<Value>::new();
+    let mut tool_config = Map::new();
+    if !function_declarations.is_empty() {
+        if let Some(tool_choice) = payload.get("tool_choice") {
+            tool_config.insert(
+                "functionCallingConfig".to_string(),
+                map_tool_choice_to_makersuite(tool_choice)?,
             );
         }
+        if !built_in_tools.is_empty() {
+            tool_config.insert(
+                "includeServerSideToolInvocations".to_string(),
+                Value::Bool(true),
+            );
+        }
+        tools.push(json!({ "function_declarations": function_declarations }));
+    }
+    tools.extend(built_in_tools);
+
+    if !tools.is_empty() {
+        request.insert("tools".to_string(), Value::Array(tools));
+    }
+    if !tool_config.is_empty() {
+        request.insert("toolConfig".to_string(), Value::Object(tool_config));
     }
 
     Ok(request)
@@ -408,9 +404,12 @@ fn convert_messages(
         let mut parts = if is_tool {
             let previous_call =
                 message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
-            let name = message_tool_name(message)
-                .or_else(|| previous_call.map(|(name, _)| name.clone()))
-                .unwrap_or_else(|| fallback_tool_name().to_string());
+            let name = tool_response_name(
+                "Gemini",
+                index,
+                previous_call.map(|(name, _)| name.as_str()),
+                message,
+            )?;
             let content_parts = parse_openai_chat_content(message.get("content"))?;
             let mut images = Vec::new();
             for part in &content_parts {
@@ -756,14 +755,10 @@ fn message_role(message: &Map<String, Value>) -> String {
         .to_lowercase()
 }
 
-fn is_tool_role(role: &str) -> bool {
-    matches!(role, "tool" | "function")
-}
-
 fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
     message
         .get("native")?
-        .get("gemini")?
+        .get(NATIVE_GEMINI)?
         .get("content")?
         .get("parts")?
         .as_array()
@@ -812,7 +807,7 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
     };
 
     let mut function_declarations = Vec::<Value>::new();
-    let mut custom_tools = Vec::<Value>::new();
+    let mut built_in_tools = Vec::<Value>::new();
 
     for entry in entries {
         let Some(tool) = entry.as_object() else {
@@ -830,41 +825,36 @@ fn split_openai_tools(tools: &Value) -> (Vec<Value>, Vec<Value>) {
         };
 
         if tool_type == "function" {
-            let Some(function) = tool.get("function").and_then(Value::as_object) else {
-                continue;
-            };
-
-            let mut function = function.clone();
-
-            if let Some(parameters) = function
-                .get_mut("parameters")
-                .and_then(Value::as_object_mut)
-            {
-                parameters.remove("$schema");
-
-                if parameters
-                    .get("properties")
-                    .and_then(Value::as_object)
-                    .is_some_and(|properties| properties.is_empty())
-                {
-                    function.remove("parameters");
-                }
+            if let Some(function) = tool.get("function").and_then(Value::as_object) {
+                function_declarations.push(function_declaration(function));
             }
-
-            function_declarations.push(Value::Object(function));
             continue;
         }
 
-        let Some(custom_tool) = tool.get(tool_type) else {
+        let Some(built_in_tool) = tool.get(tool_type) else {
             continue;
         };
 
-        let mut custom_tool_object = Map::new();
-        custom_tool_object.insert(tool_type.to_string(), custom_tool.clone());
-        custom_tools.push(Value::Object(custom_tool_object));
+        let mut built_in_tool_object = Map::new();
+        built_in_tool_object.insert(tool_type.to_string(), built_in_tool.clone());
+        built_in_tools.push(Value::Object(built_in_tool_object));
     }
 
-    (function_declarations, custom_tools)
+    (function_declarations, built_in_tools)
+}
+
+fn function_declaration(function: &Map<String, Value>) -> Value {
+    let mut declaration = Map::new();
+    for (key, gemini_key) in [
+        ("name", "name"),
+        ("description", "description"),
+        ("parameters", "parametersJsonSchema"),
+    ] {
+        if let Some(value) = function.get(key).filter(|value| !value.is_null()) {
+            declaration.insert(gemini_key.to_string(), value.clone());
+        }
+    }
+    Value::Object(declaration)
 }
 
 fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationError> {
@@ -951,17 +941,6 @@ fn inject_google_thinking_config(
 
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
     Ok(())
-}
-
-fn request_has_function_declarations(request: &Map<String, Value>) -> bool {
-    request
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| {
-            tools
-                .iter()
-                .any(|tool| tool.get("function_declarations").is_some())
-        })
 }
 
 fn google_safety_settings(use_vertex_ai: bool) -> Vec<Value> {
@@ -1397,7 +1376,7 @@ mod tests {
         ] {
             let payload = json!({
                 "model": "gemini-2.5-flash",
-                "messages": [{ "role": role, "content": content }]
+                "messages": [{ "role": role, "name": "read_state", "content": content }]
             })
             .as_object()
             .cloned()
@@ -1437,6 +1416,45 @@ mod tests {
                 .to_string()
                 .contains("Gemini system instruction cannot preserve image input")
         );
+    }
+
+    #[test]
+    fn makersuite_names_tool_results_after_the_answered_call_then_themselves() {
+        let upstream = build_with_messages(
+            "gemini-3-flash-preview",
+            json!([
+                {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "read_state", "arguments": "{}" }
+                    }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "name": "renamed", "content": "hp: 3" },
+                { "role": "tool", "tool_call_id": "call_9", "name": "note", "content": "saved" },
+            ]),
+        );
+        let names = upstream["contents"][1]["parts"]
+            .as_array()
+            .expect("tool results must share one turn")
+            .iter()
+            .map(|part| part["functionResponse"]["name"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(names, [json!("read_state"), json!("note")]);
+
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": [
+                { "role": "user", "content": "Read the state" },
+                { "role": "tool", "tool_call_id": "call_9", "content": "hp: 3" },
+            ],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let error = build(payload).expect_err("a result without any name cannot be sent");
+        assert!(error.to_string().contains("tool message 1"));
     }
 
     #[test]
@@ -1673,24 +1691,85 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_enable_web_search_adds_google_search_tool() {
+    fn makersuite_sends_web_search_and_built_in_tools_with_function_calling() {
         let payload = json!({
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.8-flash",
             "enable_web_search": true,
-            "messages": [{"role": "user", "content": "hello"}]
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                { "type": "function", "function": { "name": "roll_dice" } },
+                { "type": "url_context", "url_context": {} }
+            ],
+            "tool_choice": "auto"
         })
         .as_object()
         .cloned()
         .expect("payload must be object");
 
         let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let tools = body
-            .get("tools")
-            .and_then(Value::as_array)
-            .expect("tools must be array");
 
-        assert!(tools.iter().any(|tool| tool.get("google_search").is_some()));
+        assert_eq!(
+            upstream["tools"],
+            json!([
+                { "function_declarations": [{ "name": "roll_dice" }] },
+                { "url_context": {} },
+                { "google_search": {} }
+            ])
+        );
+        assert_eq!(
+            upstream["toolConfig"],
+            json!({
+                "functionCallingConfig": { "mode": "AUTO" },
+                "includeServerSideToolInvocations": true
+            })
+        );
+    }
+
+    #[test]
+    fn makersuite_sends_json_schemas_in_its_json_schema_fields() {
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "title": { "type": "string" },
+                "context": { "type": "object", "additionalProperties": true }
+            },
+            "required": ["title"]
+        });
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "start_task",
+                    "description": "Start a task.",
+                    "parameters": schema,
+                    "strict": true
+                }
+            }],
+            "json_schema": { "name": "task", "value": schema }
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("schemas should map");
+        assert_eq!(
+            upstream.pointer("/tools/0/function_declarations/0"),
+            Some(&json!({
+                "name": "start_task",
+                "description": "Start a task.",
+                "parametersJsonSchema": schema,
+            }))
+        );
+        assert_eq!(upstream["generationConfig"]["responseJsonSchema"], schema);
+        assert_eq!(
+            upstream["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
+        assert!(upstream["generationConfig"].get("responseSchema").is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test } from '@rstest/core';
+import { afterEach, expect, rs, test } from '@rstest/core';
 
 import { RunTimelineApp } from './RunTimelineApp';
 import { createRunTimelineController } from './RunTimelineController';
@@ -10,9 +10,7 @@ const tr = (key: string): string => key;
 const controllers: RunTimelineController[] = [];
 
 afterEach(() => {
-    cleanup();
     controllers.splice(0).forEach(controller => controller.dispose());
-    Reflect.deleteProperty(window, '__TAURITAVERN__');
 });
 
 function event(seq: number, type: string, payload: Record<string, unknown>): TauriTavernAgentRunEvent {
@@ -29,13 +27,10 @@ test('completed shell shows the command and opens both input and output', async 
         [argumentsRef]: { command },
         [resultPath]: { toolId: call.toolId, content: output, isError: false },
     };
-    Object.defineProperty(window, '__TAURITAVERN__', {
-        configurable: true,
-        value: { api: { agent: { readWorkspaceFile: ({ path }: { path: string }) => {
-            if (!(path in files)) throw new Error(`Unexpected detail file: ${path}`);
-            return Promise.resolve({ path, text: JSON.stringify(files[path]), chars: 0, words: 0, sha256: 'hash' });
-        } } } },
-    });
+    rs.stubGlobal('__TAURITAVERN__', { api: { agent: { readWorkspaceFile: ({ path }: { path: string }) => {
+        if (!(path in files)) throw new Error(`Unexpected detail file: ${path}`);
+        return Promise.resolve({ path, text: JSON.stringify(files[path]), chars: 0, words: 0, sha256: 'hash' });
+    } } } });
     const controller = createRunTimelineController({
         mode: 'history', rootId: 'shell-history', run: { runId: 'run-1' }, requestClose: () => undefined,
         deps: {

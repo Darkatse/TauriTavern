@@ -8,7 +8,7 @@ const LLM_API_LOG_EVENT = 'tauritavern-llm-api-log';
  * @param {unknown} value
  * @param {string} label
  */
-function requirePositiveInteger(value, label) {
+export function requirePositiveInteger(value, label) {
     const number = typeof value === 'number' ? value : Number(value);
     if (!Number.isSafeInteger(number) || number <= 0) {
         throw new Error(`${label} must be a positive integer`);

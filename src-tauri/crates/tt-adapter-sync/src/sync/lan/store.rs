@@ -207,10 +207,6 @@ mod tests {
 
     use ttsync_contract::peer::Permissions;
 
-    fn temp_default_user_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-lan-peer-store-{}", Uuid::new_v4()))
-    }
-
     fn test_device_id() -> DeviceId {
         DeviceId::new("550e8400-e29b-41d4-a716-446655440000".to_string()).unwrap()
     }
@@ -237,9 +233,9 @@ mod tests {
 
     #[tokio::test]
     async fn store_round_trips_and_removes_peer() {
-        let default_user_dir = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let store = LanPeerStore::new(
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             tt_contracts::host::HostPlatform::Linux,
         );
         let device_id = test_device_id();
@@ -264,15 +260,13 @@ mod tests {
             store.get_paired_device(&device_id).await,
             Err(DomainError::NotFound(_))
         ));
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test]
     async fn update_paired_device_keeps_other_fields() {
-        let default_user_dir = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let store = LanPeerStore::new(
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             tt_contracts::host::HostPlatform::Linux,
         );
         let device_id = test_device_id();
@@ -305,7 +299,5 @@ mod tests {
         assert_eq!(peer.grant.last_sync_ms, Some(42));
         assert!(peer.grant.permissions.write);
         assert!(!peer.grant.permissions.mirror_delete);
-
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 }

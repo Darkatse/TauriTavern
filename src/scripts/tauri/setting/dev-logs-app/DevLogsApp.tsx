@@ -1,20 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import {
-    validateDevLogsBoundary,
-    type DevLogsHandle,
-    type DevLogsMountOptions,
-} from './DevLogsContract';
+import { validateDevLogsBoundary, type DevLogsHandle } from './DevLogsContract';
 import { LiveLogPanel } from './LiveLogPanel';
-import { LlmApiLogsPanel } from './LlmApiLogsPanel';
-
-function DevLogsApp({ options }: { options: DevLogsMountOptions }) {
-    if (options.kind === 'live') {
-        return <LiveLogPanel {...options} />;
-    }
-    return <LlmApiLogsPanel {...options} />;
-}
 
 export function mountTauriTavernDevLogsApp(mount: unknown, options: unknown): DevLogsHandle {
     if (!(mount instanceof HTMLElement)) {
@@ -25,7 +13,7 @@ export function mountTauriTavernDevLogsApp(mount: unknown, options: unknown): De
     const root = createRoot(mount);
     root.render(
         <StrictMode>
-            <DevLogsApp options={options} />
+            <LiveLogPanel {...options} />
         </StrictMode>,
     );
 

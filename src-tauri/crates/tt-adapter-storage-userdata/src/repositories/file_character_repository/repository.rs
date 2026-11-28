@@ -5,17 +5,18 @@ use serde_json::Value;
 use tokio::fs;
 
 use crate::png_card_metadata::{
-    process_avatar_image, read_character_data_from_png, read_character_data_from_png_file,
+    is_png_bytes, read_character_data_from_png, read_character_data_from_png_file,
     write_character_data_to_png,
 };
 use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
-use tt_domain::json_merge::merge_json_value;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::character::Character;
+use tt_ports::avatar_images::ImageCrop;
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
-    CharacterCreateWarning, CharacterRepository, ImageCrop,
+    CharacterCreateWarning, CharacterRepository,
 };
 
 use super::{FileCharacterRepository, importer::CharacterImportMode};
@@ -24,11 +25,6 @@ struct CreateAvatarCarrier {
     image_data: Vec<u8>,
     can_fallback_to_default: bool,
     warnings: Vec<CharacterCreateWarning>,
-}
-
-fn is_png_bytes(image_data: &[u8]) -> bool {
-    const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    image_data.starts_with(&PNG_SIGNATURE)
 }
 
 fn avatar_import_warning(message: impl Into<String>) -> CharacterCreateWarning {
@@ -104,17 +100,9 @@ impl FileCharacterRepository {
             }
         };
 
-        if crop.is_none() && is_png_bytes(&file_data) {
-            return Ok(CreateAvatarCarrier {
-                image_data: file_data,
-                can_fallback_to_default: true,
-                warnings: Vec::new(),
-            });
-        }
-
         let raw_png_candidate = is_png_bytes(&file_data).then(|| file_data.clone());
 
-        match process_avatar_image(file_data, crop).await {
+        match self.avatar_images.process(file_data, crop).await {
             Ok(image_data) => Ok(CreateAvatarCarrier {
                 image_data,
                 can_fallback_to_default: true,
@@ -195,115 +183,6 @@ impl FileCharacterRepository {
             }
             suffix += 1;
         }
-    }
-
-    pub(super) fn parse_card_json(json_data: &str, context: &str) -> Result<Value, DomainError> {
-        let value: Value = serde_json::from_str(json_data)
-            .map_err(|e| DomainError::InvalidData(format!("Failed to parse {}: {}", context, e)))?;
-
-        if !value.is_object() {
-            return Err(DomainError::InvalidData(format!(
-                "{} must be a JSON object",
-                context
-            )));
-        }
-
-        Ok(value)
-    }
-
-    pub(super) fn serialize_card_value(
-        card_value: &Value,
-        context: &str,
-    ) -> Result<String, DomainError> {
-        serde_json::to_string(card_value).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to serialize {}: {}", context, e))
-        })
-    }
-
-    pub(super) fn serialize_character_card(character: &Character) -> Result<String, DomainError> {
-        serde_json::to_string(&character.to_v2()).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to serialize character card: {}", e))
-        })
-    }
-
-    fn character_projection_value(
-        character: &Character,
-        preserve_existing_spec: bool,
-        preserve_existing_character_book_when_unbound: bool,
-    ) -> Result<Value, DomainError> {
-        let mut projection = serde_json::to_value(character.to_v2()).map_err(|e| {
-            DomainError::InvalidData(format!("Failed to serialize character projection: {}", e))
-        })?;
-
-        let Some(projection_object) = projection.as_object_mut() else {
-            return Err(DomainError::InvalidData(
-                "Character projection must be a JSON object".to_string(),
-            ));
-        };
-
-        if preserve_existing_spec {
-            projection_object.remove("spec");
-            projection_object.remove("spec_version");
-        }
-
-        if preserve_existing_character_book_when_unbound
-            && character.data.character_book.is_none()
-            && let Some(data_object) = projection
-                .get_mut("data")
-                .and_then(serde_json::Value::as_object_mut)
-        {
-            data_object.remove("character_book");
-        }
-
-        Ok(projection)
-    }
-
-    fn merge_character_projection_into_card_value_with_options(
-        card_value: &mut Value,
-        character: &Character,
-        preserve_existing_spec: bool,
-        preserve_existing_character_book_when_unbound: bool,
-    ) -> Result<(), DomainError> {
-        let projection = Self::character_projection_value(
-            character,
-            preserve_existing_spec,
-            preserve_existing_character_book_when_unbound,
-        )?;
-
-        merge_json_value(card_value, projection);
-
-        let Some(card_object) = card_value.as_object_mut() else {
-            return Err(DomainError::InvalidData(
-                "Character card payload must be a JSON object".to_string(),
-            ));
-        };
-        card_object.remove("json_data");
-
-        Ok(())
-    }
-
-    pub(super) fn merge_existing_character_projection_into_card_value(
-        card_value: &mut Value,
-        character: &Character,
-    ) -> Result<(), DomainError> {
-        Self::merge_character_projection_into_card_value_with_options(
-            card_value, character, true, false,
-        )
-    }
-
-    fn merge_create_character_projection_into_card_json(
-        json_data: &str,
-        character: &Character,
-        context: &str,
-    ) -> Result<String, DomainError> {
-        let mut card_value = Self::parse_card_json(json_data, context)?;
-        Self::merge_character_projection_into_card_value_with_options(
-            &mut card_value,
-            character,
-            false,
-            true,
-        )?;
-        Self::serialize_card_value(&card_value, context)
     }
 }
 
@@ -425,7 +304,7 @@ impl CharacterRepository for FileCharacterRepository {
                 DomainError::InternalError(format!("Failed to read avatar file: {}", e))
             })?;
 
-            process_avatar_image(file_data, crop).await?
+            self.avatar_images.process(file_data, crop).await?
         } else {
             fs::read(&file_path).await.map_err(|e| {
                 tracing::error!("Failed to read character file: {}", e);
@@ -434,8 +313,9 @@ impl CharacterRepository for FileCharacterRepository {
         };
 
         let new_image_data = write_character_data_to_png(&image_data, character_card_json)?;
+        let character = Self::decode_character_png(&new_image_data)?;
         if !replaced_avatar && new_image_data == image_data {
-            let character = self.read_character_from_file(&file_path).await?;
+            let character = self.with_file_facts(character, &file_path).await?;
             let mut cache = self.memory_cache.lock().await;
             cache.set(name.to_string(), character.clone());
             return Ok(character);
@@ -450,7 +330,7 @@ impl CharacterRepository for FileCharacterRepository {
             return Err(error);
         }
 
-        let character = self.read_character_from_file(&file_path).await?;
+        let character = self.with_file_facts(character, &file_path).await?;
         self.publish_character_write(name.to_string(), character.clone())
             .await;
 
@@ -478,34 +358,18 @@ impl CharacterRepository for FileCharacterRepository {
         })?;
 
         let card_json = read_character_data_from_png(&old_image_data)?;
-        let mut card_value: serde_json::Value = serde_json::from_str(&card_json).map_err(|e| {
-            tracing::error!("Failed to parse character data: {}", e);
-            DomainError::InvalidData(format!("Failed to parse character data: {}", e))
-        })?;
+        let invalid_card = |error: serde_json::Error| {
+            DomainError::InvalidData(format!("Failed to parse character data: {}", error))
+        };
+        let mut card = JsonDocument::parse(card_json.as_bytes()).map_err(invalid_card)?;
+        let name = Value::from(new_name);
+        card.set("name", &name);
+        card.object_entry(&["data"])
+            .map_err(invalid_card)?
+            .set("name", &name);
 
-        let card_object = card_value.as_object_mut().ok_or_else(|| {
-            DomainError::InvalidData("Character card data is not a JSON object".to_string())
-        })?;
-
-        card_object.insert(
-            "name".to_string(),
-            serde_json::Value::String(new_name.to_string()),
-        );
-
-        let data_value = card_object
-            .entry("data")
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        if !data_value.is_object() {
-            *data_value = serde_json::Value::Object(serde_json::Map::new());
-        }
-        data_value["name"] = serde_json::Value::String(new_name.to_string());
-
-        let patched_json = serde_json::to_string(&card_value).map_err(|e| {
-            tracing::error!("Failed to serialize character data: {}", e);
-            DomainError::InvalidData(format!("Failed to serialize character data: {}", e))
-        })?;
-
-        let new_image_data = write_character_data_to_png(&old_image_data, &patched_json)?;
+        let new_image_data = write_character_data_to_png(&old_image_data, &card.to_string())?;
+        let character = Self::decode_character_png(&new_image_data)?;
 
         Self::replace_character_png_file(&new_path, &new_image_data).await?;
 
@@ -533,7 +397,7 @@ impl CharacterRepository for FileCharacterRepository {
         }
 
         let remove_old_cache_entry = old_name != target_file_stem;
-        let character = self.read_character_from_file(&new_path).await?;
+        let character = self.with_file_facts(character, &new_path).await?;
         {
             let mut cache = self.memory_cache.lock().await;
             cache.set(target_file_stem.clone(), character.clone());
@@ -560,13 +424,15 @@ impl CharacterRepository for FileCharacterRepository {
 
         let target_file_stem = self.next_duplicate_file_stem(&source_file_stem)?;
         let target_path = self.get_character_path(&target_file_stem);
+        let character =
+            Self::decode_character(read_character_data_from_png_file(&source_path).await?)?;
 
         fs::copy(&source_path, &target_path).await.map_err(|e| {
             tracing::error!("Failed to duplicate character file: {}", e);
             DomainError::InternalError(format!("Failed to duplicate character file: {}", e))
         })?;
 
-        let character = self.read_character_from_file(&target_path).await?;
+        let character = self.with_file_facts(character, &target_path).await?;
         self.publish_character_write(target_file_stem, character.clone())
             .await;
 
@@ -666,7 +532,8 @@ impl CharacterRepository for FileCharacterRepository {
 
     async fn create_with_avatar(
         &self,
-        character: &Character,
+        file_name: &str,
+        character_card_json: &str,
         avatar_path: Option<&Path>,
         crop: Option<ImageCrop>,
     ) -> Result<CharacterCreateResult, DomainError> {
@@ -675,42 +542,23 @@ impl CharacterRepository for FileCharacterRepository {
         let avatar_carrier = self
             .resolve_create_avatar_carrier(avatar_path, crop)
             .await?;
-
-        let json_data = match character.json_data.as_deref() {
-            Some(raw_json) if !raw_json.trim().is_empty() => {
-                Self::merge_create_character_projection_into_card_json(
-                    raw_json,
-                    character,
-                    "character create json_data",
-                )?
-            }
-            _ => Self::serialize_character_card(character)?,
-        };
-
-        let (new_image_data, warnings) = self
-            .write_create_character_png(avatar_carrier, &json_data)
+        let (image_data, warnings) = self
+            .write_create_character_png(avatar_carrier, character_card_json)
             .await?;
 
-        let base = Self::normalize_character_file_stem(&character.get_file_name())?;
-        let file_name = self.ensure_unique_file_stem(&base);
-        let file_path = self.get_character_path(&file_name);
+        let character = Self::decode_character_png(&image_data)?;
 
-        Self::replace_character_png_file(&file_path, &new_image_data).await?;
+        let base = Self::normalize_character_file_stem(file_name)?;
+        let file_stem = self.ensure_unique_file_stem(&base);
+        let file_path = self.get_character_path(&file_stem);
+        Self::replace_character_png_file(&file_path, &image_data).await?;
 
-        let card_value = Self::parse_card_json(&json_data, "created character card")?;
-        let mut stored_character = character.clone();
-        stored_character.file_name = Some(file_name.clone());
-        stored_character.avatar = format!("{}.png", file_name);
-        stored_character.data_size =
-            Self::calculate_character_data_size(&card_value, &stored_character);
-        stored_character.json_data = Some(json_data);
-        stored_character.shallow = false;
-
-        self.publish_character_write(file_name, stored_character.clone())
+        let character = self.with_file_facts(character, &file_path).await?;
+        self.publish_character_write(file_stem, character.clone())
             .await;
 
         Ok(CharacterCreateResult {
-            character: stored_character,
+            character,
             warnings,
         })
     }

@@ -65,7 +65,7 @@ function knownOutcomeError(outcome) {
     return outcome.response.kind !== 'tool_result' || outcome.response.isError === true;
 }
 
-async function callLegacyMcpTool(binding, argumentsJson, signal, { invokeCommand, createExecutionCallId }) {
+async function callLegacyMcpTool(binding, argumentsJson, signal, { invokeCommand, createExecutionCallId, locale }) {
     if (signal?.aborted) {
         throw abortError(signal.reason);
     }
@@ -93,6 +93,7 @@ async function callLegacyMcpTool(binding, argumentsJson, signal, { invokeCommand
                 toolId: binding.toolId,
                 argumentsJson,
             },
+            locale,
         });
     } catch (error) {
         cancel();
@@ -151,6 +152,14 @@ class LegacyMcpToolRound {
         }
     }
 
+    /**
+     * @param {string} alias
+     * @returns {string|null}
+     */
+    serverDisplayName(alias) {
+        return this.#initialBindings.get(alias)?.serverDisplayName ?? null;
+    }
+
     finalizeAdvertisedTools(generateData) {
         if (!this.#merged || this.#finalized) {
             throw new Error('Legacy MCP round must be merged once and finalized once');
@@ -199,11 +208,12 @@ class LegacyMcpToolRound {
 }
 
 class LegacyMcpGenerationContext {
-    constructor(tools, diagnostics, invokeCommand, createExecutionCallId) {
+    constructor(tools, diagnostics, invokeCommand, createExecutionCallId, locale) {
         this.tools = tools;
         this.diagnostics = diagnostics;
         this.invokeCommand = invokeCommand;
         this.createExecutionCallId = createExecutionCallId;
+        this.locale = locale;
     }
 
     createRound() {
@@ -211,19 +221,21 @@ class LegacyMcpGenerationContext {
     }
 }
 
-export function createEmptyLegacyMcpGenerationContext() {
+/** @param {unknown} error */
+export function createUnavailableLegacyMcpGenerationContext(error) {
     return new LegacyMcpGenerationContext(
         [],
-        [],
+        [{ code: 'mcp.legacy_tools_unavailable', message: error instanceof Error ? error.message : String(error) }],
         hostSafeInvoke,
         () => globalThis.crypto.randomUUID(),
     );
 }
 
 export async function createLegacyMcpGenerationContext({
+    locale,
     invokeCommand = hostSafeInvoke,
     createExecutionCallId = () => globalThis.crypto.randomUUID(),
-} = {}) {
+}) {
     const resolution = await invokeCommand('list_legacy_mcp_tools');
     if (!Array.isArray(resolution?.tools) || !Array.isArray(resolution?.diagnostics)) {
         throw new Error('list_legacy_mcp_tools returned an invalid resolution');
@@ -236,5 +248,6 @@ export async function createLegacyMcpGenerationContext({
         resolution.diagnostics,
         invokeCommand,
         createExecutionCallId,
+        locale,
     );
 }

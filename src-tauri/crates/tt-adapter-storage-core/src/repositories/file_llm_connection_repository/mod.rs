@@ -169,9 +169,7 @@ fn validate_connection_file_identity(
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::Path;
 
     use serde_json::json;
     use tt_domain::errors::DomainError;
@@ -181,40 +179,6 @@ mod tests {
         FileLlmConnectionRepository, LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION,
         LlmConnectionId,
     };
-
-    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
-            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-llm-connection-repository-test-{}-{}-{}",
-                std::process::id(),
-                suffix,
-                counter
-            ));
-            std::fs::create_dir_all(path.join("connections")).expect("create temp dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
 
     fn connection_json(id: &str, kind: &str, schema_version: u32) -> serde_json::Value {
         json!({
@@ -234,11 +198,12 @@ mod tests {
         })
     }
 
-    async fn write_connection_file(dir: &TestDir, file_id: &str, value: serde_json::Value) {
-        let path = dir
-            .path()
-            .join("connections")
-            .join(format!("{file_id}.json"));
+    async fn write_connection_file(root: &Path, file_id: &str, value: serde_json::Value) {
+        let connections = root.join("connections");
+        tokio::fs::create_dir_all(&connections)
+            .await
+            .expect("create connections dir");
+        let path = connections.join(format!("{file_id}.json"));
         let json = serde_json::to_vec_pretty(&value).expect("serialize connection json");
         tokio::fs::write(path, json)
             .await
@@ -257,14 +222,14 @@ mod tests {
 
     #[tokio::test]
     async fn load_connection_rejects_id_that_does_not_match_filename() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         write_connection_file(
-            &dir,
+            temp.path(),
             "expected",
             connection_json("actual", LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION),
         )
         .await;
-        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let repository = FileLlmConnectionRepository::new(temp.path().to_path_buf());
         let id = LlmConnectionId::parse("expected").expect("valid id");
 
         let error = repository
@@ -277,14 +242,14 @@ mod tests {
 
     #[tokio::test]
     async fn load_connection_rejects_wrong_kind() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         write_connection_file(
-            &dir,
+            temp.path(),
             "expected",
             connection_json("expected", "wrong.kind", LLM_CONNECTION_SCHEMA_VERSION),
         )
         .await;
-        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let repository = FileLlmConnectionRepository::new(temp.path().to_path_buf());
         let id = LlmConnectionId::parse("expected").expect("valid id");
 
         let error = repository
@@ -297,9 +262,9 @@ mod tests {
 
     #[tokio::test]
     async fn load_connection_rejects_wrong_schema_version() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         write_connection_file(
-            &dir,
+            temp.path(),
             "expected",
             connection_json(
                 "expected",
@@ -308,7 +273,7 @@ mod tests {
             ),
         )
         .await;
-        let repository = FileLlmConnectionRepository::new(dir.path().to_path_buf());
+        let repository = FileLlmConnectionRepository::new(temp.path().to_path_buf());
         let id = LlmConnectionId::parse("expected").expect("valid id");
 
         let error = repository

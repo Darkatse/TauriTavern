@@ -790,10 +790,15 @@ export function restoreCaretPosition(element, position) {
     selection.addRange(range);
 }
 
-export async function resetScrollHeight(element) {
-    const control = $(element);
-    control.css('height', 'auto');
-    control.css('height', control.prop('scrollHeight') + 3 + 'px');
+/**
+ * Fits each element's height to its content. All heights are read before any is set, so the page lays out once.
+ * @param {JQuery<HTMLElement> | HTMLElement | HTMLElement[]} elements
+ */
+export async function resetScrollHeight(elements) {
+    const controls = $(elements).get();
+    for (const control of controls) control.style.height = 'auto';
+    const heights = controls.map(control => control.scrollHeight);
+    controls.forEach((control, index) => { control.style.height = `${heights[index] + 3}px`; });
 }
 
 /**
@@ -961,12 +966,14 @@ export function formatTime(seconds) {
  * countOccurrences('Hello, world!', 'x'); // 0
  */
 export function countOccurrences(string, character) {
-    let count = 0;
+    if (!character) {
+        return string.length;
+    }
 
-    for (let i = 0; i < string.length; i++) {
-        if (string.substring(i, i + character.length) === character) {
-            count++;
-        }
+    // Occurrences may overlap.
+    let count = 0;
+    for (let at = string.indexOf(character); at !== -1; at = string.indexOf(character, at + 1)) {
+        count++;
     }
 
     return count;
@@ -2982,59 +2989,34 @@ export function setupScrollToTop({ scrollContainerId, buttonId, drawerId, visibi
  * @returns {Promise<void>} A promise that resolves when the import is complete.
  */
 export async function importFromExternalUrl(url, { preserveFileName = null, replacement = false } = {}) {
-    let request;
-
-    if (isValidUrl(url)) {
-        console.debug('Custom content import started for URL: ', url);
-        request = await fetch('/api/content/importURL', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ url }),
-        });
-    } else {
-        console.debug('Custom content import started for Char UUID: ', url);
-        request = await fetch('/api/content/importUUID', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ url }),
-        });
-    }
-
-    if (!request.ok) {
-        const error = new Error(`Custom content import failed: ${request.statusText || `HTTP ${request.status}`}`);
+    console.debug('Custom content import started: ', url);
+    const characterCards = window.__TAURITAVERN__.api.characterCards;
+    let content;
+    try {
+        content = replacement
+            ? { kind: 'character', file: await characterCards.stageFromUrl(url) }
+            : await characterCards.contentFromUrl(url);
+    } catch (error) {
         if (replacement) {
             throw error;
         }
 
-        toastr.info(request.statusText, 'Custom content import failed');
-        console.error('Custom content import failed', request.status, request.statusText);
+        toastr.info(error.message, t`Custom content import failed`);
+        console.error('Custom content import failed', error);
         return;
     }
 
-    const customContentType = request.headers.get('X-Custom-Content-Type');
-    if (replacement && customContentType !== 'character') {
-        throw new Error(`Expected character content, received: ${customContentType || 'unknown'}`);
-    }
-
-    const data = await request.blob();
-    const fileName = request.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '');
-    const file = new File([data], fileName, { type: data.type });
-
     const extraData = new Map();
     if (preserveFileName) {
-        extraData.set(file, preserveFileName);
+        extraData.set(content.file, preserveFileName);
     }
 
-    switch (customContentType) {
+    switch (content.kind) {
         case 'character':
-            await processDroppedFiles([file], extraData, { replacement });
+            await processDroppedFiles([content.file], extraData, { replacement });
             break;
         case 'lorebook':
-            await importWorldInfo(file);
-            break;
-        default:
-            toastr.warning('Unknown content type');
-            console.error('Unknown content type', customContentType);
+            await importWorldInfo(content.file);
             break;
     }
 }

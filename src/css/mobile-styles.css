@@ -258,6 +258,10 @@
         width: 100%;
     }
 
+    #world_popup_entries_list > .world_entry {
+        contain-intrinsic-block-size: auto 140px;
+    }
+
     #WIEntryHeaderTitlesPC {
         display: none;
     }

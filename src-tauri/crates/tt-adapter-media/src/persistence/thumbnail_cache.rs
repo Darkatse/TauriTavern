@@ -1,3 +1,4 @@
+use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use std::fs::File;
@@ -12,7 +13,7 @@ use tt_adapter_storage_core::file_system::{replace_file_blocking, unique_temp_pa
 use tt_domain::errors::DomainError;
 
 const ANIMATED_EXTENSIONS: &[&str] = &[".apng", ".mp4", ".webm", ".avi", ".mkv", ".flv", ".gif"];
-const THUMBNAIL_CACHE_SCHEMA: &[u8] = b"thumbnail-jpeg-v2\0";
+const THUMBNAIL_CACHE_SCHEMA: &[u8] = b"thumbnail-jpeg-v3\0";
 const JPEG_SOI_APP0_PREFIX: [u8; 4] = [0xff, 0xd8, 0xff, 0xe0];
 const JPEG_COM_MARKER: [u8; 2] = [0xff, 0xfe];
 static THUMBNAIL_COMMIT_LOCK: Mutex<()> = Mutex::new(());
@@ -363,6 +364,45 @@ fn write_temp_file(target_path: &Path, bytes: &[u8]) -> Result<PathBuf, DomainEr
     Ok(temp_path)
 }
 
+/// Never upscale; `Cover` still crops to the recipe's aspect ratio.
+fn fit_thumbnail(source: DynamicImage, config: ThumbnailConfig) -> DynamicImage {
+    let width = config.width.max(1);
+    let height = config.height.max(1);
+    let source_width = source.width().max(1);
+    let source_height = source.height().max(1);
+    match config.resize_mode {
+        ThumbnailResizeMode::PreserveArea => {
+            let target_area = f64::from(width) * f64::from(height);
+            if f64::from(source_width) * f64::from(source_height) <= target_area {
+                return source;
+            }
+            let aspect_ratio = f64::from(source_width) / f64::from(source_height);
+            let thumbnail_width = ((target_area * aspect_ratio).sqrt().round() as u32).max(1);
+            let thumbnail_height = ((target_area / aspect_ratio).sqrt().round() as u32).max(1);
+            source.resize(thumbnail_width, thumbnail_height, FilterType::Triangle)
+        }
+        ThumbnailResizeMode::Cover => {
+            if source_width > width && source_height > height {
+                return source.resize_to_fill(width, height, FilterType::Triangle);
+            }
+            let crop_width = source_width.min(
+                ((f64::from(source_height) * f64::from(width) / f64::from(height)).round() as u32)
+                    .max(1),
+            );
+            let crop_height = source_height.min(
+                ((f64::from(source_width) * f64::from(height) / f64::from(width)).round() as u32)
+                    .max(1),
+            );
+            source.crop_imm(
+                (source_width - crop_width) / 2,
+                (source_height - crop_height) / 2,
+                crop_width,
+                crop_height,
+            )
+        }
+    }
+}
+
 fn generate_thumbnail_sync(
     original_file: &mut File,
     original_path: &Path,
@@ -406,22 +446,7 @@ fn generate_thumbnail_sync(
         ))
     })?;
 
-    let width = config.width.max(1);
-    let height = config.height.max(1);
-    let thumbnail_image = match config.resize_mode {
-        ThumbnailResizeMode::PreserveArea => {
-            let source_width = source_image.width().max(1);
-            let source_height = source_image.height().max(1);
-            let aspect_ratio = source_width as f64 / source_height as f64;
-            let target_area = (width as f64) * (height as f64);
-            let thumbnail_width = ((target_area * aspect_ratio).sqrt().round() as u32).max(1);
-            let thumbnail_height = ((target_area / aspect_ratio).sqrt().round() as u32).max(1);
-            source_image.resize(thumbnail_width, thumbnail_height, FilterType::Triangle)
-        }
-        ThumbnailResizeMode::Cover => {
-            source_image.resize_to_fill(width, height, FilterType::Triangle)
-        }
-    };
+    let thumbnail_image = fit_thumbnail(source_image, config);
 
     let quality = config.quality.clamp(1, 100);
     let mut encoded = Vec::new();
@@ -566,7 +591,6 @@ fn rewind_original(
 mod tests {
     use super::*;
     use image::{ImageBuffer, Rgb};
-    use std::path::PathBuf;
 
     fn source_snapshot(path: &Path) -> ThumbnailSourceSnapshot {
         let metadata = std::fs::metadata(path).expect("source metadata");
@@ -576,34 +600,14 @@ mod tests {
         }
     }
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let mut path = std::env::temp_dir();
-            path.push(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn thumbnail_generation_does_not_follow_existing_temp_symlink() {
-        let temp = TempDirGuard::new("thumbnail-cache-temp-symlink");
-        let external = TempDirGuard::new("thumbnail-cache-temp-external");
-        let original_path = temp.path.join("source.png");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let original_path = temp.path().join("source.png");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         let old_temp_path = thumbnail_path.with_extension("tmp");
-        let outside_path = external.path.join("outside.txt");
+        let outside_path = temp.path().join("outside.txt");
 
         let image = ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]));
         image.save(&original_path).expect("write source image");
@@ -646,8 +650,8 @@ mod tests {
 
     #[test]
     fn external_jpeg_without_embedded_identity_is_a_cache_miss() {
-        let temp = TempDirGuard::new("thumbnail-cache-external-jpeg");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         ImageBuffer::from_pixel(2, 2, Rgb([0u8, 0, 255]))
             .save(&thumbnail_path)
             .expect("write external jpeg");
@@ -661,9 +665,9 @@ mod tests {
 
     #[test]
     fn source_change_prevents_thumbnail_commit() {
-        let temp = TempDirGuard::new("thumbnail-cache-source-change");
-        let original_path = temp.path.join("source.png");
-        let thumbnail_path = temp.path.join("thumb.jpg");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let original_path = temp.path().join("source.png");
+        let thumbnail_path = temp.path().join("thumb.jpg");
         ImageBuffer::from_pixel(2, 2, Rgb([255u8, 0, 0]))
             .save(&original_path)
             .expect("write source image");
@@ -723,6 +727,34 @@ mod tests {
                     ..config
                 }
             )
+        );
+    }
+
+    #[test]
+    fn thumbnails_never_enlarge_their_source() {
+        let fitted = |width, height, resize_mode| {
+            let source = DynamicImage::new_rgb8(width, height);
+            let config = ThumbnailConfig {
+                width: 512,
+                height: 768,
+                quality: 90,
+                resize_mode,
+            };
+            let thumbnail = fit_thumbnail(source, config);
+            (thumbnail.width(), thumbnail.height())
+        };
+
+        assert_eq!(fitted(2000, 3000, ThumbnailResizeMode::Cover), (512, 768));
+        assert_eq!(fitted(400, 600, ThumbnailResizeMode::Cover), (400, 600));
+        assert_eq!(fitted(900, 600, ThumbnailResizeMode::Cover), (400, 600));
+        assert_eq!(fitted(1000, 700, ThumbnailResizeMode::Cover), (467, 700));
+        assert_eq!(
+            fitted(300, 300, ThumbnailResizeMode::PreserveArea),
+            (300, 300)
+        );
+        assert_eq!(
+            fitted(1600, 2400, ThumbnailResizeMode::PreserveArea),
+            (512, 768)
         );
     }
 

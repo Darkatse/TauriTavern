@@ -5,16 +5,18 @@ import {
     saveGroupChatPayload,
 } from '../../../scripts/tauri/chat/transport.js';
 import { payloadToJsonl } from '../../../scripts/tauri/chat/jsonl.js';
+import { extractErrorText } from '../../../scripts/util/command-error-utils.js';
 import { resolveRouteCharacterId } from './character-route-utils.js';
 import { registerChatImportRoutes } from './chat-import-routes.js';
 import { mapChatSummaryResults } from './chat-route-utils.js';
 import { registerChatRecentRoutes } from './chat-recent-routes.js';
-import { createReadableFileStreamService } from '../services/files/readable-file-stream-service.js';
+import { createByteStreamService } from '../services/files/byte-stream-service.js';
+import { streamResponse } from '../http-utils.js';
 
 export function registerChatRoutes(router, context, { jsonResponse }) {
     registerChatImportRoutes(router, context, { jsonResponse });
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
-    const { createByteStream } = createReadableFileStreamService({
+    const { createByteStream } = createByteStreamService({
         invoke: (...args) => context.invokeTransport(...args),
     });
 
@@ -22,7 +24,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
         const rid = await context.invokeTransport('open_chat_payload_json', { target, allowNotFound });
         return rid === null
             ? jsonResponse([])
-            : new Response(createByteStream(rid), { headers: { 'Content-Type': 'application/json' } });
+            : streamResponse(createByteStream(rid), { headers: { 'Content-Type': 'application/json' } });
     }
 
     router.post('/api/chats/get', async ({ body }) => {
@@ -48,7 +50,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to load chat',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );
@@ -87,7 +89,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to save chat',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );
@@ -118,7 +120,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to delete chat',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );
@@ -146,7 +148,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 return jsonResponse({ ok: true, sanitizedFileName });
             } catch (error) {
                 console.error('Failed to rename group chat:', error);
-                return jsonResponse({ error: true, details: String(error?.message || error || '') }, 400);
+                return jsonResponse({ error: true, details: extractErrorText(error) }, 400);
             }
         }
 
@@ -170,7 +172,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ ok: true, sanitizedFileName });
         } catch (error) {
             console.error('Failed to rename chat:', error);
-            return jsonResponse({ error: true, details: String(error?.message || error || '') }, 400);
+            return jsonResponse({ error: true, details: extractErrorText(error) }, 400);
         }
     });
 
@@ -262,7 +264,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
                 });
             }
         } catch (error) {
-            const details = String(error?.message || error || '');
+            const details = extractErrorText(error);
             return jsonResponse(
                 {
                     message: details ? `Failed to export chat: ${details}` : 'Failed to export chat',
@@ -294,7 +296,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to load group chat',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );
@@ -343,7 +345,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to load group chat info',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );
@@ -372,7 +374,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             return jsonResponse(
                 {
                     error: 'Failed to save group chat',
-                    details: String(error?.message || error || ''),
+                    details: extractErrorText(error),
                 },
                 500,
             );

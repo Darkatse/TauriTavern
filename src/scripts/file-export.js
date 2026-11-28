@@ -10,13 +10,13 @@ export async function deliverBlob(blob, fileName) {
 }
 
 /**
- * Stages remote bytes in the host, then names the file using the response type.
+ * The host downloads and keeps the bytes; the page only names the file from the response type.
  * @param {string} url
  * @param {(mimeType: string) => string} fileNameFor
  * @returns {Promise<{ delivered: boolean }>}
  */
 export async function deliverRemoteFile(url, fileNameFor) {
     const { safeInvoke } = window.__TAURITAVERN__.invoke;
-    const { path, mimeType } = await createFileStagingService({ safeInvoke }).stageUrl(url);
-    return safeInvoke('deliver_staged_file', { path, fileName: fileNameFor(mimeType) });
+    const { downloadId, mimeType } = await safeInvoke('download_remote_file', { url });
+    return safeInvoke('deliver_remote_file', { downloadId, fileName: fileNameFor(mimeType ?? '') });
 }

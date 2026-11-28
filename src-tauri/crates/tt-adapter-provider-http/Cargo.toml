@@ -2,11 +2,13 @@
 name = "tt-adapter-provider-http"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
 async-trait = "0.1"
 base64 = "0.23"
+bytes = "1"
 futures-util = "0.3"
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 percent-encoding = "2"
@@ -19,7 +21,12 @@ tokio = { version = "1", default-features = false, features = ["fs", "io-util", 
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
+tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 url = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+http = "1"
+tempfile = { workspace = true }

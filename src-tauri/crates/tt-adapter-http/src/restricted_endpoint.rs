@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use reqwest::Url;
 use reqwest::redirect::Policy;
 use tt_domain::errors::DomainError;
-use tt_domain::models::endpoint_url::parse_user_http_endpoint;
+use tt_domain::models::endpoint_url::http_origin;
 
 const MAX_USER_ENDPOINT_REDIRECTS: usize = 5;
 
@@ -41,21 +41,19 @@ fn redirect_rejection(previous: &[Url], next: &Url) -> Option<&'static str> {
 }
 
 pub(crate) fn user_endpoint_route(
-    base_url: &str,
+    url: &str,
     grants: &HashSet<String>,
 ) -> Result<UserEndpointRoute, DomainError> {
-    let url = parse_user_http_endpoint(base_url)?;
-    let endpoint = url.as_str();
-    if !grants.contains(endpoint) {
+    let url = Url::parse(url)
+        .map_err(|error| DomainError::InvalidData(format!("Invalid user endpoint URL: {error}")))?;
+    let origin = http_origin(&url)?;
+    if !grants.contains(&origin) {
         return Err(DomainError::InvalidData(format!(
-            "User-configured endpoint requires approval: {endpoint}"
+            "User-configured endpoint requires approval: {origin}"
         )));
     }
 
-    let host = normalize_host(
-        url.host_str()
-            .expect("parse_user_http_endpoint guarantees a host"),
-    );
+    let host = normalize_host(url.host_str().expect("http(s) URLs have a host"));
     let direct = explicit_loopback_host(&host)
         || host.parse::<IpAddr>().is_ok_and(is_explicit_local_address);
 
@@ -117,27 +115,36 @@ mod tests {
         );
     }
 
+    fn granted(url: &str) -> HashSet<String> {
+        HashSet::from([http_origin(&Url::parse(url).unwrap()).unwrap()])
+    }
+
     #[test]
-    fn every_user_endpoint_requires_an_exact_grant() {
-        for endpoint in [
-            "https://api.example.com/v1",
-            "http://model-server.local:11434/v1",
-            "http://192.168.1.2:11434/v1",
-            "http://198.18.0.5/v1",
-            "http://localhost:11434/v1",
+    fn user_endpoint_grants_cover_their_origin() {
+        for (url, origin) in [
+            ("https://api.example.com/v1", "https://api.example.com"),
+            (
+                "http://model-server.local:11434/v1",
+                "http://model-server.local:11434",
+            ),
+            ("http://192.168.1.2:11434/v1", "http://192.168.1.2:11434"),
+            ("http://198.18.0.5/v1", "http://198.18.0.5"),
+            ("http://localhost:11434/v1", "http://localhost:11434"),
         ] {
-            assert!(user_endpoint_route(endpoint, &HashSet::new()).is_err());
-            assert!(user_endpoint_route(endpoint, &HashSet::from([endpoint.to_string()])).is_ok());
+            assert!(user_endpoint_route(url, &HashSet::new()).is_err());
+            assert!(user_endpoint_route(url, &HashSet::from([origin.to_string()])).is_ok());
         }
 
-        let endpoint = "https://api.example.com/v1";
-        assert!(
-            user_endpoint_route(
-                "https://api.example.com/other",
-                &HashSet::from([endpoint.to_string()])
-            )
-            .is_err()
-        );
+        let grants = HashSet::from(["https://api.example.com".to_string()]);
+        assert!(user_endpoint_route("https://api.example.com/other?page=2", &grants).is_ok());
+        for other in [
+            "http://api.example.com/v1",
+            "https://api.example.com:8443/v1",
+            "https://example.com/v1",
+            "https://api.example.com.evil.example/v1",
+        ] {
+            assert!(user_endpoint_route(other, &grants).is_err(), "{other}");
+        }
         assert!(user_endpoint_route("file:///etc/passwd", &HashSet::new()).is_err());
     }
 
@@ -155,7 +162,7 @@ mod tests {
             "http://api.localhost:11434/v1",
         ] {
             assert_eq!(
-                user_endpoint_route(endpoint, &HashSet::from([endpoint.to_string()])).unwrap(),
+                user_endpoint_route(endpoint, &granted(endpoint)).unwrap(),
                 UserEndpointRoute::Direct,
                 "{endpoint}"
             );
@@ -168,7 +175,7 @@ mod tests {
             "http://169.254.169.254/latest",
         ] {
             assert_eq!(
-                user_endpoint_route(endpoint, &HashSet::from([endpoint.to_string()])).unwrap(),
+                user_endpoint_route(endpoint, &granted(endpoint)).unwrap(),
                 UserEndpointRoute::Default,
                 "{endpoint}"
             );

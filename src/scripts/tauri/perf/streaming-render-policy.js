@@ -4,7 +4,8 @@ const DEFAULT_STREAMING_FPS = 30;
 const HIDDEN_MIN_INTERVAL_MS = 250;
 
 /**
- * Validates the user-configured streaming FPS once before generation starts.
+ * Validates the user-configured streaming FPS once per configured value: before a generation starts, or when a
+ * streaming preview sees the setting change.
  * @param {unknown} configuredFps User-configured streaming FPS.
  * @returns {number} A finite FPS above zero.
  */
@@ -37,14 +38,60 @@ export function getStreamingRenderInterval({ configuredFps, hidden }) {
 }
 
 /**
- * Decides whether canonical streaming HTML should be committed to the DOM.
- * @param {object} options Commit policy inputs.
- * @param {string|null} options.lastCommittedHtml Last canonical HTML committed by the state owner.
- * @param {string} options.nextHtml Next canonical HTML to render.
- * @param {boolean} options.final Whether this is the final render.
- * @param {boolean} options.fadeIn Whether the existing fade-in path must run.
- * @returns {boolean} Whether the caller should commit and update its canonical cache.
+ * Paces the renders of one streaming preview by the streaming render interval. A scheduled render waits until the
+ * interval has passed since this preview's previous render finished, then runs on the next animation frame, so a
+ * hidden document does not render.
+ * @param {() => unknown} readConfiguredFps Reads the user-configured streaming FPS.
+ * @returns {(render: () => unknown) => () => void} Schedules a render and returns a function that cancels it.
  */
-export function shouldCommitStreamingMessage({ lastCommittedHtml, nextHtml, final, fadeIn }) {
-    return Boolean(final) || Boolean(fadeIn) || lastCommittedHtml !== nextHtml;
+export function createStreamingRenderScheduler(readConfiguredFps) {
+    let lastRender = Number.NEGATIVE_INFINITY;
+    /** @type {unknown} */
+    let configuredFps;
+    let streamingFps = 0;
+    return render => {
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        let timer = null;
+        /** @type {number | null} */
+        let frame = null;
+        const requestFrame = () => {
+            frame = requestAnimationFrame(() => {
+                frame = null;
+                const finish = () => {
+                    lastRender = performance.now();
+                };
+                let asyncRender = false;
+                try {
+                    const result = render();
+                    if (result && typeof /** @type {{ then?: unknown }} */ (result).then === 'function') {
+                        asyncRender = true;
+                        Promise.resolve(result).then(finish, finish);
+                    }
+                } finally {
+                    if (!asyncRender) finish();
+                }
+            });
+        };
+        const configured = readConfiguredFps();
+        if (!streamingFps || !Object.is(configured, configuredFps)) {
+            configuredFps = configured;
+            streamingFps = normalizeStreamingFps(configured);
+        }
+        const interval = getStreamingRenderInterval({ configuredFps: streamingFps, hidden: document.hidden });
+        const wait = lastRender + interval - performance.now();
+        if (wait > 0) {
+            timer = setTimeout(() => {
+                timer = null;
+                requestFrame();
+            }, wait);
+        } else {
+            requestFrame();
+        }
+        return () => {
+            if (timer !== null) clearTimeout(timer);
+            if (frame !== null) cancelAnimationFrame(frame);
+            timer = null;
+            frame = null;
+        };
+    };
 }

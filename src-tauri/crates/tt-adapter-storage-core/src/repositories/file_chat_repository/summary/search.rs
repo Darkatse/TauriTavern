@@ -7,10 +7,11 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::strip_jsonl_extension;
+use tt_ports::repositories::chat_repository::ChatSearchResult;
 
 use super::super::FileChatRepository;
 use super::projection::{self, FileProjection, TailProjection};
-use super::{ChatFileDescriptor, ChatSummary, ScannedSummary};
+use super::{ChatFileDescriptor, ScannedSummary};
 
 const FINGERPRINT_WORDS: usize = 64;
 
@@ -100,7 +101,7 @@ impl FileChatRepository {
         &self,
         descriptors: Vec<ChatFileDescriptor>,
         fragments: &[String],
-    ) -> (Vec<ChatSummary>, bool) {
+    ) -> (Vec<ChatSearchResult>, bool) {
         let mut results = Vec::new();
         let mut complete = true;
 
@@ -120,7 +121,7 @@ impl FileChatRepository {
             };
             // Even an unmatched damaged file prevents caching this whole query.
             complete &= !entry.preview_unavailable;
-            let summary = entry.summary;
+            let summary = entry.summary.into_search_result(&descriptor.character_name);
             let file_stem = strip_jsonl_extension(&descriptor.file_name);
 
             if Self::file_stem_matches_all(file_stem, fragments) {

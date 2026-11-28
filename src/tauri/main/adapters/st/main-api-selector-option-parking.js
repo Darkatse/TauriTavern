@@ -1,8 +1,12 @@
 // @ts-check
 
 import { eventSource, event_types } from '../../../../scripts/events.js';
+import { getActiveIosPolicyCapabilities } from '../../../../scripts/tauritavern/ios-policy.js';
+import { translateSillyTavern } from './sillytavern-i18n.js';
 
 const CHAT_COMPLETION_API = 'openai';
+const TEXT_COMPLETION_API = 'textgenerationwebui';
+const HORDE_API = 'koboldhorde';
 
 /** @type {boolean} */
 let installed = false;
@@ -21,26 +25,77 @@ function mustGetMainApiSelect() {
     return el;
 }
 
-function syncMainApiOptionParking() {
-    const select = mustGetMainApiSelect();
-
-    if (!parkedOptions) {
-        parkedOptions = document.createDocumentFragment();
+/**
+ * The main APIs the host implements; iOS policy can turn text completion and the Horde off.
+ * @returns {Set<string>}
+ */
+function getAvailableMainApis() {
+    const available = new Set([CHAT_COMPLETION_API, TEXT_COMPLETION_API, HORDE_API]);
+    const capabilities = getActiveIosPolicyCapabilities();
+    if (capabilities?.llm?.text_completions?.enabled === false) {
+        available.delete(TEXT_COMPLETION_API);
     }
+    if (capabilities?.ai?.horde === false) {
+        available.delete(HORDE_API);
+    }
+    return available;
+}
+
+/**
+ * @param {Set<string>} available
+ */
+function parkUnavailableOptions(available) {
+    const select = mustGetMainApiSelect();
+    parkedOptions ??= document.createDocumentFragment();
 
     for (const option of Array.from(select.options)) {
-        const value = String(option.value || '').trim();
-        if (value === CHAT_COMPLETION_API) {
-            continue;
+        if (!available.has(option.value.trim())) {
+            parkedOptions.appendChild(option);
         }
-
-        parkedOptions.appendChild(option);
     }
 }
 
-/** @param {{ main_api?: string }} settings */
-function selectChatCompletion(settings) {
+/**
+ * @param {string} api
+ * @returns {string}
+ */
+function getMainApiLabel(api) {
+    const option = parkedOptions?.querySelector(`option[value="${CSS.escape(api)}"]`);
+    return option?.textContent?.trim() || api;
+}
+
+/** @param {{ main_api?: unknown }} settings */
+function selectAvailableMainApi(settings) {
+    const available = syncMainApiOptionParking();
+    const saved = typeof settings.main_api === 'string' ? settings.main_api.trim() : '';
+    if (saved && available.has(saved)) {
+        return;
+    }
+
     settings.main_api = CHAT_COMPLETION_API;
+    if (saved) {
+        /** @type {any} */ (window).toastr.warning(
+            translateSillyTavern(
+                'tauritavern_main_api_unavailable',
+                'This API is not available. Switched to Chat Completion.',
+            ),
+            getMainApiLabel(saved),
+        );
+    }
+}
+
+/**
+ * @param {unknown} api
+ * @returns {boolean}
+ */
+export function isMainApiAvailable(api) {
+    return typeof api === 'string' && getAvailableMainApis().has(api.trim());
+}
+
+export function syncMainApiOptionParking() {
+    const available = getAvailableMainApis();
+    parkUnavailableOptions(available);
+    return available;
 }
 
 export function installMainApiOptionParking() {
@@ -49,6 +104,6 @@ export function installMainApiOptionParking() {
     }
     installed = true;
 
-    eventSource.on(event_types.SETTINGS_LOADED_BEFORE, selectChatCompletion);
+    eventSource.on(event_types.SETTINGS_LOADED_BEFORE, selectAvailableMainApi);
     syncMainApiOptionParking();
 }

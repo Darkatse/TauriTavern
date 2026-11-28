@@ -42,9 +42,8 @@ test('completion notifications never delay generation completion', async () => {
     });
     const service = createGenerationLifecycleService({
         notificationService: {
-            getPermissionState: async () => 'granted',
-            preparePermission: async () => 'granted',
-            show: async () => {
+            prepareForGeneration: async () => true,
+            notifyIfAllowed: async () => {
                 markNotificationStarted();
                 await notificationBlocked;
             },
@@ -66,7 +65,7 @@ test('completion notifications never delay generation completion', async () => {
         progressThrottleMs: 1,
         progressMinCharsDelta: 1,
     });
-    const lifecycle = service.createLifecycle({ quiet: false });
+    const lifecycle = service.createLifecycle({ quiet: false, chunkText: () => '' });
     lifecycle.begin();
 
     const completion = lifecycle.finish({ success: true });

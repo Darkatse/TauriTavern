@@ -346,31 +346,29 @@ async function getTauriTavernSettingsState() {
     return tauriTavernSettingsPromise;
 }
 
-function getStartupUpdatePopupToken(result) {
+function getUpdateReleaseToken(result) {
     return String(result?.release_token || '').trim();
 }
 
 async function hasSeenStartupUpdate(result) {
-    const token = getStartupUpdatePopupToken(result);
+    const token = getUpdateReleaseToken(result);
     if (token === '') {
         return false;
     }
 
     const settings = await getTauriTavernSettingsState();
-    return settings.updates.startup_popup.dismissed_release_token === token;
+    return settings.updates.dismissed_release_token === token;
 }
 
 async function rememberStartupUpdate(result) {
-    const token = getStartupUpdatePopupToken(result);
+    const token = getUpdateReleaseToken(result);
     if (token === '') {
         return;
     }
 
     tauriTavernSettingsCache = await updateTauriTavernSettings({
         updates: {
-            startup_popup: {
-                dismissed_release_token: token,
-            },
+            dismissed_release_token: token,
         },
     });
 }
@@ -445,6 +443,11 @@ async function runStartupUpdateCheck() {
     }
 
     startupUpdateCheckPromise = (async () => {
+        const settings = await getTauriTavernSettingsState();
+        if (!settings.updates.popup_enabled) {
+            return;
+        }
+
         let result;
 
         try {
@@ -520,9 +523,9 @@ function renderChannel(channel) {
     renderChannelHint(channel);
 }
 
-function setChannelBodyOpen(open) {
-    $('#ttv-channel-toggle').attr('aria-expanded', String(open)).toggleClass('open', open);
-    const $body = $('#ttv-channel-body');
+function setUpdateSettingsOpen(open) {
+    $('#ttv-update-settings-toggle').attr('aria-expanded', String(open)).toggleClass('open', open);
+    const $body = $('#ttv-update-settings-body');
     $body.stop();
     if (open) {
         $body.slideDown(200);
@@ -531,9 +534,9 @@ function setChannelBodyOpen(open) {
     }
 }
 
-function onChannelToggleClick() {
-    const open = $('#ttv-channel-toggle').attr('aria-expanded') === 'true';
-    setChannelBodyOpen(!open);
+function onUpdateSettingsToggleClick() {
+    const open = $('#ttv-update-settings-toggle').attr('aria-expanded') === 'true';
+    setUpdateSettingsOpen(!open);
 }
 
 function setChannelInputsDisabled(disabled) {
@@ -557,17 +560,14 @@ async function onUpdateChannelChange(event) {
     setChannelInputsDisabled(true);
 
     try {
-        const settings = await getTauriTavernSettingsState();
         tauriTavernSettingsCache = await updateTauriTavernSettings({
             updates: {
                 channel: nextChannel,
-                startup_popup: settings.updates.startup_popup,
             },
         });
         latestUpdateResult = null;
         hideUpdateResult();
         renderChannel(nextChannel);
-        setChannelBodyOpen(false);
     } catch (error) {
         renderChannel(previousChannel);
         globalThis.toastr?.error?.(
@@ -579,6 +579,43 @@ async function onUpdateChannelChange(event) {
         );
     } finally {
         setChannelInputsDisabled(false);
+    }
+}
+
+function renderUpdatePopupEnabled(enabled) {
+    const input = document.getElementById('tauritavern_update_popup_enabled');
+    if (input instanceof HTMLInputElement) {
+        input.checked = enabled;
+    }
+}
+
+async function onUpdatePopupEnabledChange(event) {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) {
+        return;
+    }
+
+    const nextEnabled = input.checked;
+    const previousEnabled = !nextEnabled;
+    input.disabled = true;
+
+    try {
+        tauriTavernSettingsCache = await updateTauriTavernSettings({
+            updates: {
+                popup_enabled: nextEnabled,
+            },
+        });
+    } catch (error) {
+        renderUpdatePopupEnabled(previousEnabled);
+        globalThis.toastr?.error?.(
+            localizeTemplate(
+                'ttv_version.update_popup_save_failed',
+                'Failed to save update popup setting: ${0}',
+                toUserFacingErrorText(error) || extractErrorText(error),
+            ),
+        );
+    } finally {
+        input.disabled = false;
     }
 }
 
@@ -602,14 +639,25 @@ jQuery(async () => {
     }
 
     const updateCaps = resolveIosUpdateCapabilities();
-    if (updateCaps && updateCaps.manual_check === false) {
+    const manualCheckAllowed = updateCaps?.manual_check !== false;
+    const startupCheckAllowed = updateCaps?.startup_check !== false;
+    if (!startupCheckAllowed) {
+        const updatePopupRow = document.getElementById('ttv-update-popup-row');
+        if (!(updatePopupRow instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-update-popup-row not found');
+        }
+        updatePopupRow.hidden = true;
+    }
+    if (!manualCheckAllowed) {
         $('#tauritavern_check_update').remove();
 
-        const channelRow = document.getElementById('ttv-channel-row');
-        if (!(channelRow instanceof HTMLElement)) {
-            throw new Error('[TauriTavern][iOSPolicy] ttv-channel-row not found');
+        const channelSection = document.getElementById('ttv-channel-section');
+        const channelCurrentName = document.getElementById('ttv-channel-current-name');
+        if (!(channelSection instanceof HTMLElement) || !(channelCurrentName instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-channel-section not found');
         }
-        channelRow.hidden = true;
+        channelSection.hidden = true;
+        channelCurrentName.hidden = true;
 
         const compatRow = document.getElementById('ttv-compat-row');
         if (!(compatRow instanceof HTMLElement)) {
@@ -631,6 +679,13 @@ jQuery(async () => {
     } else {
         $('#tauritavern_check_update').on('click', onCheckUpdateClick);
     }
+    if (!manualCheckAllowed && !startupCheckAllowed) {
+        const updateSettingsRow = document.getElementById('ttv-update-settings-row');
+        if (!(updateSettingsRow instanceof HTMLElement)) {
+            throw new Error('[TauriTavern][iOSPolicy] ttv-update-settings-row not found');
+        }
+        updateSettingsRow.hidden = true;
+    }
     $('#tauritavern_update_dismiss').on('click', hideUpdateResult);
     container.on('click', 'a[target="_blank"]', onExternalLinkClick);
 
@@ -639,9 +694,17 @@ jQuery(async () => {
         getTauriTavernSettingsState(),
     ]);
     renderVersionInfo(versionInfo);
-    renderChannel(settings?.updates?.channel || versionInfo.defaultUpdateChannel);
-    $('#ttv-channel-toggle').on('click', onChannelToggleClick);
-    container.find('input[name="tauritavern_update_channel"]').on('change', onUpdateChannelChange);
+    if (manualCheckAllowed) {
+        renderChannel(settings?.updates?.channel || versionInfo.defaultUpdateChannel);
+        container.find('input[name="tauritavern_update_channel"]').on('change', onUpdateChannelChange);
+    }
+    if (startupCheckAllowed) {
+        renderUpdatePopupEnabled(settings.updates.popup_enabled);
+        $('#tauritavern_update_popup_enabled').on('change', onUpdatePopupEnabledChange);
+    }
+    if (manualCheckAllowed || startupCheckAllowed) {
+        $('#ttv-update-settings-toggle').on('click', onUpdateSettingsToggleClick);
+    }
 
     if (latestUpdateResult?.has_update && latestUpdateResult?.latest_release) {
         showUpdateResult(latestUpdateResult);

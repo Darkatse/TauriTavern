@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use serde_json::Value;
-use std::path::{Path, PathBuf};
+use serde_json::value::RawValue;
+use std::path::Path;
 
 use tt_domain::errors::DomainError;
 
@@ -35,9 +35,6 @@ pub trait GroupChatRepository: Send + Sync {
         query: &str,
         chat_ids: Option<&[String]>,
     ) -> Result<Vec<ChatSearchResult>, DomainError>;
-
-    /// Get the absolute path to a group chat payload file.
-    async fn get_group_chat_payload_path(&self, chat_id: &str) -> Result<PathBuf, DomainError>;
 
     /// Get the tail page for a group chat JSONL payload (excluding the header line).
     async fn get_group_chat_payload_tail_lines(
@@ -86,8 +83,8 @@ pub trait GroupChatRepository: Send + Sync {
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError>;
 
-    /// Read the group chat metadata (header only).
-    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError>;
+    /// Read the group chat metadata (header only), as stored.
+    async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Box<RawValue>, DomainError>;
 
     /// Read a JSON value from the group chat extension store.
     async fn get_group_chat_store_json(
@@ -95,7 +92,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-    ) -> Result<Value, DomainError>;
+    ) -> Result<Box<RawValue>, DomainError>;
 
     /// Write a JSON value to the group chat extension store.
     async fn set_group_chat_store_json(
@@ -103,7 +100,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Merge-update a JSON value in the group chat extension store.
@@ -112,7 +109,7 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         namespace: &str,
         key: &str,
-        value: Value,
+        value_json: &str,
     ) -> Result<(), DomainError>;
 
     /// Rename a JSON key in the group chat extension store.

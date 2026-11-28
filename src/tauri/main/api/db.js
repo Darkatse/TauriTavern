@@ -5,7 +5,7 @@ import { registerLifecycleFlushHandler } from '../services/lifecycle/lifecycle-f
 /**
  * @typedef {import('./db-types').DatabaseApi} DatabaseApi
  * @typedef {import('./db-types').DatabaseHandle} DatabaseHandle
- * @typedef {{ safeInvoke: (command: string, args?: object) => Promise<any> }} Transport
+ * @typedef {Pick<import('../context/types.js').TauriMainContext, 'safeInvoke'>} Transport
  */
 
 /** @param {Transport} transport @returns {DatabaseApi} */
@@ -68,12 +68,12 @@ export function createDbApi({ safeInvoke }) {
     };
 }
 
-/** @param {Transport} context */
-export function installDbApi(context) {
-    const host = window.__TAURITAVERN__;
-    if (!host) throw new Error('TauriTavern host ABI is not installed');
-    host.api ??= {};
-    host.api.db = createDbApi(context);
+/**
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
+ */
+export function installDbApi(api, context) {
+    api.db = createDbApi(context);
     registerLifecycleFlushHandler('databases', () => context.safeInvoke('database_handle', {
         request: { type: 'flushAll' },
     }), { priority: 110 });

@@ -1,19 +1,25 @@
 mod endpoint_url;
 mod http_chat_completion_repository;
+mod http_cors_proxy_repository;
 mod http_embedding_repository;
-mod http_error;
+mod http_horde_repository;
 mod http_provider_metadata_repository;
 mod http_searxng_search_repository;
 mod http_stable_diffusion_repository;
+mod http_text_completion_repository;
 mod http_translate_repository;
 mod http_tts_repository;
-mod workers_ai_endpoint;
+mod provider_request;
+mod provider_response;
 mod workers_ai_models;
 
 pub use http_chat_completion_repository::HttpChatCompletionRepository;
+pub use http_cors_proxy_repository::HttpCorsProxyRepository;
 pub use http_embedding_repository::HttpEmbeddingRepository;
+pub use http_horde_repository::HttpHordeRepository;
 pub use http_provider_metadata_repository::HttpProviderMetadataRepository;
 pub use http_searxng_search_repository::HttpSearxngSearchRepository;
 pub use http_stable_diffusion_repository::HttpStableDiffusionRepository;
+pub use http_text_completion_repository::HttpTextCompletionRepository;
 pub use http_translate_repository::HttpTranslateRepository;
 pub use http_tts_repository::HttpTtsRepository;

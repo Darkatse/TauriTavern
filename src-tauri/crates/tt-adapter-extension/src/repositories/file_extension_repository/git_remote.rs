@@ -11,7 +11,7 @@ use url::Url;
 
 use tt_domain::errors::DomainError;
 
-use super::git_http::GitHttp;
+use super::git_http::{GitHttp, carried_upstream_failure};
 
 const PROTOCOL_AGENT: &str = "TauriTavern";
 
@@ -291,8 +291,11 @@ fn unsupported_layout() -> DomainError {
     )
 }
 
-fn git_error(context: &str, error: impl std::fmt::Display) -> DomainError {
-    DomainError::InternalError(format!("{context}: {error}"))
+fn git_error(context: &str, error: impl std::error::Error + 'static) -> DomainError {
+    match carried_upstream_failure(&error) {
+        Some(failure) => failure.clone().into(),
+        None => DomainError::InternalError(format!("{context}: {error}")),
+    }
 }
 
 #[cfg(test)]

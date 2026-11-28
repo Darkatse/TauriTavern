@@ -1,9 +1,8 @@
 import { Compartment, EditorState } from '@codemirror/state';
-import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
-import { keymap, placeholder, showPanel } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, isolateHistory, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
+import { EditorView, ViewPlugin, highlightSpecialChars, keymap, placeholder, showPanel } from '@codemirror/view';
 import { openSearchPanel, closeSearchPanel, searchPanelOpen, searchKeymap, search } from '@codemirror/search';
-import { EditorView, minimalSetup } from 'codemirror';
-import { createSearchPanel } from './editor-search-panel.js';
+import { createSearchPanel, editorIcon } from './editor-search-panel.js';
 
 const theme = EditorView.theme({
     '&': {
@@ -15,14 +14,10 @@ const theme = EditorView.theme({
         outline: '1px solid var(--SmartThemeQuoteColor)',
     },
     '.cm-content': { caretColor: 'var(--SmartThemeBodyColor)' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--SmartThemeBodyColor)' },
-    '.cm-selectionBackground': {
-        backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent)',
-    },
-    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
+    '::selection': {
         backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent)',
+        color: 'var(--SmartThemeBodyColor)',
     },
-    '::selection': { color: 'var(--SmartThemeBodyColor)' },
     '.cm-scroller': {
         fontFamily: 'inherit',
         lineHeight: 'inherit',
@@ -32,11 +27,14 @@ const theme = EditorView.theme({
         backgroundColor: 'transparent',
         color: 'inherit',
     },
+    // Pages turn the toolbar off with `--tt-editor-tools: none`; find and replace still opens.
     '.cm-panels-top': {
+        display: 'var(--tt-editor-tools, block)',
         borderBottom: '1px solid color-mix(in srgb, currentColor 12%, transparent)',
     },
+    '.cm-panels-top:has(.cm-editor-search)': { display: 'block' },
     '.cm-editor-tools': {
-        display: 'flex',
+        display: 'var(--tt-editor-tools, flex)',
         justifyContent: 'flex-end',
         gap: '2px',
         padding: '2px 5px',
@@ -106,7 +104,7 @@ const theme = EditorView.theme({
         boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--SmartThemeQuoteColor) 45%, transparent)',
     },
     '.cm-search-wholeWord': { textDecoration: 'underline', textUnderlineOffset: '3px' },
-    '.cm-editor-search button svg': {
+    '.cm-editor-tools button svg, .cm-editor-search button svg': {
         width: '14px',
         height: '14px',
         fill: 'none',
@@ -133,15 +131,103 @@ const theme = EditorView.theme({
         backgroundColor: 'color-mix(in srgb, var(--SmartThemeQuoteColor) 50%, transparent)',
         outline: '1px solid var(--SmartThemeQuoteColor)',
     },
+    '.cm-resize-handle': {
+        position: 'absolute',
+        right: '0',
+        bottom: '0',
+        zIndex: '1',
+        width: '14px',
+        height: '14px',
+        touchAction: 'none',
+        opacity: '0.45',
+        background: 'linear-gradient(135deg, transparent 52%, currentColor 52% 60%, transparent 60% 74%, currentColor 74% 82%, transparent 82%)',
+    },
 });
 
-export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined }) {
+/**
+ * Points the content at the source's description elements. Element references, unlike IDs, reach out of a shadow
+ * root and read the elements' current text. Plugins are built before CodeMirror observes its content, so the
+ * attribute the reference writes is never read back as an edit; a rebuilt state finds the references in place.
+ * @param {readonly Element[] | null} elements
+ */
+function description(elements) {
+    if (!elements?.length) return [];
+    return ViewPlugin.define(view => {
+        const current = view.contentDOM.ariaDescribedByElements;
+        if (current?.length !== elements.length || elements.some((element, index) => current[index] !== element)) {
+            view.contentDOM.ariaDescribedByElements = elements;
+        }
+        return {};
+    });
+}
+
+/**
+ * CodeMirror covers WebKit's native resize grip; dragging must also disable flex sizing.
+ * @param {HTMLElement} host
+ * @param {string} resize The source's computed `resize`.
+ */
+function resizeHandle(host, resize) {
+    const vertical = ['both', 'vertical', 'block'].includes(resize);
+    const horizontal = ['both', 'horizontal', 'inline'].includes(resize);
+    if (!vertical && !horizontal) return [];
+    const cursor = vertical && horizontal ? 'nwse-resize' : vertical ? 'ns-resize' : 'ew-resize';
+    return ViewPlugin.define(view => {
+        const handle = document.createElement('div');
+        handle.className = 'cm-resize-handle';
+        handle.style.cursor = cursor;
+        handle.addEventListener('pointerdown', start => {
+            if (start.button !== 0) return;
+            start.preventDefault();
+            handle.setPointerCapture(start.pointerId);
+            // Convert viewport deltas to the host's unscaled dimensions.
+            const scale = host.getBoundingClientRect().height / host.offsetHeight;
+            const width = host.offsetWidth, height = host.offsetHeight;
+            let pointer = start;
+            let frame = 0;
+            let sized = false;
+            const apply = () => {
+                frame = 0;
+                if (!sized) host.style.flex = 'none';
+                sized = true;
+                if (vertical) host.style.height = `${height + (pointer.clientY - start.clientY) / scale}px`;
+                if (horizontal) host.style.width = `${width + (pointer.clientX - start.clientX) / scale}px`;
+            };
+            const move = event => {
+                pointer = event;
+                frame ||= requestAnimationFrame(apply);
+            };
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('lostpointercapture', () => {
+                handle.removeEventListener('pointermove', move);
+                if (frame) {
+                    cancelAnimationFrame(frame);
+                    apply();
+                }
+            }, { once: true });
+        });
+        view.dom.append(handle);
+        return { destroy: () => handle.remove() };
+    });
+}
+
+/**
+ * Builds the editor on `host`. An isolated editor lives in a shadow root, so page selectors never match or
+ * re-check its DOM. Raw text events end at the host; edits leave through `onChange`, and an open search
+ * panel is reflected as `data-search-open` on the host.
+ * Formatting is isolated from adjacent edits in undo history.
+ */
+export function createCodeMirrorView(host, { isolated, doc, readOnly, ariaLabel, describedBy = null, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined, resize = 'none', format = null }) {
+    const parent = isolated ? host.attachShadow({ mode: 'open' }) : host;
+    for (const type of ['beforeinput', 'input']) parent.addEventListener(type, event => event.stopPropagation());
     const permissions = new Compartment();
     const editability = disabled => [
         EditorState.readOnly.of(disabled),
         EditorView.editable.of(!disabled),
-        EditorView.contentAttributes.of({ 'aria-label': ariaLabel, 'aria-readonly': String(disabled), tabindex: '0' }),
+        EditorView.contentAttributes.of({ 'aria-readonly': String(disabled), tabindex: '0' }),
     ];
+    const naming = new Compartment();
+    let name = ariaLabel;
+    const nameAttribute = () => EditorView.contentAttributes.of({ 'aria-label': name });
 
     function toolbar(view) {
         const dom = document.createElement('div');
@@ -154,10 +240,7 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
             button.type = 'button';
             button.title = view.state.phrase(label);
             button.setAttribute('aria-label', button.title);
-            const glyph = document.createElement('i');
-            glyph.className = `fa-solid ${icon}`;
-            glyph.setAttribute('aria-hidden', 'true');
-            button.append(glyph);
+            button.append(editorIcon(icon));
             button.addEventListener('mousedown', event => event.preventDefault());
             button.addEventListener('click', () => {
                 view.focus();
@@ -167,16 +250,25 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
             return button;
         }
 
-        const undoButton = button('Undo', 'fa-rotate-left', () => undo(view));
-        const redoButton = button('Redo', 'fa-rotate-right', () => redo(view));
-        const searchButton = button('Find and replace', 'fa-magnifying-glass', () => {
+        const formatButton = format && button(format.label, 'M5.5 2.5c-1.5 0-2 .5-2 2v2c0 1-.5 1.5-1.5 1.5 1 0 1.5.5 1.5 1.5v2c0 1.5.5 2 2 2M10.5 2.5c1.5 0 2 .5 2 2v2c0 1 .5 1.5 1.5 1.5-1 0-1.5.5-1.5 1.5v2c0 1.5-.5 2-2 2', () => {
+            const text = view.state.doc.toString();
+            const formatted = format.run(text);
+            if (formatted === text) return;
+            view.dispatch({ changes: { from: 0, to: text.length, insert: formatted }, annotations: isolateHistory.of('full') });
+        });
+        const undoButton = button('Undo', 'M3.5 6.5h6a3.5 3.5 0 0 1 0 7H6M6 3.5l-3 3 3 3', () => undo(view));
+        const redoButton = button('Redo', 'M12.5 6.5h-6a3.5 3.5 0 0 0 0 7H10M10 3.5l3 3-3 3', () => redo(view));
+        const searchButton = button('Find and replace', 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 1 0 0-9ZM10.2 10.2l3.3 3.3', () => {
             searchPanelOpen(view.state) ? closeSearchPanel(view) : openSearchPanel(view);
         });
-        button('Copy all', 'fa-copy', () => onCopy(view.state.doc.toString()));
+        button('Copy all', 'M5.5 5.5h8v8h-8ZM2.5 10.5v-8h8', () => onCopy(view.state.doc.toString()));
         const update = () => {
+            const searching = searchPanelOpen(view.state);
+            if (formatButton) formatButton.disabled = view.state.readOnly;
             undoButton.disabled = view.state.readOnly || undoDepth(view.state) === 0;
             redoButton.disabled = view.state.readOnly || redoDepth(view.state) === 0;
-            searchButton.setAttribute('aria-expanded', String(searchPanelOpen(view.state)));
+            searchButton.setAttribute('aria-expanded', String(searching));
+            host.toggleAttribute('data-search-open', searching);
         };
         update();
         return { dom, top: true, update };
@@ -186,15 +278,20 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
         doc: value,
         selection,
         extensions: [
-            minimalSetup,
-            keymap.of(searchKeymap),
+            // No drawSelection: the native caret keeps each keystroke to one frame.
+            highlightSpecialChars(),
+            history(),
+            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
             showPanel.of(toolbar),
             search({ top: true, createPanel: createSearchPanel }),
             EditorState.phrases.of(phrases),
             permissions.of(editability(disabled)),
+            naming.of(nameAttribute()),
             EditorView.lineWrapping,
             placeholder(hint),
             EditorView.updateListener.of(update => update.docChanged && onChange?.()),
+            resizeHandle(host, resize),
+            description(describedBy),
             theme,
         ],
     });
@@ -209,6 +306,11 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
         },
         setReadOnly(disabled) {
             if (view.state.readOnly !== disabled) view.dispatch({ effects: permissions.reconfigure(editability(disabled)) });
+        },
+        setAriaLabel(label) {
+            if (name === label) return;
+            name = label;
+            view.dispatch({ effects: naming.reconfigure(nameAttribute()) });
         },
         focus: () => view.focus(),
         requestMeasure: () => view.requestMeasure(),

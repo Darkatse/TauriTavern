@@ -254,11 +254,6 @@ impl AgentRuntimeService {
                 false,
             )
             .await?;
-        let tool_snapshot = prepared_tools.snapshot;
-        let tool_turn = prepared_tools.turn;
-        let visible_tools = prepared_tools.model_tools;
-        let tool_diagnostics = prepared_tools.diagnostics;
-        let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let request = self
             .prompt_assembly_service
             .build_prompt_assembly_request(
@@ -271,7 +266,7 @@ impl AgentRuntimeService {
                     json_schema: None,
                 },
                 profile.clone(),
-                &visible_tools,
+                &prepared_tools.model_tools,
                 invocation.exit_policy,
                 AgentInvocationPromptAssemblyContext {
                     agent_task_prompt: Some(task_prompt),
@@ -285,6 +280,12 @@ impl AgentRuntimeService {
         let mut request = self
             .request_host_prompt_assembly(&invocation, Some(task.id.clone()), request, cancel)
             .await?;
+        let prepared_tools = prepared_tools.with_prompt_tools(&request.tools)?;
+        let tool_snapshot = prepared_tools.snapshot;
+        let tool_turn = prepared_tools.turn;
+        let visible_tools = prepared_tools.model_tools;
+        let tool_diagnostics = prepared_tools.diagnostics;
+        let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
         let accepts_images = request.accepts_images;

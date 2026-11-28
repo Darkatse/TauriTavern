@@ -2,6 +2,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::{parse_json_error_message, send_with_retry, unexpected_content_type};
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{MinimaxGenerateRequest, TtsRouteResponse};
 
@@ -48,7 +49,7 @@ pub(super) async fn generate(
     }
 
     let url = format!("{}/v1/t2a_v2", api_host.trim().trim_end_matches('/'));
-    let response = send_with_retry("MiniMax TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(&url)
             .bearer_auth(&api_key)
@@ -62,9 +63,7 @@ pub(super) async fn generate(
         return upstream_error_response(response, "MiniMax TTS request failed").await;
     }
 
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("MiniMax TTS response read failed: {error}"))
-    })?;
+    let bytes = upstream::read_body(response).await?;
     let payload: Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(error) => {
@@ -96,10 +95,8 @@ pub(super) async fn generate(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
     {
-        let audio_response = send_with_retry("MiniMax TTS audio URL request", || {
-            client.get(audio_url).header(ACCEPT, "*/*")
-        })
-        .await?;
+        let audio_response =
+            send_with_retry(|| client.get(audio_url).header(ACCEPT, "*/*")).await?;
         if !audio_response.status().is_success() {
             return upstream_error_response(audio_response, "MiniMax TTS audio URL request failed")
                 .await;
@@ -110,11 +107,7 @@ pub(super) async fn generate(
                 format!("MiniMax TTS audio URL request: {message}"),
             ));
         }
-        let audio = audio_response.bytes().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "MiniMax TTS audio URL response read failed: {error}"
-            ))
-        })?;
+        let audio = upstream::read_body(audio_response).await?;
         return Ok(TtsRouteResponse::bytes(
             200,
             audio_content_type,
@@ -134,11 +127,7 @@ async fn upstream_error_response(
     fallback: &str,
 ) -> Result<TtsRouteResponse, DomainError> {
     let status = response.status().as_u16();
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "MiniMax upstream error response read failed: {error}"
-        ))
-    })?;
+    let bytes = upstream::read_body(response).await?;
     Ok(error_response(
         status,
         parse_upstream_error(&bytes, fallback),

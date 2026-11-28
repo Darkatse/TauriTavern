@@ -7,19 +7,11 @@ import {
     setFrontendConsoleCaptureEnabled,
     subscribeFrontendLogs,
 } from '../services/dev-logging/frontend-log-capture.js';
-import { createLlmApiLogBridge } from '../services/dev-logging/llm-api-log-bridge.js';
-
-/**
- * @param {unknown} value
- * @param {string} label
- */
-function requirePositiveInteger(value, label) {
-    const number = typeof value === 'number' ? value : Number(value);
-    if (!Number.isSafeInteger(number) || number <= 0) {
-        throw new Error(`${label} must be a positive integer`);
-    }
-    return number;
-}
+import { createChatCompletionDto } from '../services/ai/chat-completion-dto.js';
+import {
+    createLlmApiLogBridge,
+    requirePositiveInteger,
+} from '../services/dev-logging/llm-api-log-bridge.js';
 
 /**
  * @template T
@@ -117,27 +109,29 @@ function createDevApi({ safeInvoke }) {
                 });
             },
         },
+        requestInspector: {
+            /**
+             * @param {number} id
+             */
+            async getLogView(id) {
+                return safeInvoke('devlog_get_llm_api_log_view', {
+                    id: requirePositiveInteger(id, 'id'),
+                });
+            },
+            async preview() {
+                const { previewRequest } = await import('../../../scripts/tauritavern/request-preview.js');
+                return previewRequest(async payload => safeInvoke('preview_chat_completion_request', {
+                    dto: await createChatCompletionDto(payload),
+                }));
+            },
+        },
     };
 }
 
 /**
- * @param {any} context
+ * @param {TauriTavernHostApi} api
+ * @param {import('../context/types.js').TauriMainContext} context
  */
-export function installDevApi(context) {
-    const hostWindow = /** @type {any} */ (window);
-    const hostAbi = hostWindow.__TAURITAVERN__;
-    if (!hostAbi || typeof hostAbi !== 'object') {
-        throw new Error('Host ABI __TAURITAVERN__ is missing');
-    }
-
-    const safeInvoke = context?.safeInvoke;
-    if (typeof safeInvoke !== 'function') {
-        throw new Error('Tauri main context safeInvoke is missing');
-    }
-
-    if (!hostAbi.api || typeof hostAbi.api !== 'object') {
-        hostAbi.api = {};
-    }
-
-    hostAbi.api.dev = createDevApi({ safeInvoke });
+export function installDevApi(api, context) {
+    api.dev = createDevApi(context);
 }

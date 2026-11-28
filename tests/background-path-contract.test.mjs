@@ -29,13 +29,11 @@ function installWindowMocks() {
 test('Tauri resource helpers encode stable Host Resource URLs', async () => {
     const { windowMock } = installWindowMocks();
 
-    const { installAssetPathHelpers } = await importFresh(
+    const { buildThumbnailUrl, installAssetPathHelpers } = await importFresh(
         path.join(REPO_ROOT, 'src/tauri/main/context/asset-path-helpers.js'),
     );
 
-    installAssetPathHelpers({
-        thumbnailRouteTypes: new Set(['bg', 'avatar', 'persona']),
-    });
+    installAssetPathHelpers();
 
     const backgroundPathFn = windowMock.__TAURITAVERN_BACKGROUND_PATH__;
     const thumbnailPathFn = windowMock.__TAURITAVERN_THUMBNAIL__;
@@ -63,4 +61,14 @@ test('Tauri resource helpers encode stable Host Resource URLs', async () => {
     }
 
     assert.throws(() => thumbnailPathFn('unknown', 'test.png'), /Unsupported thumbnail type/);
+
+    assert.equal(
+        buildThumbnailUrl('avatar', 'a b.png', { list: true }),
+        '/thumbnail?type=avatar&list=true&file=a+b.png',
+    );
+    assert.equal(
+        buildThumbnailUrl('bg', 'a.gif', { static: true }),
+        '/thumbnail?type=bg&static=true&file=a.gif',
+    );
+    assert.match(thumbnailPathFn('avatar', 'a.png', true), /^\/thumbnail\?type=avatar&t=\d+&file=a\.png$/);
 });

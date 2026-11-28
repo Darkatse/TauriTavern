@@ -24,9 +24,13 @@ pub(super) fn serve_thumbnail(
         _ => return response::method_not_allowed(THUMBNAIL_ALLOWED_METHODS),
     }
 
-    let query = request.uri().query().unwrap_or("");
-    let (thumbnail_type, file, static_preview) = match parse_thumbnail_query(query) {
-        Ok(value) => value,
+    let ThumbnailQuery {
+        thumbnail_type,
+        file,
+        static_preview,
+        list,
+    } = match parse_thumbnail_query(request.uri().query().unwrap_or("")) {
+        Ok(query) => query,
         Err(error) => {
             return response::error(error.status_code(), error.message());
         }
@@ -48,7 +52,7 @@ pub(super) fn serve_thumbnail(
 
     let selection = match kind {
         ThumbnailKind::Avatar | ThumbnailKind::Persona
-            if avatar_persona_original_images_enabled =>
+            if avatar_persona_original_images_enabled && !list =>
         {
             ThumbnailSelection::Original
         }
@@ -83,12 +87,12 @@ pub(super) fn serve_thumbnail(
         RetrievalDecision::Full | RetrievalDecision::Continue => {}
     }
 
-    let bytes = match opened.read(None) {
-        Ok(bytes) => bytes,
+    let body = match response::body(opened, None, delivery) {
+        Ok(body) => body,
         Err(error) => return response::store_error(error, "Not Found"),
     };
     tracing::debug!("Thumbnail hit: type={} file={}", thumbnail_type, file);
-    response::ok(&metadata, bytes)
+    response::ok(&metadata, body)
 }
 
 fn parse_thumbnail_kind(value: &str) -> Option<ThumbnailKind> {
@@ -134,10 +138,26 @@ impl ThumbnailQueryError {
     }
 }
 
-fn parse_thumbnail_query(query: &str) -> Result<(String, String, bool), ThumbnailQueryError> {
+struct ThumbnailQuery {
+    thumbnail_type: String,
+    file: String,
+    static_preview: bool,
+    list: bool,
+}
+
+fn parse_thumbnail_flag(value: &str) -> Result<bool, ThumbnailQueryError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(ThumbnailQueryError::InvalidQuery),
+    }
+}
+
+fn parse_thumbnail_query(query: &str) -> Result<ThumbnailQuery, ThumbnailQueryError> {
     let mut thumbnail_type = None;
     let mut file = None;
     let mut static_preview = false;
+    let mut list = false;
 
     for pair in query.split('&') {
         if pair.is_empty() {
@@ -156,13 +176,8 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String, bool), Thumbnai
         match key.as_str() {
             "type" => thumbnail_type = Some(value),
             "file" => file = Some(value),
-            "static" => {
-                static_preview = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => return Err(ThumbnailQueryError::InvalidQuery),
-                }
-            }
+            "static" => static_preview = parse_thumbnail_flag(&value)?,
+            "list" => list = parse_thumbnail_flag(&value)?,
             _ => {}
         }
     }
@@ -184,7 +199,12 @@ fn parse_thumbnail_query(query: &str) -> Result<(String, String, bool), Thumbnai
         return Err(ThumbnailQueryError::ForbiddenFile);
     }
 
-    Ok((normalized_type, file, static_preview))
+    Ok(ThumbnailQuery {
+        thumbnail_type: normalized_type,
+        file,
+        static_preview,
+        list,
+    })
 }
 
 #[cfg(test)]
@@ -229,24 +249,36 @@ mod tests {
     }
 
     #[test]
-    fn avatar_original_policy_disables_thumbnail_cache() {
+    fn original_images_setting_spares_list_thumbnails() {
         let store = store();
 
-        let response = serve_thumbnail(
-            &store,
-            true,
-            &test_support::request(Method::GET, "/thumbnail?type=avatar&file=a.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
-        );
+        for uri in [
+            "/thumbnail?type=avatar&file=a.png",
+            "/thumbnail?type=avatar&list=true&file=a.png",
+        ] {
+            let response = serve_thumbnail(
+                &store,
+                true,
+                &test_support::request(Method::GET, uri),
+                HostResourceDeliveryCapabilities::new(true),
+            );
+            assert_eq!(response.status(), StatusCode::OK);
+        }
 
-        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             store.requests.lock().expect("lock").as_slice(),
-            &[ThumbnailAssetRequest {
-                kind: ThumbnailKind::Avatar,
-                file: "a.png".to_string(),
-                selection: ThumbnailSelection::Original,
-            }]
+            &[
+                ThumbnailAssetRequest {
+                    kind: ThumbnailKind::Avatar,
+                    file: "a.png".to_string(),
+                    selection: ThumbnailSelection::Original,
+                },
+                ThumbnailAssetRequest {
+                    kind: ThumbnailKind::Avatar,
+                    file: "a.png".to_string(),
+                    selection: ThumbnailSelection::PreferGenerated,
+                },
+            ]
         );
     }
 
@@ -258,7 +290,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::GET, "/thumbnail?type=bg&file=nested%2Fbad.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -273,7 +305,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::GET, "/thumbnail?type=bg&file=a.gif&static=true"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -298,7 +330,7 @@ mod tests {
                 Method::GET,
                 "/thumbnail?type=persona&file=a.gif&static=true",
             ),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -313,7 +345,7 @@ mod tests {
             &store,
             false,
             &test_support::request(Method::HEAD, "/thumbnail?type=avatar&file=a.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);

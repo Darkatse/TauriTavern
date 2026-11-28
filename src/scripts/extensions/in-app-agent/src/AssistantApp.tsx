@@ -8,9 +8,17 @@ import { ErrorNotice, Icon, NewConversationIcon, formatTick, useNow } from './co
 import { ContextMeter } from './ContextMeter';
 import { EffortMenu, withReasoningEffort } from './EffortMenu';
 import { ModelMenu, modelChoice } from './ModelMenu';
-import { Settings } from './Settings';
+import { Settings, type ContextField } from './Settings';
 import { Transcript, toolName } from './Transcript';
 import { History, sessionTitle } from './History';
+
+/** A typed draft belongs to the preset it was typed for. */
+function readContextField(actions: AssistantActions, preset: string, draft: { preset: string; text: string } | null): ContextField {
+    let stored;
+    try { stored = actions.presetContext(preset); } catch (error) { return { error }; }
+    if (!stored) return null;
+    return { preset: stored, text: draft?.preset === preset ? draft.text : String(stored.context / 1000) };
+}
 
 function statusLabel(snapshot: AssistantSnapshot): string {
     const status = snapshot.run?.status;
@@ -61,6 +69,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     const [draft, setDraft] = useState(() => structuredClone(snapshot.profile));
     const [contentWidth, setContentWidth] = useState(actions.contentWidthPercent);
     const [savedContentWidth, setSavedContentWidth] = useState(actions.contentWidthPercent);
+    const [contextDraft, setContextDraft] = useState<{ preset: string; text: string } | null>(null);
     const [settingsVersion, setSettingsVersion] = useState(0);
     const [operation, setOperation] = useState<'save' | null>(null);
     const [error, setError] = useState<unknown>(null);
@@ -124,9 +133,19 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
         return () => clearTimeout(timer);
     }, [notice]);
 
+    const draftPreset = draft.preset.ref?.name ?? '';
+    const contextField = view === 'settings' && options ? readContextField(actions, draftPreset, contextDraft) : null;
+    let contextChange: number | null = null;
+    if (contextField && 'text' in contextField) {
+        const tokens = Math.round(Number(contextField.text) * 1000);
+        if (tokens !== contextField.preset.context) contextChange = tokens;
+    }
+
     async function save(profile: TauriTavernAgentProfileDefinition) {
         setOperation('save'); setError(null);
         try {
+            if (contextChange !== null) await actions.setPresetContext(draftPreset, contextChange);
+            setContextDraft(null);
             if (!snapshot.profileSaved || JSON.stringify(profile) !== JSON.stringify(snapshot.profile)) await controller.saveProfile(profile);
             if (contentWidth !== savedContentWidth) {
                 await actions.saveContentWidth(contentWidth); setSavedContentWidth(contentWidth);
@@ -295,9 +314,10 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                 {optionsError != null && <ErrorNotice error={optionsError} retry={() => { void refreshOptions(); }} />}
                 {options && <Settings key={settingsVersion} draft={draft} setDraft={setDraft} options={options} actions={actions} busy={snapshot.busy || operation === 'save'}
                     contentWidth={contentWidth} onContentWidthChange={setContentWidth}
-                    error={error} dirty={JSON.stringify(draft) !== JSON.stringify(snapshot.profile) || contentWidth !== savedContentWidth}
+                    context={contextField} onContextChange={text => setContextDraft({ preset: draftPreset, text })}
+                    error={error} dirty={JSON.stringify(draft) !== JSON.stringify(snapshot.profile) || contentWidth !== savedContentWidth || contextChange !== null}
                     onSave={() => { void save(draft).catch(() => { /* The settings error stays next to the form. */ }); }}
-                    onCancel={() => { setDraft(structuredClone(snapshot.profile)); setContentWidth(savedContentWidth); setSettingsVersion(value => value + 1); setError(null); setView('chat'); }} refreshOptions={() => { void refreshOptions(); }} />}
+                    onCancel={() => { setDraft(structuredClone(snapshot.profile)); setContentWidth(savedContentWidth); setContextDraft(null); setSettingsVersion(value => value + 1); setError(null); setView('chat'); }} refreshOptions={() => { void refreshOptions(); }} />}
             </div>
         </div>
     </div>;

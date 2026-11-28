@@ -28,6 +28,7 @@
     "src/tauri/main/services/**/*.js",
     "src/tauri/main/ports/**/*.js",
     "src/tauri/main/adapters/**/*.js",
+    "src/tauri/main/routes/**/*.js",
     "src/tauri/main/context.js"
   ]
 }

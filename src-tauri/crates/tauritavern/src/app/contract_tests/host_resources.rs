@@ -10,17 +10,24 @@ use tauri::http::{Method, Request, StatusCode};
 use tokio::fs;
 use tt_adapter_media::FilesystemHostResourceStore;
 
-use super::temp_root;
 use tt_application::services::host_resource_service::{
-    HostResourceDeliveryCapabilities, HostResourceService,
+    HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceResponseBody,
+    HostResourceService,
 };
 
-const DELIVERY: HostResourceDeliveryCapabilities =
-    HostResourceDeliveryCapabilities::new(true, false);
+const DELIVERY: HostResourceDeliveryCapabilities = HostResourceDeliveryCapabilities::new(true);
+
+fn body_bytes(response: &HostResourceResponse) -> &[u8] {
+    match response.body() {
+        HostResourceResponseBody::Bytes(bytes) => bytes,
+        HostResourceResponseBody::Stream(_) => panic!("the body was streamed"),
+    }
+}
 
 #[tokio::test]
 async fn filesystem_host_resources_serve_background_video_range() {
-    let root = temp_root("host-resource-range");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.mp4");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -31,7 +38,7 @@ async fn filesystem_host_resources_serve_background_video_range() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
 
     let request = Request::builder()
@@ -45,7 +52,7 @@ async fn filesystem_host_resources_serve_background_video_range() {
         .expect("serve background range");
 
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-    assert_eq!(response.body(), b"bc");
+    assert_eq!(body_bytes(&response), b"bc");
     assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
     assert_eq!(response.headers()[CONTENT_LENGTH], "2");
     assert_eq!(response.headers()[ACCEPT_RANGES], "bytes");
@@ -69,7 +76,8 @@ async fn filesystem_host_resources_serve_background_video_range() {
 
 #[tokio::test]
 async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
-    let root = temp_root("host-resource-thumbnail");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.gif");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -80,7 +88,7 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -93,13 +101,14 @@ async fn filesystem_host_resources_return_original_for_animated_thumbnail() {
         .expect("serve thumbnail");
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.body(), b"gif");
+    assert_eq!(body_bytes(&response), b"gif");
     assert_eq!(response.headers()[CONTENT_TYPE], "image/gif");
 }
 
 #[tokio::test]
 async fn filesystem_host_resources_generate_required_static_animated_preview() {
-    let root = temp_root("host-resource-static-animated-thumbnail");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.gif");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -113,7 +122,7 @@ async fn filesystem_host_resources_generate_required_static_animated_preview() {
 
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -127,14 +136,15 @@ async fn filesystem_host_resources_generate_required_static_animated_preview() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CONTENT_TYPE], "image/jpeg");
-    assert!(response.body().starts_with(&[0xff, 0xd8]));
+    assert!(body_bytes(&response).starts_with(&[0xff, 0xd8]));
     assert_eq!(response.headers()[CACHE_CONTROL], "private, no-cache");
     assert!(response.headers().contains_key(ETAG));
 }
 
 #[tokio::test]
 async fn generated_thumbnail_revalidation_tracks_source_replacement() {
-    let root = temp_root("host-resource-generated-thumbnail-revalidation");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.png");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -148,7 +158,7 @@ async fn generated_thumbnail_revalidation_tracks_source_replacement() {
         .expect("source mtime");
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -183,7 +193,8 @@ async fn generated_thumbnail_revalidation_tracks_source_replacement() {
 
 #[tokio::test]
 async fn filesystem_host_resources_revalidate_without_reading_stale_content() {
-    let root = temp_root("host-resource-revalidation");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let background = root.join("default-user/backgrounds/a.png");
     fs::create_dir_all(background.parent().expect("background parent"))
         .await
@@ -193,7 +204,7 @@ async fn filesystem_host_resources_revalidate_without_reading_stale_content() {
         .expect("write background");
     let service = HostResourceService::new(
         false,
-        Arc::new(FilesystemHostResourceStore::from_data_root(&root)),
+        Arc::new(FilesystemHostResourceStore::from_data_root(root)),
     );
     let request = Request::builder()
         .method(Method::GET)

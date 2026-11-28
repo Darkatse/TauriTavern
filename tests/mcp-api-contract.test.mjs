@@ -7,18 +7,18 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 async function installHarness(invokeOverride) {
     const calls = [];
-    globalThis.window = { __TAURITAVERN__: { api: {} } };
     const { installMcpApi } = await import(pathToFileURL(path.join(
         REPO_ROOT,
         'src/tauri/main/api/mcp.js',
     )));
-    installMcpApi({
+    const api = {};
+    installMcpApi(api, {
         safeInvoke: invokeOverride ?? (async (command, args) => {
             calls.push({ command, args });
             return { command, args };
         }),
     });
-    return { calls, mcp: globalThis.window.__TAURITAVERN__.api.mcp };
+    return { calls, mcp: api.mcp };
 }
 
 

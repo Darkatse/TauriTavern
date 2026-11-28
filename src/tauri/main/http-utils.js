@@ -98,7 +98,24 @@ export async function getMethod(input, init) {
     return getMethodHint(input, init);
 }
 
+/**
+ * The standard request a native fetch would send: forbidden headers dropped, Content-Type derived from the body.
+ * @param {URL} url
+ * @param {RequestInfo | URL} input
+ * @param {RequestInit} init
+ */
+export function toRequest(url, input, init) {
+    return new Request(isRequestLike(input) ? input : url, init);
+}
+
+/**
+ * Reads a routed request body as its route declares: `json` parses it like Express's JSON and urlencoded
+ * parsers, `text` keeps the text, and `none` leaves the request to the route.
+ */
 export async function readRequestBody(input, init, mode = 'json') {
+    if (mode === 'none') {
+        return null;
+    }
     const decode = text => mode === 'text' ? text : parseMaybeJson(text);
     let rawBody;
 
@@ -156,6 +173,77 @@ export function parseMaybeJson(value) {
 
 export function jsonResponse(data, status = 200, statusText) {
     return new Response(JSON.stringify(data), responseInit(status, 'application/json', statusText));
+}
+
+/**
+ * A response whose body reads fail with the stream's own error, or with the abort reason once `signal` aborts;
+ * Chromium would report either as TypeError('Failed to fetch'). A used or locked body still rejects at once, since
+ * that read never reaches the stream. Piping keeps `signal` attached while a reader holds the body.
+ *
+ * `blob()` never lets the browser build a Blob from the stream: Chromium writes one to disk past 5 MB and reports
+ * a failed write only as TypeError('Failed to fetch').
+ */
+export function streamResponse(stream, init, signal) {
+    const { readable, writable } = new TransformStream();
+    const failure = stream.pipeTo(writable, { signal }).then(() => null, error => error);
+    const response = new Response(readable, init);
+    for (const method of ['arrayBuffer', 'blob', 'bytes', 'formData', 'json', 'text']) {
+        const read = method === 'blob' ? blobFromChunks : response[method];
+        if (typeof read !== 'function') continue;
+        Object.defineProperty(response, method, {
+            configurable: true,
+            value: () => response.bodyUsed || response.body.locked
+                ? read.call(response)
+                : read.call(response).catch(async (error) => { throw (await failure) ?? error; }),
+        });
+    }
+    return response;
+}
+
+/** @this {Response} */
+async function blobFromChunks() {
+    // A partly read, released body is used but unlocked; reject as the native method does.
+    if (this.bodyUsed) return Response.prototype.blob.call(this);
+    const reader = this.body.getReader();
+    const chunks = [];
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        chunks.push(chunk.value);
+    }
+    return new Blob(chunks, { type: this.headers.get('Content-Type') ?? '' });
+}
+
+/**
+ * A JSON response whose `json()` resolves to `data` itself; any other body read serializes it.
+ * `data` must be JSON-compatible and no longer referenced by the handler.
+ */
+export function ownedJsonResponse(data, status = 200, statusText) {
+    let value = data;
+    let cloned = false;
+    const body = new ReadableStream({
+        pull(controller) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+            controller.close();
+        },
+    }, { highWaterMark: 0 });
+    const response = new Response(body, responseInit(status, 'application/json', statusText));
+    // Clones share the body bytes, so a cloned response parses like any other.
+    response.clone = () => {
+        cloned = true;
+        return Response.prototype.clone.call(response);
+    };
+    response.json = async () => {
+        if (cloned) {
+            return Response.prototype.json.call(response);
+        }
+        if (response.bodyUsed) {
+            throw new TypeError('Body has already been consumed.');
+        }
+        await response.body.cancel();
+        const result = value;
+        value = undefined;
+        return result;
+    };
+    return response;
 }
 
 export function safeResponseStatusText(value) {

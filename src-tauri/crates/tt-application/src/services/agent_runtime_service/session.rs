@@ -138,7 +138,6 @@ impl AgentRuntimeService {
             .read_session_messages(
                 &session.id,
                 AgentSessionMessageReadQuery {
-                    after_seq: None,
                     before_seq: dto.before_seq,
                     limit: limit + 1,
                 },
@@ -365,21 +364,32 @@ impl AgentRuntimeService {
         Ok(entry)
     }
 
-    pub(super) async fn read_session_history(
+    /// Reads the history back from its end until `enough` holds for the messages read, or the history begins.
+    pub(super) async fn read_session_tail(
         &self,
         session_id: &str,
+        enough: impl Fn(&[AgentSessionMessage]) -> bool,
     ) -> Result<Vec<AgentSessionMessage>, ApplicationError> {
-        Ok(self
-            .session_repository
-            .read_session_messages(
-                session_id,
-                AgentSessionMessageReadQuery {
-                    after_seq: Some(0),
-                    before_seq: None,
-                    limit: usize::MAX,
-                },
-            )
-            .await?)
+        let mut entries: Vec<AgentSessionMessage> = Vec::new();
+        let mut limit = 64;
+        loop {
+            let mut page = self
+                .session_repository
+                .read_session_messages(
+                    session_id,
+                    AgentSessionMessageReadQuery {
+                        before_seq: entries.first().map(|entry| entry.seq),
+                        limit,
+                    },
+                )
+                .await?;
+            page.append(&mut entries);
+            entries = page;
+            if entries.first().is_none_or(|entry| entry.seq == 1) || enough(&entries) {
+                return Ok(entries);
+            }
+            limit *= 2;
+        }
     }
 
     pub(super) async fn resolve_session_skills(

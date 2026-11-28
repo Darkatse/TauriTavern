@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::cell::RefCell;
+use std::fmt;
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -14,6 +15,8 @@ use reqwest::header::{
 };
 use reqwest::redirect::Policy;
 use reqwest::{Method, StatusCode, Url};
+use tt_adapter_http::upstream;
+use tt_domain::models::upstream_failure::UpstreamFailure;
 
 const MAX_INITIAL_REDIRECTS: usize = 5;
 const UNBOUNDED_POST_ERROR: &str =
@@ -74,10 +77,20 @@ struct PendingRequest {
 #[derive(Clone)]
 struct IoFailure {
     kind: io::ErrorKind,
-    message: String,
+    detail: FailureDetail,
+}
+
+#[derive(Clone)]
+enum FailureDetail {
+    Message(String),
+    Upstream(UpstreamFailure),
 }
 
 struct SafeResponseReader(Response);
+
+/// `io::Error::source()` skips its own payload, so the failure is this payload's source.
+#[derive(Debug)]
+struct TransportFailure(UpstreamFailure);
 
 impl GitHttp {
     pub(super) fn new(builder: ClientBuilder) -> Result<Self, HttpError> {
@@ -388,34 +401,69 @@ impl IoFailure {
     fn new(kind: io::ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
-            message: message.into(),
+            detail: FailureDetail::Message(message.into()),
         }
     }
 
     fn from_reqwest(error: reqwest::Error) -> Self {
-        if error.is_timeout() {
-            Self::new(io::ErrorKind::TimedOut, "Git HTTP request timed out")
+        let kind = if error.is_timeout() {
+            io::ErrorKind::TimedOut
         } else if error.is_connect() {
-            Self::new(
-                io::ErrorKind::ConnectionAborted,
-                "Git HTTP connection failed",
-            )
+            io::ErrorKind::ConnectionAborted
         } else {
-            Self::new(io::ErrorKind::Other, "Git HTTP request failed")
+            io::ErrorKind::Other
+        };
+        Self {
+            kind,
+            detail: FailureDetail::Upstream(upstream::request_failure(error)),
         }
     }
 
     fn to_io_error(&self) -> io::Error {
-        io::Error::new(self.kind, self.message.clone())
+        match &self.detail {
+            FailureDetail::Message(message) => io::Error::new(self.kind, message.clone()),
+            FailureDetail::Upstream(failure) => {
+                io::Error::new(self.kind, TransportFailure(failure.clone()))
+            }
+        }
     }
 }
 
 impl Read for SafeResponseReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        self.0
-            .read(buffer)
-            .map_err(|error| io::Error::new(error.kind(), "Git HTTP response body read failed"))
+        self.0.read(buffer).map_err(|error| {
+            let kind = error.kind();
+            let detail = match error
+                .into_inner()
+                .map(|inner| inner.downcast::<reqwest::Error>())
+            {
+                Some(Ok(error)) => {
+                    FailureDetail::Upstream(upstream::body_failure(*error, self.0.url()))
+                }
+                _ => FailureDetail::Message("Git HTTP response body read failed".to_string()),
+            };
+            IoFailure { kind, detail }.to_io_error()
+        })
     }
+}
+
+impl fmt::Display for TransportFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl std::error::Error for TransportFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+pub(super) fn carried_upstream_failure<'a>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a UpstreamFailure> {
+    std::iter::successors(Some(error), |error| error.source())
+        .find_map(|error| error.downcast_ref())
 }
 
 fn execute_request(

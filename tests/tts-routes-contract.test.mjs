@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { getSillyTavernLocale } from '../src/tauri/main/adapters/st/sillytavern-i18n.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerTtsRoutes } from '../src/tauri/main/routes/tts-routes.js';
 
@@ -55,6 +56,7 @@ test('grok tts route delegates generation to backend command', async () => {
             args: {
                 path: 'grok/generate',
                 body,
+                locale: getSillyTavernLocale(),
             },
         },
     ]);

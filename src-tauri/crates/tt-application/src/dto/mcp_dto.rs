@@ -226,6 +226,11 @@ pub enum McpKnownResponseDto {
         #[serde(skip_serializing_if = "Option::is_none")]
         data_json: Option<String>,
     },
+    Rejected {
+        http_status: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_after: Option<String>,
+    },
     UnsupportedResponse {
         response_type: String,
         message: String,

@@ -49,3 +49,11 @@ export async function confirmAiNotificationPermissionRationale() {
     return result === POPUP_RESULT.AFFIRMATIVE;
 }
 
+export function showAiNotificationsOffNotice() {
+    /** @type {any} */ (window).toastr.info(
+        translateSillyTavern(
+            'tauritavern_notification_permission_declined_body',
+            'OK. You can turn notifications on in TauriTavern Settings.',
+        ),
+    );
+}

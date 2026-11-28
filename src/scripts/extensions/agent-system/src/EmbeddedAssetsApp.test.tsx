@@ -1,5 +1,5 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from '@rstest/core';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 
 import { EmbeddedAssetsApp } from './EmbeddedAssetsApp';
@@ -145,10 +145,6 @@ function createWorld(options: {
         : Promise.resolve(initial);
     return { actions, initialLoad, world };
 }
-
-afterEach(() => {
-    cleanup();
-});
 
 test('shows a loading state until the initial load resolves', async () => {
     const pending = deferredInitial();

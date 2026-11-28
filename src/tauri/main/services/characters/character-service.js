@@ -1,28 +1,25 @@
 // @ts-check
 
+import { commandErrorStatus } from '../../../../scripts/util/command-error-utils.js';
 import {
-    assertCharacterAvatarFileName,
-    characterAvatarFileNameFromStem,
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from './character-identity.js';
 
 /**
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
+ * @typedef {{ avatar: string; name: string }} CharacterIdentity
  */
 
 /**
  * @param {{ safeInvoke: SafeInvokeFn }} deps
  */
 export function createCharacterService({ safeInvoke }) {
-    /** @type {any[]} */
-    let characterCache = [];
-    /** @type {Map<string, any>} */
-    let characterByAvatar = new Map();
-    /** @type {Map<string, any>} */
-    let characterByDisplayName = new Map();
-    /** @type {Map<string, any>} */
-    let characterById = new Map();
+    // The index holds identities only; card data is always read from the backend.
+    /** @type {Map<string, CharacterIdentity>} */
+    const identityByName = new Map();
+    /** @type {Map<string, CharacterIdentity>} */
+    const identityById = new Map();
 
     /** @param {any} input */
     function normalizeExtensions(input) {
@@ -212,12 +209,6 @@ export function createCharacterService({ safeInvoke }) {
             && Object.prototype.hasOwnProperty.call(body, fieldName));
     }
 
-    /** @param {unknown} error */
-    function isNotFoundError(error) {
-        const message = error instanceof Error ? error.message : String(error || '');
-        return /^\s*(not found:|entity not found:)/i.test(message);
-    }
-
     /** @param {any} character */
     function getCharacterId(character) {
         if (!character || typeof character !== 'object') {
@@ -242,60 +233,33 @@ export function createCharacterService({ safeInvoke }) {
         return null;
     }
 
-    /** @param {any} characters */
-    function updateCharacterCache(characters) {
-        characterCache = Array.isArray(characters) ? characters : [];
-        characterByAvatar = new Map();
-        characterByDisplayName = new Map();
-        characterById = new Map();
-
-        for (const character of characterCache) {
-            if (character?.avatar) {
-                const rawAvatar = String(character.avatar);
-                characterByAvatar.set(rawAvatar, character);
-            }
-
-            if (character?.name) {
-                characterByDisplayName.set(String(character.name), character);
-            }
-
-            const characterId = getCharacterId(character);
-            if (characterId) {
-                characterById.set(characterId, character);
-            }
+    /** @param {any} character */
+    function indexCharacter(character) {
+        /** @type {CharacterIdentity} */
+        const identity = {
+            avatar: character?.avatar ? String(character.avatar) : '',
+            name: character?.name ? String(character.name) : '',
+        };
+        if (identity.name) {
+            identityByName.set(identity.name, identity);
+        }
+        const characterId = getCharacterId(identity);
+        if (characterId) {
+            identityById.set(characterId, identity);
         }
     }
 
     function invalidateCharacterCache() {
-        updateCharacterCache([]);
+        identityByName.clear();
+        identityById.clear();
     }
 
-    /** @param {boolean} requestShallow */
-    function canReuseCharacterCache(requestShallow) {
-        if (characterCache.length === 0) {
-            return false;
-        }
-
-        if (requestShallow) {
-            return true;
-        }
-
-        return characterCache.every((character) => !Boolean(character?.shallow));
-    }
-
-    /**
-     * @param {{ shallow?: boolean; forceRefresh?: boolean } | undefined} options
-     */
-    async function getAllCharacters(options = {}) {
-        const shallow = options.shallow ?? true;
-        const forceRefresh = options.forceRefresh ?? false;
-        if (!forceRefresh && canReuseCharacterCache(shallow)) {
-            return characterCache;
-        }
-
-        const characters = await safeInvoke('get_all_characters', { shallow });
+    /** Reads the shallow character list and indexes it. */
+    async function getAllCharacters() {
+        const characters = await safeInvoke('get_all_characters', { shallow: true });
         const normalized = Array.isArray(characters) ? characters.map(normalizeCharacter) : [];
-        updateCharacterCache(normalized);
+        invalidateCharacterCache();
+        normalized.forEach(indexCharacter);
         return normalized;
     }
 
@@ -303,48 +267,17 @@ export function createCharacterService({ safeInvoke }) {
      * @param {{ avatar?: any; fallbackName?: string } | undefined} options
      */
     function resolveCachedCharacterId(options = {}) {
-        const avatar = options.avatar;
-        const fallbackName = options.fallbackName;
-        const avatarInternalId = getOptionalAvatarInternalId(avatar);
-
-        if (hasCharacterAvatarIdentity(avatar)) {
-            if (!avatarInternalId) {
-                return null;
-            }
-
-            const fromRawAvatar = characterByAvatar.get(String(avatar));
-            const fromRawAvatarId = getCharacterId(fromRawAvatar);
-            if (fromRawAvatarId) {
-                return fromRawAvatarId;
-            }
-
-            const fromInternalId = characterById.get(avatarInternalId);
-            const fromInternalIdValue = getCharacterId(fromInternalId);
-            if (fromInternalIdValue) {
-                return fromInternalIdValue;
-            }
-
-            return null;
+        if (hasCharacterAvatarIdentity(options.avatar)) {
+            const avatarInternalId = getOptionalAvatarInternalId(options.avatar);
+            return avatarInternalId && identityById.has(avatarInternalId) ? avatarInternalId : null;
         }
 
-        const fallback = String(fallbackName || '').trim();
+        const fallback = String(options.fallbackName || '').trim();
         if (!fallback) {
             return null;
         }
 
-        const cachedByName = characterByDisplayName.get(fallback);
-        const cachedByNameId = getCharacterId(cachedByName);
-        if (cachedByNameId) {
-            return cachedByNameId;
-        }
-
-        const cachedByInternalId = characterById.get(fallback);
-        const cachedByInternalIdValue = getCharacterId(cachedByInternalId);
-        if (cachedByInternalIdValue) {
-            return cachedByInternalIdValue;
-        }
-
-        return null;
+        return getCharacterId(identityByName.get(fallback)) ?? (identityById.has(fallback) ? fallback : null);
     }
 
     /**
@@ -368,7 +301,7 @@ export function createCharacterService({ safeInvoke }) {
             return cached;
         }
 
-        await getAllCharacters({ shallow: true, forceRefresh: true });
+        await getAllCharacters();
         return resolveCachedCharacterId(options);
     }
 
@@ -396,30 +329,14 @@ export function createCharacterService({ safeInvoke }) {
         try {
             character = await safeInvoke('get_character', { name: characterId });
         } catch (error) {
-            if (isNotFoundError(error)) {
+            if (commandErrorStatus(error) === 404) {
                 return null;
             }
             throw error;
         }
 
         const normalized = normalizeCharacter(character);
-        const normalizedAvatar = normalized?.avatar ? String(normalized.avatar) : '';
-        if (normalizedAvatar) {
-            const index = characterCache.findIndex((item) => String(item?.avatar || '') === normalizedAvatar);
-            if (index >= 0) {
-                characterCache[index] = normalized;
-            }
-        }
-        if (normalized?.avatar) {
-            characterByAvatar.set(String(normalized.avatar), normalized);
-        }
-        if (normalized?.name) {
-            characterByDisplayName.set(String(normalized.name), normalized);
-        }
-        const normalizedCharacterId = getCharacterId(normalized);
-        if (normalizedCharacterId) {
-            characterById.set(normalizedCharacterId, normalized);
-        }
+        indexCharacter(normalized);
         return normalized;
     }
 
@@ -442,42 +359,6 @@ export function createCharacterService({ safeInvoke }) {
         return readCharacterById(characterId);
     }
 
-    /** @param {any} characterId */
-    function findAvatarByCharacterId(characterId) {
-        const key = String(characterId || '');
-        if (!key) {
-            return '';
-        }
-
-        const byDisplayName = characterByDisplayName.get(key);
-        if (byDisplayName?.avatar) {
-            return byDisplayName.avatar;
-        }
-
-        const byInternalId = characterById.get(key);
-        if (byInternalId?.avatar) {
-            return byInternalId.avatar;
-        }
-
-        try {
-            const avatarFileName = assertCharacterAvatarFileName(key, 'characterId');
-            const byAvatar = characterByAvatar.get(avatarFileName);
-            if (byAvatar?.avatar) {
-                return byAvatar.avatar;
-            }
-        } catch {
-            // characterId is normally a storage stem; exact avatar filenames are accepted for callers that already have one.
-        }
-
-        const pngName = characterAvatarFileNameFromStem(key);
-        const byPng = characterByAvatar.get(pngName);
-        if (byPng?.avatar) {
-            return byPng.avatar;
-        }
-
-        return pngName;
-    }
-
     return {
         normalizeCharacter,
         normalizeExtensions,
@@ -486,6 +367,5 @@ export function createCharacterService({ safeInvoke }) {
         resolveCharacterId,
         resolveExistingCharacterId,
         getSingleCharacter,
-        findAvatarByCharacterId,
     };
 }

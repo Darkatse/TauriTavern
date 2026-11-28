@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::commands::helpers::{
     log_command, log_user_visible_error, map_command_error,
 };
@@ -14,7 +15,6 @@ use tt_application::dto::character_dto::{
     DuplicateCharacterDto, ExportCharacterContentDto, GetCharacterChatsDto, ImportCharacterDto,
     ImportCharacterResultDto, MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
     ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
-    UpdateCharacterDto,
 };
 use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
@@ -58,7 +58,7 @@ pub async fn create_character(
     dto: CreateCharacterDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CharacterDto, CommandError> {
-    log_command(format!("create_character {}", dto.name));
+    log_command("create_character");
 
     app_state
         .services
@@ -70,13 +70,14 @@ pub async fn create_character(
 
 #[tauri::command]
 pub async fn create_character_with_avatar(
+    app: AppHandle,
     dto: CreateWithAvatarDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CreateCharacterWithAvatarResultDto, CommandError> {
-    log_command(format!(
-        "create_character_with_avatar {}",
-        dto.character.name
-    ));
+    log_command("create_character_with_avatar");
+    if let Some(path) = &dto.avatar_path {
+        validate_staged_path(&app, path).await?;
+    }
 
     app_state
         .services
@@ -87,28 +88,16 @@ pub async fn create_character_with_avatar(
 }
 
 #[tauri::command]
-pub async fn update_character(
-    name: String,
-    dto: UpdateCharacterDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
-    log_command(format!("update_character {}", name));
-
-    app_state
-        .services
-        .character_service
-        .update_character(&name, dto)
-        .await
-        .map_err(map_command_error("Failed to update character"))
-}
-
-#[tauri::command]
 pub async fn update_character_card_data(
+    app: AppHandle,
     name: String,
     dto: UpdateCharacterCardDataDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CharacterDto, CommandError> {
     log_command(format!("update_character_card_data {}", name));
+    if let Some(path) = &dto.avatar_path {
+        validate_staged_path(&app, path).await?;
+    }
 
     app_state
         .services
@@ -280,10 +269,12 @@ pub async fn duplicate_character(
 
 #[tauri::command]
 pub async fn import_character(
+    app: AppHandle,
     dto: ImportCharacterDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ImportCharacterResultDto, CommandError> {
     log_command(format!("import_character from {}", dto.file_path));
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services
@@ -295,6 +286,7 @@ pub async fn import_character(
 
 #[tauri::command]
 pub async fn replace_character(
+    app: AppHandle,
     dto: ReplaceCharacterDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<ImportCharacterResultDto, CommandError> {
@@ -302,6 +294,7 @@ pub async fn replace_character(
         "replace_character {} from {}",
         dto.name, dto.file_path
     ));
+    validate_staged_path(&app, &dto.file_path).await?;
 
     app_state
         .services
@@ -332,10 +325,12 @@ pub async fn export_character_content(
 
 #[tauri::command]
 pub async fn update_avatar(
+    app: AppHandle,
     dto: UpdateAvatarDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command(format!("update_avatar for {}", dto.name));
+    validate_staged_path(&app, &dto.avatar_path).await?;
 
     app_state
         .services

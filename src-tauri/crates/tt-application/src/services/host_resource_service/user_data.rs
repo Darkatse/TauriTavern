@@ -2,12 +2,12 @@ use super::range::{RangeHeaderError, parse_single_range_header};
 use super::response::{self, RepresentationMetadata, RetrievalDecision};
 use super::{HostResourceDeliveryCapabilities, HostResourceResponse};
 use crate::client_asset_paths::{
-    UserDataAssetKind, UserDataPathError, parse_user_data_asset_request_path,
+    UserDataAssetRequestPath, UserDataPathError, parse_user_data_asset_request_path,
 };
 use http::header::RANGE;
 use http::{Method, Request, StatusCode};
 use tt_ports::host_resource::{
-    HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError,
+    HostResourceAssetStore, HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
 };
 
 const USER_DATA_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
@@ -57,14 +57,10 @@ pub(super) fn serve_user_data_asset(
             return response::with_accept_ranges(response::head(&metadata));
         }
         RetrievalDecision::Full => {
-            return read_full_response(opened, &metadata);
+            return full_response(&parsed, opened, &metadata, delivery);
         }
         RetrievalDecision::Continue => {}
     }
-
-    let webview_reapplies_background_video_range = delivery.webview_reapplies_range_semantics()
-        && parsed.kind == UserDataAssetKind::Background
-        && opened.metadata.content_type.starts_with("video/");
 
     let mut range_headers = request.headers().get_all(RANGE).iter();
     if let Some(range_header) = range_headers.next() {
@@ -75,7 +71,7 @@ pub(super) fn serve_user_data_asset(
             );
         }
         if !response::if_range_allows_range(request, &metadata) {
-            return read_full_response(opened, &metadata);
+            return full_response(&parsed, opened, &metadata, delivery);
         }
 
         let header_value = match range_header.to_str() {
@@ -95,37 +91,11 @@ pub(super) fn serve_user_data_asset(
             }
         };
 
-        if webview_reapplies_background_video_range && range.start() != 0 {
-            return match opened.read(None) {
-                Ok(bytes) => {
-                    let response = response::partial(
-                        &metadata,
-                        bytes,
-                        format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
-                        range.byte_len(),
-                    );
-                    tracing::debug!(
-                        "User data asset Android video range workaround hit: {}",
-                        parsed.relative_path_display
-                    );
-                    response::with_accept_ranges(response)
-                }
-                Err(error) => response::with_accept_ranges(store_error_response(error)),
-            };
-        }
-
-        if usize::try_from(range.byte_len()).is_err() {
-            return response::with_accept_ranges(response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Range is too large to serve",
-            ));
-        }
-
-        return match opened.read(Some(range)) {
-            Ok(bytes) => {
+        return match response::body(opened, Some(range), delivery) {
+            Ok(body) => {
                 let response = response::partial(
                     &metadata,
-                    bytes,
+                    body,
                     format!("bytes {}-{}/{}", range.start(), range.end(), total_size),
                     range.byte_len(),
                 );
@@ -141,25 +111,24 @@ pub(super) fn serve_user_data_asset(
         };
     }
 
-    match opened.read(None) {
-        Ok(bytes) => {
+    full_response(&parsed, opened, &metadata, delivery)
+}
+
+fn full_response(
+    parsed: &UserDataAssetRequestPath,
+    opened: OpenedHostResource,
+    metadata: &RepresentationMetadata,
+    delivery: HostResourceDeliveryCapabilities,
+) -> HostResourceResponse {
+    match response::body(opened, None, delivery) {
+        Ok(body) => {
             tracing::debug!(
                 "User data asset hit: {:?}/{}",
                 parsed.kind,
                 parsed.relative_path_display
             );
-            response::with_accept_ranges(response::ok(&metadata, bytes))
+            response::with_accept_ranges(response::ok(metadata, body))
         }
-        Err(error) => response::with_accept_ranges(store_error_response(error)),
-    }
-}
-
-fn read_full_response(
-    opened: tt_ports::host_resource::OpenedHostResource,
-    metadata: &RepresentationMetadata,
-) -> HostResourceResponse {
-    match opened.read(None) {
-        Ok(bytes) => response::with_accept_ranges(response::ok(metadata, bytes)),
         Err(error) => response::with_accept_ranges(store_error_response(error)),
     }
 }
@@ -173,7 +142,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use http::header::{CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
+    use http::header::{CONTENT_RANGE, ETAG, IF_RANGE, RANGE};
     use tt_ports::host_resource::{
         HostResourceSourceRequest, HostResourceStoreError, OpenedHostResource,
     };
@@ -188,20 +157,12 @@ mod tests {
     impl HostResourceAssetStore for Store {
         fn open(
             &self,
-            request: HostResourceSourceRequest<'_>,
+            _request: HostResourceSourceRequest<'_>,
         ) -> Result<OpenedHostResource, HostResourceStoreError> {
             self.opens.fetch_add(1, Ordering::Relaxed);
-            let HostResourceSourceRequest::UserData { kind, .. } = request else {
-                unreachable!()
-            };
-            let mime_type = if kind == UserDataAssetKind::Background {
-                "video/mp4"
-            } else {
-                "application/octet-stream"
-            };
             Ok(test_support::opened(
                 b"abcd",
-                mime_type,
+                "video/mp4",
                 Arc::new(AtomicUsize::new(0)),
             ))
         }
@@ -223,11 +184,11 @@ mod tests {
         let response = serve_user_data_asset(
             &store(),
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.body(), b"bc");
+        assert_eq!(test_support::body_bytes(&response), b"bc");
         assert_eq!(response.headers()[CONTENT_RANGE], "bytes 1-2/4");
     }
 
@@ -244,29 +205,11 @@ mod tests {
         let response = serve_user_data_asset(
             &store(),
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(response.headers()[CONTENT_RANGE], "bytes */4");
-    }
-
-    #[test]
-    fn android_background_video_range_returns_full_body_with_range_headers() {
-        let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
-        request
-            .headers_mut()
-            .insert(RANGE, "bytes=1-2".parse().expect("range"));
-
-        let response = serve_user_data_asset(
-            &store(),
-            &request,
-            HostResourceDeliveryCapabilities::new(false, true),
-        );
-
-        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.body(), b"abcd");
-        assert_eq!(response.headers()[CONTENT_LENGTH], "2");
     }
 
     #[test]
@@ -275,7 +218,7 @@ mod tests {
         let first = serve_user_data_asset(
             &store,
             &test_support::request(Method::GET, "/backgrounds/a.mp4"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
         let mut request = test_support::request(Method::GET, "/backgrounds/a.mp4");
         request
@@ -288,11 +231,11 @@ mod tests {
         let response = serve_user_data_asset(
             &store,
             &request,
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.body(), b"abcd");
+        assert_eq!(test_support::body_bytes(&response), b"abcd");
     }
 
     #[test]
@@ -301,7 +244,7 @@ mod tests {
         let response = serve_user_data_asset(
             &store,
             &test_support::request(Method::GET, "/backgrounds/%2Fbad.png"),
-            HostResourceDeliveryCapabilities::new(true, false),
+            HostResourceDeliveryCapabilities::new(true),
         );
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);

@@ -2,6 +2,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::{bytes_response, response_content_type, send_with_retry, upstream_error_response};
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{GrokOutputFormat, TtsRouteResponse};
 
@@ -12,7 +13,7 @@ pub(super) async fn voices(
     client: reqwest::Client,
     api_key: String,
 ) -> Result<TtsRouteResponse, DomainError> {
-    let response = send_with_retry("Grok voice list request", || {
+    let response = send_with_retry(|| {
         client
             .get(VOICES_URL)
             .bearer_auth(&api_key)
@@ -25,9 +26,7 @@ pub(super) async fn voices(
     }
 
     let content_type = response_content_type(&response, "application/json");
-    let bytes = response.bytes().await.map_err(|error| {
-        DomainError::InternalError(format!("Grok voice list response read failed: {error}"))
-    })?;
+    let bytes = upstream::read_body(response).await?;
 
     if let Err(error) = serde_json::from_slice::<Value>(&bytes) {
         return Ok(TtsRouteResponse::text(
@@ -58,7 +57,7 @@ pub(super) async fn generate(
         },
     });
 
-    let response = send_with_retry("Grok TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(TTS_URL)
             .bearer_auth(&api_key)

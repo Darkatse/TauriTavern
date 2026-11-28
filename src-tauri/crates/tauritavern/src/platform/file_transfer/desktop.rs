@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::{Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
@@ -34,6 +34,38 @@ pub(super) async fn pick(
                 name,
                 source: PickedSource::UserPath(path),
             })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+pub(super) async fn pick_directories(
+    window: &WebviewWindow,
+    multiple: bool,
+) -> Result<Option<Vec<PathBuf>>, DomainError> {
+    let dialog = window.dialog().file().set_parent(window);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if multiple {
+        dialog.pick_folders(move |folders| {
+            let _ = sender.send(folders);
+        });
+    } else {
+        dialog.pick_folder(move |folder| {
+            let _ = sender.send(folder.map(|folder| vec![folder]));
+        });
+    }
+    let Some(folders) = receiver.await.map_err(|error| {
+        DomainError::InternalError(format!("Folder picker did not complete: {error}"))
+    })?
+    else {
+        return Ok(None);
+    };
+    folders
+        .into_iter()
+        .map(|folder| {
+            folder
+                .into_path()
+                .map_err(|error| DomainError::InvalidData(error.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()
         .map(Some)

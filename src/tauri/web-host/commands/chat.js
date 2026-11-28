@@ -9,16 +9,21 @@ export function readChatRecords({ json }, address) {
     throw new Error(`Invalid chat payload for ${address.avatar_url}/${address.file_name}: expected records or {}`);
 }
 
+/** The native chat read chunk. */
+const READ_CHUNK_BYTES = 4 * 1024 * 1024;
+
 /** @param {ReturnType<import('../backend.js').createBackend>} backend @param {ReturnType<import('../protocols/resources.js').createResources>} resources @returns {import('../install.js').CommandHandlers} */
 export function createChatCommands(backend, resources) {
     return {
-        get_chat_payload_path: ({ characterName, fileName, allowNotFound }) => {
-            const payload = readChatRecords(backend, { avatar_url: characterAvatarFileNameFromStem(characterName), file_name: fileName });
+        open_chat_payload_jsonl: ({ target, allowNotFound }) => {
+            if (target.kind !== 'character') throw { Unsupported: 'Web Host supports character chat reads' };
+            const { characterId, fileName } = target;
+            const payload = readChatRecords(backend, { avatar_url: characterAvatarFileNameFromStem(characterId), file_name: fileName });
             if (payload !== null) {
-                return resources.path(new TextEncoder().encode(payload.map(record => JSON.stringify(record)).join('\n')));
+                return resources.open(new TextEncoder().encode(payload.map(record => JSON.stringify(record)).join('\n')), READ_CHUNK_BYTES);
             }
-            if (allowNotFound) return '';
-            throw { NotFound: `Chat not found: ${characterName}/${fileName}` };
+            if (allowNotFound) return null;
+            throw { NotFound: `Chat not found: ${characterId}/${fileName}` };
         },
     };
 }

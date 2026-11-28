@@ -254,10 +254,8 @@ class EnvBuilder {
     }
 
     /** Session inputs have no current character or chat. Only user-wide settings are shared. */
-    createSessionContext(messages, { sessionId = '', variables } = {}) {
+    createSessionContext({ messageCount, lastMessage, lastUserMessage, lastAssistantMessage }, { sessionId = '', variables } = {}) {
         const text = message => (message?.parts ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
-        const lastUser = messages.findLast(message => message.role === 'user');
-        const lastChar = messages.findLast(message => message.role === 'assistant');
         const settings = structuredClone(readSettings());
         settings.isGroup = false;
         settings.groupNames = [];
@@ -269,14 +267,14 @@ class EnvBuilder {
             character: { ...Object.fromEntries(characterFields.map(([key]) => [key, key === 'alternateGreetings' ? [] : ''])), groupCards: null, personaPosition: 0 },
             system: { model: '', api: 'openai', maxPrompt: 0, maxContext: 0, maxResponse: 0 },
             chat: {
-                lastMessage: text(messages.at(-1)), lastUserMessage: text(lastUser), lastCharMessage: text(lastChar),
-                lastMessageId: messages.length ? messages.length - 1 : '',
+                lastMessage: text(lastMessage), lastUserMessage: text(lastUserMessage), lastCharMessage: text(lastAssistantMessage),
+                lastMessageId: messageCount ? messageCount - 1 : '',
                 lastSwipeId: '', currentSwipeId: '', firstIncludedMessageId: null, firstDisplayedMessageId: null,
-                allChatRange: messages.length ? `0-${messages.length - 1}` : '',
+                allChatRange: messageCount ? `0-${messageCount - 1}` : '',
                 idHash: getStringHash(sessionId), pickRerollSeed: null, idleDuration: 'just now',
             },
             settings,
-            state: { input: text(lastUser), isMobile: isMobile(), lastGenerationType: 'normal', extensions: readExtensions(), ephemeralStoppingStrings: [] },
+            state: { input: text(lastUserMessage), isMobile: isMobile(), lastGenerationType: 'normal', extensions: readExtensions(), ephemeralStoppingStrings: [] },
             now: Date.now(),
             variables: structuredClone(variables ?? { local: {}, global: extension_settings.variables?.global ?? {} }),
             extensionPrompts: {}, bannedWords: [], extra: {},

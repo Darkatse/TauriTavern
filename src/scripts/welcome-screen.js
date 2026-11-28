@@ -32,6 +32,7 @@ import {
     this_chid,
     unshallowCharacter,
 } from '../script.js';
+import { getListThumbnailUrl } from './tauri/list-thumbnails.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { deleteGroupChat, getGroupAvatar, groups, is_group_generating, openGroupById } from './group-chats.js';
@@ -774,7 +775,7 @@ async function getRecentChats() {
         chat.date_short = chatTimestamp.format('l');
         chat.date_long = chatTimestamp.format('LL LT');
         chat.chat_name = chat.file_name.replace('.jsonl', '');
-        chat.char_thumbnail = character ? getThumbnailUrl('avatar', character.avatar) : system_avatar;
+        chat.char_thumbnail = character ? getListThumbnailUrl('avatar', character.avatar) : system_avatar;
         chat.is_group = !!group;
         chat.hidden = index >= settings.collapsedDisplayed;
         chat.avatar = chat.avatar || '';

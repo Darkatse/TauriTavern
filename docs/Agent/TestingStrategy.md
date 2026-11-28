@@ -8,8 +8,8 @@
 | --- | --- |
 | Run、Session 连续性、目录、协作、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
 | Session 分组、计数与压缩 | [session_context.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session_context.rs) 与 [Session contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/session.rs) |
-| Session 历史放置与深度注入 | [PromptManager 浏览器测试](../../tests/browser/agent-session.test.mjs) |
-| 宏输入捕获与请求参数 | [SDK 捕获](../../tests/browser/agent-macro-capture.test.mjs)、[提示词组装](../../tests/browser/additional-parameters.test.mjs) |
+| Session 历史放置与深度注入 | [PromptManager 浏览器测试](../../tests/webview/agent-session.test.mjs) |
+| 宏输入捕获与请求参数 | [SDK 捕获](../../tests/webview/agent-macro-capture.test.mjs)、[提示词组装](../../tests/webview/additional-parameters.test.mjs) |
 | 文件与持久版本 | [FileAgentRepository tests](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests.rs)、[文件语义闭环](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests/workspace_fs.rs) |
 | 模型协议与续接 | [gateway tests](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/tests.rs) |
 | Host API | [agent-api-contract.test.mjs](../../tests/agent-api-contract.test.mjs) |
@@ -30,7 +30,7 @@
 cargo test --manifest-path src-tauri/Cargo.toml -p tauritavern contract_tests::agent_runtime
 cargo test --manifest-path src-tauri/Cargo.toml -p tt-adapter-workspace-shell
 node --test tests/agent-api-contract.test.mjs
-pnpm run test:browser
+pnpm run test:dom
 ```
 
 完成改动后运行仓库检查：

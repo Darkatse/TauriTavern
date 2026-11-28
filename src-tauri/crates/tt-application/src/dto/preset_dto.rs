@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tt_domain::models::preset::{Preset, PresetType};
+use tt_domain::json_document::JsonDocument;
 
 /// DTO for saving a preset
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,8 +9,8 @@ pub struct SavePresetDto {
     /// API ID (e.g., "openai", "kobold", "novel")
     #[serde(rename = "apiId")]
     pub api_id: String,
-    /// Preset data as JSON
-    pub preset: Value,
+    /// The preset document as JSON text
+    pub preset_json: String,
 }
 
 /// DTO for deleting a preset
@@ -42,21 +41,13 @@ pub struct SavePresetResponseDto {
 }
 
 /// DTO for preset restore response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RestorePresetResponseDto {
     /// Whether this is a default preset
     #[serde(rename = "isDefault")]
     pub is_default: bool,
     /// Preset data
-    pub preset: Value,
-}
-
-/// DTO for OpenAI preset save (specialized endpoint)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveOpenAIPresetDto {
-    /// Preset data as JSON
-    #[serde(flatten)]
-    pub preset: Value,
+    pub preset: JsonDocument,
 }
 
 /// DTO for OpenAI preset delete (specialized endpoint)
@@ -77,17 +68,6 @@ pub struct DeleteOpenAIPresetResponseDto {
     pub error: Option<bool>,
 }
 
-impl TryFrom<SavePresetDto> for Preset {
-    type Error = String;
-
-    fn try_from(dto: SavePresetDto) -> Result<Self, Self::Error> {
-        let preset_type = PresetType::from_api_id(&dto.api_id)
-            .ok_or_else(|| format!("Unknown API ID: {}", dto.api_id))?;
-
-        Ok(Preset::new(dto.name, preset_type, dto.preset))
-    }
-}
-
 impl SavePresetResponseDto {
     pub fn new(name: String) -> Self {
         Self { name }
@@ -95,14 +75,14 @@ impl SavePresetResponseDto {
 }
 
 impl RestorePresetResponseDto {
-    pub fn new(is_default: bool, preset: Value) -> Self {
+    pub fn new(is_default: bool, preset: JsonDocument) -> Self {
         Self { is_default, preset }
     }
 
     pub fn not_found() -> Self {
         Self {
             is_default: false,
-            preset: Value::Object(serde_json::Map::new()),
+            preset: JsonDocument::default(),
         }
     }
 }

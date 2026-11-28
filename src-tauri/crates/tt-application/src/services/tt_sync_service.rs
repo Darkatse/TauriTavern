@@ -12,8 +12,10 @@ use tt_contracts::sync::{
     SyncOperationOptions, SyncOrigin,
 };
 use tt_domain::errors::DomainError;
-use tt_domain::models::tt_sync::TtSyncPairedServer;
+use tt_domain::models::endpoint_url::http_origin;
+use tt_domain::models::tt_sync::{TtSyncPairTarget, TtSyncPairedServer};
 pub use tt_ports::sync::{TtPairingClient, TtSyncRepository};
+use url::Url;
 
 pub struct TtSyncService {
     repository: Arc<dyn TtSyncRepository>,
@@ -34,7 +36,7 @@ impl TtSyncService {
         }
     }
 
-    pub async fn pair(&self, pair_uri: &str) -> Result<TtSyncPairedServer, DomainError> {
+    pub fn resolve_pairing(&self, pair_uri: &str) -> Result<TtSyncPairTarget, DomainError> {
         let pair = PairUri::parse_uri_string(pair_uri)
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
 
@@ -46,6 +48,18 @@ impl TtSyncService {
             )));
         }
 
+        let server_url =
+            Url::parse(&pair.url).map_err(|error| DomainError::InvalidData(error.to_string()))?;
+        let server_origin = http_origin(&server_url)?;
+        Ok(TtSyncPairTarget {
+            pair,
+            server_origin,
+        })
+    }
+
+    /// Requires prior native consent for this target.
+    pub async fn pair(&self, target: TtSyncPairTarget) -> Result<TtSyncPairedServer, DomainError> {
+        let pair = target.pair;
         let identity = self.repository.load_or_create_identity().await?;
         let device_pubkey = ttsync_core::crypto::device_pubkey_b64url(&identity.ed25519_seed)
             .map_err(|error| DomainError::InvalidData(error.to_string()))?;
@@ -67,7 +81,7 @@ impl TtSyncService {
             base_url: pair.url,
             spki_sha256: pair.spki_sha256,
             permissions: response.granted_permissions,
-            paired_at_ms: now_ms,
+            paired_at_ms: now_ms(),
             last_sync_ms: None,
         };
 

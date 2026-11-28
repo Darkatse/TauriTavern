@@ -75,6 +75,8 @@ ARIA 是既有业务状态的投影，由该状态的写入者同步更新：选
 
 展开状态以已有 DOM class 为准。共同实现接收扩展对已识别 drawer 的 class 修改，并保留移动面板与触发控件的关联。第一方 bundle 复用页面的同一模块实例及其状态订阅。
 
+顶层面板的显隐由 class 与样式决定，开合经 `setTopLevelDrawerOpen`，不写内联 display。应用在外部按下或打开另一个抽屉时关闭所有未固定的面板，所以面板关闭时要做的事放在状态订阅里，不放在自己的关闭按钮上。
+
 Inline 的 display 属于动画表现，即时设置会取消旧动画。`inline-drawer-toggle` 保留生态时序：点击在动画前发送带 `detail.open` 的通知；即时设置在更新 display 后发送无 detail 的通知。`utils.toggleDrawer()` 保留旧调用入口。
 
 ## Popup

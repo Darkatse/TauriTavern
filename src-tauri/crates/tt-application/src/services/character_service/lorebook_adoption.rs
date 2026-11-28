@@ -6,7 +6,7 @@ use tt_domain::models::filename::MAX_SANITIZED_FILENAME_BYTES;
 use tt_domain::models::world_info::{WORLD_INFO_EXTENSION, sanitize_world_info_name};
 
 use super::lorebook_codec::character_book_to_world_info;
-use super::{CharacterCardValidationMode, CharacterService, card_contract};
+use super::{CharacterService, card_contract};
 use crate::dto::character_dto::{
     CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto,
     ResolveCharacterLorebookAdoptionDto,
@@ -227,15 +227,9 @@ impl CharacterService {
                     )
                 })?;
                 let mut card = card_contract::parse_character_card_json(raw)?;
-                card_contract::set_character_world(&mut card, target.clone())?;
-                self.write_character_card_value(
-                    &character.get_file_name(),
-                    card,
-                    None,
-                    None,
-                    CharacterCardValidationMode::ReadableOnly,
-                )
-                .await
+                card_contract::set_character_world(&mut card, &target)?;
+                self.write_character_card(&character.get_file_name(), card, None, None)
+                    .await
             }
             .await
             .map_err(|error| {

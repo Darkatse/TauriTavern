@@ -1,9 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -188,32 +186,4 @@ impl tracing::field::Visit for EventFieldVisitor {
         self.fields
             .push((field.name().to_string(), value.to_string()));
     }
-}
-
-pub fn purge_old_log_files(log_root: &Path, max_age: Duration) -> std::io::Result<usize> {
-    let now = SystemTime::now();
-    let cutoff = now
-        .checked_sub(max_age)
-        .ok_or_else(|| std::io::Error::other("Invalid log retention duration"))?;
-
-    let mut deleted = 0usize;
-
-    for entry in std::fs::read_dir(log_root)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-        let modified = metadata.modified()?;
-        if modified > cutoff {
-            continue;
-        }
-
-        std::fs::remove_file(entry.path())?;
-        deleted += 1;
-    }
-
-    Ok(deleted)
 }

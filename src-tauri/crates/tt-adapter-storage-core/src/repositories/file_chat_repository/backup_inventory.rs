@@ -8,6 +8,7 @@ use tt_domain::models::settings::ChatBackupSettings;
 
 use super::backup_codec::{BackupFormat, set_backup_modified};
 use super::{ContentSignature, FileChatRepository};
+use crate::file_system::BACKUP_TIMESTAMP_FORMAT;
 
 pub(super) const BACKUP_TEMP_PREFIX: &str = ".tmp-chat-backup-";
 
@@ -231,7 +232,7 @@ pub(super) fn parsed_backup_prefix(file_name: &str) -> Option<String> {
         .strip_prefix(FileChatRepository::CHAT_BACKUP_PREFIX)?
         .strip_suffix(".jsonl")?;
     let (name, timestamp) = stem.rsplit_once('_')?;
-    NaiveDateTime::parse_from_str(timestamp, "%Y%m%d-%H%M%S").ok()?;
+    NaiveDateTime::parse_from_str(timestamp, BACKUP_TIMESTAMP_FORMAT).ok()?;
     Some(format!(
         "{}{}_",
         FileChatRepository::CHAT_BACKUP_PREFIX,

@@ -19,6 +19,7 @@ import { connectCurrentApi } from '../../slash-commands.js';
 import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
 import { ConnectionManagerRequestService } from '../shared.js';
+import { modelTargetSupportsReverseProxy } from '../../tauritavern/agent/model-target-llm-connection.js';
 import { formatReasoning } from '/scripts/reasoning.js';
 
 const MODULE_NAME = 'connection-manager';
@@ -506,7 +507,11 @@ async function readModelTargetFromCommands(target) {
 
     if (mode === 'cc') {
         setOptionalField(target, 'custom-api-format', await executeManagedCommand('custom-api-format'));
-        setOptionalField(target, 'proxy', await executeManagedCommand('proxy'));
+        if (modelTargetSupportsReverseProxy(target)) {
+            setOptionalField(target, 'proxy', await executeManagedCommand('proxy'));
+        } else {
+            delete target.proxy;
+        }
     } else {
         delete target['custom-api-format'];
         delete target.proxy;
@@ -812,7 +817,10 @@ function makeFancyProfile(profile) {
  */
 function makeFancyModelTarget(target) {
     const result = {};
-    const fields = ['api', 'custom-api-format', 'api-url', 'model', 'proxy'];
+    const fields = ['api', 'custom-api-format', 'api-url', 'model'];
+    if (modelTargetSupportsReverseProxy(target)) {
+        fields.push('proxy');
+    }
 
     result['Saved Object'] = t`Model`;
     for (const field of fields) {
@@ -903,10 +911,12 @@ async function applyModelTarget(target) {
                     await requireManagedCommand('secret-id', target.secretRef.id, { key: target.secretRef.key, quiet: 'true' });
                 }
 
-                if (target.proxy) {
-                    await requireManagedCommand('proxy', target.proxy);
-                } else {
-                    await requireManagedCommand('proxy', NO_PROXY_PRESET);
+                if (modelTargetSupportsReverseProxy(target)) {
+                    if (target.proxy) {
+                        await requireManagedCommand('proxy', target.proxy);
+                    } else {
+                        await requireManagedCommand('proxy', NO_PROXY_PRESET);
+                    }
                 }
 
                 await requireManagedCommand('model', target.model, { quiet: 'true' });
@@ -960,6 +970,11 @@ async function applyConnectionProfile(profile) {
                     const argument = profile[command];
                     const allowEmpty = ALLOW_EMPTY.includes(command);
                     if (!argument && !(allowEmpty && argument === '')) {
+                        continue;
+                    }
+
+                    if (command === 'api') {
+                        await requireManagedCommand('api', argument);
                         continue;
                     }
 
@@ -1342,10 +1357,9 @@ export async function init() {
     }
     toggleProfileSpecificButtons();
 
-    profiles.addEventListener('change', async function () {
+    async function applyDropdownSelection() {
         const selectedOption = profiles.selectedOptions[0];
         if (!selectedOption) {
-            // Safety net for preventing the command getting stuck
             await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
             return;
         }
@@ -1376,6 +1390,12 @@ export async function init() {
             await applyModelTarget(selected.item);
             await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
         }
+    }
+
+    let selectionApplication = Promise.resolve();
+    profiles.addEventListener('change', () => {
+        selectionApplication = applyDropdownSelection();
+        selectionApplication.catch(error => console.error('Connection Manager: failed to apply the selection', error));
     });
 
     const reloadButton = document.getElementById('reload_connection_profile');
@@ -1610,14 +1630,11 @@ export async function init() {
                 return '';
             }
 
-            const shouldAwait = !isFalseBoolean(String(args?.await));
-            const awaitPromise = new Promise((resolve) => eventSource.once(event_types.CONNECTION_PROFILE_LOADED, resolve));
-
             profiles.selectedIndex = Array.from(profiles.options).findIndex(o => o.value === makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id));
             profiles.dispatchEvent(new Event('change'));
 
-            if (shouldAwait) {
-                await awaitPromise;
+            if (!isFalseBoolean(String(args?.await))) {
+                await selectionApplication;
 
                 // We should also await the connection to be established
                 const parsedTimeout = parseInt(args?.timeout?.toString());

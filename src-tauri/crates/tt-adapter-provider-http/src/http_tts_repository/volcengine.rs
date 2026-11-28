@@ -5,6 +5,7 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::{send_with_retry, upstream_error_response};
+use tt_adapter_http::upstream;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{TtsRouteResponse, VolcengineTtsRequest};
 
@@ -42,7 +43,7 @@ pub(super) async fn generate(
             }).to_string(),
         },
     });
-    let response = send_with_retry("Volcengine TTS request", || {
+    let response = send_with_retry(|| {
         client
             .post(&provider_endpoint)
             .header("X-Api-App-Id", &app_id)
@@ -57,13 +58,13 @@ pub(super) async fn generate(
         return upstream_error_response(response, "Volcengine TTS request failed").await;
     }
 
+    let endpoint = response.url().clone();
     let mut stream = response.bytes_stream();
     let mut pending = Vec::new();
     let mut audio = Vec::new();
     while let Some(chunk) = stream.next().await {
-        pending.extend_from_slice(&chunk.map_err(|error| {
-            DomainError::InternalError(format!("Volcengine TTS stream read failed: {error}"))
-        })?);
+        pending
+            .extend_from_slice(&chunk.map_err(|error| upstream::body_failure(error, &endpoint))?);
         while let Some(index) = pending.iter().position(|byte| *byte == b'\n') {
             let line = pending.drain(..=index).collect::<Vec<_>>();
             if let Err(message) = decode_line(&line[..line.len() - 1], &mut audio) {

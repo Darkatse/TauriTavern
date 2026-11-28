@@ -1,9 +1,10 @@
-import type { TimelineItem } from './RunTimelineContract';
+import type { RunTimelineLiveSource, TimelineItem } from './RunTimelineContract';
 import { displayToolLabel, displayToolName } from './run-tool-labels';
 
 // Non-authoritative previews of streaming tool arguments and reasoning.
 // Durable journal events remain independent. This lane owns subscription,
-// projection, and per-frame publish coalescing.
+// projection, and publish coalescing at the injected cadence. Detaching does
+// not publish: the owner detaches while it publishes.
 //
 // Only `run_finish_allowed` calls are presented, so the main lane never shows
 // SubAgent internals. The chat consumer separately selects write_file content.
@@ -29,8 +30,8 @@ type LiveLaneCall = TauriTavernAgentRunLiveToolCall & LiveLaneState & {
 };
 
 export type RunTimelineLiveLaneOptions = {
-    subscribeLiveProjection: TauriTavernAgentApi['subscribeLiveProjection'] | undefined;
-    scheduleFrame: ((callback: () => void) => void) | undefined;
+    /** Null for a timeline that shows no live previews. */
+    liveSource: RunTimelineLiveSource | null;
     onChange: () => void;
     onError: (error: unknown) => void;
 };
@@ -45,8 +46,7 @@ export type RunTimelineLiveLane = {
 };
 
 export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): RunTimelineLiveLane {
-    const subscribe = options.subscribeLiveProjection ?? null;
-    const scheduleFrame = options.scheduleFrame ?? defaultScheduleFrame;
+    const { liveSource } = options;
     let runId = '';
     let unsubscribe: TauriTavernHostUnsubscribe | null = null;
     const calls = new Map<string, LiveLaneCall>();
@@ -54,15 +54,25 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
     let insertionCounter = 0;
     let storeVersion = 0;
     let frameScheduled = false;
+    let cancelFrame: (() => void) | null = null;
     let disposed = false;
 
+    function clearScheduledFrame(): void {
+        const cancel = cancelFrame;
+        cancelFrame = null;
+        frameScheduled = false;
+        cancel?.();
+    }
+
     function publishSoon(): void {
-        if (disposed || frameScheduled) return;
+        if (!liveSource || disposed || frameScheduled) return;
         frameScheduled = true;
-        scheduleFrame(() => {
+        const cancel = liveSource.scheduleFrame(() => {
+            cancelFrame = null;
             frameScheduled = false;
             if (!disposed) options.onChange();
         });
+        if (frameScheduled) cancelFrame = cancel;
     }
 
     function receiveUpdate(update: TauriTavernAgentRunLiveUpdate): void {
@@ -259,12 +269,13 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
     }
 
     function detachInternal(): void {
+        clearScheduledFrame();
         const stop = unsubscribe;
         unsubscribe = null;
+        runId = '';
         if (stop) void stop();
         if (resetProjection()) {
             storeVersion += 1;
-            publishSoon();
         }
     }
 
@@ -284,10 +295,11 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         attach(nextRunId) {
             const normalized = nextRunId.trim();
             if (!normalized) throw new Error('Agent run id is required.');
+            if (normalized === runId && unsubscribe) return;
             detachInternal();
             runId = normalized;
-            if (!subscribe || disposed) return;
-            unsubscribe = subscribe(normalized, receiveUpdate, { onError: options.onError });
+            if (!liveSource || disposed) return;
+            unsubscribe = liveSource.subscribe(normalized, receiveUpdate, { onError: options.onError });
         },
         detach: detachInternal,
         dispose() {
@@ -296,14 +308,6 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
             detachInternal();
         },
     };
-}
-
-function defaultScheduleFrame(callback: () => void): void {
-    if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(callback);
-        return;
-    }
-    setTimeout(callback, 16);
 }
 
 function toolCallKey(invocationId: string, toolCallIndex: number): string {

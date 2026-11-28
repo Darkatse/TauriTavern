@@ -754,13 +754,6 @@ fn git_error(context: &str, error: impl std::fmt::Display) -> DomainError {
 mod tests {
     use super::*;
 
-    fn temp_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-gix-{label}-{}",
-            uuid::Uuid::new_v4().simple()
-        ))
-    }
-
     fn write_commit(
         repo: &gix::Repository,
         mut entries: Vec<gix::objs::tree::Entry>,
@@ -826,8 +819,8 @@ mod tests {
 
     #[test]
     fn preflight_rejects_missing_and_wrong_kind_payload_objects() {
-        let path = temp_path("invalid-payload-object");
-        let repo = init_embedded(&path).expect("init repository");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repo = init_embedded(temp.path()).expect("init repository");
         let manifest = br#"{
             "display_name":"Fixture",
             "version":"1.0.0",
@@ -877,16 +870,13 @@ mod tests {
             ],
         );
         assert!(prepare_candidate(&repo, wrong_kind_commit).is_err());
-
-        drop(repo);
-        fs::remove_dir_all(path).expect("remove repository");
     }
 
     #[test]
     fn materializes_candidate_and_round_trips_standard_branch_state() {
-        let path = temp_path("roundtrip");
-        let repo = init_embedded(&path).expect("init repository");
-        fs::write(path.join("stale.txt"), "stale").expect("write stale payload");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repo = init_embedded(temp.path()).expect("init repository");
+        fs::write(temp.path().join("stale.txt"), "stale").expect("write stale payload");
 
         let manifest = br#"{
             "display_name":"Fixture",
@@ -934,7 +924,7 @@ mod tests {
         let mut prepared = prepare_candidate(&repo, commit).expect("preflight candidate");
         assert_eq!(prepared.manifest.display_name, "Fixture");
         assert_eq!(prepared.manifest.author, "");
-        materialize_candidate(&repo, &path, &mut prepared).expect("materialize candidate");
+        materialize_candidate(&repo, temp.path(), &mut prepared).expect("materialize candidate");
         configure_install(
             &repo,
             "https://git.example.test/group/fixture.git",
@@ -943,19 +933,22 @@ mod tests {
         .expect("configure repository");
         finalize_install_ref(&repo, &selected, commit).expect("finalize repository state");
 
-        assert!(!path.join("stale.txt").exists());
-        assert_eq!(fs::read(path.join("shortcut")).unwrap(), b"target.txt");
+        assert!(!temp.path().join("stale.txt").exists());
+        assert_eq!(
+            fs::read(temp.path().join("shortcut")).unwrap(),
+            b"target.txt"
+        );
         assert!(
-            fs::symlink_metadata(path.join("shortcut"))
+            fs::symlink_metadata(temp.path().join("shortcut"))
                 .unwrap()
                 .file_type()
                 .is_file()
         );
-        assert!(path.join("submodule").is_dir());
+        assert!(temp.path().join("submodule").is_dir());
         drop(prepared);
         drop(repo);
 
-        let reopened = super::super::git_remote::open_embedded(&path).unwrap();
+        let reopened = super::super::git_remote::open_embedded(temp.path()).unwrap();
         let state = read_managed_state(&reopened).expect("read managed state");
         assert_eq!(state.deployed, commit);
         assert_eq!(state.selected, selected);
@@ -964,19 +957,17 @@ mod tests {
             "https://git.example.test/group/fixture.git"
         );
         assert!(
-            fs::read_to_string(path.join(".git/config"))
+            fs::read_to_string(temp.path().join(".git/config"))
                 .unwrap()
                 .contains("symlinks = false")
         );
-
-        fs::remove_dir_all(path).expect("cleanup fixture");
     }
 
     #[test]
     fn preflight_rejects_portable_collisions_before_payload_changes() {
-        let path = temp_path("collision");
-        let repo = init_embedded(&path).expect("init repository");
-        fs::write(path.join("keep.txt"), "keep").expect("write payload sentinel");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let repo = init_embedded(temp.path()).expect("init repository");
+        fs::write(temp.path().join("keep.txt"), "keep").expect("write payload sentinel");
         let commit = write_commit(
             &repo,
             vec![
@@ -992,9 +983,9 @@ mod tests {
         );
 
         assert!(prepare_candidate(&repo, commit).is_err());
-        assert_eq!(fs::read_to_string(path.join("keep.txt")).unwrap(), "keep");
-
-        drop(repo);
-        fs::remove_dir_all(path).expect("cleanup fixture");
+        assert_eq!(
+            fs::read_to_string(temp.path().join("keep.txt")).unwrap(),
+            "keep"
+        );
     }
 }

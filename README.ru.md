@@ -37,7 +37,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?logo=apple&logoColor=white&style=flat-square)](https://testflight.apple.com/join/gpqAdeTm)
-[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?logo=harmonyos&logoColor=white&style=flat-square)](https://github.com/Darkatse/TauriTavern/releases/latest)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?logo=harmonyos&logoColor=white&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
 
 [Все платформы](https://tauritavern.github.io/en/downloads/platforms/) · [Релизы на GitHub](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -142,10 +142,12 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **Портативная версия для Windows**: в системе должен быть установлен WebView2 Runtime.
 >
 > **HarmonyOS (бета)**: HAP в релизах предназначен для HarmonyOS NEXT. Перед установкой подпишите его своим сертификатом; рекомендуем [Auto-Installer](https://github.com/likuai2010/auto-installer/). Пока он тестировался только на эмуляторе.
+>
+> **Если приложение не открывается**: закройте и снова откройте TauriTavern 5 раз подряд в течение 3 минут — приложение спросит, включить ли безопасный режим.
 
 ## Что такое TauriTavern
 
-TauriTavern переносит [SillyTavern](https://github.com/SillyTavern/SillyTavern) в нативное приложение. Фронтенд сохраняет возможности исходного проекта и синхронизирован с версией 1.19.0, а бэкенд переписан с Node.js на Rust с использованием Tauri v2.
+TauriTavern переносит [SillyTavern](https://github.com/SillyTavern/SillyTavern) в нативное приложение. Фронтенд сохраняет возможности исходного проекта и синхронизирован с версией 1.19.1, а бэкенд переписан с Node.js на Rust с использованием Tauri v2.
 
 Устанавливать Node.js и работать с командной строкой не нужно: достаточно скачать и запустить приложение. Карточки персонажей, чаты, пресеты, информация о мире и расширения фронтенда совместимы с SillyTavern.
 
@@ -154,7 +156,7 @@ TauriTavern переносит [SillyTavern](https://github.com/SillyTavern/Sill
 ## Основные возможности
 
 - 🖥️ **Пять нативных платформ**: Windows, macOS, Linux, Android и iOS с единым пользовательским интерфейсом; нативная поддержка HarmonyOS пока в бета-версии
-- 🎭 **Совместимость с SillyTavern**: фронтенд синхронизирован с версией 1.19.0, форматы данных и структура каталогов совместимы с исходным проектом
+- 🎭 **Совместимость с SillyTavern**: фронтенд синхронизирован с версией 1.19.1, форматы данных и структура каталогов совместимы с исходным проектом
 - 🧩 **Расширения фронтенда**: встроенный нативный Git позволяет устанавливать и обновлять расширения, а также переключать ветки прямо в интерфейсе (плагины бэкенда, рассчитанные только на Node.js, не поддерживаются)
 - 🔄 **Синхронизация между устройствами**: зашифрованное сопряжение по локальной сети или автоматическая отправка через удалённый TT-Sync v2
 - 🤖 **Agent Framework**: вызов инструментов, Skills, субагенты и временная шкала выполнения; разработка продолжается

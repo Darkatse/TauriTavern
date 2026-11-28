@@ -1,4 +1,7 @@
 use serde_json::{Map, Value};
+use tt_contracts::observability::PartViewDto;
+
+use super::projection::pointer_push;
 
 pub(super) fn collect_visible_reasoning_texts(object: &Map<String, Value>) -> Vec<String> {
     let mut texts = Vec::new();
@@ -23,10 +26,54 @@ pub(super) fn collect_visible_reasoning_value(value: &Value) -> Vec<String> {
     texts
 }
 
-pub(super) fn has_reasoning_native_state(object: &Map<String, Value>) -> bool {
-    object.get("signature").is_some()
-        || object.get("encrypted_content").is_some()
-        || object.get("thoughtSignature").is_some()
+pub(super) fn collect_native_state_parts(
+    object: &Map<String, Value>,
+    base_path: Option<&str>,
+) -> Vec<PartViewDto> {
+    let mut parts = Vec::new();
+
+    for key in ["signature", "encrypted_content", "thoughtSignature"] {
+        let Some(value) = object.get(key) else {
+            continue;
+        };
+        let length = value_encoded_len(value);
+        if length == 0 {
+            continue;
+        }
+        parts.push(PartViewDto::NativeState {
+            kind: key.to_string(),
+            length,
+            path: base_path.map(|base| pointer_push(base, key)),
+        });
+    }
+
+    if let Some(sig) = object
+        .get("extra_content")
+        .and_then(Value::as_object)
+        .and_then(|extra| extra.get("google"))
+        .and_then(Value::as_object)
+        .and_then(|google| google.get("thought_signature"))
+    {
+        let length = value_encoded_len(sig);
+        if length > 0 {
+            parts.push(PartViewDto::NativeState {
+                kind: "thought_signature".to_string(),
+                length,
+                path: base_path
+                    .map(|base| format!("{base}/extra_content/google/thought_signature")),
+            });
+        }
+    }
+
+    parts
+}
+
+pub(super) fn value_encoded_len(value: &Value) -> usize {
+    match value {
+        Value::Null => 0,
+        Value::String(text) => text.len(),
+        other => other.to_string().len(),
+    }
 }
 
 fn push_visible_reasoning_texts(texts: &mut Vec<String>, value: &Value) {
@@ -56,8 +103,7 @@ fn push_visible_reasoning_texts(texts: &mut Vec<String>, value: &Value) {
 }
 
 fn push_visible_reasoning_text(texts: &mut Vec<String>, text: &str) {
-    let text = text.trim();
-    if !text.is_empty() {
+    if !text.trim().is_empty() {
         texts.push(text.to_string());
     }
 }

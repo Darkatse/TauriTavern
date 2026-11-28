@@ -20,6 +20,9 @@ pub struct OpenAiTokenCountBatchRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAiTokenCountBatchResponseDto {
     pub token_counts: Vec<usize>,
+    /// The fallback tokenizer counted in place of the model's own, which could not be downloaded:
+    /// a later count may differ.
+    pub fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -33,6 +36,21 @@ pub struct OpenAiTokenPrefixCountRequestDto {
     /// Threshold in caller-visible text token counts, matching the returned counts.
     #[serde(default)]
     pub stop_at: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TextTokenCountRequestDto {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TextTokenCountResponseDto {
+    pub count: usize,
+    /// See [`OpenAiTokenCountBatchResponseDto::fallback`].
+    pub fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

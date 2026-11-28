@@ -7,7 +7,6 @@ use tt_domain::models::agent::{
 };
 
 use super::constants::{CHAT_WORKSPACE_ROOTS, SESSION_WORKSPACE_ROOTS};
-use crate::services::agent_workspace_scope::AGENT_TOOL_RESULTS_ROOT;
 
 pub fn workspace_roots_from_profile(
     profile: &ResolvedAgentProfile,
@@ -32,7 +31,7 @@ pub fn workspace_roots_from_profile(
     } else {
         CHAT_WORKSPACE_ROOTS
     };
-    let mut roots = root_names
+    root_names
         .iter()
         .map(|root| {
             if session {
@@ -67,25 +66,7 @@ pub fn workspace_roots_from_profile(
                 }
             }
         })
-        .collect::<Vec<_>>();
-    roots.push(WorkspaceRootSpec {
-        path: AGENT_TOOL_RESULTS_ROOT.to_string(),
-        lifecycle: if session {
-            WorkspaceRootLifecycle::Persistent
-        } else {
-            WorkspaceRootLifecycle::Run
-        },
-        scope: if session {
-            WorkspaceRootScope::Session
-        } else {
-            WorkspaceRootScope::Run
-        },
-        mount: WorkspaceRootMount::Materialized,
-        visible: true,
-        writable: false,
-        commit: WorkspaceRootCommit::Never,
-    });
-    roots
+        .collect()
 }
 
 pub fn commit_policy_from_profile(_profile: &ResolvedAgentProfile) -> CommitPolicy {

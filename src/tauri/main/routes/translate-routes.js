@@ -1,4 +1,5 @@
-import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
+import { commandErrorResponse } from '../../../scripts/util/command-error-utils.js';
 
 function normalizeProvider(wildcard) {
     const value = String(wildcard || '').trim();
@@ -9,8 +10,8 @@ function normalizeProvider(wildcard) {
     return value.replace(/^\/+/, '').split('/')[0] || '';
 }
 
-function errorTextResponse(message, textResponse) {
-    const resolved = resolveHostErrorResponse(message);
+function errorTextResponse(error, textResponse) {
+    const resolved = commandErrorResponse(error);
     return textResponse(resolved.body, resolved.status, resolved.body);
 }
 
@@ -25,11 +26,11 @@ export function registerTranslateRoutes(router, context, { textResponse }) {
             const translated = await context.safeInvoke('translate_text', {
                 provider,
                 body,
+                locale: getSillyTavernLocale(),
             });
             return textResponse(translated ?? '');
         } catch (error) {
-            const message = extractErrorText(error);
-            return errorTextResponse(message, textResponse);
+            return errorTextResponse(error, textResponse);
         }
     });
 }

@@ -10,19 +10,6 @@ pub struct Avatar {
     pub path: PathBuf,
 }
 
-/// Crop information for avatar image
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CropInfo {
-    /// X coordinate of the crop
-    pub x: i32,
-    /// Y coordinate of the crop
-    pub y: i32,
-    /// Width of the crop
-    pub width: i32,
-    /// Height of the crop
-    pub height: i32,
-}
-
 /// Result of avatar upload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvatarUploadResult {

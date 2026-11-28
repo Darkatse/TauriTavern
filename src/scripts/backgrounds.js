@@ -12,6 +12,7 @@ import { groups, selected_group } from './group-chats.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { deleteMediaFromServer } from './chats.js';
 import { consumeStartupPrefetch, startStartupPrefetch } from './tauri/startup/startup-prefetch-registry.js';
+import { buildThumbnailUrl } from '../tauri/main/context/asset-path-helpers.js';
 
 const BG_METADATA_KEY = 'custom_background';
 const LIST_METADATA_KEY = 'chat_backgrounds';
@@ -1576,7 +1577,7 @@ function isVideoBackgroundExtension(fileName) {
 }
 
 function getStaticBackgroundThumbnailUrl(fileName) {
-    return `${getThumbnailUrl('bg', fileName)}&static=true`;
+    return buildThumbnailUrl('bg', fileName, { static: true });
 }
 
 /**

@@ -1,14 +1,16 @@
 import { localforage } from '../lib.js';
 import { characters, event_types, eventSource, main_api, nai_settings, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
-import { chat_completion_sources, model_list, oai_settings as current_oai_settings } from './openai.js';
+import { getChatCompletionModel, oai_settings as current_oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';
 import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer, getTextGenModel } from './textgen-settings.js';
-import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, openRouterModels } from './textgen-models.js';
+import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer } from './textgen-models.js';
 import { getOpenAIConversationTokenCount } from './util/openai-token-count.js';
 import { createSingleFlight } from './util/single-flight.js';
+import { normalizeChatFileName } from './chat-payload-transport.js';
+import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 export const BYTES_PER_TOKEN = 3.35;
 export { BYTES_PER_TOKEN as CHARACTERS_PER_TOKEN_RATIO };
@@ -70,27 +72,27 @@ const TOKENIZER_URLS = {
     [tokenizers.GPT2]: {
         encode: '/api/tokenizers/gpt2/encode',
         decode: '/api/tokenizers/gpt2/decode',
-        count: '/api/tokenizers/gpt2/encode',
+        count: '/api/tokenizers/gpt2/count-text',
     },
     [tokenizers.OPENAI]: {
         encode: '/api/tokenizers/openai/encode',
         decode: '/api/tokenizers/openai/decode',
-        count: '/api/tokenizers/openai/encode',
+        count: '/api/tokenizers/openai/count-text',
     },
     [tokenizers.LLAMA]: {
         encode: '/api/tokenizers/llama/encode',
         decode: '/api/tokenizers/llama/decode',
-        count: '/api/tokenizers/llama/encode',
+        count: '/api/tokenizers/llama/count-text',
     },
     [tokenizers.NERD]: {
         encode: '/api/tokenizers/nerdstash/encode',
         decode: '/api/tokenizers/nerdstash/decode',
-        count: '/api/tokenizers/nerdstash/encode',
+        count: '/api/tokenizers/nerdstash/count-text',
     },
     [tokenizers.NERD2]: {
         encode: '/api/tokenizers/nerdstash_v2/encode',
         decode: '/api/tokenizers/nerdstash_v2/decode',
-        count: '/api/tokenizers/nerdstash_v2/encode',
+        count: '/api/tokenizers/nerdstash_v2/count-text',
     },
     [tokenizers.API_KOBOLD]: {
         count: '/api/tokenizers/remote/kobold/count',
@@ -99,57 +101,57 @@ const TOKENIZER_URLS = {
     [tokenizers.MISTRAL]: {
         encode: '/api/tokenizers/mistral/encode',
         decode: '/api/tokenizers/mistral/decode',
-        count: '/api/tokenizers/mistral/encode',
+        count: '/api/tokenizers/mistral/count-text',
     },
     [tokenizers.YI]: {
         encode: '/api/tokenizers/yi/encode',
         decode: '/api/tokenizers/yi/decode',
-        count: '/api/tokenizers/yi/encode',
+        count: '/api/tokenizers/yi/count-text',
     },
     [tokenizers.CLAUDE]: {
         encode: '/api/tokenizers/claude/encode',
         decode: '/api/tokenizers/claude/decode',
-        count: '/api/tokenizers/claude/encode',
+        count: '/api/tokenizers/claude/count-text',
     },
     [tokenizers.LLAMA3]: {
         encode: '/api/tokenizers/llama3/encode',
         decode: '/api/tokenizers/llama3/decode',
-        count: '/api/tokenizers/llama3/encode',
+        count: '/api/tokenizers/llama3/count-text',
     },
     [tokenizers.GEMMA]: {
         encode: '/api/tokenizers/gemma/encode',
         decode: '/api/tokenizers/gemma/decode',
-        count: '/api/tokenizers/gemma/encode',
+        count: '/api/tokenizers/gemma/count-text',
     },
     [tokenizers.JAMBA]: {
         encode: '/api/tokenizers/jamba/encode',
         decode: '/api/tokenizers/jamba/decode',
-        count: '/api/tokenizers/jamba/encode',
+        count: '/api/tokenizers/jamba/count-text',
     },
     [tokenizers.QWEN2]: {
         encode: '/api/tokenizers/qwen2/encode',
         decode: '/api/tokenizers/qwen2/decode',
-        count: '/api/tokenizers/qwen2/encode',
+        count: '/api/tokenizers/qwen2/count-text',
     },
     [tokenizers.COMMAND_R]: {
         encode: '/api/tokenizers/command-r/encode',
         decode: '/api/tokenizers/command-r/decode',
-        count: '/api/tokenizers/command-r/encode',
+        count: '/api/tokenizers/command-r/count-text',
     },
     [tokenizers.COMMAND_A]: {
         encode: '/api/tokenizers/command-a/encode',
         decode: '/api/tokenizers/command-a/decode',
-        count: '/api/tokenizers/command-a/encode',
+        count: '/api/tokenizers/command-a/count-text',
     },
     [tokenizers.NEMO]: {
         encode: '/api/tokenizers/nemo/encode',
         decode: '/api/tokenizers/nemo/decode',
-        count: '/api/tokenizers/nemo/encode',
+        count: '/api/tokenizers/nemo/count-text',
     },
     [tokenizers.DEEPSEEK]: {
         encode: '/api/tokenizers/deepseek/encode',
         decode: '/api/tokenizers/deepseek/decode',
-        count: '/api/tokenizers/deepseek/encode',
+        count: '/api/tokenizers/deepseek/count-text',
     },
     [tokenizers.API_TEXTGENERATIONWEBUI]: {
         encode: '/api/tokenizers/remote/textgenerationwebui/encode',
@@ -159,19 +161,43 @@ const TOKENIZER_URLS = {
 
 const textEncoder = new TextEncoder();
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
-// Counts made with the old role wrappers are not reusable under the 1.19 rules.
-const TOKEN_CACHE_PREFIX = 'tokenCache:v2:';
-const TAURI_WARM_TOKENIZER_MODEL = 'gpt-4o';
+// Counts are kept per chat under this prefix. Raise its version whenever a key could count
+// differently, so that the obsolete buckets are removed.
+const TOKEN_CACHE_PREFIX = 'tokenCache:v3:';
 
-let tokenCacheState = {
-    chatId: 'undefined',
-    cache: {},
-    dirty: false,
-    loadPromise: null,
-};
+/**
+ * The counts of the chat in use. Its bucket is written with the counts the chat used since the
+ * bucket loaded, so counts of replaced messages, swipes and models leave the bucket.
+ * @typedef {object} TokenCacheState
+ * @property {string} chatId
+ * @property {Record<string, number>} stored The bucket as it loaded.
+ * @property {Record<string, number>} used The counts read or made since: the bucket to write.
+ * @property {boolean} dirty Whether `used` holds counts the bucket lacks.
+ * @property {Promise<void>} loaded
+ */
+
+/** @type {TokenCacheState | null} */
+let tokenCacheState = null;
+let bucketTasks = Promise.resolve();
+
+/**
+ * Runs bucket loads, writes and removals one at a time in the order they were queued, so that a
+ * bucket is what the last of them left. A failed task fails only its own promise.
+ * @param {() => Promise<void>} task
+ * @returns {Promise<void>}
+ */
+function queueBucketTask(task) {
+    const run = bucketTasks.then(task);
+    bucketTasks = run.catch(() => {});
+    return run;
+}
 
 function getTokenCacheStorageKey(chatId) {
     return `${TOKEN_CACHE_PREFIX}${chatId}`;
+}
+
+function normalizeTokenCacheChatId(chatId) {
+    return chatId === undefined || chatId === null ? 'undefined' : String(chatId);
 }
 
 function resolveTokenCacheChatId() {
@@ -192,60 +218,117 @@ function resolveTokenCacheChatId() {
     return 'undefined';
 }
 
-function startTokenCacheLoad(state) {
-    if (state.loadPromise) {
-        return;
-    }
-
-    const storageKey = getTokenCacheStorageKey(state.chatId);
-    state.loadPromise = objectStore.getItem(storageKey)
-        .then(bucket => {
-            if (bucket === null || bucket === undefined) {
-                return;
+/**
+ * @param {string} chatId
+ * @returns {TokenCacheState}
+ */
+function createTokenCacheState(chatId) {
+    const storageKey = getTokenCacheStorageKey(chatId);
+    /** @type {TokenCacheState} */
+    const state = {
+        chatId,
+        stored: {},
+        used: {},
+        dirty: false,
+        loaded: queueBucketTask(async () => {
+            try {
+                const bucket = await objectStore.getItem(storageKey);
+                if (bucket === null || bucket === undefined) {
+                    return;
+                }
+                if (typeof bucket !== 'object' || Array.isArray(bucket)) {
+                    console.warn(`Ignoring invalid token cache bucket: ${storageKey}`);
+                    return;
+                }
+                state.stored = bucket;
+            } catch (error) {
+                console.warn(`Failed to load token cache bucket '${storageKey}':`, error);
             }
-
-            if (typeof bucket !== 'object' || Array.isArray(bucket)) {
-                console.warn(`Ignoring invalid token cache bucket: ${storageKey}`);
-                return;
-            }
-
-            Object.assign(state.cache, bucket);
-        })
-        .catch(error => console.warn(`Failed to load token cache bucket '${storageKey}':`, error));
+        }),
+    };
+    return state;
 }
 
-async function flushTokenCacheState(state) {
-    if (!state.dirty) {
-        return;
-    }
-
-    startTokenCacheLoad(state);
-    if (state.loadPromise) {
-        await state.loadPromise;
-    }
-
+/**
+ * Writes the counts the state's chat used to its bucket, when the bucket lacks some of them.
+ * @param {TokenCacheState} state
+ * @returns {Promise<void>}
+ */
+function writeTokenCache(state) {
     const storageKey = getTokenCacheStorageKey(state.chatId);
-    try {
-        await objectStore.setItem(storageKey, state.cache);
+    return queueBucketTask(async () => {
+        if (!state.dirty) {
+            return;
+        }
+
+        // Counts made while the bucket is written make the state dirty again.
         state.dirty = false;
-    } catch (error) {
-        console.warn(`Failed to save token cache bucket '${storageKey}':`, error);
-    }
+        try {
+            await objectStore.setItem(storageKey, state.used);
+        } catch (error) {
+            state.dirty = true;
+            console.warn(`Failed to save token cache bucket '${storageKey}':`, error);
+        }
+    });
 }
 
-function getTokenCacheState(chatId) {
-    const normalizedChatId = chatId === undefined || chatId === null ? 'undefined' : String(chatId);
-    if (tokenCacheState.chatId !== normalizedChatId) {
-        tokenCacheState = {
-            chatId: normalizedChatId,
-            cache: {},
-            dirty: false,
-            loadPromise: null,
-        };
+/**
+ * Forgets a chat's counts, in memory and in its bucket.
+ * @param {string | undefined | null} chatId
+ */
+function removeTokenCache(chatId) {
+    const normalizedChatId = normalizeTokenCacheChatId(chatId);
+    if (tokenCacheState?.chatId === normalizedChatId) {
+        tokenCacheState = null;
     }
 
-    startTokenCacheLoad(tokenCacheState);
+    const storageKey = getTokenCacheStorageKey(normalizedChatId);
+    void queueBucketTask(() => objectStore.removeItem(storageKey)
+        .catch(error => console.warn(`Failed to remove token cache bucket '${storageKey}':`, error)));
+}
+
+/**
+ * The counts of the chat. Leaving another chat for it writes that chat's bucket.
+ * @param {string | undefined | null} chatId
+ * @returns {TokenCacheState}
+ */
+function getTokenCacheState(chatId) {
+    const normalizedChatId = normalizeTokenCacheChatId(chatId);
+    if (tokenCacheState?.chatId !== normalizedChatId) {
+        if (tokenCacheState) {
+            void writeTokenCache(tokenCacheState);
+        }
+        tokenCacheState = createTokenCacheState(normalizedChatId);
+    }
     return tokenCacheState;
+}
+
+/**
+ * The count the chat's cache holds for the key. A count read is kept at the next write.
+ * @param {TokenCacheState} state
+ * @param {string} key
+ * @returns {number | undefined}
+ */
+function readCachedCount(state, key) {
+    const count = Object.hasOwn(state.used, key) ? state.used[key] : state.stored[key];
+    if (typeof count !== 'number') {
+        return undefined;
+    }
+
+    state.used[key] = count;
+    return count;
+}
+
+/**
+ * Keeps a count the key's tokenizer made. Fallback counts are not kept, since the next count may
+ * differ.
+ * @param {TokenCacheState} state
+ * @param {string} key
+ * @param {number} count
+ */
+function rememberCount(state, key, count) {
+    state.used[key] = count;
+    state.dirty = true;
 }
 
 /**
@@ -277,34 +360,21 @@ function scheduleObsoleteTokenCacheCleanup() {
     setTimeout(runAsync, 0);
 }
 
-function isTokenCacheState(value) {
-    return Boolean(value && typeof value === 'object' && 'chatId' in value && 'cache' in value);
-}
-
-export function captureTokenCacheSaveState(chatId = resolveTokenCacheChatId()) {
-    return getTokenCacheState(chatId);
-}
-
-export async function saveTokenCache(chatIdOrState = resolveTokenCacheChatId()) {
-    console.debug('Chat Completions: saving token cache');
-    const state = isTokenCacheState(chatIdOrState)
-        ? chatIdOrState
-        : getTokenCacheState(chatIdOrState);
-    await flushTokenCacheState(state);
+/** Writes the counts of the chat in use to its bucket. */
+export async function saveTokenCache() {
+    if (tokenCacheState) {
+        await writeTokenCache(tokenCacheState);
+    }
 }
 
 async function resetTokenCache() {
     console.debug('Chat Completions: resetting token cache');
-    tokenCacheState = {
-        chatId: 'undefined',
-        cache: {},
-        dirty: false,
-        loadPromise: null,
-    };
-
-    const keys = await objectStore.keys();
-    const tokenCacheKeys = keys.filter(key => key === 'tokenCache' || key.startsWith('tokenCache:'));
-    await Promise.all(tokenCacheKeys.map(key => objectStore.removeItem(key)));
+    tokenCacheState = null;
+    await queueBucketTask(async () => {
+        const keys = await objectStore.keys();
+        const tokenCacheKeys = keys.filter(key => key === 'tokenCache' || key.startsWith('tokenCache:'));
+        await Promise.all(tokenCacheKeys.map(key => objectStore.removeItem(key)));
+    });
 
     toastr.success('Token cache cleared. Please reload the chat to re-tokenize it.');
 }
@@ -488,17 +558,53 @@ function currentRemoteTokenizerAPI() {
 }
 
 /**
+ * Best match and the current API's tokenizer depend on the main API and its connection, so a count
+ * resolves them once, before its cache lookup.
+ * @param {number} selection
+ * @returns {number}
+ */
+function resolveTokenizer(selection) {
+    switch (selection) {
+        case tokenizers.BEST_MATCH:
+            return getTokenizerBestMatch(main_api);
+        case tokenizers.API_CURRENT:
+            return currentRemoteTokenizerAPI();
+        default:
+            return selection;
+    }
+}
+
+/**
+ * A text completion server tokenizes with the model it serves.
+ * @param {number} tokenizerType Resolved tokenizer type.
+ * @param {string} str
+ * @param {number} padding
+ * @returns {string}
+ */
+function getTextTokenCacheKey(tokenizerType, str, padding) {
+    const modelHash = tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI
+        ? getStringHash(getTextGenModel() || online_status).toString()
+        : '';
+    return `${tokenizerType}-${getStringHash(str)}${modelHash}+${padding}`;
+}
+
+/**
+ * A text's count, and whether a fallback made it in place of the tokenizer: a guesstimate or
+ * another tokenizer after the tokenizer failed, or the backend's fallback tokenizer while the
+ * model's own cannot be downloaded.
+ * @typedef {{ count: number, fallback: boolean }} TextTokenCount
+ */
+
+/**
  * Calls the underlying tokenizer model to the token count for a string.
- * @param {number} type Tokenizer type.
+ * @param {number} type Tokenizer type, resolved.
  * @param {string} str String to tokenize.
- * @returns {number} Token count.
+ * @returns {TextTokenCount} Token count.
  */
 function callTokenizer(type, str) {
-    if (type === tokenizers.NONE) return guesstimate(str);
+    if (type === tokenizers.NONE) return { count: guesstimate(str), fallback: false };
 
     switch (type) {
-        case tokenizers.API_CURRENT:
-            return callTokenizer(currentRemoteTokenizerAPI(), str);
         case tokenizers.API_KOBOLD:
             return countTokensFromKoboldAPI(str);
         case tokenizers.API_TEXTGENERATIONWEBUI:
@@ -507,7 +613,7 @@ function callTokenizer(type, str) {
             const endpointUrl = TOKENIZER_URLS[type]?.count;
             if (!endpointUrl) {
                 console.warn('Unknown tokenizer type', type);
-                return apiFailureTokenCount(str);
+                return { count: apiFailureTokenCount(str), fallback: true };
             }
             return countTokensFromServer(endpointUrl, str);
         }
@@ -516,19 +622,17 @@ function callTokenizer(type, str) {
 
 /**
  * Calls the underlying tokenizer model to the token count for a string.
- * @param {number} type Tokenizer type.
+ * @param {number} type Tokenizer type, resolved.
  * @param {string} str String to tokenize.
- * @returns {Promise<number>} Token count.
+ * @returns {Promise<TextTokenCount>} Token count.
  */
 function callTokenizerAsync(type, str) {
     return new Promise(resolve => {
         if (type === tokenizers.NONE) {
-            return resolve(guesstimate(str));
+            return resolve({ count: guesstimate(str), fallback: false });
         }
 
         switch (type) {
-            case tokenizers.API_CURRENT:
-                return callTokenizerAsync(currentRemoteTokenizerAPI(), str).then(resolve);
             case tokenizers.API_KOBOLD:
                 return countTokensFromKoboldAPI(str, resolve);
             case tokenizers.API_TEXTGENERATIONWEBUI:
@@ -537,7 +641,7 @@ function callTokenizerAsync(type, str) {
                 const endpointUrl = TOKENIZER_URLS[type]?.count;
                 if (!endpointUrl) {
                     console.warn('Unknown tokenizer type', type);
-                    return resolve(apiFailureTokenCount(str));
+                    return resolve({ count: apiFailureTokenCount(str), fallback: true });
                 }
                 return countTokensFromServer(endpointUrl, str, resolve);
             }
@@ -557,7 +661,6 @@ export async function getTokenCountAsync(str, padding = undefined) {
     }
 
     let tokenizerType = power_user.tokenizer;
-    let modelHash = '';
 
     if (main_api === 'openai') {
         if (padding === power_user.token_padding) {
@@ -569,39 +672,31 @@ export async function getTokenCountAsync(str, padding = undefined) {
         }
     }
 
-    if (tokenizerType === tokenizers.BEST_MATCH) {
-        tokenizerType = getTokenizerBestMatch(main_api);
-    }
-
-    if (tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI) {
-        modelHash = getStringHash(getTextGenModel() || online_status).toString();
-    }
+    tokenizerType = resolveTokenizer(tokenizerType);
 
     if (padding === undefined) {
         padding = 0;
     }
 
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-    if (cacheState.loadPromise) {
-        await cacheState.loadPromise;
-    }
-    const cacheObject = cacheState.cache;
-    const hash = getStringHash(str);
-    const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
-
-    if (typeof cacheObject[cacheKey] === 'number') {
-        return cacheObject[cacheKey];
+    await cacheState.loaded;
+    const cacheKey = getTextTokenCacheKey(tokenizerType, str, padding);
+    const cachedCount = readCachedCount(cacheState, cacheKey);
+    if (cachedCount !== undefined) {
+        return cachedCount;
     }
 
-    const result = (await callTokenizerAsync(tokenizerType, str)) + padding;
+    const { count, fallback } = await callTokenizerAsync(tokenizerType, str);
+    const result = count + padding;
 
     if (isNaN(result)) {
         console.warn('Token count calculation returned NaN');
         return 0;
     }
 
-    cacheObject[cacheKey] = result;
-    cacheState.dirty = true;
+    if (!fallback) {
+        rememberCount(cacheState, cacheKey, result);
+    }
     return result;
 }
 
@@ -618,7 +713,6 @@ export function getTokenCount(str, padding = undefined) {
     }
 
     let tokenizerType = power_user.tokenizer;
-    let modelHash = '';
 
     if (main_api === 'openai') {
         if (padding === power_user.token_padding) {
@@ -630,36 +724,30 @@ export function getTokenCount(str, padding = undefined) {
         }
     }
 
-    if (tokenizerType === tokenizers.BEST_MATCH) {
-        tokenizerType = getTokenizerBestMatch(main_api);
-    }
-
-    if (tokenizerType === tokenizers.API_TEXTGENERATIONWEBUI) {
-        modelHash = getStringHash(getTextGenModel() || online_status).toString();
-    }
+    tokenizerType = resolveTokenizer(tokenizerType);
 
     if (padding === undefined) {
         padding = 0;
     }
 
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-    const cacheObject = cacheState.cache;
-    const hash = getStringHash(str);
-    const cacheKey = `${tokenizerType}-${hash}${modelHash}+${padding}`;
-
-    if (typeof cacheObject[cacheKey] === 'number') {
-        return cacheObject[cacheKey];
+    const cacheKey = getTextTokenCacheKey(tokenizerType, str, padding);
+    const cachedCount = readCachedCount(cacheState, cacheKey);
+    if (cachedCount !== undefined) {
+        return cachedCount;
     }
 
-    const result = callTokenizer(tokenizerType, str) + padding;
+    const { count, fallback } = callTokenizer(tokenizerType, str);
+    const result = count + padding;
 
     if (isNaN(result)) {
         console.warn('Token count calculation returned NaN');
         return 0;
     }
 
-    cacheObject[cacheKey] = result;
-    cacheState.dirty = true;
+    if (!fallback) {
+        rememberCount(cacheState, cacheKey, result);
+    }
     return result;
 }
 
@@ -750,267 +838,30 @@ export async function getTokenPrefixCountsAsync(base, suffixes, padding = undefi
     return getTokenCountsAsync(prefixes, padding);
 }
 
+/**
+ * The model name the tokenizer endpoints count with. The backend resolves it to a tokenizer, and
+ * counts names it does not know with o200k.
+ * @param {ChatCompletionSettings|null} settings Chat-completion settings to take the model from.
+ * @returns {string} Model name.
+ */
 export function getTokenizerModel(settings = null) {
-    const oai_settings = settings ?? current_oai_settings;
-    // OpenAI models always provide their own tokenizer
-    if (oai_settings.chat_completion_source == chat_completion_sources.OPENAI) {
-        return oai_settings.openai_model;
+    if (!settings && main_api === 'textgenerationwebui' && textgen_settings.type === textgen_types.OPENROUTER) {
+        return textgen_settings.openrouter_model;
     }
-
-    const turboTokenizer = 'gpt-3.5-turbo';
-    const gpt4Tokenizer = 'gpt-4';
-    const gpt4oTokenizer = 'gpt-4o';
-    const gpt2Tokenizer = 'gpt2';
-    const claudeTokenizer = 'claude';
-    const llamaTokenizer = 'llama';
-    const llama3Tokenizer = 'llama3';
-    const mistralTokenizer = 'mistral';
-    const yiTokenizer = 'yi';
-    const gemmaTokenizer = 'gemma';
-    const jambaTokenizer = 'jamba';
-    const qwen2Tokenizer = 'qwen2';
-    const commandRTokenizer = 'command-r';
-    const commandATokenizer = 'command-a';
-    const nemoTokenizer = 'nemo';
-    const deepseekTokenizer = 'deepseek';
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI) {
-        return oai_settings.azure_openai_model || turboTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
-        return deepseekTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT) {
-        return oai_settings.moonshot_model || 'kimi';
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
-        return turboTokenizer;
-    }
-
-    // And for OpenRouter (if not a site model, then it's impossible to determine the tokenizer)
-    if (main_api == 'openai' && oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER && oai_settings.openrouter_model ||
-        main_api == 'textgenerationwebui' && textgen_settings.type === textgen_types.OPENROUTER && textgen_settings.openrouter_model) {
-        const model = main_api == 'openai'
-            ? model_list.find(x => x.id === oai_settings.openrouter_model)
-            : openRouterModels.find(x => x.id === textgen_settings.openrouter_model);
-
-        if (model?.architecture?.tokenizer === 'Llama2') {
-            return llamaTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Llama3') {
-            return llama3Tokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Mistral') {
-            return mistralTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Yi') {
-            return yiTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Gemini') {
-            return gemmaTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Qwen') {
-            return qwen2Tokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Cohere') {
-            if (model?.id && model?.id.includes('command-a')) {
-                return commandATokenizer;
-            }
-            return commandRTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('gpt-4o')) {
-            return gpt4oTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('gpt-4')) {
-            return gpt4Tokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('gpt-3.5-turbo')) {
-            return turboTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('claude')) {
-            return claudeTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('GPT-NeoXT')) {
-            return gpt2Tokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('jamba')) {
-            return jambaTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('deepseek')) {
-            return deepseekTokenizer;
-        }
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB && oai_settings.electronhub_model) {
-        if (oai_settings.electronhub_model.includes('gpt-4o') || oai_settings.electronhub_model.includes('gpt-5') || oai_settings.electronhub_model.includes('gpt-6-astra')) {
-            return gpt4oTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('gpt-4.1') || oai_settings.electronhub_model.includes('gpt-4.5')) {
-            return gpt4oTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('gpt-4')) {
-            return gpt4Tokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('gpt-3.5-turbo')) {
-            return turboTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('claude')) {
-            return claudeTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('jamba')) {
-            return jambaTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('deepseek') || oai_settings.electronhub_model.includes('sonar-reasoning') || oai_settings.electronhub_model.includes('r1')) {
-            return deepseekTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('qwen')) {
-            return qwen2Tokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('gemma')) {
-            return gemmaTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('mistral')) {
-            return mistralTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('yi')) {
-            return yiTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('llama3') || oai_settings.electronhub_model.includes('llama-3') || oai_settings.electronhub_model.startsWith('l3')) {
-            return llama3Tokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('llama')) {
-            return llamaTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('command-a')) {
-            return commandATokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('command-r')) {
-            return commandRTokenizer;
-        }
-        else if (oai_settings.electronhub_model.includes('nemo')) {
-            return nemoTokenizer;
-        }
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES && oai_settings.chutes_model) {
-        const model = oai_settings.chutes_model.toLowerCase();
-
-        if (model.includes('kimi')) {
-            return model;
-        } else if (model.includes('deepseek') || model.includes('mai-ds')) {
-            return deepseekTokenizer;
-        } else if (model.includes('qwen') || model.includes('qwq') || model.includes('tongyi')) {
-            return qwen2Tokenizer;
-        } else if (model.includes('llama') || model.includes('longcat') || model.includes('hermes')) {
-            return llama3Tokenizer;
-        } else if (model.includes('gemma')) {
-            return gemmaTokenizer;
-        } else if (model.includes('nemo')) {
-            return nemoTokenizer;
-        } else if (model.includes('mistral')) {
-            return mistralTokenizer;
-        } else if (model.includes('gpt-oss')) {
-            return gpt4oTokenizer;
-        }
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI && oai_settings.workers_ai_model) {
-        const model = oai_settings.workers_ai_model.toLowerCase();
-
-        if (model.includes('qwen') || model.includes('qwq')) {
-            return qwen2Tokenizer;
-        } else if (model.includes('llama')) {
-            return llama3Tokenizer;
-        } else if (model.includes('deepseek')) {
-            return deepseekTokenizer;
-        } else if (model.includes('mistral')) {
-            return mistralTokenizer;
-        }
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.COHERE) {
-        if (oai_settings.cohere_model.includes('command-a')) {
-            return commandATokenizer;
-        }
-        return commandRTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.MAKERSUITE) {
-        return gemmaTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.VERTEXAI) {
-        return String(oai_settings.vertexai_model ?? '').trim().toLowerCase().startsWith('claude-')
-            ? claudeTokenizer
-            : gemmaTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.AI21) {
-        return jambaTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.CLAUDE) {
-        return claudeTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.MISTRALAI) {
-        if (oai_settings.mistralai_model.includes('nemo') || oai_settings.mistralai_model.includes('pixtral')) {
-            return nemoTokenizer;
-        }
-        return mistralTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
-        return oai_settings.custom_model;
-    }
-
-    if (oai_settings.chat_completion_source === chat_completion_sources.PERPLEXITY) {
-        if (oai_settings.perplexity_model.includes('sonar-reasoning') || oai_settings.perplexity_model.includes('r1-1776')) {
-            return deepseekTokenizer;
-        }
-        if (oai_settings.perplexity_model.includes('llama-3') || oai_settings.perplexity_model.includes('llama3')) {
-            return llama3Tokenizer;
-        }
-        if (oai_settings.perplexity_model.includes('llama')) {
-            return llamaTokenizer;
-        }
-        if (oai_settings.perplexity_model.includes('mistral') || oai_settings.perplexity_model.includes('mixtral')) {
-            return mistralTokenizer;
-        }
-    }
-
-    if (oai_settings.chat_completion_source === chat_completion_sources.GROQ) {
-        if (oai_settings.groq_model.includes('qwen')) {
-            return qwen2Tokenizer;
-        }
-        if (oai_settings.groq_model.includes('llama-3') || oai_settings.groq_model.includes('llama3')) {
-            return llama3Tokenizer;
-        }
-        if (oai_settings.groq_model.includes('mistral') || oai_settings.groq_model.includes('mixtral')) {
-            return mistralTokenizer;
-        }
-        if (oai_settings.groq_model.includes('gemma')) {
-            return gemmaTokenizer;
-        }
-    }
-
-    // Default to Turbo 3.5
-    return turboTokenizer;
+    return getChatCompletionModel(settings ?? current_oai_settings);
 }
 
 export async function warmTokenizerCache() {
-    if (!globalThis.__TAURITAVERN__) {
+    if (!globalThis.__TAURITAVERN__ || main_api !== 'openai') {
         return;
     }
 
     try {
+        // An empty batch counts nothing; it prepares the model's tokenizer before the first count.
         await jQuery.ajax({
             async: true,
             type: 'POST',
-            url: `/api/tokenizers/openai/count-batch?model=${TAURI_WARM_TOKENIZER_MODEL}`,
+            url: `/api/tokenizers/openai/count-batch?model=${getTokenizerModel()}`,
             data: '[]',
             dataType: 'json',
             contentType: 'application/json',
@@ -1050,6 +901,34 @@ function guesstimateOpenAiMessageTokenCount(message) {
 }
 
 /**
+ * The counts of the messages the cache missed, from a count-batch response or, without a valid
+ * response, guesstimated. Keeps the counts the model's own tokenizer made.
+ * @param {TokenCacheState} cacheState
+ * @param {object[]} misses Messages the cache missed.
+ * @param {string[]} missKeys Their cache keys.
+ * @param {any} data The response, or null when the request failed.
+ * @returns {number[]} Counts in the order of `misses`.
+ */
+function settleMessageTokenCounts(cacheState, misses, missKeys, data) {
+    const valid = Array.isArray(data?.token_counts)
+        && data.token_counts.length === misses.length
+        && data.token_counts.every(Number.isFinite);
+    if (data && !valid) {
+        console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
+    }
+
+    return misses.map((message, index) => {
+        if (!valid) {
+            return guesstimateOpenAiMessageTokenCount(message);
+        }
+        if (data.fallback === false) {
+            rememberCount(cacheState, missKeys[index], data.token_counts[index]);
+        }
+        return data.token_counts[index];
+    });
+}
+
+/**
  * @param {any[] | Object} messages
  * @deprecated Use countTokensOpenAIAsync instead.
  */
@@ -1057,7 +936,6 @@ export function countTokensOpenAI(messages, full = false) {
     const model = getTokenizerModel();
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-    const cacheObject = cacheState.cache;
 
     if (!Array.isArray(messages)) {
         messages = [messages];
@@ -1065,19 +943,15 @@ export function countTokensOpenAI(messages, full = false) {
 
     const counts = [];
 
-    if (model === 'claude') {
-        full = true;
-    }
-
     const cacheMisses = [];
     const cacheMissKeys = [];
 
     for (const message of messages) {
         const hash = getStringHash(JSON.stringify(message));
         const cacheKey = `${model}-${hash}`;
-        const cachedCount = cacheObject[cacheKey];
+        const cachedCount = readCachedCount(cacheState, cacheKey);
 
-        if (typeof cachedCount === 'number') {
+        if (cachedCount !== undefined) {
             counts.push(cachedCount);
         }
 
@@ -1105,26 +979,7 @@ export function countTokensOpenAI(messages, full = false) {
             },
         });
 
-        const tokenCounts = Array.isArray(batchResult?.token_counts)
-            && batchResult.token_counts.length === cacheMisses.length
-            && batchResult.token_counts.every(Number.isFinite)
-            ? batchResult.token_counts
-            : null;
-        if (batchResult && !tokenCounts) {
-            console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
-        }
-
-        for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            const count = tokenCounts
-                ? tokenCounts[i]
-                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-
-            counts.push(count);
-            if (tokenCounts) {
-                cacheObject[cacheMissKeys[i]] = count;
-                cacheState.dirty = true;
-            }
-        }
+        counts.push(...settleMessageTokenCounts(cacheState, cacheMisses, cacheMissKeys, batchResult));
     }
 
     return getOpenAIConversationTokenCount(counts, full);
@@ -1138,14 +993,8 @@ export function countTokensOpenAI(messages, full = false) {
  * @returns {Promise<number>} Token count.
  */
 export async function countTokensOpenAIAsync(messages, full = false, settings = null) {
-    const model = getTokenizerModel(settings);
-
     if (!Array.isArray(messages)) {
         messages = [messages];
-    }
-
-    if (model === 'claude') {
-        full = true;
     }
 
     const counts = await countOpenAIMessageTokensBatchAsync(messages, settings);
@@ -1158,14 +1007,11 @@ export async function countTokensOpenAIAsync(messages, full = false, settings = 
  * @param {ChatCompletionSettings|null} settings Optional model settings.
  * @returns {Promise<number[]>} Per-message token counts.
  */
-async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
+export async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
     const model = getTokenizerModel(settings);
     const tokenizerEndpoint = `/api/tokenizers/openai/count-batch?model=${model}`;
     const cacheState = getTokenCacheState(resolveTokenCacheChatId());
-    if (cacheState.loadPromise) {
-        await cacheState.loadPromise;
-    }
-    const cacheObject = cacheState.cache;
+    await cacheState.loaded;
     const counts = new Array(messages.length);
 
     const cacheMisses = [];
@@ -1176,9 +1022,9 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
         const message = messages[index];
         const hash = getStringHash(JSON.stringify(message));
         const cacheKey = `${model}-${hash}`;
-        const cachedCount = cacheObject[cacheKey];
+        const cachedCount = readCachedCount(cacheState, cacheKey);
 
-        if (typeof cachedCount === 'number') {
+        if (cachedCount !== undefined) {
             counts[index] = cachedCount;
         }
 
@@ -1190,10 +1036,10 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
     }
 
     if (cacheMisses.length) {
-        let tokenCounts = null;
+        let data = null;
 
         try {
-            const data = await jQuery.ajax({
+            data = await jQuery.ajax({
                 async: true,
                 type: 'POST',
                 url: tokenizerEndpoint,
@@ -1201,61 +1047,55 @@ async function countOpenAIMessageTokensBatchAsync(messages, settings = null) {
                 dataType: 'json',
                 contentType: 'application/json',
             });
-
-            if (Array.isArray(data?.token_counts)
-                && data.token_counts.length === cacheMisses.length
-                && data.token_counts.every(Number.isFinite)) {
-                tokenCounts = data.token_counts;
-            } else {
-                console.warn('OpenAI token count batch returned an invalid response, using guesstimate fallback');
-            }
         } catch (error) {
             console.warn('OpenAI token count batch request failed, using guesstimate fallback:', error);
         }
 
-        for (let i = 0; i < cacheMissKeys.length; i += 1) {
-            const count = tokenCounts
-                ? tokenCounts[i]
-                : guesstimateOpenAiMessageTokenCount(cacheMisses[i]);
-
-            counts[cacheMissIndices[i]] = count;
-            if (tokenCounts) {
-                cacheObject[cacheMissKeys[i]] = count;
-                cacheState.dirty = true;
-            }
-        }
+        settleMessageTokenCounts(cacheState, cacheMisses, cacheMissKeys, data)
+            .forEach((count, index) => {
+                counts[cacheMissIndices[index]] = count;
+            });
     }
 
     return counts;
 }
 
 /**
- * Count tokens using the server API.
- * @param {string} endpoint API endpoint.
- * @param {string} str String to tokenize.
- * @param {function} [resolve] Promise resolve function.s
- * @returns {number} Token count.
+ * The count of a count-text response. Without a valid response, the tokenizer failed and a
+ * fallback counts the text.
+ * @param {any} data The response, or null when the request failed.
+ * @param {string} str The text.
+ * @param {function} [resolve] Resolves the count, when counting asynchronously.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function settleTokenCount(data, str, resolve) {
     if (!data?.error && typeof data?.count === 'number') {
-        resolve?.(data.count);
-        return data.count;
+        const result = { count: data.count, fallback: data.fallback !== false };
+        resolve?.(result);
+        return result;
     }
 
     if (typeof resolve === 'function') {
-        void apiFailureTokenCountAsync(str).then(resolve, error => {
+        void apiFailureTokenCountAsync(str).then(count => resolve({ count, fallback: true }), error => {
             console.warn('Tokenizer fallback failed, using guesstimate:', error);
-            resolve(guesstimate(str));
+            resolve({ count: guesstimate(str), fallback: true });
         });
-        return 0;
+        return null;
     }
 
-    return apiFailureTokenCount(str);
+    return { count: apiFailureTokenCount(str), fallback: true };
 }
 
+/**
+ * Count tokens using the server API.
+ * @param {string} endpoint API endpoint.
+ * @param {string} str String to tokenize.
+ * @param {function} [resolve] Promise resolve function.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
+ */
 function countTokensFromServer(endpoint, str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
@@ -1279,11 +1119,11 @@ function countTokensFromServer(endpoint, str, resolve) {
  * Count tokens using the AI provider's API.
  * @param {string} str String to tokenize.
  * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function countTokensFromKoboldAPI(str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
@@ -1321,11 +1161,11 @@ function getTextgenAPITokenizationParams(str) {
  * Count tokens using the AI provider's API.
  * @param {string} str String to tokenize.
  * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
+ * @returns {TextTokenCount | null} The count, when counting synchronously.
  */
 function countTokensFromTextgenAPI(str, resolve) {
     const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
+    let tokenCount = null;
 
     jQuery.ajax({
         async: isAsync,
@@ -1630,12 +1470,10 @@ export async function initTokenizers() {
     eventSource.on(event_types.CHAT_CHANGED, chatId => {
         getTokenCacheState(chatId);
     });
-    const removeChatTokenCache = chatId => {
-        const storageKey = getTokenCacheStorageKey(chatId === undefined || chatId === null ? 'undefined' : String(chatId));
-        void objectStore.removeItem(storageKey)
-            .catch(error => console.warn(`Failed to remove token cache bucket '${storageKey}':`, error));
-    };
-    eventSource.on(event_types.CHAT_DELETED, removeChatTokenCache);
-    eventSource.on(event_types.GROUP_CHAT_DELETED, removeChatTokenCache);
+    eventSource.on(event_types.CHAT_DELETED, removeTokenCache);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, removeTokenCache);
+    // The renamed chat counts again under its new name.
+    eventSource.on(event_types.CHAT_RENAMED, ({ oldFileName }) => removeTokenCache(normalizeChatFileName(oldFileName)));
+    registerLifecycleFlushHandler('token-cache', saveTokenCache);
     registerDebugFunction('resetTokenCache', 'Reset token cache', 'Purges the calculated token counts. Use this if you want to force a full re-tokenization of all chats or suspect the token counts are wrong.', resetTokenCache);
 }

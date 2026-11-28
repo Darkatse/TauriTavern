@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::errors::ApplicationError;
+use crate::services::agent_model_gateway::fields::metadata_with_fields;
 use crate::services::chat_completion_service::exchange::{
     ChatCompletionExchange, NormalizedChatCompletionResponse,
 };
@@ -8,6 +9,10 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
 use tt_domain::models::tool::{ToolArguments, ToolInvocation};
+
+// Replay only request-valid fields, not the entire response.
+const REPLAYED_MESSAGE_FIELDS: &[&str] = &["reasoning", "reasoning_details"];
+const REPLAYED_TOOL_CALL_FIELDS: &[&str] = &["signature", "extra_content"];
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
@@ -65,39 +70,28 @@ fn decode_normalized_chat_completion_response(
         parts.push(AgentModelContentPart::Text { text: text.clone() });
     }
 
-    if let Some(reasoning) = message
-        .get("reasoning_content")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .filter(|value| !value.trim().is_empty())
-    {
-        parts.push(AgentModelContentPart::Reasoning {
-            text: Some(reasoning),
-            provider_metadata: json!({ "source": "reasoning_content" }),
-        });
+    if let Some(reasoning) = message.get("reasoning_content").and_then(Value::as_str) {
+        parts.push(reasoning_content_part(reasoning.to_string()));
     }
 
     if let Some(native) = message.get("native").and_then(Value::as_object) {
-        for (provider, value) in native {
-            parts.push(AgentModelContentPart::Native {
-                provider: provider.clone(),
-                value: value.clone(),
-            });
-        }
+        parts.extend(native_parts(native.clone()));
     }
 
     for call in &tool_calls {
         parts.push(AgentModelContentPart::ToolCall { call: call.clone() });
     }
 
+    let mut metadata = Map::new();
+    metadata.insert("responseId".to_string(), json!(raw_response.get("id")));
+    metadata.insert("model".to_string(), json!(raw_response.get("model")));
     let model_message = AgentModelMessage {
         role: AgentModelRole::Assistant,
         parts,
-        provider_metadata: json!({
-            "message": message,
-            "responseId": raw_response.get("id"),
-            "model": raw_response.get("model"),
-        }),
+        provider_metadata: metadata_with_fields(
+            metadata,
+            replayed_fields(message, REPLAYED_MESSAGE_FIELDS),
+        ),
     };
 
     Ok(AgentModelResponse {
@@ -206,16 +200,43 @@ fn parse_tool_call(
     let arguments =
         ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
 
+    let mut metadata = Map::new();
+    metadata.insert("modelAlias".to_string(), json!(raw_name));
     Ok(ToolInvocation {
         call_id: id.to_string(),
         tool_id: tool.tool_id.clone(),
         arguments,
-        provider_metadata: json!({
-            "modelAlias": raw_name,
-            "signature": object.get("signature"),
-            "raw": call,
-        }),
+        provider_metadata: metadata_with_fields(
+            metadata,
+            replayed_fields(object, REPLAYED_TOOL_CALL_FIELDS),
+        ),
     })
+}
+
+pub(super) fn reasoning_content_part(text: String) -> AgentModelContentPart {
+    AgentModelContentPart::Reasoning {
+        text: Some(text),
+        provider_metadata: json!({ "source": "reasoning_content" }),
+    }
+}
+
+pub(super) fn native_parts(
+    native: Map<String, Value>,
+) -> impl Iterator<Item = AgentModelContentPart> {
+    native
+        .into_iter()
+        .map(|(provider, value)| AgentModelContentPart::Native { provider, value })
+}
+
+fn replayed_fields(object: &Map<String, Value>, keys: &[&str]) -> Map<String, Value> {
+    keys.iter()
+        .filter_map(|key| {
+            object
+                .get(*key)
+                .filter(|value| !value.is_null())
+                .map(|value| (key.to_string(), value.clone()))
+        })
+        .collect()
 }
 
 pub(super) fn model_tool_for_alias<'a>(

@@ -20,6 +20,8 @@ const RESTORE_TRIGGER_SELECTOR = [
     '#mes_impersonate',
 ].join(', ');
 
+const CHAT_TEXT_FOCUS_ATTRIBUTE = 'data-tt-text-focus';
+
 let focusKeeperInstalled = false;
 
 export const ChatInputFocusIntent = Object.freeze({
@@ -67,6 +69,29 @@ export function focusChatInput(intent, { cursor = 'preserve' } = {}) {
     }
 
     return document.activeElement === textarea;
+}
+
+/**
+ * On mobile hosts the chat input area gives way to a text field focused in the chat, such as a message being edited.
+ * #chat is marked from a text field's focusin to the next focusout; style.css hides #form_sheld.
+ */
+export function installChatInputYield() {
+    if (!isMobileHost()) {
+        return;
+    }
+
+    const chat = document.getElementById('chat');
+    if (!chat) {
+        throw new Error('Expected #chat to exist');
+    }
+
+    /** @param {FocusEvent} event */
+    const mark = (event) => {
+        const holdsText = event.type === 'focusin' && /** @type {Element} */ (event.target).matches(':read-write');
+        chat.toggleAttribute(CHAT_TEXT_FOCUS_ATTRIBUTE, holdsText);
+    };
+    chat.addEventListener('focusin', mark);
+    chat.addEventListener('focusout', mark);
 }
 
 export function installChatInputFocusKeeper() {

@@ -6,7 +6,7 @@ import {
     setExtensionMenuShortcutIds,
 } from '../src/scripts/tauri/setting/extension-menu-shortcuts.js';
 
-test('quick access selection defaults to Sync and preserves an explicit empty selection', () => {
+test('quick access selection defaults to Sync and the request inspector, and preserves an explicit empty selection', () => {
     const values = new Map();
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     Object.defineProperty(globalThis, 'localStorage', {
@@ -18,7 +18,7 @@ test('quick access selection defaults to Sync and preserves an explicit empty se
     });
 
     try {
-        assert.deepEqual(getExtensionMenuShortcutIds(), ['sync']);
+        assert.deepEqual(getExtensionMenuShortcutIds(), ['sync', 'llm-api-logs']);
 
         setExtensionMenuShortcutIds([]);
         assert.deepEqual(getExtensionMenuShortcutIds(), []);

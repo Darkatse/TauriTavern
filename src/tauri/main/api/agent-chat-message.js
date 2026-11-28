@@ -14,14 +14,28 @@ export function prepareGeneratedReplyForSave(script, rawText, generationType) {
     });
 }
 
-export function prepareGeneratedReplyForDisplay(script, rawText, generationType) {
+/**
+ * The chat preview of one run's live write. `text` applies the streaming reply cleanup with the stopping strings
+ * of the run's first render; `write` shows a text through the streaming preview writer, with open markup balanced.
+ */
+export function createGeneratedReplyPreview(script, generationType) {
     const type = String(generationType || 'normal').trim() || 'normal';
-    return script.cleanUpMessage({
-        getMessage: rawText,
-        isImpersonate: type === 'impersonate',
-        isContinue: type === 'continue',
-        displayIncompleteSentences: true,
-    });
+    const isImpersonate = type === 'impersonate';
+    const isContinue = type === 'continue';
+    const stoppingStrings = script.getStoppingStrings(isImpersonate, isContinue);
+    const writeMesText = script.createStreamingMesTextWriter();
+    return {
+        /** @param {string} rawText @returns {string} */
+        text: rawText => script.cleanUpMessage({
+            getMessage: rawText,
+            isImpersonate,
+            isContinue,
+            displayIncompleteSentences: true,
+            stoppingStrings,
+        }),
+        /** @param {number} messageId @param {string} text */
+        write: (messageId, text) => writeMesText(messageId, script.balanceStreamingMarkup(text)),
+    };
 }
 
 export function normalizeCommitMode(value) {

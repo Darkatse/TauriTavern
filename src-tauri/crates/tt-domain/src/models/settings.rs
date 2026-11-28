@@ -2,8 +2,10 @@ pub mod repair;
 pub mod revision;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
+use url::Url;
 
+use crate::errors::DomainError;
 use crate::models::update::UpdateChannel;
 
 fn default_perf_profile() -> String {
@@ -101,6 +103,14 @@ fn default_close_to_tray_on_close() -> bool {
     true
 }
 
+fn default_generation_notifications_enabled() -> bool {
+    true
+}
+
+fn default_update_popup_enabled() -> bool {
+    true
+}
+
 fn default_request_proxy_bypass() -> Vec<String> {
     vec![
         "localhost".to_string(),
@@ -131,6 +141,48 @@ impl Default for RequestProxySettings {
             url: String::new(),
             bypass: default_request_proxy_bypass(),
         }
+    }
+}
+
+impl RequestProxySettings {
+    /// A URL without a scheme, including `host:port`, names an HTTP proxy.
+    pub fn proxy_url(&self) -> Result<Option<Url>, DomainError> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        let url = self.url.trim();
+        if url.is_empty() {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL is required".to_string(),
+            ));
+        }
+
+        let proxy_url = Url::parse(url)
+            .ok()
+            .filter(Url::has_host)
+            .map_or_else(|| Url::parse(&format!("http://{url}")), Ok)
+            .map_err(|error| {
+                DomainError::InvalidData(format!("Invalid request proxy URL: {error}"))
+            })?;
+        if !matches!(
+            proxy_url.scheme(),
+            "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
+        ) {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL must use http, https, socks4, socks4a, socks5, or socks5h"
+                    .to_string(),
+            ));
+        }
+        if !matches!(proxy_url.path(), "" | "/")
+            || proxy_url.query().is_some()
+            || proxy_url.fragment().is_some()
+        {
+            return Err(DomainError::InvalidData(
+                "Request proxy URL must not include a path, query, or fragment".to_string(),
+            ));
+        }
+        Ok(Some(proxy_url))
     }
 }
 
@@ -313,7 +365,8 @@ fn default_chat_backup_max_total_bytes() -> i64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TauriTavernSettings {
-    pub updates: TauriTavernUpdateSettings,
+    #[serde(default)]
+    pub updates: AppUpdateSettings,
     #[serde(default = "default_perf_profile")]
     pub perf_profile: String,
     #[serde(default = "default_panel_runtime_profile")]
@@ -330,6 +383,8 @@ pub struct TauriTavernSettings {
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
+    #[serde(default = "default_generation_notifications_enabled")]
+    pub generation_notifications_enabled: bool,
     #[serde(default)]
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
@@ -359,7 +414,7 @@ pub struct TauriTavernSettings {
 impl Default for TauriTavernSettings {
     fn default() -> Self {
         Self {
-            updates: TauriTavernUpdateSettings::default(),
+            updates: AppUpdateSettings::default(),
             perf_profile: default_perf_profile(),
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
@@ -368,6 +423,7 @@ impl Default for TauriTavernSettings {
             codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
+            generation_notifications_enabled: default_generation_notifications_enabled(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
@@ -406,11 +462,25 @@ impl TauriTavernSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TauriTavernUpdateSettings {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<UpdateChannel>,
+    #[serde(default = "default_update_popup_enabled")]
+    pub popup_enabled: bool,
+    /// Always written: older builds cannot load settings without it.
+    #[serde(default)]
     pub startup_popup: StartupUpdatePopupSettings,
+}
+
+impl Default for AppUpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: None,
+            popup_enabled: default_update_popup_enabled(),
+            startup_popup: StartupUpdatePopupSettings::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -419,24 +489,10 @@ pub struct StartupUpdatePopupSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettings {
-    #[serde(flatten)]
-    pub data: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSnapshot {
     pub date: i64,
     pub name: String,
     pub size: u64,
-}
-
-impl Default for UserSettings {
-    fn default() -> Self {
-        Self {
-            data: Value::Object(Map::new()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -451,7 +507,7 @@ mod tests {
     #[test]
     fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
         let settings = TauriTavernSettings::from_json_value_with_compat(
-            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}),
+            serde_json::json!({"avatar_persona_thumbnails_enabled":false}),
         )
         .expect("parse settings");
 
@@ -465,6 +521,7 @@ mod tests {
         )
         .expect("parse settings");
 
+        assert!(settings.updates.popup_enabled);
         assert!(settings.codemirror_editor_enabled);
         assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
@@ -480,7 +537,6 @@ mod tests {
     #[test]
     fn chat_backup_settings_default_missing_nested_fields() {
         let settings = TauriTavernSettings::from_json_value_with_compat(serde_json::json!({
-            "updates":{"startup_popup":{"dismissed_release_token":null}},
             "chat_backups":{"max_total_files":12}
         }))
         .expect("parse settings");

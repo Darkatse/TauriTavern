@@ -1,18 +1,20 @@
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use std::borrow::Cow;
+
 use serde_json::{Map, Value, json};
-use tokio::sync::mpsc;
 
 use tt_domain::errors::DomainError;
+use tt_ports::generation_stream::{GenerationCancelReceiver, GenerationStreamSender};
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
 };
 
 use super::normalizers;
-use super::response_body::read_upstream_json_body;
-use super::{HttpChatCompletionRepository, current_unix_timestamp};
+use super::{
+    GenerationRequest, HttpChatCompletionRepository, current_unix_timestamp, response_format,
+};
 use crate::endpoint_url::append_google_api_path;
+use crate::provider_request::ProviderRequest;
+use crate::provider_response::{self, read_upstream_json_body};
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
@@ -51,7 +53,7 @@ impl InteractionsStreamState {
 
     fn handle_event(
         &mut self,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         raw_payload: &[u8],
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
@@ -93,7 +95,7 @@ impl InteractionsStreamState {
     fn apply_step_start(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         if self.active_step.is_some() {
@@ -166,7 +168,7 @@ impl InteractionsStreamState {
     fn apply_step_delta(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         let index = required_index(event, "step.delta event")?;
@@ -270,7 +272,7 @@ impl InteractionsStreamState {
     fn apply_step_stop(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
     ) -> Result<(), DomainError> {
         let index = required_index(event, "step.stop event")?;
         let mut active = self
@@ -306,7 +308,7 @@ impl InteractionsStreamState {
     fn apply_interaction_completed(
         &mut self,
         event: &Map<String, Value>,
-        sender: Option<&ChatCompletionStreamSender>,
+        sender: Option<&GenerationStreamSender>,
     ) -> Result<(), DomainError> {
         if self.active_step.is_some() {
             return Err(invalid_stream(
@@ -382,7 +384,7 @@ impl InteractionsStreamState {
         })
     }
 
-    fn send_delta(&mut self, sender: Option<&ChatCompletionStreamSender>, delta: Value) {
+    fn send_delta(&mut self, sender: Option<&GenerationStreamSender>, delta: Value) {
         let Some(sender) = sender else {
             return;
         };
@@ -392,7 +394,7 @@ impl InteractionsStreamState {
 
     fn send_terminal(
         &mut self,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         delta: Value,
         finish_reason: &str,
         usage: Option<Value>,
@@ -407,7 +409,7 @@ impl InteractionsStreamState {
         self.send_chunk(sender, chunk);
     }
 
-    fn ensure_role(&mut self, sender: &ChatCompletionStreamSender) {
+    fn ensure_role(&mut self, sender: &GenerationStreamSender) {
         if self.sent_role {
             return;
         }
@@ -418,7 +420,7 @@ impl InteractionsStreamState {
         );
     }
 
-    fn send_chunk(&self, sender: &ChatCompletionStreamSender, chunk: Value) {
+    fn send_chunk(&self, sender: &GenerationStreamSender, chunk: Value) {
         let _ = sender.send(chunk.to_string());
     }
 
@@ -444,25 +446,10 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-    let url = build_gemini_url(&config.base_url, endpoint_path);
-
-    let client = repository.client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(payload);
-
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        provider_name,
-        "Generation request failed",
-    )
-    .await?;
+    let request = generation_request(config, endpoint_path, payload, false)?;
+    let response = repository
+        .send_generation(config, request, false, provider_name)
+        .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -475,8 +462,8 @@ pub(super) async fn generate_stream(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    sender: ChatCompletionStreamSender,
-    cancel: ChatCompletionCancelReceiver,
+    sender: GenerationStreamSender,
+    cancel: GenerationCancelReceiver,
 ) -> Result<(), DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
@@ -488,16 +475,9 @@ pub(super) async fn generate_stream(
     let mut state = InteractionsStreamState::new(model);
     let cancelled = cancel.clone();
 
-    let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
-    drop(dummy_receiver);
-
-    HttpChatCompletionRepository::stream_sse_response_with_hook(
-        provider_name,
-        response,
-        dummy_sender,
-        cancel,
-        |payload| state.handle_event(Some(&sender), payload, &mut |_| {}),
-    )
+    provider_response::consume_sse_until_cancelled(provider_name, response, cancel, |payload| {
+        state.handle_event(Some(&sender), payload, &mut |_| {})
+    })
     .await?;
 
     let was_cancelled = *cancelled.borrow();
@@ -521,7 +501,7 @@ pub(super) async fn generate_with_deltas(
         .to_string();
     let mut state = InteractionsStreamState::new(model);
 
-    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+    provider_response::consume_sse_response(provider_name, response, |event| {
         state.handle_event(None, event, on_delta)
     })
     .await?;
@@ -536,44 +516,28 @@ async fn send_stream_request(
     payload: &Value,
     provider_name: &str,
 ) -> Result<reqwest::Response, DomainError> {
-    let url = build_gemini_url(&config.base_url, endpoint_path);
-
-    let client = repository.stream_client(config)?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(payload);
-
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+    let request = generation_request(config, endpoint_path, payload, true)?;
+    repository
+        .send_generation(config, request, true, provider_name)
         .await
 }
 
-fn apply_gemini_auth(
-    request: reqwest::RequestBuilder,
+pub(super) fn generation_request<'a>(
     config: &ChatCompletionApiConfig,
-) -> reqwest::RequestBuilder {
-    if let Some(authorization_header) = config.authorization_header.as_deref() {
-        return HttpChatCompletionRepository::apply_header_if_present(
-            request,
-            "Authorization",
-            authorization_header,
-        );
-    }
-
-    HttpChatCompletionRepository::apply_header_if_present(
-        request,
-        "x-goog-api-key",
-        &config.api_key,
-    )
-}
-
-fn build_gemini_url(base_url: &str, endpoint_path: &str) -> String {
-    append_google_api_path(base_url, GEMINI_API_VERSION, endpoint_path.trim())
+    endpoint_path: &str,
+    payload: &'a Value,
+    stream: bool,
+) -> Result<GenerationRequest<'a>, DomainError> {
+    let url = append_google_api_path(&config.base_url, GEMINI_API_VERSION, endpoint_path)?;
+    let mut request = ProviderRequest::post_json(url, response_format(stream));
+    let (name, value) = match config.authorization_header.as_deref() {
+        Some(authorization_header) => ("Authorization", authorization_header),
+        None => ("x-goog-api-key", config.api_key.as_str()),
+    };
+    HttpChatCompletionRepository::apply_header_if_present(&mut request, name, value)?;
+    HttpChatCompletionRepository::apply_extra_headers(&mut request, &config.extra_headers)?;
+    HttpChatCompletionRepository::apply_additional_headers(&mut request, config)?;
+    Ok(GenerationRequest::http(request, Cow::Borrowed(payload)))
 }
 
 fn required_object<'a>(
@@ -757,7 +721,7 @@ mod tests {
 
     fn apply(
         state: &mut InteractionsStreamState,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         event: Value,
     ) -> Result<(), DomainError> {
         state.handle_event(
@@ -769,7 +733,7 @@ mod tests {
 
     fn apply_all(
         state: &mut InteractionsStreamState,
-        sender: &ChatCompletionStreamSender,
+        sender: &GenerationStreamSender,
         events: Value,
     ) -> Vec<ChatCompletionStreamDelta> {
         let mut deltas = Vec::new();

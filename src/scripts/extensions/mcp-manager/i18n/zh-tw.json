@@ -67,6 +67,8 @@
     "mcp_manager.protocolHint": "自動模式會協商雙方支援的最新版本。",
     "mcp_manager.protocolVersion": "協定版本",
     "mcp_manager.refreshTools": "重新整理工具",
+    "mcp_manager.rejected": "伺服器拒絕了請求",
+    "mcp_manager.rejectedHint": "工具呼叫未能執行。",
     "mcp_manager.remove": "移除",
     "mcp_manager.removeHeader": "移除請求標頭",
     "mcp_manager.removeNote": "該註冊及其儲存的全部工具設定都會被移除。",

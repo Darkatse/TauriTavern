@@ -8,7 +8,7 @@ use crate::presentation::errors::CommandError;
 #[cfg(any(dev, debug_assertions))]
 use crate::presentation::web_resources::tauri_resource_adapter::serve_dev_ipc_resource_from_app;
 
-const SILLYTAVERN_COMPAT_VERSION: &str = "1.19.0";
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.19.1";
 use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +108,9 @@ pub fn read_dev_web_resource(
     let request = build_dev_web_resource_request(request)?;
     let response = serve_dev_ipc_resource_from_app(&app, &request);
     let (parts, body) = response.into_parts();
+    let body = body
+        .into_bytes()
+        .expect("only the Android Wry delivery streams bodies");
     let headers = parts
         .headers
         .iter()
@@ -204,11 +207,9 @@ pub fn request_notification_permission(
 ) -> Result<NotificationPermissionStateDto, CommandError> {
     log_command("request_notification_permission");
 
-    if !matches!(
-        get_notification_permission_state_inner(&app)?,
-        NotificationPermissionStateDto::Prompt
-    ) {
-        return get_notification_permission_state_inner(&app);
+    let current_state = get_notification_permission_state_inner(&app)?;
+    if !matches!(current_state, NotificationPermissionStateDto::Prompt) {
+        return Ok(current_state);
     }
 
     let requested_state = app.notification().request_permission().map_err(|error| {
@@ -241,7 +242,7 @@ pub fn show_system_notification(
         get_notification_permission_state_inner(&app)?,
         NotificationPermissionStateDto::Granted
     ) {
-        return Err(CommandError::Unauthorized(
+        return Err(CommandError::Forbidden(
             "Notification permission is not granted".to_string(),
         ));
     }

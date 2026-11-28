@@ -3,13 +3,16 @@ use std::collections::HashMap;
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_ports::repositories::chat_completion_repository::NATIVE_GEMINI_INTERACTIONS;
 
 use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
     reject_media_for_text_only_content,
 };
 use super::shared::message_content_to_text;
-use super::tool_calls::{OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id};
+use super::tool_calls::{
+    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id, tool_response_name,
+};
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
@@ -326,11 +329,12 @@ fn build_input_and_system_instruction(
                         "Tool message is missing tool_call_id required for Gemini Interactions function_result".to_string(),
                     )
                 })?;
-                let name = function_name_by_call_id.remove(&call_id).ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "Gemini Interactions function_result references call_id without preceding function_call: {call_id}"
-                    ))
-                })?;
+                let name = tool_response_name(
+                    "Gemini Interactions",
+                    index,
+                    function_name_by_call_id.get(&call_id).map(String::as_str),
+                    message,
+                )?;
                 let result = convert_openai_content_to_interactions_blocks(message.get("content"))?;
 
                 steps.push(json!({
@@ -375,15 +379,10 @@ fn build_input_and_system_instruction(
 fn message_native_steps(
     message: &Map<String, Value>,
 ) -> Result<Option<&[Value]>, ApplicationError> {
-    let Some(native) = message.get("native") else {
-        return Ok(None);
-    };
-    let native = native.as_object().ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "Gemini Interactions message native state must be an object".to_string(),
-        )
-    })?;
-    let Some(interactions) = native.get("gemini_interactions") else {
+    let Some(interactions) = message
+        .get("native")
+        .and_then(|native| native.get(NATIVE_GEMINI_INTERACTIONS))
+    else {
         return Ok(None);
     };
     let interactions = interactions.as_object().ok_or_else(|| {
@@ -611,6 +610,36 @@ mod tests {
                 "result": [{ "type": "text", "text": "Sunny" }]
             })
         );
+    }
+
+    #[test]
+    fn gemini_interactions_names_unanswered_results_after_themselves() {
+        let upstream = build_with_messages(json!([
+            { "role": "user", "content": "Read the state" },
+            { "role": "tool", "tool_call_id": "call_9", "name": "read_state", "content": "hp: 3" },
+        ]));
+        assert_eq!(
+            upstream["input"][1],
+            json!({
+                "type": "function_result",
+                "name": "read_state",
+                "call_id": "call_9",
+                "result": [{ "type": "text", "text": "hp: 3" }],
+            })
+        );
+
+        let payload = json!({
+            "model": "gemini-3-flash-preview",
+            "messages": [
+                { "role": "user", "content": "Read the state" },
+                { "role": "tool", "tool_call_id": "call_9", "content": "hp: 3" },
+            ],
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+        let error = build(payload).expect_err("a result without any name cannot be sent");
+        assert!(error.to_string().contains("tool message 1"));
     }
 
     #[test]

@@ -1,9 +1,11 @@
 [package]
 name = "tauritavern"
-version = "2.4.0"
+version = "2.5.0"
 description = "SillyTavern backend rebuilt with Tauri and Rust"
 authors = ["TauriTavern Team"]
 edition = "2024"
+rust-version.workspace = true
+default-run = "tauritavern"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,20 +16,32 @@ edition = "2024"
 name = "tauritavern_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "tauritavern"
+path = "src/main.rs"
+# main.rs has no tests, and a test harness for it would link the whole app once more.
+test = false
+
+[[bin]]
+name = "tt-perf"
+# Outside src/bin: cargo-tauri 2.11 (nixpkgs 26.05) bundles every src/bin file, whatever its required-features.
+path = "src/perf/main.rs"
+required-features = ["perf"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.2", features = [] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dependencies]
-tauri = { version = "2.12.3", features = ["protocol-asset"] }
+tauri = { version = "2.12.3", features = [] }
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-fs = "2.7.0"
 tauri-plugin-notification = "2.6.0"
 tauri-plugin-dialog = "2.8.2"
 tauri-plugin-clipboard-manager = "2.4.2"
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "std"] }
@@ -35,24 +49,24 @@ tracing-appender = "0.2"
 chrono = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["io", "rt"] }
-futures-util = "0.3"
-reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks", "stream"] }
+reqwest = { workspace = true, features = ["http2", "json", "rustls", "socks"] }
 bytes = "1"
 base64 = "0.23"
 uuid = { workspace = true }
 async-trait = "0.1"
 url = { workspace = true }
 percent-encoding = "2"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 mime_guess = "2.0.5"
-filetime = "0.2"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 dunce = "1"
+rayon = "1.10"
 tt-domain = { path = "../tt-domain" }
 tt-contracts = { path = "../tt-contracts" }
 tt-ports = { path = "../tt-ports" }
 tt-application = { path = "../tt-application" }
 tt-adapter-http = { path = "../tt-adapter-http" }
+tt-adapter-external-import = { path = "../tt-adapter-external-import" }
 tt-adapter-mcp = { path = "../tt-adapter-mcp" }
 tt-adapter-tokenization = { path = "../tt-adapter-tokenization" }
 tt-adapter-sync = { path = "../tt-adapter-sync" }
@@ -73,6 +87,10 @@ ttsync-core = { workspace = true }
 [dev-dependencies]
 tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Cargo dependency selection cannot see tauri-build's desktop/mobile cfg aliases.
 [target.'cfg(any(target_os = "macos", windows, all(target_os = "linux", not(target_env = "ohos"))))'.dependencies]
@@ -99,14 +117,17 @@ tauri-plugin-barcode-scanner = "2.5.2"
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-pilot = { version = "0.8.1", optional = true, default-features = false }
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
 objc2-background-tasks = "0.3.2"
 objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = ["std", "UTType"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSData", "NSGeometry", "objc2-core-foundation", "NSItemProvider", "NSString", "NSURL"] }
-objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSLayoutAnchor", "NSLayoutConstraint", "UIKeyboardLayoutGuide", "UILayoutGuide", "UITrackingLayoutGuide", "UIColor", "UIImage", "UIImageView", "UIScreen", "UIActivity", "UIActivityItemsConfiguration", "UIActivityItemsConfigurationReading", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UIGestureRecognizer", "UIPanGestureRecognizer", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSData", "NSGeometry", "objc2-core-foundation", "NSProgress", "NSString", "NSURL"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "NSLayoutAnchor", "NSLayoutConstraint", "UIKeyboardLayoutGuide", "UILayoutGuide", "UITrackingLayoutGuide", "UIColor", "UIImage", "UIImageView", "UIScreen", "UIActivity", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UIGestureRecognizer", "UIPanGestureRecognizer", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry", "UIAccessibility", "UIAction", "UIButton", "UIButtonConfiguration", "UICornerConfiguration", "UIGlassEffect", "UIImageConfiguration", "UIImageSymbolConfiguration", "UIInteraction", "UIInterface", "UILargeContentViewer", "UIMenuElement", "UIStackView", "UITraitCollection", "UIViewLayoutRegion", "UIVisualEffect", "UIVisualEffectView"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
@@ -118,3 +139,5 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 devtools-pilot = ["dep:tauri-plugin-pilot"]
 portable = []
+# The backend perf replay (tests/perf/backend.mjs).
+perf = ["tauri/test"]

@@ -6,13 +6,15 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
-    ExternalAgentTool, builtin_available_in_scope, compile_invocation_tool_snapshot,
-    mcp_model_name, prepare_tool_bindings, project_agent_model_tools,
+    ExternalAgentTool, apply_prompt_tools, builtin_available_in_scope,
+    compile_invocation_tool_snapshot, mcp_model_name, prepare_tool_bindings,
+    project_agent_model_tools,
 };
 use tt_domain::models::agent::profile::{AgentProfileDefinition, ResolvedAgentProfile};
 use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 use tt_domain::models::tool::{
-    AgentToolScope, ToolChoice, ToolDescriptor, ToolId, ToolSnapshotId, ToolTurnContract,
+    AgentToolScope, InvocationToolSnapshot, ToolChoice, ToolDescriptor, ToolId, ToolSnapshotId,
+    ToolTurnContract,
 };
 
 impl AgentRuntimeService {
@@ -176,14 +178,7 @@ impl AgentRuntimeService {
             ToolSnapshotId::parse(snapshot_id)?,
             bindings,
         )?;
-        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto)?;
-        let model_tools = project_agent_model_tools(&snapshot, &turn)?;
-        Ok(PreparedInvocationTools {
-            snapshot,
-            turn,
-            model_tools,
-            diagnostics,
-        })
+        PreparedInvocationTools::new(snapshot, diagnostics)
     }
 
     pub async fn save_profile(
@@ -230,6 +225,30 @@ impl AgentRuntimeService {
             }
         }
         Ok(())
+    }
+}
+
+impl PreparedInvocationTools {
+    fn new(
+        snapshot: InvocationToolSnapshot,
+        diagnostics: Vec<AgentToolCatalogDiagnosticDto>,
+    ) -> Result<Self, ApplicationError> {
+        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto)?;
+        let model_tools = project_agent_model_tools(&snapshot, &turn)?;
+        Ok(Self {
+            snapshot,
+            turn,
+            model_tools,
+            diagnostics,
+        })
+    }
+
+    /// System prompts are assembled first; executable tool names must stay unchanged.
+    pub(super) fn with_prompt_tools(
+        self,
+        tools: &[AgentModelTool],
+    ) -> Result<Self, ApplicationError> {
+        Self::new(apply_prompt_tools(&self.snapshot, tools)?, self.diagnostics)
     }
 }
 

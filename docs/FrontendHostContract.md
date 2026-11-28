@@ -60,7 +60,9 @@
 
 `SillyTavern.getContext().macros` 提供宏注册与独立求值，接口和使用范围见[宏求值 API](API/Macros.md)。
 
-`SillyTavern.getContext().messageFormatter` 暴露上游 [MessageFormatter](../src/scripts/message-formatter.js) 单例。同步 hook 在 HTML 净化前运行，可重复执行；单个 hook 失败会报告并隔离。延后扩展初始化完成后，通过 ChatSurface 统一补刷已挂载内容。
+`SillyTavern.getContext().messageFormatter` 暴露上游 [MessageFormatter](../src/scripts/message-formatter.js) 单例。同步 hook 在 HTML 净化前运行，可重复执行，每次都收到整条消息；单个 hook 失败会报告并隔离。延后扩展初始化完成后，通过 ChatSurface 统一补刷已挂载内容。
+
+流式中间帧的 `.mes_text` 等于当时文本的格式化结果（重复标题的 id 编号可能不同），未变的顶层块保留原节点；其他代码改动过 `.mes_text` 时，下一帧整体重写。
 
 > 这些符号被第三方脚本/扩展/角色卡直接调用，变更需极度谨慎。
 
@@ -92,7 +94,7 @@
 由 `src/tauri/main/share-target-bridge.js` 安装：
 
 - `window.__TAURITAVERN_NATIVE_SHARE__ = { push(payload), subscribe(handler) }`
-  - `push()`：注入分享 payload（url 或 png）。
+  - `push()`：注入分享 payload，`{ kind: 'url', url }` 或 `{ kind: 'png', id, name }`（分享 id 与显示名，`id` 交给 `api.characterCards.stageSharedFile`）。
   - `subscribe()`：订阅消费；若早到则进入 backlog，首次订阅会 drain backlog。
 
 ### 3.5 上游库兼容全局（Public）
@@ -121,10 +123,10 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `api.layout`：读取与订阅已排除原生遮挡的内容视口；`capture()` 属于第一方使用的 Project Contract，见 [API/Layout.md](API/Layout.md)。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
-  - `api.characterCards`：选择角色卡文件，以及接管卡内的世界书。
-    - `isNativePickerAvailable()`：所有宿主都为 `true`。
-    - `pickFiles(options?: { multiple?: boolean }) -> Promise<File[] | null>`：选择 `json/png` 角色卡，返回标准 `File[]`；支持多选；取消返回 `null`，失败抛错。
-    - Project，第一方使用，参数为头像文件名：
+  - `api.characterCards`（Project，第一方使用）：把角色卡放进宿主暂存，以及接管卡内的世界书。
+    - `pickFiles({ multiple? })`、`stageFromUrl(url)`、`stageSharedFile(uri, name)`（仅 Android）得到 `StagedFile { path, name }`，交给 `processDroppedFiles` 导入，规则见[文件导入与导出](CurrentState/FileTransfer.md)。`pickFiles` 取消时返回 `null`；`stageFromUrl` 只接受角色卡。
+    - `contentFromUrl(url)` 接受 URL 或站点 ID，返回 `{ kind, file }`：`character` 为 `StagedFile`，`lorebook` 为 `File`。
+    - 世界书接管，参数为头像文件名：
       - `adoptLorebook(avatar)`：按角色当前的绑定，接管卡内世界书。
       - `resolveLorebookAdoption(avatar, choice, token)`：提交 `adopt` 或 `update`。决定已过期时，以 `LorebookAdoptionConflictError` 拒绝。
       - 两个方法都返回 `TauriTavernCharacterLorebookAdoption`（`src/types.d.ts`），失败时拒绝。规则见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
@@ -150,9 +152,12 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
       - `getKeep() -> Promise<number>`
       - `setKeep(value: number) -> Promise<void>`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
+    - `api.dev.requestInspector`（Project，第一方使用）
+      - `getLogView(id: number) -> Promise<LlmApiLogView>`：从落盘原始文件派生结构化 `ExchangeView`，见 [RequestInspector](CurrentState/RequestInspector.md) 与 `docs/API/Dev.md`。
+      - `preview() -> Promise<RequestPreview>`：下一次发送的请求与它的组成，不发送。
     - `api.dev.exportBundle() -> Promise<boolean>`：生成并交付 debug bundle（zip），返回是否已交付，详见 `docs/API/Dev.md`。
 
-`api.dev.*` 的长期契约要求：
+`api.dev` 中 Public 部分（`frontendLogs`、`backendLogs`、`llmApiLogs`、`exportBundle`）的长期契约要求：
 
 - DTO 字段保持 camelCase，新增字段只能做向后兼容扩展。
 - `subscribe()` / `subscribeIndex()` 返回的 `unsubscribe` 必须幂等且可安全延迟调用。
@@ -242,7 +247,11 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 路由位于 `src/tauri/main/routes/*`；公共契约覆盖上游兼容及生态实际依赖的接口。
 
-`/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。
+`/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。请求可以用 `staged_path`（宿主暂存文件的路径）代替 `avatar`。
+
+`/api/content/importURL`、`/api/content/importUUID` 与 `/api/assets/download` 的 `character` 类别由宿主下载，响应与上游相同；名单外的来源先询问用户（[导入来源](CurrentState/UserEndpointAccess.md#导入来源)）。两条 content 路由都接受 URL 或站点 ID。
+
+`/proxy/<URL>` 是上游的 CORS 代理。`<URL>` 可以直接拼接，也可以先经 `encodeURIComponent` 编码，宿主解码一次。宿主用页面设置的方法、请求头和正文字节请求目标，只去掉宿主自己的 `X-CSRF-Token`；状态码、响应头和正文原样返回，正文边到达边读取。目标的来源首次使用时询问用户，重定向只跟随同源（[用户端点授权](CurrentState/UserEndpointAccess.md#授权与传输)）。与上游不同：直接拼接时保留查询串，正文二进制安全，不把 401 改成 400，转发响应头，不跟随跨源重定向。
 
 `/api/characters/delete` 只删除角色和请求删除的聊天，不删除世界书。界面删卡时如何清理世界书，见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
 
@@ -256,6 +265,8 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 世界书 get/edit 直接读写磁盘，保留未知字段和键顺序，不合并编辑缓存；get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
 
+`/api/worldinfo/list` 只列出扩展名为小写 `.json` 的文件，与 get/edit 寻址的范围相同；上游不区分扩展名大小写。
+
 最关键的启动依赖：
 
 - `/csrf-token`：返回固定 token（用于兼容上游初始化对 CSRF 的假设）
@@ -267,7 +278,8 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - 用户设定沿用上游 settings 数据形状；列表刷新不写入资料，单项保存失败不影响其他修改。
   - `/api/settings/save` 接收设置 JSON：Persona 注册表按 ID 增量提交，提及的 ID 替换整条记录，未提及的不删除；其余设置是完整快照。读取与保存确认返回 `tauritavern_settings_revision`；调用方将其作为不透明令牌，以 JSON 编码经 `X-TauriTavern-Settings-Revision` 回传。过期令牌返回 409，未携带时仍可覆盖保存。Persona 修改独立确认成败。
   - `/api/settings/get` 保持上游响应形状，`settings` 仍为 JSON 字符串；启动读取与应用顺序见 [StartupOptimization §4](CurrentState/StartupOptimization.md#4-设置与-bootstrap-元数据读取)。
-- `/api/backends/chat-completions/generate` 的流式响应由 Rust 进程内会话持有生成任务、移动端 best-effort 后台执行租约与未确认事件；前端通过单调递增的 `after_seq` 消费并确认，WebView 暂停后可在同一 Rust 进程内重放缺失事件。单次读取失败会使用相同 cursor 重试一次，第二次失败才关闭会话。后台租约失败或到期不拥有生成终止权；该保证不跨进程重启，也不伪装成上游 provider 的 HTTP 断点续传。
+- 生成路由（`/api/backends/chat-completions/generate`、`/api/backends/text-completions/generate`、`/api/backends/koboldhorde/generate`）的流式响应由 Rust 进程内会话持有生成任务、移动端 best-effort 后台执行租约与未确认事件；前端通过单调递增的 `after_seq` 消费并确认，WebView 暂停后可在同一 Rust 进程内重放缺失事件。单次读取失败会使用相同 cursor 重试一次，第二次失败才关闭会话。后台租约失败或到期不拥有生成终止权；该保证不跨进程重启，也不伪装成上游 provider 的 HTTP 断点续传。非流式生成的请求 ID 在命令开始时登记，命令等待端点确认期间发出的 `cancel_generation` 同样生效；流式会话在开始命令返回后由页面关闭。
+  - 失败时，非 quiet 的请求得到一条写着错误的角色回复，形状随 API 家族；quiet 的失败交给调用方：流开始前返回 502 `{ error: { message } }`（家族可为非流式请求另定形状），流开始后流本身出错。
 - `/css/user.css`：用户自定义 CSS 覆盖文件（数据目录 `_css/user.css`）
 - `/scripts/extensions/third-party/*`：third-party 扩展静态资源端点（ESM/CSS/url()/字体/图片）
 - `/thumbnail`：缩略图端点（与 `__TAURITAVERN_THUMBNAIL__` 强耦合）
@@ -276,7 +288,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - `/backgrounds/*`、`/assets/*`
   - `/user/images/*`、`/user/files/*`
 
-`/api/users/backup` 与上游不同：由宿主生成并交付备份，返回 `{ ok, delivered, includes_secrets }`。
+`/api/users/backup` 与上游不同：由宿主生成并交付备份，返回 `{ ok, delivered, includes_secrets }`。是否包含密钥由宿主决定，与上游一样只在密钥显示生效时包含。
 
 ### 4.4 浏览器资源契约（Public）
 
@@ -306,6 +318,13 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 - GIF/WebP/APNG 在预览动画开启时使用 raw `/backgrounds/*`，关闭时使用 `/thumbnail?...&static=true` 的 first-frame JPEG；
 - MP4 选择器使用占位图，不为 poster 引入视频解码器；
 - active background 与 `<video>` 始终保留 raw `/backgrounds/*`，`static=true` 不得进入播放路径。
+
+头像同样区分列表与其他用途：
+
+- 第一方头像列表用 `getListThumbnailUrl()` 取地址，模板图片懒加载。开启原图设置时地址带 `list=true`，关闭时与普通 `/thumbnail` 相同，列表与聊天共用一份缓存；
+- 聊天头像、已保存的 URL（`force_avatar`、群组 `avatar_url`）、编辑页预览和扩展使用普通 `/thumbnail`。
+
+两者的选择规则见 [HostResourceCaching §5](CurrentState/HostResourceCaching.md#5-各资源表示)。
 
 禁止事项（为了保持契约稳定）：
 
@@ -347,6 +366,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 | `--tt-inset-*` | `env(safe-area-inset-*, 0px)` 的别名 |
 | `--tt-viewport-bottom-inset` | `--tt-inset-bottom` 的别名 |
 | `--tt-window-x/-y/-width/-height` | Project：只写在 `#bg1` 上，供第一方窗口背景使用 |
+| `data-tt-drawer-bar` | Project：宿主在系统 bar 区域绘制抽屉按钮时写在根元素上（`left`/`right`/`top`），页面没有顶栏 |
 | `data-tt-mobile-surface`；`layout-kit.js` 的 `SURFACE`/`applySurface()` | 保留，无布局作用 |
 | `--tt-ime-bottom`、`--tt-base-viewport-height`、`__TAURITAVERN_INSETS__`、`__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`、`__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`、`__TAURITAVERN_ANDROID_IME_LAYOUT_HOST__` | 已移除 |
 

@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from '@rstest/core';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { expect, test } from '@rstest/core';
 import userEvent from '@testing-library/user-event';
 
 import { AgentSystemEntryApp } from './AgentSystemEntryApp';
@@ -86,10 +86,6 @@ function createDeps(options: {
     };
     return { deps, state };
 }
-
-afterEach(() => {
-    cleanup();
-});
 
 test('loads settings and lists only direct-runnable profiles', async () => {
     const { deps } = createDeps({

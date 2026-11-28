@@ -159,29 +159,10 @@ mod tests {
     use super::*;
     use tt_ports::user_media::UserMediaStore;
 
-    struct TempDirGuard {
-        path: PathBuf,
-    }
-
-    impl TempDirGuard {
-        fn new(test_name: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("tauritavern-{test_name}-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDirGuard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
     #[tokio::test]
     async fn filesystem_store_writes_lists_and_deletes_media() {
-        let temp = TempDirGuard::new("user-media-store");
-        let store = FilesystemUserMediaStore::from_data_root(&temp.path);
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = FilesystemUserMediaStore::from_data_root(temp.path());
         let relative = PathBuf::from("gallery").join("photo.png");
 
         store

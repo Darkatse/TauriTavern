@@ -1,6 +1,7 @@
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
 import { decodeBase64ToBytes } from '../binary-utils.js';
 import { safeResponseStatusText, textResponse } from '../http-utils.js';
-import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
+import { commandErrorResponse } from '../../../scripts/util/command-error-utils.js';
 
 function normalizeRouteResponse(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -48,11 +49,12 @@ async function handleTtsRoute(context, path, body) {
         const payload = await context.safeInvoke('tts_handle', {
             path,
             body: body || {},
+            locale: getSillyTavernLocale(),
         });
 
         return createRouteResponse(payload);
     } catch (error) {
-        const resolved = resolveHostErrorResponse(extractErrorText(error));
+        const resolved = commandErrorResponse(error);
         return textResponse(resolved.body, resolved.status, resolved.body);
     }
 }

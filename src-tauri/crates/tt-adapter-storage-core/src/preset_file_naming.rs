@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -7,6 +8,7 @@ use tokio::fs;
 use crate::file_system::list_files_with_extension;
 use crate::sillytavern_sorting::sort_paths_by_file_name_sillytavern_name;
 use tt_domain::errors::DomainError;
+use tt_domain::json_document::JsonDocument;
 use tt_domain::models::filename::sanitize_filename;
 
 #[derive(Debug, Clone)]
@@ -132,55 +134,26 @@ pub async fn load_named_preset_files(dir: &Path) -> Result<Vec<NamedPresetFile>,
     let mut indices = HashMap::<String, usize>::new();
 
     for path in files {
-        let file_stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .ok_or_else(|| {
-                DomainError::InvalidData(format!(
-                    "Preset file name is not valid UTF-8: {}",
-                    path.display()
-                ))
-            })?;
-        let raw_content = fs::read_to_string(&path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read preset file '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let value: Value = serde_json::from_str(&raw_content).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid preset JSON in '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let name = preset_name_from_value(file_stem, &value);
-        let is_canonical = canonical_preset_file_stem(&name)? == file_stem;
-
-        let entry = NamedPresetFile {
-            #[cfg(test)]
-            path,
-            name: name.clone(),
-            raw_content,
-            is_canonical,
+        let entry = match read_named_preset_file(&path).await {
+            Ok(entry) => entry,
+            Err(error) => {
+                report_skipped_preset(error);
+                continue;
+            }
         };
 
-        if let Some(existing_index) = indices.get(&name).copied() {
-            let existing = &entries[existing_index];
-            match (existing.is_canonical, entry.is_canonical) {
-                (true, false) => continue,
+        if let Some(existing_index) = indices.get(&entry.name).copied() {
+            match (entries[existing_index].is_canonical, entry.is_canonical) {
+                (true, false) => {}
                 (false, true) => entries[existing_index] = entry,
-                _ => {
-                    return Err(DomainError::InvalidData(format!(
-                        "Duplicate preset name '{}' found in '{}'",
-                        name,
-                        dir.display()
-                    )));
-                }
+                _ => report_skipped_preset(format_args!(
+                    "name '{}' is already used by another file: {}",
+                    entry.name,
+                    path.display()
+                )),
             }
         } else {
-            indices.insert(name, entries.len());
+            indices.insert(entry.name.clone(), entries.len());
             entries.push(entry);
         }
     }
@@ -188,10 +161,48 @@ pub async fn load_named_preset_files(dir: &Path) -> Result<Vec<NamedPresetFile>,
     Ok(entries)
 }
 
-fn preset_name_from_value(file_stem: &str, value: &Value) -> String {
-    value
-        .get("name")
-        .and_then(Value::as_str)
+async fn read_named_preset_file(path: &Path) -> Result<NamedPresetFile, DomainError> {
+    let file_stem = path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .expect("sorting rejects file names that are not UTF-8");
+    let raw_content = fs::read_to_string(path).await.map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read preset file '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+    let name = JsonDocument::parse(raw_content.as_bytes())
+        .and_then(|preset| preset.get::<Value>(&["name"]))
+        .map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid preset JSON in '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
+    let name = preset_name(file_stem, name.as_ref());
+    let is_canonical = canonical_preset_file_stem(&name)? == file_stem;
+
+    Ok(NamedPresetFile {
+        #[cfg(test)]
+        path: path.to_path_buf(),
+        name,
+        raw_content,
+        is_canonical,
+    })
+}
+
+fn report_skipped_preset(reason: impl std::fmt::Display) {
+    tracing::error!(
+        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+        "Skipped preset: {reason}"
+    );
+}
+
+fn preset_name(file_stem: &str, name: Option<&Value>) -> String {
+    name.and_then(Value::as_str)
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .unwrap_or(file_stem)
@@ -205,44 +216,7 @@ mod tests {
         PresetFilePaths, canonical_preset_file_stem, legacy_preset_file_stem,
         load_named_preset_files,
     };
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tt_domain::errors::DomainError;
-
-    static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
-            let counter = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-preset-file-naming-test-{}-{}-{}",
-                std::process::id(),
-                suffix,
-                counter
-            ));
-            std::fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn canonical_stem_matches_upstream_unicode_behavior() {
@@ -284,8 +258,8 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_for_save_migrates_deprecated_legacy_path() {
-        let dir = TestDir::new();
-        let paths = PresetFilePaths::new("【明月青秋】", dir.path(), ".json").expect("paths");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let paths = PresetFilePaths::new("【明月青秋】", temp.path(), ".json").expect("paths");
         #[allow(deprecated)]
         let legacy = paths.legacy_path().to_path_buf();
         tokio::fs::write(&legacy, r#"{"name":"【明月青秋】"}"#)
@@ -301,8 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_for_save_rejects_conflicting_canonical_and_deprecated_legacy_paths() {
-        let dir = TestDir::new();
-        let paths = PresetFilePaths::new("【明月青秋】", dir.path(), ".json").expect("paths");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let paths = PresetFilePaths::new("【明月青秋】", temp.path(), ".json").expect("paths");
         #[allow(deprecated)]
         let legacy = paths.legacy_path().to_path_buf();
         tokio::fs::write(paths.canonical_path(), r#"{"name":"【明月青秋】"}"#)
@@ -322,41 +296,71 @@ mod tests {
 
     #[tokio::test]
     async fn load_named_preset_files_prefers_canonical_over_deprecated_legacy() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         tokio::fs::write(
-            dir.path().join("_明月青秋_.json"),
+            temp.path().join("_明月青秋_.json"),
             r#"{"name":"【明月青秋】","temperature":0.1}"#,
         )
         .await
         .expect("write legacy preset");
         tokio::fs::write(
-            dir.path().join("【明月青秋】.json"),
+            temp.path().join("【明月青秋】.json"),
             r#"{"name":"【明月青秋】","temperature":0.9}"#,
         )
         .await
         .expect("write canonical preset");
 
-        let entries = load_named_preset_files(dir.path())
+        let entries = load_named_preset_files(temp.path())
             .await
             .expect("load preset files");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "【明月青秋】");
         assert!(entries[0].is_canonical);
-        assert_eq!(entries[0].path, dir.path().join("【明月青秋】.json"));
+        assert_eq!(entries[0].path, temp.path().join("【明月青秋】.json"));
+    }
+
+    #[tokio::test]
+    async fn load_named_preset_files_skips_files_that_cannot_be_presets() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        for (file, content) in [
+            ("Broken.json", "{"),
+            ("First.json", r#"{"name":"Shared"}"#),
+            ("Second.json", r#"{"name":"Shared"}"#),
+            ("Valid.json", r#"{"temperature":0.5}"#),
+        ] {
+            tokio::fs::write(temp.path().join(file), content)
+                .await
+                .expect("write preset");
+        }
+
+        let entries = load_named_preset_files(temp.path())
+            .await
+            .expect("load preset files");
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.name.as_str(), entry.path.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Shared", temp.path().join("First.json")),
+                ("Valid", temp.path().join("Valid.json")),
+            ]
+        );
     }
 
     #[tokio::test]
     async fn load_named_preset_files_falls_back_to_file_stem_without_embedded_name() {
-        let dir = TestDir::new();
+        let temp = tempfile::tempdir().expect("create temp dir");
         tokio::fs::write(
-            dir.path().join("Plain Preset.json"),
+            temp.path().join("Plain Preset.json"),
             r#"{"temperature":0.5}"#,
         )
         .await
         .expect("write preset");
 
-        let entries = load_named_preset_files(dir.path())
+        let entries = load_named_preset_files(temp.path())
             .await
             .expect("load preset files");
 

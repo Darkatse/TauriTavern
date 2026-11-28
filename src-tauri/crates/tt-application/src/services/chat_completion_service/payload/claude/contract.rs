@@ -15,7 +15,7 @@ pub(super) struct ClaudeModelContract {
     pub(super) supports_xhigh_output_effort: bool,
     pub(super) thinking_defaults_on: bool,
     pub(super) supports_assistant_prefill: bool,
-    pub(super) supports_json_output: bool,
+    pub(super) supports_forced_tool_choice: bool,
 }
 
 impl ClaudeModelContract {
@@ -56,8 +56,11 @@ impl ClaudeModelContract {
             supports_xhigh_output_effort: adaptive_only,
             thinking_defaults_on: claude5,
             supports_assistant_prefill: !claude46 && !adaptive_only,
-            supports_json_output: matches(&[
+            supports_forced_tool_choice: !matches(&[
                 "claude-fable-5-1",
+                "claude-fable-5-2",
+                "claude-mythos-5-1",
+                "claude-mythos-5-2",
                 "claude-opus-5-5",
                 "claude-sonnet-5-5",
             ]),

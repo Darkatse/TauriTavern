@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use reqwest::blocking::{Client as BlockingClient, ClientBuilder as BlockingClientBuilder};
 use reqwest::redirect::Policy;
-use reqwest::{Client, NoProxy, Proxy, Url};
+use reqwest::{Client, NoProxy, Proxy};
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::RequestProxySettings;
 use tt_ports::settings::RequestProxyRuntime;
@@ -16,10 +16,10 @@ use crate::restricted_endpoint::{
     UserEndpointRoute, restricted_redirect_policy, user_endpoint_route,
 };
 
-pub const CHAT_COMPLETION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
-pub const CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
-pub const TOKENIZER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const GENERATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+pub const GENERATION_NON_STREAM_REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+pub const PINNED_FILE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const PINNED_FILE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PROVIDER_METADATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PROVIDER_METADATA_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const WEB_SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,14 +33,15 @@ pub const GIT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 pub const GIT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const CORS_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpClientProfile {
     Default,
     Download,
-    Tokenizer,
-    ChatCompletion,
-    ChatCompletionStream,
+    PinnedFile,
+    Generation,
+    GenerationStream,
     ChatCompletionWebSocket,
     ProviderAuthentication,
     ProviderMetadata,
@@ -49,6 +50,7 @@ pub enum HttpClientProfile {
     Translation,
     Tts,
     Mcp,
+    CorsProxy,
 }
 
 #[derive(Clone, Default)]
@@ -104,6 +106,11 @@ impl HttpClientPool {
             product_user_agent,
             state: RwLock::new(HttpClientPoolState::default()),
         }
+    }
+
+    /// The `User-Agent` every client of this pool sends unless a request sets its own.
+    pub fn product_user_agent(&self) -> &str {
+        &self.product_user_agent
     }
 
     pub fn validate_request_proxy_settings(
@@ -173,20 +180,20 @@ impl HttpClientPool {
     pub fn user_endpoint_client(
         &self,
         profile: HttpClientProfile,
-        base_url: &str,
+        url: &str,
     ) -> Result<Client, DomainError> {
-        self.user_endpoint_client_with_revision(profile, base_url)
+        self.user_endpoint_client_with_revision(profile, url)
             .map(|(client, _revision)| client)
     }
 
     pub fn user_endpoint_client_with_revision(
         &self,
         profile: HttpClientProfile,
-        base_url: &str,
+        url: &str,
     ) -> Result<(Client, u64), DomainError> {
         let route = {
             let state = self.state.read().unwrap();
-            user_endpoint_route(base_url, &state.user_endpoint_grants)?
+            user_endpoint_route(url, &state.user_endpoint_grants)?
         };
         self.client_with_revision_for_route(profile, Some(route))
     }
@@ -281,45 +288,19 @@ impl RequestProxyRuntime for HttpClientPool {
 }
 
 impl UserEndpointGrantRuntime for HttpClientPool {
-    fn replace_user_endpoint_grants(&self, endpoints: &[String]) {
-        self.state.write().unwrap().user_endpoint_grants = endpoints.iter().cloned().collect();
+    fn allow_user_endpoints(&self, origins: &[String]) {
+        self.state
+            .write()
+            .unwrap()
+            .user_endpoint_grants
+            .extend(origins.iter().cloned());
     }
 }
 
 fn proxy_from_settings(settings: &RequestProxySettings) -> Result<Option<Proxy>, DomainError> {
-    if !settings.enabled {
+    let Some(proxy_url) = settings.proxy_url()? else {
         return Ok(None);
-    }
-
-    let url = settings.url.trim();
-    if url.is_empty() {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL is required".to_string(),
-        ));
-    }
-
-    let proxy_url = Url::parse(url)
-        .ok()
-        .filter(Url::has_host)
-        .map_or_else(|| Url::parse(&format!("http://{url}")), Ok)
-        .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
-    if !matches!(
-        proxy_url.scheme(),
-        "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
-    ) {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL must use http, https, socks4, socks4a, socks5, or socks5h"
-                .to_string(),
-        ));
-    }
-    if !matches!(proxy_url.path(), "" | "/")
-        || proxy_url.query().is_some()
-        || proxy_url.fragment().is_some()
-    {
-        return Err(DomainError::InvalidData(
-            "Request proxy URL must not include a path, query, or fragment".to_string(),
-        ));
-    }
+    };
     let mut proxy = Proxy::all(proxy_url)
         .map_err(|error| DomainError::InvalidData(format!("Invalid request proxy URL: {error}")))?;
 
@@ -349,22 +330,21 @@ fn build_profile_client(
     let mut builder = Client::builder().no_proxy();
 
     builder = match profile {
-        HttpClientProfile::Default => builder,
-        HttpClientProfile::Download => builder.redirect(Policy::limited(5)),
-        HttpClientProfile::Tokenizer => builder
-            .connect_timeout(TOKENIZER_CONNECT_TIMEOUT)
-            .timeout(TOKENIZER_REQUEST_TIMEOUT),
-        HttpClientProfile::ChatCompletion => builder
-            .connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
-            .timeout(CHAT_COMPLETION_NON_STREAM_REQUEST_TIMEOUT),
-        HttpClientProfile::ChatCompletionStream => {
-            builder.connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT)
-        }
+        HttpClientProfile::Default | HttpClientProfile::Download => builder,
+        // A pinned file may take minutes to arrive, so only a stalled read ends its download.
+        HttpClientProfile::PinnedFile => builder
+            .connect_timeout(PINNED_FILE_CONNECT_TIMEOUT)
+            .read_timeout(PINNED_FILE_READ_TIMEOUT),
+        HttpClientProfile::Generation => builder
+            .connect_timeout(GENERATION_CONNECT_TIMEOUT)
+            .timeout(GENERATION_NON_STREAM_REQUEST_TIMEOUT),
+        // No read limit: a stream may pause between tokens, and a text completion model download
+        // answers only when it ends.
+        HttpClientProfile::GenerationStream => builder.connect_timeout(GENERATION_CONNECT_TIMEOUT),
         HttpClientProfile::ChatCompletionWebSocket => builder
             .http1_only()
-            .connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT),
+            .connect_timeout(GENERATION_CONNECT_TIMEOUT),
         HttpClientProfile::ProviderAuthentication => builder
-            .redirect(Policy::none())
             .connect_timeout(PROVIDER_METADATA_CONNECT_TIMEOUT)
             .timeout(PROVIDER_METADATA_REQUEST_TIMEOUT),
         HttpClientProfile::ProviderMetadata => builder
@@ -382,17 +362,23 @@ fn build_profile_client(
         HttpClientProfile::Tts => builder
             .connect_timeout(TTS_CONNECT_TIMEOUT)
             .timeout(TTS_REQUEST_TIMEOUT),
-        // Match RMCP's default client: idle reuse can stall on delayed ACK when a prior body
-        // was not fully consumed.
-        HttpClientProfile::Mcp => builder
-            .redirect(Policy::none())
-            .pool_max_idle_per_host(0)
-            .connect_timeout(MCP_CONNECT_TIMEOUT),
+        HttpClientProfile::Mcp => builder.connect_timeout(MCP_CONNECT_TIMEOUT),
+        // A proxied body streams for as long as the target keeps sending.
+        HttpClientProfile::CorsProxy => builder.connect_timeout(CORS_PROXY_CONNECT_TIMEOUT),
     };
 
-    if user_endpoint_route.is_some() {
-        builder = builder.redirect(restricted_redirect_policy());
-    }
+    builder = match (profile, user_endpoint_route) {
+        // Download callers follow redirects themselves, so each URL can be allowed before it is
+        // requested; the other two never follow them. A user endpoint only narrows redirects.
+        (
+            HttpClientProfile::Download
+            | HttpClientProfile::ProviderAuthentication
+            | HttpClientProfile::Mcp,
+            _,
+        ) => builder.redirect(Policy::none()),
+        (_, Some(_)) => builder.redirect(restricted_redirect_policy()),
+        (_, None) => builder,
+    };
 
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
@@ -414,9 +400,10 @@ mod tests {
 
     use super::{HttpClientPool, HttpClientProfile};
     use rcgen::{CertifiedKey, generate_simple_self_signed};
-    use reqwest::StatusCode;
+    use reqwest::{StatusCode, Url};
     use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
+    use tt_domain::models::endpoint_url::http_origin;
     use tt_domain::models::settings::RequestProxySettings;
     use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
@@ -426,11 +413,9 @@ mod tests {
         HttpClientPool::new(TEST_USER_AGENT)
     }
 
-    fn grant_user_endpoint(pool: &HttpClientPool, endpoint: &str) {
-        let endpoint = tt_domain::models::endpoint_url::parse_user_http_endpoint(endpoint)
-            .unwrap()
-            .to_string();
-        pool.replace_user_endpoint_grants(&[endpoint]);
+    fn grant_user_endpoint(pool: &HttpClientPool, url: &str) {
+        let origin = http_origin(&Url::parse(url).unwrap()).unwrap();
+        pool.allow_user_endpoints(&[origin]);
     }
 
     struct CaptureServer {
@@ -620,11 +605,8 @@ mod tests {
         assert!(pool.git_blocking_client_builder().is_err());
         grant_user_endpoint(&pool, "http://localhost:11434/v1");
         assert!(
-            pool.user_endpoint_client(
-                HttpClientProfile::ChatCompletion,
-                "http://localhost:11434/v1"
-            )
-            .is_ok()
+            pool.user_endpoint_client(HttpClientProfile::Generation, "http://localhost:11434/v1")
+                .is_ok()
         );
 
         pool.apply_request_proxy_settings(&RequestProxySettings::default())
@@ -758,6 +740,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn next_request_survives_a_connection_that_died_while_idle() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind origin");
+        let url = format!("http://{}", listener.local_addr().expect("origin address"));
+        let origin = thread::spawn(move || {
+            let (mut first, _peer) = listener.accept().expect("accept first request");
+            read_request_head(&first).expect("read first request");
+            first
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .expect("write first response");
+            let dead = thread::spawn(move || {
+                let _ = first.read(&mut [0; 1]);
+            });
+
+            let (mut second, _peer) = listener.accept().expect("accept second request");
+            read_request_head(&second).expect("read second request");
+            second
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("write second response");
+            dead.join().expect("dead connection thread");
+        });
+        let client = pool().client(HttpClientProfile::GenerationStream).unwrap();
+
+        client.get(&url).send().await.unwrap();
+        client.get(&url).send().await.unwrap();
+        origin.join().expect("origin thread");
+    }
+
+    #[tokio::test]
     async fn approved_loopback_user_endpoint_forces_direct_client() {
         let origin = capture_server();
         let (proxy_url, proxy_hit, proxy_handle) = proxy_probe(Duration::from_millis(150));
@@ -769,13 +779,13 @@ mod tests {
         })
         .unwrap();
         assert!(
-            pool.user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
+            pool.user_endpoint_client(HttpClientProfile::Generation, &origin.url)
                 .is_err()
         );
         grant_user_endpoint(&pool, &origin.url);
 
         let client = pool
-            .user_endpoint_client(HttpClientProfile::ChatCompletion, &origin.url)
+            .user_endpoint_client(HttpClientProfile::Generation, &origin.url)
             .unwrap();
         client.get(&origin.url).send().await.unwrap();
 
@@ -799,7 +809,7 @@ mod tests {
         grant_user_endpoint(&pool, endpoint);
 
         let client = pool
-            .user_endpoint_client(HttpClientProfile::ChatCompletion, endpoint)
+            .user_endpoint_client(HttpClientProfile::Generation, endpoint)
             .unwrap();
         client.get(endpoint).send().await.unwrap();
 
@@ -834,7 +844,7 @@ mod tests {
         let pool = pool();
         grant_user_endpoint(&pool, &base_url);
         let client = pool
-            .user_endpoint_client(HttpClientProfile::ChatCompletion, &base_url)
+            .user_endpoint_client(HttpClientProfile::Generation, &base_url)
             .unwrap();
 
         let response = client
@@ -847,6 +857,34 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(first_request.starts_with("GET /start HTTP/1.1"));
         assert!(second_request.starts_with("GET /final HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn user_endpoints_keep_profiles_that_refuse_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect_handle = thread::spawn(move || {
+            let (mut stream, _peer) = listener.accept().expect("accept redirect request");
+            read_request_head(&stream).expect("read redirect request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("write redirect response");
+        });
+        let pool = pool();
+        grant_user_endpoint(&pool, &url);
+
+        let response = pool
+            .user_endpoint_client(HttpClientProfile::Mcp, &url)
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FOUND);
+        redirect_handle.join().expect("redirect server thread");
     }
 
     #[tokio::test]
@@ -866,7 +904,7 @@ mod tests {
         let pool = pool();
         grant_user_endpoint(&pool, &redirect_url);
         let client = pool
-            .user_endpoint_client(HttpClientProfile::ChatCompletion, &redirect_url)
+            .user_endpoint_client(HttpClientProfile::Generation, &redirect_url)
             .unwrap();
 
         let error = client.get(&redirect_url).send().await.unwrap_err();

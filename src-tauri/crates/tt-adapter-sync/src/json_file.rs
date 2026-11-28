@@ -76,21 +76,13 @@ fn json_tmp_path(path: &Path) -> PathBuf {
 mod tests {
     use serde_json::{Value, json};
     use tt_domain::errors::DomainError;
-    use uuid::Uuid;
 
     use super::{read_json_file, write_json_file};
 
-    fn temp_root() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-sync-json-{}", Uuid::new_v4()))
-    }
-
     #[tokio::test]
     async fn read_json_file_reports_malformed_json_as_invalid_data() {
-        let root = temp_root();
-        let path = root.join("bad.json");
-        tokio::fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("bad.json");
         tokio::fs::write(&path, b"{")
             .await
             .expect("write malformed json");
@@ -98,7 +90,6 @@ mod tests {
         let error = read_json_file::<Value>(&path).await.unwrap_err();
 
         assert!(matches!(error, DomainError::InvalidData(_)));
-        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
@@ -114,8 +105,8 @@ mod tests {
             }
         }
 
-        let root = temp_root();
-        let path = root.join("settings.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let path = temp.path().join("settings.json");
         write_json_file(&path, &json!({ "ok": true }))
             .await
             .expect("write initial json");
@@ -126,13 +117,12 @@ mod tests {
         assert!(matches!(error, DomainError::InvalidData(_)));
         let after: Value = read_json_file(&path).await.expect("read after");
         assert_eq!(after, before);
-        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
     async fn write_json_file_keeps_directory_target_on_failure() {
-        let root = temp_root();
-        let target = root.join("state.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("state.json");
         tokio::fs::create_dir_all(&target)
             .await
             .expect("create directory target");
@@ -142,7 +132,6 @@ mod tests {
             .unwrap_err();
 
         assert!(target.is_dir());
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
-        let _ = tokio::fs::remove_dir_all(root).await;
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
     }
 }

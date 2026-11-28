@@ -1,4 +1,5 @@
-import { normalizeBinaryPayload } from '../binary-utils.js';
+import { getSillyTavernLocale } from '../adapters/st/sillytavern-i18n.js';
+import { expectCharacter, stageUrlContent, takeUrlContent } from '../services/files/url-content.js';
 
 export function registerAssetsRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/assets/get', async () => {
@@ -7,24 +8,20 @@ export function registerAssetsRoutes(router, context, { jsonResponse, textRespon
     });
 
     router.post('/api/assets/download', async ({ body }) => {
+        const url = String(body?.url || '');
         const category = String(body?.category || '');
-        const result = await context.safeInvoke('download_asset', {
-            url: String(body?.url || ''),
-            category,
-            filename: String(body?.filename || ''),
-        });
-
         if (category === 'character') {
-            const bytes = normalizeBinaryPayload(result?.data);
-            const mimeType = String(result?.mimeType || 'application/octet-stream');
-            return new Response(bytes, {
-                status: 200,
-                headers: {
-                    'Content-Type': mimeType,
-                },
-            });
+            const card = expectCharacter(await stageUrlContent(context.safeInvoke, url));
+            const { bytes, type } = await takeUrlContent(context, card);
+            return new Response(bytes, { status: 200, headers: { 'Content-Type': type } });
         }
 
+        await context.safeInvoke('download_asset', {
+            url,
+            category,
+            filename: String(body?.filename || ''),
+            locale: getSillyTavernLocale(),
+        });
         return textResponse('OK');
     });
 

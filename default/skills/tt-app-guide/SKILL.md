@@ -6,7 +6,7 @@ license: AGPL-3.0
 
 # TauriTavern app guide
 
-TauriTavern runs the SillyTavern 1.19.0 frontend on a Rust backend, as a native app for desktop, Android, iOS and HarmonyOS. Most of the interface is upstream SillyTavern; TauriTavern adds its own settings, data handling and platform behavior.
+TauriTavern runs the SillyTavern 1.19.1 frontend on a Rust backend, as a native app for desktop, Android, iOS and HarmonyOS. Most of the interface is upstream SillyTavern; TauriTavern adds its own settings, data handling and platform behavior.
 
 ## How it differs from SillyTavern
 
@@ -50,20 +50,21 @@ Each top bar drawer is a `.drawer` holding a `.drawer-toggle` and a `.drawer-con
 Elsewhere:
 
 - **TauriTavern settings** open as a popup from `#tauritavern_settings_button`.
-  - Sections: Performance, Chat Backups, System (data directory, request proxy), Models, Misc and Development (logs, reload frontend). Windows adds Interface, and Sync appears when LAN sync is allowed.
+  - Sections: Interface (generation notifications; Windows adds minimize to tray on close), Performance, Chat Backups, System (data directory, request proxy), Models, Misc and Development (logs, reload frontend). Sync appears when LAN sync is allowed.
   - The controls have no stable ids. Find a section by its `aria-label` and a row by its label, both in the user's language.
   - Most changes take effect when the popup is saved, and some of those reload the page.
   - Some act at once: choosing a data directory (after its own confirmation), the Development buttons and Sync.
   - The data directory and the API key exposure option (Misc) need an app restart.
 - **Updates and the debug bundle.** They are in the TauriTavern version panel in the Extensions drawer, which is collapsed by default.
-  - The update channel is the radio group `input[name="tauritavern_update_channel"]` (`stable` or `canary`); `#ttv-channel-toggle` only expands it.
-  - The update check is `#tauritavern_check_update`, and the debug bundle export is `#tauritavern_export_debug_bundle`.
+  - `#ttv-update-settings-toggle` expands Update Settings, which holds the update channel radio group `input[name="tauritavern_update_channel"]` (`stable` or `canary`) and the startup update popup switch `#tauritavern_update_popup_enabled`.
+  - The manual update check is `#tauritavern_check_update`, and the debug bundle export is `#tauritavern_export_debug_bundle`.
   - iOS builds may hide the update controls.
 - **The extensions menu.** `#extensionsMenuButton`, next to the chat input, opens `#extensionsMenu`.
 
 ## Working in the live interface
 
 - **Opening a drawer.** Click its `.drawer-toggle`. This closes every other unpinned drawer, including the Advanced Formatting drawer this assistant lives in.
+  - When `<html>` has `data-tt-drawer-bar`, the system draws the drawer buttons beside the page and the toggles are hidden, so interact cannot reach them. Click the drawer's icon with evaluate instead, using the drawer element from the table above: `document.querySelector('#ai-config-button .drawer-icon').click()`.
   - Your run continues; the user sees the drawer you opened and gets your reply when they come back.
   - Read state instead of opening drawers when the user doesn't need to see the screen.
 - **Detached panels.** With TauriTavern's Panel Runtime setting on, a closed drawer's content may be detached from the page. Open the drawer before looking inside it.

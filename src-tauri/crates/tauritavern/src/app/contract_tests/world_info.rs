@@ -3,7 +3,8 @@ use tt_application::services::world_info_service::WorldInfoService;
 
 #[tokio::test]
 async fn world_info_document_replacement_preserves_text_and_rejects_invalid_updates() {
-    let root = temp_root("world-info-document");
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let root = temp.path();
     let user = root.join("default-user");
     let service = WorldInfoService::new(Arc::new(FileWorldInfoRepository::new(
         user.join("worlds"),
@@ -54,5 +55,4 @@ async fn world_info_document_replacement_preserves_text_and_rejects_invalid_upda
             .count(),
         0
     );
-    fs::remove_dir_all(root).await.unwrap();
 }

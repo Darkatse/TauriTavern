@@ -222,11 +222,6 @@ mod tests {
 
     use super::{delete_sync_file, download_tmp_path, write_file_atomic};
 
-    fn unique_temp_root() -> std::path::PathBuf {
-        use rand::random;
-        std::env::temp_dir().join(format!("tauritavern-sync-fs-{}", random::<u64>()))
-    }
-
     #[tokio::test]
     async fn failed_download_keeps_existing_file_and_removes_partial_stage() {
         use std::{
@@ -247,9 +242,8 @@ mod tests {
             }
         }
 
-        let root = unique_temp_root();
-        tokio::fs::create_dir_all(&root).await.unwrap();
-        let target = root.join("settings.json");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("settings.json");
         tokio::fs::write(&target, b"old").await.unwrap();
         let mut source = b"partial".as_slice().chain(FailedRead);
 
@@ -259,7 +253,6 @@ mod tests {
         assert!(!error.target_changed());
         assert_eq!(tokio::fs::read(&target).await.unwrap(), b"old");
         assert!(!download_tmp_path(&target).exists());
-        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
     #[test]
@@ -304,18 +297,14 @@ mod tests {
 
     #[tokio::test]
     async fn write_file_atomic_overwrites_and_preserves_mtime() {
-        let root = unique_temp_root();
-        let _ = tokio::fs::remove_dir_all(&root).await;
-        tokio::fs::create_dir_all(&root)
-            .await
-            .expect("create temp root");
+        let temp = tempfile::tempdir().expect("create temp dir");
 
-        let source_path = root.join("source.bin");
+        let source_path = temp.path().join("source.bin");
         tokio::fs::write(&source_path, b"new")
             .await
             .expect("write source");
 
-        let dest_path = root.join("dest.bin");
+        let dest_path = temp.path().join("dest.bin");
         tokio::fs::write(&dest_path, b"old")
             .await
             .expect("write existing dest");
@@ -339,16 +328,12 @@ mod tests {
         let expected_nanos = ((modified_ms % 1000) * 1_000_000) as u32;
         assert_eq!(actual.unix_seconds(), expected_secs);
         assert_eq!(actual.nanoseconds(), expected_nanos);
-
-        tokio::fs::remove_dir_all(&root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn delete_sync_file_prunes_fileless_git_tree_at_dataset_boundary() {
-        let root = unique_temp_root();
-        let extension = root.join("extensions/third-party/example");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let extension = temp.path().join("extensions/third-party/example");
         let git = extension.join(".git");
 
         for directory in [
@@ -372,7 +357,7 @@ mod tests {
             .expect("write config");
 
         let head = SyncPath::new("extensions/third-party/example/.git/HEAD".to_string()).unwrap();
-        delete_sync_file(&root, &head).await.unwrap();
+        delete_sync_file(temp.path(), &head).await.unwrap();
 
         assert!(git.join("config").exists());
         assert!(git.join("objects/info").exists());
@@ -382,27 +367,23 @@ mod tests {
 
         let config =
             SyncPath::new("extensions/third-party/example/.git/config".to_string()).unwrap();
-        delete_sync_file(&root, &config).await.unwrap();
+        delete_sync_file(temp.path(), &config).await.unwrap();
 
         assert!(!git.exists());
         assert!(extension.join("manifest.json").exists());
 
         let manifest =
             SyncPath::new("extensions/third-party/example/manifest.json".to_string()).unwrap();
-        delete_sync_file(&root, &manifest).await.unwrap();
+        delete_sync_file(temp.path(), &manifest).await.unwrap();
 
         assert!(!extension.exists());
-        assert!(root.join("extensions/third-party").exists());
-
-        tokio::fs::remove_dir_all(root)
-            .await
-            .expect("remove temp root");
+        assert!(temp.path().join("extensions/third-party").exists());
     }
 
     #[tokio::test]
     async fn delete_sync_file_does_not_prune_file_only_dataset_parent() {
-        let root = unique_temp_root();
-        let default_user = root.join("default-user");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let default_user = temp.path().join("default-user");
         tokio::fs::create_dir_all(&default_user)
             .await
             .expect("create default user");
@@ -411,14 +392,10 @@ mod tests {
             .expect("write settings");
 
         let settings = SyncPath::new("default-user/settings.json".to_string()).unwrap();
-        delete_sync_file(&root, &settings).await.unwrap();
+        delete_sync_file(temp.path(), &settings).await.unwrap();
 
         assert!(default_user.exists());
         assert!(!default_user.join("settings.json").exists());
-
-        tokio::fs::remove_dir_all(root)
-            .await
-            .expect("remove temp root");
     }
 
     #[cfg(unix)]
@@ -426,9 +403,9 @@ mod tests {
     async fn delete_sync_file_does_not_follow_symlinks_in_candidate_tree() {
         use std::os::unix::fs::symlink;
 
-        let root = unique_temp_root();
-        let git = root.join("extensions/third-party/example/.git");
-        let outside = root.join("outside");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let git = temp.path().join("extensions/third-party/example/.git");
+        let outside = temp.path().join("outside");
         tokio::fs::create_dir_all(&git)
             .await
             .expect("create git directory");
@@ -444,13 +421,10 @@ mod tests {
         symlink(&outside, git.join("linked-directory")).expect("create directory symlink");
 
         let head = SyncPath::new("extensions/third-party/example/.git/HEAD".to_string()).unwrap();
-        delete_sync_file(&root, &head).await.unwrap();
+        delete_sync_file(temp.path(), &head).await.unwrap();
 
         assert!(git.join("linked-directory").symlink_metadata().is_ok());
         assert!(outside.join("keep.txt").exists());
-        tokio::fs::remove_dir_all(root)
-            .await
-            .expect("remove temp root");
     }
 
     #[cfg(unix)]
@@ -458,8 +432,8 @@ mod tests {
     async fn cleanup_failure_after_delete_reports_target_changed() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = unique_temp_root();
-        let extension = root.join("extensions/third-party/example");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let extension = temp.path().join("extensions/third-party/example");
         let child = extension.join("child");
         let file = child.join("index.js");
         tokio::fs::create_dir_all(&child)
@@ -474,7 +448,7 @@ mod tests {
 
         let path =
             SyncPath::new("extensions/third-party/example/child/index.js".to_string()).unwrap();
-        let result = delete_sync_file(&root, &path).await;
+        let result = delete_sync_file(temp.path(), &path).await;
 
         tokio::fs::set_permissions(&extension, std::fs::Permissions::from_mode(0o755))
             .await
@@ -483,30 +457,22 @@ mod tests {
         assert!(error.target_changed());
         assert!(!file.exists());
         assert!(child.exists());
-
-        tokio::fs::remove_dir_all(root)
-            .await
-            .expect("remove temp root");
     }
 
     #[tokio::test]
     async fn delete_sync_file_rejects_unknown_path_before_mutation() {
-        let root = unique_temp_root();
-        let file = root.join("outside/file.txt");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = temp.path().join("outside/file.txt");
         tokio::fs::create_dir_all(file.parent().unwrap())
             .await
             .expect("create parent");
         tokio::fs::write(&file, b"keep").await.expect("write file");
 
         let path = SyncPath::new("outside/file.txt".to_string()).unwrap();
-        let error = delete_sync_file(&root, &path).await.unwrap_err();
+        let error = delete_sync_file(temp.path(), &path).await.unwrap_err();
 
         assert!(!error.target_changed());
         assert!(matches!(error.into_error(), SyncError::InvalidData(_)));
         assert!(file.exists());
-
-        tokio::fs::remove_dir_all(root)
-            .await
-            .expect("remove temp root");
     }
 }

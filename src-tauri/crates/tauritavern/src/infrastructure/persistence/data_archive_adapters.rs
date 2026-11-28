@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
 use tt_adapter_storage_core::file_system::DataDirectory;
+use tt_adapter_storage_core::validate_user_settings_blocking;
 use tt_domain::errors::DomainError;
 use tt_ports::data_archive::{
     DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
@@ -16,6 +17,15 @@ use tt_ports::data_archive::{
 };
 
 const EXPORT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Runs on an archive's staged files: settings the app could not load never replace the target's.
+pub(crate) fn prepare_imported_user_data(
+    user_root: &Path,
+    target_user_root: &Path,
+) -> Result<(), DomainError> {
+    validate_user_settings_blocking(user_root)?;
+    tt_adapter_media::persona_cards::migrate_personas(user_root, target_user_root)
+}
 
 pub(crate) struct TauriDataArchiveFileGateway {
     app_handle: AppHandle,
@@ -316,45 +326,32 @@ fn cleanup_stale_exports(export_root: &Path, protected_paths: &[PathBuf]) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
-
-    use filetime::{FileTime, set_file_mtime};
-    use uuid::Uuid;
 
     use super::*;
 
-    fn temp_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-adapters-{}-{}",
-            name,
-            Uuid::new_v4().simple()
-        ))
-    }
-
     fn make_stale(path: &Path) {
-        let stale_time = FileTime::from_system_time(
-            SystemTime::now() - EXPORT_RETENTION - Duration::from_secs(1),
-        );
-        set_file_mtime(path, stale_time).expect("set file mtime");
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open export")
+            .set_modified(SystemTime::now() - EXPORT_RETENTION - Duration::from_secs(1))
+            .expect("set file mtime");
     }
 
     #[test]
     fn cleanup_stale_exports_keeps_protected_active_artifact() {
-        let root = temp_root("protected-export");
-        fs::create_dir_all(&root).expect("create export root");
-        let protected = root.join("export-active.zip");
-        let stale = root.join("export-stale.zip");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let protected = temp.path().join("export-active.zip");
+        let stale = temp.path().join("export-stale.zip");
         fs::write(&protected, b"active").expect("write protected export");
         fs::write(&stale, b"stale").expect("write stale export");
         make_stale(&protected);
         make_stale(&stale);
 
-        cleanup_stale_exports(&root, std::slice::from_ref(&protected));
+        cleanup_stale_exports(temp.path(), std::slice::from_ref(&protected));
 
         assert!(protected.is_file());
         assert!(!stale.exists());
-
-        fs::remove_dir_all(root).expect("cleanup temp root");
     }
 }

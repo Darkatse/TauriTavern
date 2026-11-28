@@ -10,6 +10,7 @@ use crate::errors::DomainError;
 
 const TOOL_ID_SEPARATOR: char = ':';
 const BUILTIN_TOOL_PROVIDER_ID: &str = "builtin";
+const PROMPT_TOOL_PROVIDER_ID: &str = "prompt";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +108,18 @@ impl ToolId {
         Self::new(&ToolProviderId::builtin(), native_name)
     }
 
+    /// A model-facing name with no executor.
+    pub fn prompt(model_name: impl AsRef<str>) -> Result<Self, DomainError> {
+        Self::new(
+            &ToolProviderId(PROMPT_TOOL_PROVIDER_ID.to_string()),
+            model_name,
+        )
+    }
+
+    pub fn is_prompt(&self) -> bool {
+        self.provider_id() == PROMPT_TOOL_PROVIDER_ID
+    }
+
     pub fn provider_id(&self) -> &str {
         self.0
             .split_once(TOOL_ID_SEPARATOR)
@@ -178,6 +191,7 @@ pub struct ToolDescriptor {
     pub id: ToolId,
     pub title: Option<String>,
     pub description: Option<String>,
+    /// `null` when the definition declares no parameters.
     pub input_schema: Value,
     pub output_schema: Option<Value>,
     pub annotations: Value,
@@ -289,6 +303,8 @@ impl<'de> Deserialize<'de> for ToolSnapshotId {
 pub struct ToolBinding {
     descriptor: ToolDescriptor,
     model_alias: String,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    fields: Map<String, Value>,
 }
 
 impl ToolBinding {
@@ -306,7 +322,13 @@ impl ToolBinding {
         Ok(Self {
             descriptor,
             model_alias,
+            fields: Map::new(),
         })
+    }
+
+    pub fn with_fields(mut self, fields: Map<String, Value>) -> Self {
+        self.fields = fields;
+        self
     }
 
     pub fn descriptor(&self) -> &ToolDescriptor {
@@ -320,6 +342,10 @@ impl ToolBinding {
     pub fn model_alias(&self) -> &str {
         &self.model_alias
     }
+
+    pub fn fields(&self) -> &Map<String, Value> {
+        &self.fields
+    }
 }
 
 impl<'de> Deserialize<'de> for ToolBinding {
@@ -332,10 +358,14 @@ impl<'de> Deserialize<'de> for ToolBinding {
         struct Binding {
             descriptor: ToolDescriptor,
             model_alias: String,
+            #[serde(default)]
+            fields: Map<String, Value>,
         }
 
         let binding = Binding::deserialize(deserializer)?;
-        Self::new(binding.descriptor, binding.model_alias).map_err(de::Error::custom)
+        Ok(Self::new(binding.descriptor, binding.model_alias)
+            .map_err(de::Error::custom)?
+            .with_fields(binding.fields))
     }
 }
 

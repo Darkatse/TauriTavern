@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
-use tauri::{ResourceId, State, Webview};
+use tauri::{ResourceId, Runtime, State, Webview};
 
 use crate::app::AppState;
 use crate::presentation::commands::chunk_body::{chunk_bytes_from_request, commit_headers};
@@ -25,10 +25,10 @@ pub enum ChatCommitOperationDto {
 }
 
 #[tauri::command]
-pub async fn begin_chat_commit(
+pub async fn begin_chat_commit<R: Runtime>(
     target: ChatHistoryLocator,
     operation: ChatCommitOperationDto,
-    webview: Webview,
+    webview: Webview<R>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<CommitBegin, CommandError> {
     let operation = match operation {

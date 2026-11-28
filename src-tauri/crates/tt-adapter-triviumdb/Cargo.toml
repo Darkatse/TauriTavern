@@ -2,6 +2,7 @@
 name = "tt-adapter-triviumdb"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
@@ -14,5 +15,5 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }

@@ -181,6 +181,7 @@ export function getKoboldGenerationData(finalPrompt, settings, maxLength, maxCon
 
     let generate_data = {
         prompt: finalPrompt,
+        type,
         gui_settings: false,
         sampler_order: sampler_order,
         max_context_length: Number(maxContextLength),
@@ -500,8 +501,9 @@ export function initKoboldSettings() {
     });
 
     $('#settings_preset').on('change', async function () {
-        if ($('#settings_preset').find(':selected').val() != 'gui') {
-            kai_settings.preset_settings = $('#settings_preset').find(':selected').text();
+        const selected = $(this).find(':selected');
+        if (selected.val() != 'gui') {
+            kai_settings.preset_settings = selected.text();
             const preset = koboldai_settings[koboldai_setting_names[kai_settings.preset_settings]];
             const adjustments = [];
             setGenerationParamsFromPreset(preset, adjustments);

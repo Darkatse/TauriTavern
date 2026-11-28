@@ -62,6 +62,9 @@ pub(super) fn map_openai_tools_to_claude(tools: &Value, eager_input_streaming: b
                 .filter(|value| !value.is_null())
                 .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
             mapped.insert("input_schema".to_string(), input_schema);
+            if let Some(strict) = function.get("strict").filter(|value| !value.is_null()) {
+                mapped.insert("strict".to_string(), strict.clone());
+            }
             if eager_input_streaming {
                 mapped.insert("eager_input_streaming".to_string(), Value::Bool(true));
             }

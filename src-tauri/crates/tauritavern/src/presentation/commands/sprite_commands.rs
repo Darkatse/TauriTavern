@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 use tt_application::dto::sprite_dto::{
     DeleteSpriteDto, ListSpritesDto, SpriteDto, UploadSpriteDto, UploadSpritePackDto,
 };
 
 use crate::app::AppState;
+use crate::infrastructure::staging::validate_staged_path;
 use crate::presentation::errors::CommandError;
 
 use super::helpers::{log_command, map_command_error};
@@ -26,10 +27,12 @@ pub async fn list_sprites(
 
 #[tauri::command]
 pub async fn upload_sprite(
+    app: AppHandle,
     dto: UploadSpriteDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<(), CommandError> {
     log_command("upload_sprite");
+    validate_staged_path(&app, &dto.file_path).await?;
     app_state
         .services
         .sprite_service
@@ -40,10 +43,12 @@ pub async fn upload_sprite(
 
 #[tauri::command]
 pub async fn upload_sprite_pack(
+    app: AppHandle,
     dto: UploadSpritePackDto,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<usize, CommandError> {
     log_command("upload_sprite_pack");
+    validate_staged_path(&app, &dto.file_path).await?;
     app_state
         .services
         .sprite_service

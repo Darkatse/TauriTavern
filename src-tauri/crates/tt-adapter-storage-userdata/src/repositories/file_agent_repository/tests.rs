@@ -1,9 +1,6 @@
-use std::path::PathBuf;
-
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio::fs;
-use uuid::Uuid;
 
 use super::FileAgentRepository;
 use tt_domain::errors::DomainError;
@@ -32,10 +29,6 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 };
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
-fn temp_root() -> PathBuf {
-    std::env::temp_dir().join(format!("tauritavern-agent-repo-{}", Uuid::new_v4()))
-}
-
 fn sample_run() -> AgentRun {
     sample_run_with_id("run_test")
 }
@@ -185,8 +178,8 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
 
 #[tokio::test]
 async fn repository_round_trips_run_workspace_and_event() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run();
     let manifest = sample_manifest(&run);
     let profile = sample_resolved_profile(&manifest);
@@ -237,7 +230,7 @@ async fn repository_round_trips_run_workspace_and_event() {
         .expect("append second event");
     assert_eq!(event.seq, 2);
 
-    let repository = FileAgentRepository::new(root.clone());
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let event = repository
         .append_event(
             &run.id,
@@ -291,14 +284,12 @@ async fn repository_round_trips_run_workspace_and_event() {
         .await
         .expect("read workspace file");
     assert_eq!(file.text, "hello");
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn checkpoint_replaces_previous_bytes_and_survives_reopening() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let mut run = sample_run();
     run.status = AgentRunStatus::Completed;
     repository.create_run(&run).await.expect("create run");
@@ -320,7 +311,7 @@ async fn checkpoint_replaces_previous_bytes_and_survives_reopening() {
         .await
         .expect("replace checkpoint");
 
-    let reopened = FileAgentRepository::new(root.clone());
+    let reopened = FileAgentRepository::new(temp.path().to_path_buf());
     assert_eq!(
         reopened
             .load_run_checkpoint(&run.id)
@@ -329,14 +320,12 @@ async fn checkpoint_replaces_previous_bytes_and_survives_reopening() {
             .as_deref(),
         Some(latest.as_slice())
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn reset_event_sequence_observes_externally_updated_journal() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run();
     repository.create_run(&run).await.expect("create run");
     repository
@@ -349,7 +338,7 @@ async fn reset_event_sequence_observes_externally_updated_journal() {
         .await
         .expect("append local event");
 
-    let other_repository = FileAgentRepository::new(root.clone());
+    let other_repository = FileAgentRepository::new(temp.path().to_path_buf());
     other_repository
         .append_event(
             &run.id,
@@ -382,14 +371,12 @@ async fn reset_event_sequence_observes_externally_updated_journal() {
             .len(),
         3
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn repository_rejects_non_contiguous_event_sequences() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_invalid_event_seq");
     repository.create_run(&run).await.expect("create run");
     repository
@@ -402,7 +389,8 @@ async fn repository_rejects_non_contiguous_event_sequences() {
         .await
         .expect("append event");
 
-    let events_path = root
+    let events_path = temp
+        .path()
         .join("chats")
         .join(&run.workspace_id)
         .join("runs")
@@ -441,14 +429,12 @@ async fn repository_rejects_non_contiguous_event_sequences() {
     assert!(
         matches!(error, DomainError::InvalidData(message) if message.contains("expected 1, found 2"))
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn list_runs_reads_index_sorted_and_cursor_paginated() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let mut oldest = sample_run_with_id("run_page_oldest");
     let mut tied_a = sample_run_with_id("run_page_a");
     let mut tied_b = sample_run_with_id("run_page_b");
@@ -505,14 +491,12 @@ async fn list_runs_reads_index_sorted_and_cursor_paginated() {
             .collect::<Vec<_>>(),
         vec!["run_page_a", "run_page_oldest"]
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn list_runs_filters_by_chat_stable_id_and_status() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let mut matching = sample_run_with_id("run_filter_match");
     matching.status = AgentRunStatus::Completed;
     matching.chat_target_mut().unwrap().stable_chat_id = "stable_filter".to_string();
@@ -549,18 +533,18 @@ async fn list_runs_filters_by_chat_stable_id_and_status() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, matching.id);
     assert_eq!(listed[0].profile_id.as_deref(), Some("writer"));
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn list_runs_accepts_legacy_index_without_presentation() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_legacy_without_presentation");
     repository.create_run(&run).await.expect("create run");
 
-    let index_path = root.join("index/runs/run_legacy_without_presentation.json");
+    let index_path = temp
+        .path()
+        .join("index/runs/run_legacy_without_presentation.json");
     let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
     let mut target = legacy
         .as_object_mut()
@@ -603,14 +587,12 @@ async fn list_runs_accepts_legacy_index_without_presentation() {
         loaded.chat_target().unwrap().presentation,
         AgentRunPresentation::Foreground
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn run_summary_projection_round_trips_by_run_id() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_summary_projection");
     repository.create_run(&run).await.expect("create run");
 
@@ -654,14 +636,12 @@ async fn run_summary_projection_round_trips_by_run_id() {
             .map(|message| message.message_index),
         Some(Some(7))
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn inspect_run_storage_counts_total_and_heavy_artifacts() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_prune_stats");
     repository.create_run(&run).await.expect("create run");
     repository
@@ -674,7 +654,8 @@ async fn inspect_run_storage_counts_total_and_heavy_artifacts() {
         .await
         .expect("append event");
 
-    let run_dir = root
+    let run_dir = temp
+        .path()
         .join("chats")
         .join(&run.workspace_id)
         .join("runs")
@@ -715,14 +696,12 @@ async fn inspect_run_storage_counts_total_and_heavy_artifacts() {
     assert_eq!(stats.heavy_artifacts.byte_count, 9);
     assert_eq!(stats.total.file_count, 7);
     assert!(stats.total.byte_count > stats.heavy_artifacts.byte_count);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_prune_slim");
     repository.create_run(&run).await.expect("create run");
     repository
@@ -735,7 +714,8 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
         .await
         .expect("append event");
 
-    let run_dir = root
+    let run_dir = temp
+        .path()
         .join("chats")
         .join(&run.workspace_id)
         .join("runs")
@@ -781,9 +761,10 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
     assert_eq!(removed.byte_count, 9 + checkpoint.len() as u64);
     assert!(run_dir.join("run.json").exists());
     assert!(run_dir.join("events.jsonl").exists());
-    assert!(root.join("index/runs/run_prune_slim.json").exists());
+    assert!(temp.path().join("index/runs/run_prune_slim.json").exists());
     assert!(
-        root.join("index/run-summaries/run_prune_slim.json")
+        temp.path()
+            .join("index/run-summaries/run_prune_slim.json")
             .exists()
     );
     assert!(!run_dir.join("manifest.json").exists());
@@ -796,14 +777,12 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
             .expect("load pruned checkpoint")
             .is_none()
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn delete_run_removes_workspace_index_and_summary_projection() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_prune_delete");
     repository.create_run(&run).await.expect("create run");
     repository
@@ -822,7 +801,8 @@ async fn delete_run_removes_workspace_index_and_summary_projection() {
         .await
         .expect("save summary");
 
-    let run_dir = root
+    let run_dir = temp
+        .path()
         .join("chats")
         .join(&run.workspace_id)
         .join("runs")
@@ -841,9 +821,15 @@ async fn delete_run_removes_workspace_index_and_summary_projection() {
 
     assert!(removed.file_count >= 5);
     assert!(!run_dir.exists());
-    assert!(!root.join("index/runs/run_prune_delete.json").exists());
     assert!(
-        !root
+        !temp
+            .path()
+            .join("index/runs/run_prune_delete.json")
+            .exists()
+    );
+    assert!(
+        !temp
+            .path()
             .join("index/run-summaries/run_prune_delete.json")
             .exists()
     );
@@ -861,19 +847,20 @@ async fn delete_run_removes_workspace_index_and_summary_projection() {
             .await
             .is_err()
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn list_runs_rejects_index_file_with_mismatched_run_id() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_index_real");
     repository.create_run(&run).await.expect("create run");
-    FileAgentRepository::write_json_atomic(&root.join("index/runs/run_index_wrong.json"), &run)
-        .await
-        .expect("write mismatched index");
+    FileAgentRepository::write_json_atomic(
+        &temp.path().join("index/runs/run_index_wrong.json"),
+        &run,
+    )
+    .await
+    .expect("write mismatched index");
 
     let error = repository
         .list_runs(AgentRunListQuery {
@@ -887,13 +874,12 @@ async fn list_runs_rejects_index_file_with_mismatched_run_id() {
         .expect_err("mismatched index file must fail");
 
     assert!(matches!(error, DomainError::InvalidData(_)));
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn concurrent_workspace_edits_reject_stale_content() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_guarded_workspace_write");
     let manifest = sample_manifest(&run);
     let profile = sample_resolved_profile(&manifest);
@@ -979,14 +965,12 @@ async fn concurrent_workspace_edits_reject_stale_content() {
         left_files.read_text(&path).await.unwrap().text,
         "program update"
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn append_text_serializes_results_and_creates_missing_files() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_append_workspace_write");
     let manifest = sample_manifest(&run);
     let profile = sample_resolved_profile(&manifest);
@@ -1048,14 +1032,12 @@ async fn append_text_serializes_results_and_creates_missing_files() {
         "unexpected final text: {final_text}"
     );
     assert_eq!(second.file.text, final_text);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn repository_round_trips_invocations() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_invocation");
     repository.create_run(&run).await.expect("create run");
 
@@ -1099,14 +1081,12 @@ async fn repository_round_trips_invocations() {
         .expect("invocation exists");
     assert_eq!(loaded_optional.profile_id, "default-writer");
     assert_eq!(repository.list_invocations(&run.id).await.unwrap().len(), 1);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn delete_chat_workspace_removes_runs_and_indexes() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let first = sample_run_with_id("run_delete_a");
     let second = sample_run_with_id("run_delete_b");
 
@@ -1141,7 +1121,8 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
         .await
         .expect("save second summary");
     fs::write(
-        root.join("chats")
+        temp.path()
+            .join("chats")
             .join(&first.workspace_id)
             .join("runs")
             .join(".DS_Store"),
@@ -1160,20 +1141,29 @@ async fn delete_chat_workspace_removes_runs_and_indexes() {
         deletion.run_ids,
         vec!["run_delete_a".to_string(), "run_delete_b".to_string()]
     );
-    assert!(!root.join("chats").join(&first.workspace_id).exists());
-    assert!(!root.join("index/runs/run_delete_a.json").exists());
-    assert!(!root.join("index/runs/run_delete_b.json").exists());
-    assert!(!root.join("index/run-summaries/run_delete_a.json").exists());
-    assert!(!root.join("index/run-summaries/run_delete_b.json").exists());
-
-    fs::remove_dir_all(root).await.expect("cleanup");
+    assert!(!temp.path().join("chats").join(&first.workspace_id).exists());
+    assert!(!temp.path().join("index/runs/run_delete_a.json").exists());
+    assert!(!temp.path().join("index/runs/run_delete_b.json").exists());
+    assert!(
+        !temp
+            .path()
+            .join("index/run-summaries/run_delete_a.json")
+            .exists()
+    );
+    assert!(
+        !temp
+            .path()
+            .join("index/run-summaries/run_delete_b.json")
+            .exists()
+    );
 }
 
 #[tokio::test]
 async fn prune_persistent_states_removes_only_unretained_candidates() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let states_dir = root
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
+    let states_dir = temp
+        .path()
         .join("chats")
         .join("chat_prune")
         .join("persistent-states");
@@ -1210,15 +1200,14 @@ async fn prune_persistent_states_removes_only_unretained_candidates() {
     assert!(!states_dir.join("state_drop").exists());
     assert!(states_dir.join("state_orphan_not_candidate").exists());
     assert!(states_dir.join(".DS_Store").exists());
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn prune_persistent_states_rejects_candidate_file() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let states_dir = root
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
+    let states_dir = temp
+        .path()
         .join("chats")
         .join("chat_prune")
         .join("persistent-states");
@@ -1242,14 +1231,12 @@ async fn prune_persistent_states_rejects_candidate_file() {
 
     assert!(matches!(error, DomainError::InvalidData(_)));
     assert!(states_dir.join("state_file").exists());
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn persistent_workspace_projects_run_changes_only_after_commit() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let run = sample_run_with_id("run_persist_a");
     let manifest = sample_manifest(&run);
     let profile = sample_resolved_profile(&manifest);
@@ -1278,7 +1265,8 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .await
         .expect("write persist projection");
     fs::write(
-        root.join("chats")
+        temp.path()
+            .join("chats")
             .join(&run.workspace_id)
             .join("runs")
             .join(&run.id)
@@ -1342,7 +1330,8 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("publish changed persistent files");
     assert_ne!(revised.state_id, changes.state_id);
     let mut versions = fs::read_dir(
-        root.join("chats")
+        temp.path()
+            .join("chats")
             .join(&run.workspace_id)
             .join("persistent-states"),
     )
@@ -1357,7 +1346,8 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         "unchanged publication must not copy a snapshot"
     );
     assert!(
-        !root
+        !temp
+            .path()
             .join("chats")
             .join(&run.workspace_id)
             .join("persistent-states")
@@ -1450,14 +1440,12 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
             .text,
         "revised thread note"
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn persistent_workspace_commits_parallel_branch_states() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let repository = FileAgentRepository::new(temp.path().to_path_buf());
     let first = sample_run_with_id("run_conflict_a");
     let second = sample_run_with_id("run_conflict_b");
     let persist_path = WorkspacePath::parse("persist/MEMORY.md").unwrap();
@@ -1568,8 +1556,6 @@ async fn persistent_workspace_commits_parallel_branch_states() {
             .text,
         "second"
     );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 mod workspace_fs;

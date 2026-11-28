@@ -391,7 +391,6 @@ fn append_feature(features: &mut Vec<String>, feature: &str) {
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
@@ -410,7 +409,6 @@ mod tests {
     use ttsync_contract::sync::SyncMode;
     use ttsync_core::bundle::{FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1};
     use ttsync_core::dataset::{tauri_tavern_default_selection, tauri_tavern_full_selection};
-    use uuid::Uuid;
 
     use crate::sync::http_client::{bearer_auth_value, ensure_dataset_scope_v1, new_sync_client};
     use crate::sync::lan::client::{HttpLanPairingClient, LanSyncClient};
@@ -418,10 +416,6 @@ mod tests {
     use tt_domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
 
     const TEST_USER_AGENT: &str = "TauriTavern/test";
-
-    fn temp_default_user_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("tauritavern-lan-server-{}", Uuid::new_v4()))
-    }
 
     struct NoopInboundHandler;
 
@@ -554,8 +548,8 @@ mod tests {
 
     #[tokio::test]
     async fn manifest_store_delete_prunes_fileless_parents() {
-        let sync_root = temp_default_user_dir();
-        let git = sync_root.join("extensions/third-party/example/.git");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let git = temp.path().join("extensions/third-party/example/.git");
         tokio::fs::create_dir_all(git.join("objects/info"))
             .await
             .expect("create git directories");
@@ -564,7 +558,7 @@ mod tests {
             .expect("write HEAD");
 
         let store = LanManifestStore::new(
-            sync_root.clone(),
+            temp.path().to_path_buf(),
             crate::sync::workspace::empty_database_access(),
         );
         let path = SyncPath::new("extensions/third-party/example/.git/HEAD".to_string()).unwrap();
@@ -572,25 +566,21 @@ mod tests {
             .await
             .expect("delete file");
 
-        assert!(!sync_root.join("extensions/third-party/example").exists());
-        assert!(sync_root.join("extensions/third-party").exists());
-
-        tokio::fs::remove_dir_all(sync_root)
-            .await
-            .expect("remove temp root");
+        assert!(!temp.path().join("extensions/third-party/example").exists());
+        assert!(temp.path().join("extensions/third-party").exists());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn status_is_served_over_spki_pinned_https() {
         use tt_ports::lan_sync::LanPeerRepository;
-        let default_user_dir = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let store = LanPeerStore::new(
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             tt_contracts::host::HostPlatform::Linux,
         );
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             store.clone(),
             noop_inbound(),
             recording_events(),
@@ -649,7 +639,7 @@ mod tests {
         }
         store.set_device_name("书房 Mac").await.unwrap();
         let reloaded = LanPeerStore::new(
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             tt_contracts::host::HostPlatform::Linux,
         )
         .load_or_create_identity()
@@ -676,14 +666,13 @@ mod tests {
         );
 
         handle.shutdown();
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pair_complete_exchanges_identity_over_pinned_https() {
-        let default_user_dir = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
         let store = LanPeerStore::new(
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             tt_contracts::host::HostPlatform::Linux,
         );
         let identity = store
@@ -707,7 +696,7 @@ mod tests {
         tokio::spawn(async move { while stale.accept().await.is_ok() {} });
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
-            default_user_dir.clone(),
+            temp.path().to_path_buf(),
             store.clone(),
             inbound.clone(),
             events.clone(),
@@ -812,12 +801,12 @@ mod tests {
         assert_eq!(events.pairings.load(Ordering::SeqCst), 1);
 
         handle.shutdown();
-        let _ = tokio::fs::remove_dir_all(default_user_dir).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pull_plan_and_file_download_use_session_and_dataset_scope() {
-        let sync_root = temp_default_user_dir();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let sync_root = temp.path().join("source");
         tokio::fs::create_dir_all(sync_root.join("default-user/chats"))
             .await
             .expect("create sync scope");
@@ -978,7 +967,7 @@ mod tests {
                 .expect("write Agent artifact");
         }
 
-        let target_root = temp_default_user_dir();
+        let target_root = temp.path().join("target");
         tokio::fs::create_dir_all(&target_root)
             .await
             .expect("create target root");
@@ -1037,7 +1026,5 @@ mod tests {
         }
 
         handle.shutdown();
-        let _ = tokio::fs::remove_dir_all(target_root).await;
-        let _ = tokio::fs::remove_dir_all(sync_root).await;
     }
 }

@@ -16,6 +16,7 @@ const COMPILER_OWNED_ROOTS = [
     'src/scripts/extensions/mcp-manager/src',
     'src/scripts/tauri/setting/settings-app',
     'src/scripts/tauri/setting/dev-logs-app',
+    'src/scripts/tauri/setting/request-inspector-app',
     'src/scripts/tauri/setting/sync-app',
 ];
 

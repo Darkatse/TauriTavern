@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+pub use tt_contracts::observability::{
+    ChatCompletionRequestPreviewDto, ExchangeViewDto, LlmApiLogIndexEntryDto, LlmApiLogPreviewDto,
+    LlmApiLogRawDto, LlmApiLogViewDto, LlmApiRawKindDto, MessageViewDto, ParameterViewDto,
+    PartViewDto, RequestKindDto, RequestViewDto, ResponseViewDto, ToolViewDto, UsageViewDto,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendLogEntryDto {
@@ -26,54 +32,6 @@ pub struct BackendLogEntryDto {
     pub level: String,
     pub target: String,
     pub message: String,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmApiRawKindDto {
-    Json,
-    Sse,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogIndexEntryDto {
-    pub id: u64,
-    pub timestamp_ms: i64,
-    pub level: String,
-    pub ok: bool,
-    pub source: String,
-    pub model: Option<String>,
-    pub endpoint: String,
-    pub duration_ms: u32,
-    pub stream: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogPreviewDto {
-    pub id: u64,
-    pub timestamp_ms: i64,
-    pub level: String,
-    pub ok: bool,
-    pub source: String,
-    pub model: Option<String>,
-    pub endpoint: String,
-    pub duration_ms: u32,
-    pub stream: bool,
-    pub error_message: Option<String>,
-    pub request_readable: String,
-    pub response_readable: String,
-    pub response_raw_kind: Option<LlmApiRawKindDto>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmApiLogRawDto {
-    pub id: u64,
-    pub request_raw: String,
-    pub response_raw: String,
-    pub response_raw_kind: Option<LlmApiRawKindDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

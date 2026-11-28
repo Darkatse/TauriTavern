@@ -10,7 +10,7 @@ use tt_ports::repositories::translate_repository::{
     DeeplApiEndpoint, TranslateProvider, TranslateRepository, TranslateRequest,
 };
 
-const LINGVA_DEFAULT_BASE_URL: &str = "https://lingva.ml/api/v1";
+const LINGVA_DEFAULT_BASE_URL: &str = "https://lingva.ml/api/v1/";
 const ONERING_DEFAULT_URL: &str = "http://127.0.0.1:4990/translate";
 const DEEPLX_DEFAULT_URL: &str = "http://127.0.0.1:1188/translate";
 
@@ -30,10 +30,15 @@ impl TranslateService {
         }
     }
 
+    pub async fn resolve_user_endpoint(
+        &self,
+        provider: &str,
+    ) -> Result<Option<Url>, ApplicationError> {
+        self.configured_url(parse_provider(provider)?).await
+    }
+
     pub async fn translate(&self, provider: &str, body: Value) -> Result<String, ApplicationError> {
-        let provider = TranslateProvider::parse(provider).ok_or_else(|| {
-            ApplicationError::NotFound(format!("Unsupported translate provider: {provider}"))
-        })?;
+        let provider = parse_provider(provider)?;
 
         let request = match provider {
             TranslateProvider::Google => {
@@ -44,13 +49,11 @@ impl TranslateService {
             TranslateProvider::Libre => {
                 let text = require_string(&body, "text")?;
                 let lang = normalize_libre_lang(require_string(&body, "lang")?);
-                let url = self
-                    .read_required_secret(
-                        SecretKeys::LIBRE_URL,
-                        "LibreTranslate URL is not configured.",
+                let url = self.configured_url(provider).await?.ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "LibreTranslate URL is not configured.".to_string(),
                     )
-                    .await?;
-                let url = parse_url_with_optional_trailing_slash(&url, "LibreTranslate")?;
+                })?;
                 let api_key = self.read_optional_secret(SecretKeys::LIBRE).await?;
                 TranslateRequest::Libre {
                     url,
@@ -62,13 +65,10 @@ impl TranslateService {
             TranslateProvider::Lingva => {
                 let text = require_string(&body, "text")?;
                 let lang = normalize_lingva_lang(require_string(&body, "lang")?);
-                let raw = self
-                    .read_optional_secret(SecretKeys::LINGVA_URL)
-                    .await?
-                    .unwrap_or_else(|| LINGVA_DEFAULT_BASE_URL.to_string());
-                let base_url = parse_url_with_required_trailing_slash(&raw, "Lingva")?;
+                let configured = self.configured_url(provider).await?;
                 TranslateRequest::Lingva {
-                    base_url,
+                    user_configured_endpoint: configured.is_some(),
+                    base_url: configured.unwrap_or_else(|| builtin_url(LINGVA_DEFAULT_BASE_URL)),
                     text,
                     lang,
                 }
@@ -90,24 +90,22 @@ impl TranslateService {
             TranslateProvider::Deeplx => {
                 let text = require_string(&body, "text")?;
                 let lang = normalize_deeplx_lang(require_string(&body, "lang")?);
-                let raw = self
-                    .read_optional_secret(SecretKeys::DEEPLX_URL)
-                    .await?
-                    .unwrap_or_else(|| DEEPLX_DEFAULT_URL.to_string());
-                let url = parse_url_with_optional_trailing_slash(&raw, "DeepLX")?;
-                TranslateRequest::Deeplx { url, text, lang }
+                let configured = self.configured_url(provider).await?;
+                TranslateRequest::Deeplx {
+                    user_configured_endpoint: configured.is_some(),
+                    url: configured.unwrap_or_else(|| builtin_url(DEEPLX_DEFAULT_URL)),
+                    text,
+                    lang,
+                }
             }
             TranslateProvider::OneRing => {
                 let text = require_string(&body, "text")?;
                 let from_lang = require_string(&body, "from_lang")?;
                 let to_lang = require_string(&body, "to_lang")?;
-                let raw = self
-                    .read_optional_secret(SecretKeys::ONERING_URL)
-                    .await?
-                    .unwrap_or_else(|| ONERING_DEFAULT_URL.to_string());
-                let url = parse_url_with_optional_trailing_slash(&raw, "OneRing")?;
+                let configured = self.configured_url(provider).await?;
                 TranslateRequest::OneRing {
-                    url,
+                    user_configured_endpoint: configured.is_some(),
+                    url: configured.unwrap_or_else(|| builtin_url(ONERING_DEFAULT_URL)),
                     text,
                     from_lang,
                     to_lang,
@@ -116,6 +114,32 @@ impl TranslateService {
         };
 
         Ok(self.translate_repository.translate(request).await?)
+    }
+
+    async fn configured_url(
+        &self,
+        provider: TranslateProvider,
+    ) -> Result<Option<Url>, ApplicationError> {
+        let (key, label) = match provider {
+            TranslateProvider::Libre => (SecretKeys::LIBRE_URL, "LibreTranslate"),
+            TranslateProvider::Lingva => (SecretKeys::LINGVA_URL, "Lingva"),
+            TranslateProvider::Deeplx => (SecretKeys::DEEPLX_URL, "DeepLX"),
+            TranslateProvider::OneRing => (SecretKeys::ONERING_URL, "OneRing"),
+            TranslateProvider::Google | TranslateProvider::Deepl => return Ok(None),
+        };
+        let Some(raw) = self
+            .read_optional_secret(key)
+            .await?
+            .filter(|raw| !raw.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let url = if provider == TranslateProvider::Lingva {
+            parse_url_with_required_trailing_slash(&raw, label)?
+        } else {
+            parse_url_with_optional_trailing_slash(&raw, label)?
+        };
+        Ok(Some(url))
     }
 
     async fn read_optional_secret(&self, key: &str) -> Result<Option<String>, ApplicationError> {
@@ -138,6 +162,15 @@ impl TranslateService {
 
         Ok(secret)
     }
+}
+
+fn parse_provider(raw: &str) -> Result<TranslateProvider, ApplicationError> {
+    TranslateProvider::parse(raw)
+        .ok_or_else(|| ApplicationError::NotFound(format!("Unsupported translate provider: {raw}")))
+}
+
+fn builtin_url(url: &str) -> Url {
+    Url::parse(url).expect("built-in translation URLs are valid")
 }
 
 fn as_object(value: &Value) -> Result<&serde_json::Map<String, Value>, ApplicationError> {
