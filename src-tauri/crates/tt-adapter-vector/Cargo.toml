@@ -7,14 +7,14 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-candle-core = "0.11.0"
-candle-nn = "0.11.0"
-candle-transformers = "0.11.0"
+candle-core = "0.11.1"
+candle-nn = "0.11.1"
+candle-transformers = "0.11.1"
 redb = "4.1.0"
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
-tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tracing = "0.1"
 tt-adapter-http = { path = "../tt-adapter-http" }
 tt-domain = { path = "../tt-domain" }

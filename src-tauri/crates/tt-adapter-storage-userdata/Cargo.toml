@@ -17,9 +17,8 @@ yaml_serde = "0.10"
 sha2 = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }
 tracing = "0.1"
-typed-path = "0.12"
 uuid = { workspace = true }
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
 tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }

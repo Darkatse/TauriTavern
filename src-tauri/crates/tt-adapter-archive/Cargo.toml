@@ -6,14 +6,15 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+chardetng = "1.0.0"
 encoding_rs = "0.8"
 flate2 = "1.1.9"
 serde_json = { workspace = true }
 tar = { version = "0.4", default-features = false }
 tracing = "0.1"
-typed-path = "0.12"
+typed-path = "0.13"
 uuid = { workspace = true }
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }

@@ -506,30 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn zip_unicode_extra_field_overrides_non_utf8_filename() {
-        let bytes = decode_fixture();
-        let reader = std::io::Cursor::new(bytes);
-
-        let mut archive = zip::ZipArchive::new(reader).expect("parse fixture zip");
-        let mut names = (0..archive.len())
-            .map(|index| {
-                archive
-                    .by_index(index)
-                    .expect("read entry")
-                    .name()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        names.sort();
-
-        assert!(
-            names
-                .iter()
-                .any(|name| name.ends_with("data/default-user/characters/中文.json"))
-        );
-    }
-
-    #[test]
     fn import_preserves_unicode_filenames() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let data_root = temp.path().join("data");
@@ -593,6 +569,44 @@ mod tests {
                 .expect("read ambiguous GB18030 filename"),
             b"second"
         );
+    }
+
+    #[test]
+    fn import_detects_big5_zip_filenames() {
+        let names = ["繁體中文設定", "聊天紀錄", "角色卡片", "世界書", "夏瑾"];
+        let raw_names = names.map(|name| {
+            let path = format!("data/default-user/characters/{name}.json");
+            let (bytes, _, unmappable) = encoding_rs::BIG5.encode(&path);
+            assert!(!unmappable, "{name} is Big5");
+            bytes.into_owned()
+        });
+        let placeholders = raw_names
+            .iter()
+            .enumerate()
+            .map(|(index, raw_name)| {
+                let prefix = format!("data/default-user/characters/{index}");
+                format!("{prefix}{}", "x".repeat(raw_name.len() - prefix.len()))
+            })
+            .collect::<Vec<_>>();
+        let entries = placeholders
+            .iter()
+            .zip(&raw_names)
+            .map(|(placeholder, raw_name)| {
+                (placeholder.as_str(), raw_name.as_slice(), &b"big5"[..])
+            })
+            .collect::<Vec<_>>();
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let data_root = import_zip_with_raw_names(temp.path(), &entries);
+
+        for name in names {
+            assert!(
+                data_root
+                    .join("default-user/characters")
+                    .join(format!("{name}.json"))
+                    .is_file(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -738,27 +752,34 @@ mod tests {
 
     #[test]
     fn tar_import_rejects_path_escape() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let data_root = temp.path().join("data");
-        let workspace_root = temp.path().join("workspace");
-        let archive_path = temp.path().join("fixture.tar");
+        for escape in ["../escape.json", "data/c:/escape.json"] {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let data_root = temp.path().join("data");
+            let workspace_root = temp.path().join("workspace");
+            let archive_path = temp.path().join("fixture.tar");
 
-        fs::create_dir_all(&workspace_root).expect("create temp workspace");
-        write_raw_tar_file(&archive_path, "../escape.json", b"bad");
+            fs::create_dir_all(&workspace_root).expect("create temp workspace");
+            write_raw_tar_file(&archive_path, escape, b"bad");
 
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let is_cancelled = || false;
+            let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+            let is_cancelled = || false;
 
-        let error = run_import_data_archive(
-            &data_root,
-            &archive_path,
-            &workspace_root,
-            &mut report_progress,
-            &is_cancelled,
-            |_, _| Ok(()),
-        )
-        .expect_err("path escape should be rejected");
-        assert!(matches!(error.error, DomainError::InvalidData(_)));
+            let error = run_import_data_archive(
+                &data_root,
+                &archive_path,
+                &workspace_root,
+                &mut report_progress,
+                &is_cancelled,
+                |_, _| Ok(()),
+            )
+            .expect_err("path escape should be rejected");
+            assert!(
+                matches!(&error.error, DomainError::InvalidData(message)
+                    if message.starts_with("Invalid archive entry path:")),
+                "{escape}: {:?}",
+                error.error
+            );
+        }
     }
 
     #[test]

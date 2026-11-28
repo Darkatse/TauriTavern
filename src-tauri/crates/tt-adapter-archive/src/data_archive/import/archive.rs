@@ -200,10 +200,10 @@ pub fn prepare_archive_for_import(
         .seek(SeekFrom::Start(0))
         .map_err(|error| internal_error("Failed to seek archive file", error))?;
     match ZipArchive::new(archive_file) {
-        Ok(mut archive) => {
-            let name_encoding = detect_zip_entry_name_encoding(&mut archive, is_cancelled)?;
+        Ok(archive) => {
+            let name_encoding = zipkit::detect_zip_entry_name_encoding(&archive);
             let (scanned_archive, entries) =
-                scan_zip_archive(&mut archive, name_encoding, is_cancelled, visit)?;
+                scan_zip_archive(&archive, name_encoding, is_cancelled, visit)?;
             let worker_count =
                 zip_worker_count(entries.iter().filter(|entry| !entry.is_dir).count());
             let metadata = archive.metadata();
@@ -247,33 +247,8 @@ pub fn prepare_archive_for_import(
     }
 }
 
-fn detect_zip_entry_name_encoding<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    is_cancelled: &dyn Fn() -> bool,
-) -> Result<zipkit::ZipEntryNameEncoding, DomainError> {
-    // Keep the common path in-memory; only mojibake-shaped names need raw ZIP entry metadata.
-    let mojibake_candidates = archive
-        .file_names()
-        .enumerate()
-        .filter_map(|(index, name)| zipkit::has_cp437_box_or_block(name).then_some(index))
-        .collect::<Vec<_>>();
-
-    for index in mojibake_candidates {
-        ensure_not_cancelled(is_cancelled)?;
-        let entry = archive
-            .by_index_raw(index)
-            .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
-        if zipkit::decodes_as_legacy_gb18030_cjk(&entry) {
-            tracing::info!("Detected legacy GB18030 ZIP entry names");
-            return Ok(zipkit::ZipEntryNameEncoding::Gb18030);
-        }
-    }
-
-    Ok(zipkit::ZipEntryNameEncoding::Utf8OrCp437)
-}
-
 fn scan_zip_archive<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+    archive: &ZipArchive<R>,
     name_encoding: zipkit::ZipEntryNameEncoding,
     is_cancelled: &dyn Fn() -> bool,
     visit: &mut dyn FnMut(&Path) -> Result<(), DomainError>,
@@ -286,7 +261,7 @@ fn scan_zip_archive<R: Read + Seek>(
         ensure_not_cancelled(is_cancelled)?;
 
         let entry = archive
-            .by_index(index)
+            .by_index_data(index)
             .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
         let (sanitized_path, entry_name) =
             zipkit::enclosed_zip_entry_path_with_encoding(&entry, name_encoding)?;
@@ -720,12 +695,6 @@ fn ensure_supported_tar_entry_type(
 
 fn tar_entry_display_name<R: Read>(entry: &tar::Entry<'_, R>) -> Result<String, DomainError> {
     let path_bytes = entry.path_bytes();
-    if path_bytes.contains(&0) {
-        return Err(DomainError::InvalidData(
-            "Invalid archive entry path (NUL byte)".to_string(),
-        ));
-    }
-
     let name = std::str::from_utf8(&path_bytes).map_err(|error| {
         DomainError::InvalidData(format!("Invalid archive entry path encoding: {}", error))
     })?;

@@ -421,15 +421,18 @@ mod tests {
                 "data/default-user/"
             };
             let archive = zip::ZipArchive::new(File::open(output_path).unwrap()).unwrap();
-            let names = archive.file_names().collect::<Vec<_>>();
+            let names = archive
+                .file_names()
+                .map(|name| name.unwrap().into_owned())
+                .collect::<Vec<_>>();
             for secret in ["secrets.json", "backups/secrets_migration_123.json"] {
                 assert_eq!(
-                    names.contains(&format!("{prefix}{secret}").as_str()),
+                    names.contains(&format!("{prefix}{secret}")),
                     include_secrets != Some(false)
                 );
             }
-            assert!(!names.contains(&format!("{prefix}{staging}").as_str()));
-            assert!(names.contains(&format!("{prefix}{kept}").as_str()));
+            assert!(!names.contains(&format!("{prefix}{staging}")));
+            assert!(names.contains(&format!("{prefix}{kept}")));
         }
     }
 
