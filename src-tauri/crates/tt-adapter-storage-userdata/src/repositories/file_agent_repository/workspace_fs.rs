@@ -16,6 +16,9 @@ use tt_ports::workspace_fs::{
 
 use super::fs_tree::hash_file;
 
+pub(super) const SESSION_WORKSPACE_DIRECTORIES: [&str; 4] =
+    ["work", "tmp", "tool-results", "long-results"];
+
 pub(super) struct FileWorkspaceFs {
     pub(super) root: PathBuf,
     session_workspace: Option<PathBuf>,
@@ -30,7 +33,7 @@ impl FileWorkspaceFs {
             .next()
             .expect("workspace path is nonempty");
         match &self.session_workspace {
-            Some(root) if matches!(first, "work" | "tmp" | "tool-results") => root,
+            Some(root) if SESSION_WORKSPACE_DIRECTORIES.contains(&first) => root,
             _ => &self.root,
         }
     }

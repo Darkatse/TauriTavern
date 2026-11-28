@@ -21,7 +21,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                 model_tool_call(
                     "readonly_write",
                     "workspace_shell",
-                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("tool-results/forbidden.txt", "forbidden")'"#}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("long-results/forbidden.txt", "forbidden")'"#}),
                 ),
                 model_tool_call(
                     "missing_context",
@@ -168,7 +168,7 @@ JS
         "scratch/finalized/draft.txt",
         "scratch/finalized/input.json",
         "scratch/leaked.json",
-        "tool-results/forbidden.txt",
+        "long-results/forbidden.txt",
     ] {
         assert!(matches!(
             files
@@ -196,7 +196,7 @@ JS
         })
         .collect::<std::collections::HashMap<_, _>>();
     assert!(errors["hidden_read"].contains("input/prompt_snapshot.json"));
-    assert!(errors["readonly_write"].contains("tool-results/forbidden.txt"));
+    assert!(errors["readonly_write"].contains("long-results/forbidden.txt"));
     assert!(errors["missing_context"].contains("context.worldInfo"));
     assert!(events.iter().any(|event| {
         event.event_type == "tool_call_failed"

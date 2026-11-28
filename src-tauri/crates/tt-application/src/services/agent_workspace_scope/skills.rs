@@ -41,9 +41,6 @@ impl ScopedWorkspaceFs {
         path: &WorkspacePath,
         maximum_bytes: usize,
     ) -> Result<Vec<u8>, DomainError> {
-        if path.as_str() == SKILLS_ROOT {
-            return Err(DomainError::workspace_path_is_directory(path.as_str()));
-        }
         let (repository, binding, relative) = self.skill_entry(path)?;
         let Some(relative) = relative else {
             repository
@@ -84,9 +81,6 @@ impl ScopedWorkspaceFs {
         &self,
         path: &WorkspacePath,
     ) -> Result<WorkspaceMetadata, DomainError> {
-        if path.as_str() == SKILLS_ROOT {
-            return Ok(binding_directory_metadata());
-        }
         let (repository, binding, relative) = self.skill_entry(path)?;
         let mut metadata = repository
             .skill_metadata(&binding.scope, &binding.name, relative.as_ref())
@@ -118,7 +112,7 @@ impl ScopedWorkspaceFs {
                 .map(|binding| {
                     Ok(WorkspaceDirectoryEntry {
                         path: WorkspacePath::parse(format!("skills/{}", binding.name))?,
-                        metadata: binding_directory_metadata(),
+                        metadata: view_directory(),
                     })
                 })
                 .collect::<Result<Vec<_>, DomainError>>()?;
@@ -151,13 +145,4 @@ impl ScopedWorkspaceFs {
 fn renders_frozen_macros(binding: &SkillIndexEntry, relative: &WorkspacePath) -> bool {
     binding.scope != tt_domain::models::skill::SkillScope::Builtin
         && !relative.as_str().starts_with("scripts/")
-}
-
-fn binding_directory_metadata() -> WorkspaceMetadata {
-    WorkspaceMetadata {
-        kind: WorkspaceEntryKind::Directory,
-        bytes: 0,
-        modified: None,
-        created: None,
-    }
 }

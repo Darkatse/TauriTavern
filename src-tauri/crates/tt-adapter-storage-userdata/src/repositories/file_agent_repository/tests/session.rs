@@ -50,7 +50,7 @@ async fn session_run(
     repository.create_run(&run).await.unwrap();
     let mut manifest = sample_manifest(&run);
     manifest.artifacts.clear();
-    manifest.roots = ["work", "tmp", "tool-results"]
+    manifest.roots = ["work", "tmp"]
         .into_iter()
         .map(|name| WorkspaceRootSpec {
             path: name.into(),
@@ -58,7 +58,7 @@ async fn session_run(
             scope: WorkspaceRootScope::Session,
             mount: WorkspaceRootMount::Materialized,
             visible: true,
-            writable: name != "tool-results",
+            writable: true,
             commit: WorkspaceRootCommit::Never,
         })
         .collect();
@@ -98,14 +98,16 @@ async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecyc
         )
         .await
         .unwrap();
-    first
-        .write_text(
-            &path("tool-results/opaque_first/result.txt"),
-            "old result",
-            WorkspaceWriteGuard::Unchecked,
-        )
-        .await
-        .unwrap();
+    for directory in ["tool-results", "long-results"] {
+        first
+            .write_text(
+                &path(&format!("{directory}/opaque_first/result.txt")),
+                "old result",
+                WorkspaceWriteGuard::Unchecked,
+            )
+            .await
+            .unwrap();
+    }
 
     let (_, second) = session_run(&repository, "session_a", "opaque_second").await;
     let (_, other) = session_run(&repository, "session_b", "opaque_other").await;
@@ -141,7 +143,7 @@ async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecyc
         .await
         .unwrap();
     let roots = second.read_dir(None, 100).await.unwrap();
-    for name in ["work", "tmp", "tool-results"] {
+    for name in ["work", "tmp", "tool-results", "long-results"] {
         assert_eq!(
             roots
                 .iter()
@@ -174,14 +176,16 @@ async fn session_workspace_survives_runs_and_reopen_without_joining_chat_lifecyc
         files.read_text(&path("work/check.js")).await.unwrap().text,
         "temporary"
     );
-    assert_eq!(
-        files
-            .read_text(&path("tool-results/opaque_first/result.txt"))
-            .await
-            .unwrap()
-            .text,
-        "old result"
-    );
+    for directory in ["tool-results", "long-results"] {
+        assert_eq!(
+            files
+                .read_text(&path(&format!("{directory}/opaque_first/result.txt")))
+                .await
+                .unwrap()
+                .text,
+            "old result"
+        );
+    }
     assert!(reopened.load_session("session_a").await.is_ok());
 }
 

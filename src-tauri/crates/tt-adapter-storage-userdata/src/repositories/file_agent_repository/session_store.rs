@@ -20,6 +20,7 @@ use tt_ports::repositories::agent_session_repository::{
 
 use super::FileAgentRepository;
 use super::run_prune_store::remove_index_file_if_exists;
+use super::workspace_fs::SESSION_WORKSPACE_DIRECTORIES;
 
 #[async_trait]
 impl AgentSessionRepository for FileAgentRepository {
@@ -53,7 +54,7 @@ impl AgentSessionRepository for FileAgentRepository {
         fs::create_dir(&directory)
             .await
             .map_err(|error| DomainError::file_io("create session", &session.id, error))?;
-        for root in ["work", "tmp", "tool-results"] {
+        for root in SESSION_WORKSPACE_DIRECTORIES {
             fs::create_dir_all(directory.join("workspace").join(root))
                 .await
                 .map_err(|error| {

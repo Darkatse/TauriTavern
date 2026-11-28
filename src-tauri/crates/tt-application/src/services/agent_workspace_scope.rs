@@ -15,8 +15,11 @@ use tt_ports::workspace_fs::{
 
 mod skills;
 
-pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
+/// Visible as an empty directory even when absent on disk.
+pub(crate) const LONG_RESULTS_ROOT: &str = "long-results";
 const SKILLS_ROOT: &str = "skills";
+/// Profiles cannot configure these read-only roots.
+const VIEW_ROOTS: [&str; 2] = [LONG_RESULTS_ROOT, SKILLS_ROOT];
 
 pub(crate) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
     Path::new(path.as_str())
@@ -48,12 +51,11 @@ pub(crate) fn format_model_workspace_roots(roots: &[String]) -> String {
 }
 
 pub(crate) fn format_model_visible_workspace_roots(roots: &[String]) -> String {
-    let mut roots = roots.to_vec();
-    for root in [AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT] {
-        if !roots.iter().any(|existing| existing == root) {
-            roots.push(root.to_string());
-        }
-    }
+    let roots: Vec<String> = roots
+        .iter()
+        .cloned()
+        .chain(VIEW_ROOTS.map(String::from))
+        .collect();
     format_model_workspace_roots(&roots)
 }
 
@@ -99,25 +101,12 @@ pub(crate) struct WorkspaceAccessPolicy {
 impl WorkspaceAccessPolicy {
     pub(crate) fn from_profile(profile: &ResolvedAgentProfile) -> Self {
         let mut visible_roots = profile.workspace.visible_roots.clone();
-        for root in [AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT] {
-            if !visible_roots.iter().any(|existing| existing == root) {
-                visible_roots.push(root.to_string());
-            }
-        }
+        visible_roots.extend(VIEW_ROOTS.map(String::from));
         visible_roots.sort();
         visible_roots.dedup();
-        let mut writable_roots: Vec<_> = profile
-            .workspace
-            .writable_roots
-            .iter()
-            .filter(|root| ![AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT].contains(&root.as_str()))
-            .cloned()
-            .collect();
-        writable_roots.sort();
-        writable_roots.dedup();
         Self {
             visible_roots,
-            writable_roots,
+            writable_roots: profile.workspace.writable_roots.clone(),
         }
     }
 
@@ -148,11 +137,9 @@ impl WorkspaceAccessPolicy {
     }
 
     pub(crate) fn is_writable(&self, path: &WorkspacePath) -> bool {
-        !is_skill_path(path)
-            && self
-                .writable_roots
-                .iter()
-                .any(|root| path_matches_child(path.as_str(), root))
+        self.writable_roots
+            .iter()
+            .any(|root| path_matches_child(path.as_str(), root))
     }
 }
 
@@ -261,6 +248,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         maximum_bytes: usize,
     ) -> Result<Vec<u8>, DomainError> {
         self.check(path, false)?;
+        if is_view_root(path) {
+            return Err(DomainError::workspace_path_is_directory(path.as_str()));
+        }
         if is_skill_path(path) {
             return self.read_skill_file(path, maximum_bytes).await;
         }
@@ -300,17 +290,15 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         match path {
             Some(path) => {
                 self.check(path, false)?;
+                if is_view_root(path) {
+                    return Ok(view_directory());
+                }
                 if is_skill_path(path) {
                     return self.skill_metadata(path).await;
                 }
                 self.inner.metadata(Some(path)).await
             }
-            None => Ok(WorkspaceMetadata {
-                kind: WorkspaceEntryKind::Directory,
-                bytes: 0,
-                modified: None,
-                created: None,
-            }),
+            None => Ok(view_directory()),
         }
     }
     async fn read_dir(
@@ -323,7 +311,12 @@ impl WorkspaceFs for ScopedWorkspaceFs {
             if is_skill_path(path) {
                 return self.read_skill_dir(path, maximum_entries).await;
             }
-            return self.inner.read_dir(Some(path), maximum_entries).await;
+            return match self.inner.read_dir(Some(path), maximum_entries).await {
+                Err(DomainError::NotFound(_)) if path.as_str() == LONG_RESULTS_ROOT => {
+                    Ok(Vec::new())
+                }
+                entries => entries,
+            };
         }
         if self.policy.visible_roots.len() > maximum_entries {
             return Err(DomainError::InvalidData(format!(
@@ -385,6 +378,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<(), DomainError> {
         self.check(source, false)?;
         self.check(target, true)?;
+        if is_view_root(source) {
+            return Err(DomainError::workspace_path_is_directory(source.as_str()));
+        }
         if is_skill_path(source) {
             let bytes = self.read_skill_file(source, usize::MAX).await?;
             self.inner
@@ -400,4 +396,17 @@ impl WorkspaceFs for ScopedWorkspaceFs {
 
 fn is_skill_path(path: &WorkspacePath) -> bool {
     path_matches_root_or_child(path.as_str(), SKILLS_ROOT)
+}
+
+fn is_view_root(path: &WorkspacePath) -> bool {
+    VIEW_ROOTS.contains(&path.as_str())
+}
+
+fn view_directory() -> WorkspaceMetadata {
+    WorkspaceMetadata {
+        kind: WorkspaceEntryKind::Directory,
+        bytes: 0,
+        modified: None,
+        created: None,
+    }
 }

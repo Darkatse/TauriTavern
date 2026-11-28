@@ -16,7 +16,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
                 "call_read",
                 "workspace_read_file",
                 json!({
-                    "path": "tool-results/inv_root/round-001-call_fe79da5f09df9787.txt",
+                    "path": "long-results/inv_root/round-001-call_fe79da5f09df9787.txt",
                     "start_line": 1,
                     "line_count": 100
                 }),
@@ -128,7 +128,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
     assert!(mcp_result.content.contains(readable_path));
     assert_eq!(
         readable_path,
-        "tool-results/inv_root/round-001-call_fe79da5f09df9787.txt"
+        "long-results/inv_root/round-001-call_fe79da5f09df9787.txt"
     );
     assert_eq!(
         audit_path,

@@ -27,7 +27,7 @@ impl AgentRunStorageClass {
         match component {
             "input" | "invocations" => Self::RunContext,
             "persist" | "summaries" | "plan" => Self::RunWorkspaceProjection,
-            "tool-args" | "tool-results" | "agent-results" => Self::RunToolIo,
+            "tool-args" | "tool-results" | "long-results" | "agent-results" => Self::RunToolIo,
             "output" => Self::WorkspaceOutputs,
             "scratch" => Self::WorkspaceScratch,
             "tasks" => Self::Tasks,
